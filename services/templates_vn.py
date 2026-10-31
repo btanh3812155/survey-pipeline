@@ -1,0 +1,71 @@
+from typing import Optional, List
+
+TEMPLATES_VN = {
+    "APPROVED": (
+        "✅ <b>PHIẾU KHẢO SÁT ĐÃ ĐƯỢC DUYỆT THÀNH CÔNG</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Trạng thái: <b>Hợp lệ (Approved)</b>\n"
+        "• Thù lao dự kiến: <b>25.000 VNĐ</b>\n\n"
+        "🎉 <i>Hệ thống đã tự động ghi nhận vào bảng thanh toán của bạn. Cảm ơn bạn!</i>"
+    ),
+    "MISSING_FIELDS": (
+        "❌ <b>PHIẾU KHẢO SÁT CHƯA ĐẠT YÊU CẦU</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi phát hiện: <b>Thiếu thông tin bắt buộc</b>\n"
+        "• Chi tiết cần bổ sung:\n{missing_list}\n\n"
+        "👉 <i>Vui lòng hoàn thiện các mục trên và chụp gửi lại phiếu nhé!</i>"
+    ),
+    "BLURRY": (
+        "❌ <b>ẢNH CHỤP KHÔNG ĐẠT (BỊ MỜ / CHÓI SÁNG)</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi phát hiện: <b>Ảnh bị rung tay hoặc lóa đèn</b>\n\n"
+        "👉 <i>Chữ và số trên phiếu không đủ rõ nét để nhận diện. Bạn giữ chắc tay, chụp ở nơi đủ sáng và gửi lại nha!</i>"
+    ),
+    "SCREEN_PHOTO": (
+        "❌ <b>PHÁT HIỆN ẢNH CHỤP MÀN HÌNH (SPOOF)</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi vi phạm: <b>Ảnh chụp từ màn hình thiết bị khác</b>\n\n"
+        "👉 <i>Quy định khảo sát yêu cầu chụp trực tiếp từ phiếu giấy thực tế. Ảnh chụp màn hình sẽ không được duyệt.</i>"
+    ),
+    "DUPLICATE": (
+        "❌ <b>PHÁT HIỆN ẢNH TRÙNG LẶP (DUPLICATE)</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi vi phạm: <b>Phiếu này đã được nộp trước đó trên hệ thống</b>\n\n"
+        "👉 <i>Vui lòng không sử dụng lại ảnh khảo sát cũ để tránh vi phạm chính sách cộng tác viên.</i>"
+    ),
+    "ARITHMETIC_MISMATCH": (
+        "❌ <b>LỖI SAI LỆCH SỐ TIỀN TRÊN HÓA ĐƠN</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi phát hiện: <b>Tổng tiền không khớp các khoản chi tiết</b>\n"
+        "• Ghi chú: {collaborator_note}\n\n"
+        "👉 <i>Vui lòng kiểm tra lại số liệu trên hóa đơn và gửi lại.</i>"
+    ),
+    "MANUAL_REVIEW": (
+        "⏳ <b>HỆ THỐNG ĐANG CHUYỂN DUYỆT THỦ CÔNG</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Trạng thái: <b>Đang chờ quản lý kiểm tra</b>\n\n"
+        "👉 <i>Phiếu của bạn cần xem xét thêm. Kết quả sẽ được cập nhật trong ít phút!</i>"
+    ),
+}
+
+
+def render_telegram_verdict(
+    submission_id: str,
+    reason_code: str,
+    missing_fields: Optional[List[str]] = None,
+    collaborator_note: Optional[str] = None,
+) -> str:
+    template = TEMPLATES_VN.get(reason_code, TEMPLATES_VN["MISSING_FIELDS"])
+
+    formatted_missing = ""
+    if missing_fields:
+        formatted_missing = "\n".join([f"  • {item}" for item in missing_fields])
+    else:
+        formatted_missing = "  • Không xác định"
+
+    note = collaborator_note or "Cần đối soát lại"
+    return template.format(
+        submission_id=submission_id,
+        missing_list=formatted_missing,
+        collaborator_note=note,
+    )
