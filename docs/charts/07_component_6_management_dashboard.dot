@@ -1,0 +1,58 @@
+
+digraph G {
+    graph [
+        rankdir=LR,
+        bgcolor="white",
+        dpi=180,
+        compound=true,
+        nodesep=0.45,
+        ranksep=0.75,
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=13,
+        fontcolor="#111827",
+        pad="0.3,0.3"
+    ];
+    node [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=11,
+        fontcolor="#111827",
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f9fafb",
+        color="#9ca3af",
+        penwidth=1.5,
+        margin="0.2,0.12"
+    ];
+    edge [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=10,
+        fontcolor="#4b5563",
+        color="#4b5563",
+        penwidth=1.3,
+        arrowsize=0.85
+    ];
+
+    subgraph cluster_lark {
+        label="Component 6: Management Operations Dashboard (Lark Base)";
+        style="rounded,filled";
+        fillcolor="#f8fafc";
+        color="#cbd5e1";
+
+        db_sync [label="PostgreSQL Bi-directional Sync\n(FastAPI Outbox REST Sync)", fillcolor="#e0f2fe", color="#0284c7"];
+        lark_base [label="Lark Base Master Collaborative Database\n(Hosted on Bytedance Lark Cloud)", fillcolor="#ede9fe", color="#7c3aed"];
+
+        view1 [label="View 1: Admin Master Grid\n• Real-time Driver Phone Numbers & Revenue\n• AI Audit Metadata, Serial Numbers, GPS Map\n• 1-Click Export to CSV / Microsoft Excel", fillcolor="#ffffff", color="#64748b"];
+        view2 [label="View 2: QC Supervisor Kanban\n• Columns: Đang xử lý | Đã duyệt | Từ chối | Khiếu nại\n• Inspect Full-Resolution WebP Photos & Finger Signatures\n• 1-Click Manual Overrides for Edge-Case Appeals", fillcolor="#ffffff", color="#64748b"];
+        view3 [label="View 3: Telesales Workspace\n• Auto-Filtered: status == APPROVED AND phone != EMPTY\n• Shows Driver Name, Phone Number, Vehicle Model\n• Interactive Call Status: Chưa gọi | Đã liên hệ | Bận\n• Notes & Follow-up Survey Dispatch", fillcolor="#ffffff", color="#64748b"];
+
+        pc_admin [label="Accessed on Company PCs via Web / Desktop App\n(Granular RBAC: Telesales cannot delete or view unapproved rows)", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    db_sync -> lark_base;
+    lark_base -> view1;
+    lark_base -> view2;
+    lark_base -> view3;
+    view1 -> pc_admin;
+    view2 -> pc_admin;
+    view3 -> pc_admin;
+}

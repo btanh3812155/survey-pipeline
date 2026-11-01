@@ -1,0 +1,55 @@
+
+digraph G {
+    graph [rankdir=TB, bgcolor="white", dpi=180, nodesep=0.35, ranksep=0.45, fontname="Helvetica, Arial, sans-serif", fontsize=13, fontcolor="#111827", pad="0.3,0.3"];
+    node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
+    edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
+
+    raw_in [label="Raw Image Bytes in Memory (io.BytesIO)", fillcolor="#e0f2fe", color="#0284c7"];
+
+    subgraph cluster_forensic {
+        label="Stage 1: Forensic Scan (Executed on Raw Bytes First!)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        exif_scan [label="Scan EXIF Tag 305\n(Detect Photoshop, Canva, Snapseed, Lightroom)", fillcolor="#ffffff", color="#64748b"];
+        ela_scan [label="Error Level Analysis (ELA)\n(Detect Localized Splicing/Cloning)", fillcolor="#ffffff", color="#64748b"];
+        tamper_gate [label="Digital Tampering Found?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        rej_tamper [label="Liberal Reject:\nDIGITAL_TAMPERING", fillcolor="#fee2e2", color="#dc2626"];
+    }
+
+    subgraph cluster_normalize {
+        label="Stage 2: In-Memory Normalization & Bug Elimination";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        draft_scale [label="libjpeg C Draft Scaling\nim.draft('RGB', (1024, 1024))\n(85% RAM Reduction)", fillcolor="#ffffff", color="#64748b"];
+        exif_trans [label="Pillow exif_transpose\n(Auto-Rotate Mobile Orientation)", fillcolor="#ffffff", color="#64748b"];
+        purge_exif [label="Purge EXIF Metadata (exif=b'')\n(Kills Double-Rotation Bug)", fillcolor="#ffffff", color="#64748b"];
+        alpha_canvas [label="White Canvas Alpha Composite\n(Kills RGBA/P Blackout Bug)", fillcolor="#ffffff", color="#64748b"];
+        webp_enc [label="Lanczos 1024px WebP Encoding\n(Quality 82, ~49KB Payload)", fillcolor="#ffffff", color="#64748b"];
+    }
+
+    subgraph cluster_quality {
+        label="Stage 3: Physical Quality & Exposure Pre-Filters";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        blur_gate [label="OpenCV Laplacian Blur Check\n(Variance >= 100.0)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        rej_blur [label="Liberal Reject:\nIMAGE_TOO_BLURRY", fillcolor="#fee2e2", color="#dc2626"];
+        is_screen [label="Digital UI Screenshot Check\n(is_digital_screenshot)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        exempt_screen [label="EXEMPT From Exposure Checks\n(Dark Mode & Light Themes 100% Safe)", fillcolor="#dcfce7", color="#16a34a"];
+        p95_check [label="Physical Photo: 95th Percentile\np95 Peak Brightness < 35?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        rej_dark [label="Liberal Reject:\nIMAGE_TOO_DARK", fillcolor="#fee2e2", color="#dc2626"];
+        glare_check [label="Specular Glare Check\n(Flash Halo Destroys Text Edges?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        rej_glare [label="Liberal Reject:\nSPECULAR_GLARE", fillcolor="#fee2e2", color="#dc2626"];
+        pass_quality [label="Quality Gate PASSED\n(Hand off to Fleet Screening & AI)", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    raw_in -> exif_scan -> ela_scan -> tamper_gate;
+    tamper_gate -> rej_tamper [label="Yes"];
+    tamper_gate -> draft_scale [label="No (Clean)"];
+    draft_scale -> exif_trans -> purge_exif -> alpha_canvas -> webp_enc -> blur_gate;
+    blur_gate -> rej_blur [label="Variance < 100"];
+    blur_gate -> is_screen [label="Sharp (Variance >= 100)"];
+    is_screen -> exempt_screen [label="Yes (App Screenshot)"];
+    exempt_screen -> pass_quality;
+    is_screen -> p95_check [label="No (Camera Shot)"];
+    p95_check -> rej_dark [label="p95 < 35 (Pitch Black)"];
+    p95_check -> glare_check [label="p95 >= 35"];
+    glare_check -> rej_glare [label="Text Obliterated"];
+    glare_check -> pass_quality [label="Text Sharp & Legible"];
+}

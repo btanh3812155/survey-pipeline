@@ -1,0 +1,48 @@
+
+digraph G {
+    graph [rankdir=TB, bgcolor="white", dpi=180, nodesep=0.35, ranksep=0.45, fontname="Helvetica, Arial, sans-serif", fontsize=13, fontcolor="#111827", pad="0.3,0.3"];
+    node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
+    edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
+
+    subgraph cluster_driver_retake {
+        label="Stage 1: Driver Feedback & 1-Click Retake (Private 1-to-1 DM)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        rej_in [label="Survey Rejection Notice\n(Exact Retake Guidance)", fillcolor="#fee2e2", color="#dc2626"];
+        deep_link [label="1-Click Telegram Deep Link\nt.me/bot?start=fix_ID_slot", fillcolor="#ffffff", color="#64748b"];
+        priv_dm [label="Driver Taps Link -> Opens Private 1-to-1 DM\n(Driver strictly sees ONLY their own chat!)", fillcolor="#e0f2fe", color="#0284c7"];
+        snap_fix [label="Driver Snaps & Sends Replacement Photo\n(Patches Slot in DB & R2 -> Approved!)", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    subgraph cluster_appeal_limit {
+        label="Stage 2: Rate-Limited Human Appeal (Max 3 / 8 Hours)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        appeal_btn [label="Driver Taps Inline Button:\n🙋 Yêu cầu người thật kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
+        redis_limit [label="Redis Counter Check:\nAppeals in Last 8 Hours?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        block_appeal [label="Block Appeal (> 3 in 8h):\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H", fillcolor="#fee2e2", color="#dc2626"];
+        allow_appeal [label="Allow Appeal (<= 3 in 8h):\nIncrement Counter (8h TTL) & status=APPEAL_PENDING", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    subgraph cluster_mod_group {
+        label="Stage 3: Telegram Admin Moderation Group & 3-Mode Dispatch";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        admin_group [label="Telegram Admin Moderation Group\n(Alerts with Photo + Driver Phone + Reason)", fillcolor="#fee2e2", color="#dc2626"];
+        mod_action [label="Admins Moderate with 1-Click Buttons\n[Duyệt ép] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
+        mod_dispatch [label="Moderator Dispatch Controls", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        mode1 [label="Mode 1: Internal Mod Note\n(Stays in Admin Group Only)", fillcolor="#f3f4f6", color="#6b7280"];
+        mode2 [label="Mode 2: Targeted Message (/send)\n(Relayed Privately to Driver 1-to-1 DM)", fillcolor="#e0f2fe", color="#0284c7"];
+        mode3 [label="Mode 3: Fleet Broadcast (/broadcast)\n(Pushed Individually to All Driver DMs)", fillcolor="#ede9fe", color="#7c3aed"];
+    }
+
+    rej_in -> deep_link -> priv_dm -> snap_fix;
+    rej_in -> appeal_btn -> redis_limit;
+    redis_limit -> block_appeal [label="> 3 Appeals"];
+    redis_limit -> allow_appeal [label="<= 3 Appeals"];
+    allow_appeal -> admin_group -> mod_action;
+
+    admin_group -> mod_dispatch;
+    mod_dispatch -> mode1 [label="Internal Chat"];
+    mod_dispatch -> mode2 [label="Direct Reply"];
+    mod_dispatch -> mode3 [label="Broadcast"];
+    mode2 -> priv_dm;
+    mode3 -> priv_dm;
+}

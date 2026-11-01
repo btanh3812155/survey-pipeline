@@ -1,0 +1,45 @@
+
+digraph G {
+    graph [rankdir=TB, bgcolor="white", dpi=180, nodesep=0.4, ranksep=0.45, fontname="Helvetica, Arial, sans-serif", fontsize=13, fontcolor="#111827", pad="0.3,0.3"];
+    node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
+    edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
+
+    req [label="Incoming HTTP POST Webhook\n(From Lark Base or Telegram)", fillcolor="#e0f2fe", color="#0284c7"];
+    caddy [label="Caddy Reverse Proxy (DO SGP1)\n(TLS 1.3 Termination, 25MB Body Cap)", fillcolor="#ffffff", color="#64748b"];
+    route [label="Endpoint Route Check", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+
+    subgraph cluster_lark {
+        label="Bytedance Lark Base Webhook Flow";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        challenge [label="URL Challenge Handshake?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        echo_chal [label="Echo Challenge Token (< 1s)\n200 OK", fillcolor="#dcfce7", color="#16a34a"];
+        raw_hash [label="Raw SHA256 String Hash\nsha256(ts + nonce + key + body)", fillcolor="#ffffff", color="#64748b"];
+        verify_sig [label="Compare X-Lark-Signature\n(Constant-Time secrets.compare_digest)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        drop_401 [label="Drop Request:\n401 Unauthorized", fillcolor="#fee2e2", color="#dc2626"];
+        redis_lock [label="Redis SETNX Lock\nlock:submission:ID (60s TTL)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        drop_dup [label="Duplicate Webhook Retry:\nReturn 200 OK & Exit", fillcolor="#fef3c7", color="#d97706"];
+        mem_stream [label="Stream Image Bytes to Memory\n(io.BytesIO - Zero Disk I/O)", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    subgraph cluster_telegram {
+        label="Telegram Bot Webhook Flow";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        tg_auth [label="Verify Telegram Secret Token\nX-Telegram-Bot-Api-Secret-Token", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        tg_drop [label="Drop Request: 401 Unauthorized", fillcolor="#fee2e2", color="#dc2626"];
+        tg_route [label="Route to Driver 1-to-1 DM Handler\nor Admin Mod Group Relay", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    req -> caddy -> route;
+    route -> challenge [label="/webhook/lark-survey"];
+    challenge -> echo_chal [label="Yes"];
+    challenge -> raw_hash [label="No (Normal Event)"];
+    raw_hash -> verify_sig;
+    verify_sig -> drop_401 [label="Invalid"];
+    verify_sig -> redis_lock [label="Valid"];
+    redis_lock -> drop_dup [label="Key Exists"];
+    redis_lock -> mem_stream [label="New Key -> Pass to Normalizer"];
+
+    route -> tg_auth [label="/webhook/telegram"];
+    tg_auth -> tg_drop [label="Invalid"];
+    tg_auth -> tg_route [label="Valid"];
+}

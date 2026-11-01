@@ -1,0 +1,66 @@
+
+digraph G {
+    graph [
+        rankdir=LR,
+        bgcolor="white",
+        dpi=180,
+        compound=true,
+        nodesep=0.45,
+        ranksep=0.75,
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=13,
+        fontcolor="#111827",
+        pad="0.3,0.3"
+    ];
+    node [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=11,
+        fontcolor="#111827",
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f9fafb",
+        color="#9ca3af",
+        penwidth=1.5,
+        margin="0.2,0.12"
+    ];
+    edge [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=10,
+        fontcolor="#4b5563",
+        color="#4b5563",
+        penwidth=1.3,
+        arrowsize=0.85
+    ];
+
+    subgraph cluster_persistence {
+        label="Component 4: Persistence, Transactional Outbox & Delivery";
+        style="rounded,filled";
+        fillcolor="#f8fafc";
+        color="#cbd5e1";
+
+        approved_in [label="Approved Survey Event", fillcolor="#dcfce7", color="#16a34a"];
+        sql_tx [label="PostgreSQL Atomic Transaction\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
+        sub_table [label="INSERT survey_submissions\n(status = APPROVED)", fillcolor="#e0f2fe", color="#0284c7"];
+        outbox_table [label="INSERT outbox_events\n(status = PENDING)", fillcolor="#fee2e2", color="#dc2626"];
+
+        poller [label="Background Outbox Worker\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
+        r2_upload [label="Cloudflare R2 Object Storage\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
+        ledger_credit [label="Credit Payout to Ledger\ncollaborator_billing_ledger", fillcolor="#dcfce7", color="#16a34a"];
+
+        gdrive_sync [label="Google Drive API Delivery\n(Service Account Upload)", fillcolor="#e0e7ff", color="#4338ca"];
+        gdrive_folder [label="Customer Delivery Folder\n(YYYY-MM-DD/Client_Spreadsheet.xlsx)", fillcolor="#dcfce7", color="#16a34a"];
+
+        lark_sync [label="Lark Base Bi-directional Sync\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
+        zns_notify [label="Zalo ZNS Official Thank-You\n(Delivered to Driver Phone - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    approved_in -> sql_tx;
+    sql_tx -> sub_table;
+    sql_tx -> outbox_table;
+    outbox_table -> poller [label="Poll Events"];
+    poller -> r2_upload;
+    poller -> ledger_credit;
+    poller -> gdrive_sync -> gdrive_folder;
+    poller -> lark_sync;
+    poller -> zns_notify;
+}

@@ -1,0 +1,92 @@
+
+digraph G {
+    graph [
+        rankdir=LR,
+        bgcolor="white",
+        dpi=180,
+        compound=true,
+        nodesep=0.45,
+        ranksep=0.75,
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=13,
+        fontcolor="#111827",
+        pad="0.3,0.3"
+    ];
+    node [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=11,
+        fontcolor="#111827",
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f9fafb",
+        color="#9ca3af",
+        penwidth=1.5,
+        margin="0.2,0.12"
+    ];
+    edge [
+        fontname="Helvetica, Arial, sans-serif",
+        fontsize=10,
+        fontcolor="#4b5563",
+        color="#4b5563",
+        penwidth=1.3,
+        arrowsize=0.85
+    ];
+
+    subgraph cluster_edge {
+        label="1. Edge Tier (Vietnam)";
+        style="rounded,filled";
+        fillcolor="#f3f4f6";
+        color="#d1d5db";
+        fontcolor="#1f2937";
+        
+        driver [label="Driver on Mobile\n(Lark Form + Private Telegram Bot)", fillcolor="#e0f2fe", color="#0284c7"];
+        staff [label="Management on Company PCs\n(Lark Base Workspace Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
+        clients [label="Paying Business Clients\n(Google Drive Deliverable Folder)", fillcolor="#fef3c7", color="#d97706"];
+    }
+
+    subgraph cluster_cloud {
+        label="2. Cloud Processing Core (Singapore SGP1)";
+        style="rounded,filled";
+        fillcolor="#f8fafc";
+        color="#cbd5e1";
+        fontcolor="#1e293b";
+
+        caddy [label="Caddy TLS 1.3 Reverse Proxy\n(25MB Request Cap)", fillcolor="#ffffff", color="#64748b"];
+        fastapi [label="FastAPI Ingestion Gateway\n(4 Uvicorn Workers)", fillcolor="#e0f2fe", color="#0284c7"];
+        redis [label="Redis 7 Cache & Queue\n(Session Locks & 3/8h Appeal Limit)", fillcolor="#fee2e2", color="#dc2626"];
+        sanitizer [label="In-Memory Sanitizer\n(EXIF, ELA, Blur, Exposure)", fillcolor="#ffffff", color="#64748b"];
+        dual_ai [label="Dual AI Extraction\nPrimary: DeepSeek Flash\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
+        rules [label="Python Deterministic Rules\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
+        outbox_worker [label="Background Outbox Worker\n(SKIP LOCKED Poller)", fillcolor="#fef3c7", color="#d97706"];
+    }
+
+    subgraph cluster_storage {
+        label="3. Storage & Downstream Outputs";
+        style="rounded,filled";
+        fillcolor="#f3f4f6";
+        color="#d1d5db";
+        fontcolor="#1f2937";
+
+        postgres [label="PostgreSQL Database\n(survey_submissions + outbox_events)", fillcolor="#e0f2fe", color="#0284c7"];
+        r2 [label="Cloudflare R2 Storage\n(Permanent $0 Egress Archive)", fillcolor="#fef3c7", color="#d97706"];
+        gdrive [label="Google Drive Folder\n(Curated Client Spreadsheets & Photos)", fillcolor="#dcfce7", color="#16a34a"];
+        lark_cloud [label="Bytedance Lark Cloud\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
+        zns [label="Zalo ZNS Service\n(Thank-You to Driver Phone - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
+        admin_tg [label="Telegram Admin Mod Group\n(1-Click Moderation Buttons)", fillcolor="#fee2e2", color="#dc2626"];
+    }
+
+    driver -> caddy [label="Submit Form"];
+    caddy -> fastapi;
+    fastapi -> redis [dir=both, label="Lock / Cache"];
+    fastapi -> sanitizer -> dual_ai -> rules;
+    rules -> postgres [label="Approved (Atomic Commit)"];
+    rules -> driver [label="Rejected / Retake Deep Link", style=dashed, color="#dc2626"];
+    rules -> admin_tg [label="Appealed (Max 3/8h)", style=dashed, color="#d97706"];
+    postgres -> outbox_worker [dir=both];
+    outbox_worker -> r2;
+    outbox_worker -> gdrive -> clients;
+    outbox_worker -> lark_cloud;
+    lark_cloud -> staff [dir=both, label="Manage / Review"];
+    outbox_worker -> zns -> driver [label="ZNS Thank-You"];
+    admin_tg -> fastapi [label="1-Click Override", color="#dc2626"];
+}
