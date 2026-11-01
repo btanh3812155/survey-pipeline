@@ -84,3 +84,47 @@ def compute_laplacian_blur_score(pil_img: Image.Image) -> Tuple[bool, float]:
     # threshold 100.0 is the standard empirical threshold for readable survey text
     is_sharp = bool(variance >= 100.0)
     return is_sharp, float(variance)
+
+
+def detect_image_manipulation(raw_bytes: bytes, pil_img: Image.Image) -> Tuple[bool, str]:
+    """
+    Detects digital manipulation / Photoshop tampering using:
+    1. Metadata forensic analysis (checks for editing software signatures).
+    2. Error Level Analysis (ELA) variance across compression boundaries.
+    """
+    # 1. EXIF metadata software tag check
+    try:
+        stream = io.BytesIO(raw_bytes)
+        raw_im = Image.open(stream)
+        exif = raw_im.getexif()
+        if exif:
+            software = str(exif.get(305, "")).lower()  # tag 305 = Software
+            banned_software = [
+                "photoshop", "canva", "gimp", "picsart", "lightroom",
+                "snapseed", "meitu", "photoscape", "facetune", "procreate"
+            ]
+            for bad in banned_software:
+                if bad in software:
+                    return True, f"phát hiện metadata phần mềm chỉnh sửa: {software}"
+    except Exception:
+        pass
+
+    # 2. Error Level Analysis (ELA)
+    try:
+        ela_buf = io.BytesIO()
+        pil_img.save(ela_buf, "JPEG", quality=95)
+        ela_buf.seek(0)
+        resaved_im = Image.open(ela_buf)
+
+        # calculate pixel difference
+        diff = np.abs(np.array(pil_img.convert("RGB"), dtype=np.int16) - np.array(resaved_im, dtype=np.int16))
+        ela_max = np.max(diff)
+        ela_mean = np.mean(diff)
+
+        # localized extreme error spike indicates spliced/tampered region
+        if ela_max > 85 and ela_mean < 8.0:
+            return True, "phát hiện bất thường mức nén điểm ảnh cục bộ (ELA splice)"
+    except Exception:
+        pass
+
+    return False, "clean"

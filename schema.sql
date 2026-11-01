@@ -76,3 +76,29 @@ CREATE TABLE IF NOT EXISTS collaborator_billing_ledger (
 
 CREATE INDEX IF NOT EXISTS idx_billing_collab_status 
 ON collaborator_billing_ledger (collaborator_id, payout_status);
+
+-- 5. Driver Persistent Vehicle Registry
+CREATE TABLE IF NOT EXISTS driver_registered_vehicles (
+    driver_phone VARCHAR(20) PRIMARY KEY,
+    license_plate VARCHAR(32) NOT NULL,
+    vehicle_type VARCHAR(16) NOT NULL CHECK (vehicle_type IN ('BIKE', 'CAR')),
+    vehicle_color TEXT,
+    vehicle_model TEXT,
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_driver_plate 
+ON driver_registered_vehicles (license_plate);
+
+-- 6. Reference Database of Online Stock / Marketing Vehicle Images
+CREATE TABLE IF NOT EXISTS online_stock_images (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    image_title TEXT NOT NULL,
+    image_dhash BIT(64) NOT NULL,
+    source_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_dhash 
+ON online_stock_images (image_dhash);

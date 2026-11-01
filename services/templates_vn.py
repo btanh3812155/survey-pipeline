@@ -27,6 +27,13 @@ TEMPLATES_VN = {
         "• Lỗi vi phạm: <b>Ảnh chụp từ màn hình thiết bị khác</b>\n\n"
         "👉 <i>Quy định khảo sát yêu cầu chụp trực tiếp từ phiếu giấy thực tế. Ảnh chụp màn hình sẽ không được duyệt.</i>"
     ),
+    "DIGITAL_TAMPERING": (
+        "❌ <b>PHÁT HIỆN DẤU HIỆU CHỈNH SỬA ẢNH (PHOTOSHOP)</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Lỗi vi phạm: <b>Ảnh có dấu hiệu can thiệp kỹ thuật số / tẩy xóa</b>\n"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Quy định bắt buộc nộp ảnh nguyên bản chụp trực tiếp từ camera. Ảnh chỉnh sửa qua phần mềm sẽ bị từ chối duyệt.</i>"
+    ),
     "DUPLICATE": (
         "❌ <b>PHÁT HIỆN ẢNH TRÙNG LẶP (DUPLICATE)</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"

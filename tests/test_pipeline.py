@@ -137,6 +137,12 @@ def test_deterministic_evaluation_engine():
     assert res_screen.passed is False
     assert res_screen.reason_code == "SCREEN_PHOTO"
 
+    # digital tampering / photoshop
+    tampered_facts = valid_facts.model_copy(update={"is_manipulated_or_photoshopped": True, "tamper_evidence": "font mismatch on total"})
+    res_tampered = evaluate_survey_compliance(tampered_facts)
+    assert res_tampered.passed is False
+    assert res_tampered.reason_code == "DIGITAL_TAMPERING"
+
 
 def test_telegram_vietnamese_template_rendering():
     text_approved = render_telegram_verdict("VN-8821", "APPROVED")

@@ -2,14 +2,27 @@ import base64
 import time
 import os
 import json
+import re
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 
 
 class ReceiptLineItem(BaseModel):
     item_name: str
-    amount: int
+    amount: Optional[int] = 0
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def parse_amount(cls, v):
+        if v is None:
+            return 0
+        if isinstance(v, (int, float)):
+            return int(v)
+        if isinstance(v, str):
+            clean = re.sub(r"[^0-9\-]", "", v)
+            return int(clean) if clean and clean != "-" else 0
+        return 0
 
 
 class ExtractedReceiptFacts(BaseModel):
@@ -17,20 +30,33 @@ class ExtractedReceiptFacts(BaseModel):
     tax_id: Optional[str] = None
     receipt_serial: Optional[str] = None
     line_items: List[ReceiptLineItem] = Field(default_factory=list)
-    raw_subtotal: int = 0
-    vat_amount: int = 0
-    raw_total: int = 0
+    raw_subtotal: Optional[int] = 0
+    vat_amount: Optional[int] = 0
+    raw_total: Optional[int] = 0
+
+    @field_validator("raw_subtotal", "vat_amount", "raw_total", mode="before")
+    @classmethod
+    def parse_int_or_zero(cls, v):
+        if v is None:
+            return 0
+        if isinstance(v, (int, float)):
+            return int(v)
+        if isinstance(v, str):
+            clean = re.sub(r"[^0-9\-]", "", v)
+            return int(clean) if clean and clean != "-" else 0
+        return 0
     has_signature: bool = False
     unchecked_boxes_count: int = 0
     is_screen_photo: bool = False
+    is_manipulated_or_photoshopped: bool = False
+    tamper_evidence: Optional[str] = None
     notes: Optional[str] = None
-
 
 class DualModelVisionClient:
     """
     Manages dual-model AI vision extraction with automated failover:
-    - Primary: Gemini 2.5 Flash (thinking_budget=0, 2.0s hard cutoff)
-    - Fallback: DeepSeek Flash (via Alibaba Cloud Singapore ap-southeast-1 or official)
+    - Primary: DeepSeek Flash (2.0s hard cutoff)
+    - Fallback: Gemini 3.5 Flash (thinking_budget=0, sub-1.5s cutoff)
     - Circuit breaker: 5 consecutive failures opens breaker for 60s
     """
 
@@ -40,7 +66,7 @@ class DualModelVisionClient:
         gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/",
         deepseek_api_key: Optional[str] = None,
         deepseek_base_url: str = "https://api.deepseek.com",
-        timeout_seconds: float = 2.0,
+        timeout_seconds: float = 15.0,
     ):
         self.timeout_seconds = timeout_seconds
         self.gemini_client = (
@@ -87,7 +113,9 @@ class DualModelVisionClient:
                     "do NOT perform mathematical verification or compliance judgment. "
                     "output fields: vendor_name, tax_id, receipt_serial, line_items [{item_name, amount}], "
                     "raw_subtotal (int), vat_amount (int), raw_total (int), has_signature (bool), "
-                    "unchecked_boxes_count (int), is_screen_photo (bool), notes."
+                    "unchecked_boxes_count (int), is_screen_photo (bool), is_manipulated_or_photoshopped (bool), "
+                    "tamper_evidence (string or null), notes (string or null). "
+                    "digital eraser artifacts, or altered digits on odometers/receipts. set is_manipulated_or_photoshopped to true if tampering is detected."
                 ),
             },
             {
@@ -106,15 +134,15 @@ class DualModelVisionClient:
         ]
 
         now = time.time()
-        # check if circuit breaker is open (bypass Gemini directly to DeepSeek)
-        if now < self.circuit_open_until and self.deepseek_client:
-            return await self._call_deepseek(messages)
+        # check if circuit breaker is open (bypass DeepSeek directly to Gemini)
+        if now < self.circuit_open_until and self.gemini_client:
+            return await self._call_gemini(messages)
 
-        # attempt primary: Gemini 2.5 Flash
-        if self.gemini_client:
+        # attempt primary: DeepSeek Flash
+        if self.deepseek_client:
             try:
-                resp = await self.gemini_client.chat.completions.create(
-                    model="gemini-2.5-flash",
+                resp = await self.deepseek_client.chat.completions.create(
+                    model="deepseek-flash",
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -122,30 +150,43 @@ class DualModelVisionClient:
                     timeout=self.timeout_seconds,
                 )
                 self.consecutive_failures = 0
-                return ExtractedReceiptFacts.model_validate_json(
-                    resp.choices[0].message.content
-                )
+                content = resp.choices[0].message.content
+                if content.startswith("```json"):
+                    content = content[7:-3].strip()
+                elif content.startswith("```"):
+                    content = content[3:-3].strip()
+                return ExtractedReceiptFacts.model_validate_json(content)
             except Exception as e:
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= 5:
                     self.circuit_open_until = time.time() + 60.0
 
-        # failover: DeepSeek Flash
-        if self.deepseek_client:
-            return await self._call_deepseek(messages)
+        # failover: Gemini 3.5 Flash (thinking_budget=0)
+        if self.gemini_client:
+            return await self._call_gemini(messages)
 
         raise RuntimeError("both primary and fallback vision providers failed")
 
-    async def _call_deepseek(self, messages: list) -> ExtractedReceiptFacts:
-        resp = await self.deepseek_client.chat.completions.create(
-            model="deepseek-flash",
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=300,
-            timeout=self.timeout_seconds + 0.5,
-        )
-        content = resp.choices[0].message.content
+    async def _call_gemini(self, messages: list) -> ExtractedReceiptFacts:
+        import asyncio
+        resp = None
+        models_to_try = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+        for model in models_to_try:
+            try:
+                resp = await self.gemini_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                    max_tokens=2048,
+                    timeout=self.timeout_seconds,
+                )
+                break
+            except Exception as e:
+                if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and model != models_to_try[-1]:
+                    continue
+                raise
+        content = resp.choices[0].message.content or "{}"
         if content.startswith("```json"):
             content = content[7:-3].strip()
         elif content.startswith("```"):

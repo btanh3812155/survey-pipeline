@@ -27,6 +27,16 @@ def evaluate_survey_compliance(facts: ExtractedReceiptFacts) -> EvaluationResult
             collaborator_note="Hệ thống phát hiện ảnh chụp từ màn hình thiết bị khác. Quy định bắt buộc chụp trực tiếp từ phiếu giấy thực tế.",
         )
 
+    # 1b. Anti-Tampering & Photoshop check
+    if facts.is_manipulated_or_photoshopped:
+        evidence = facts.tamper_evidence or "chắp vá hoặc tẩy xóa kỹ thuật số"
+        return EvaluationResult(
+            passed=False,
+            reason_code="DIGITAL_TAMPERING",
+            missing_fields=["ảnh gốc chưa qua chỉnh sửa"],
+            collaborator_note=f"Hệ thống phát hiện dấu hiệu chỉnh sửa ảnh (Photoshop/splicing): {evidence}. Quy định bắt buộc nộp ảnh gốc chụp trực tiếp.",
+        )
+
     # 2. Signature requirement check
     if not facts.has_signature:
         missing.append("chữ ký khách hàng")
@@ -48,9 +58,9 @@ def evaluate_survey_compliance(facts: ExtractedReceiptFacts) -> EvaluationResult
         )
 
     # 5. Arithmetic reconciliation (Sum of items + VAT == Total)
-    if facts.raw_total > 0 and facts.line_items:
-        items_sum = sum(item.amount for item in facts.line_items)
-        expected_total = items_sum + facts.vat_amount
+    if (facts.raw_total or 0) > 0 and facts.line_items:
+        items_sum = sum((item.amount or 0) for item in facts.line_items)
+        expected_total = items_sum + (facts.vat_amount or 0)
         # allow small 100 VND rounding threshold
         if abs(expected_total - facts.raw_total) > 100:
             return EvaluationResult(

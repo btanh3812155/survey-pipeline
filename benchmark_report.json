@@ -1,0 +1,749 @@
+[
+  {
+    "file": "01 - Bike/IMG_1792069227891_1792121791578.jpg",
+    "raw_size_kb": 105.7,
+    "webp_size_kb": 23.8,
+    "blur_variance": 1947.0,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 1244000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 1216000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -245881
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 998119
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income statistics screen capture from a mobile app showing earnings for the period 31 - 06 08/2026."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 174.1,
+      "ai_inference": 3975.7,
+      "total": 4180.6
+    }
+  },
+  {
+    "file": "101 - Car/IMG_20261027_162904 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2033.7,
+    "webp_size_kb": 47.5,
+    "blur_variance": 357.9,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 6050500
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 5992500
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -4617298
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 1433202
+        },
+        {
+          "item_name": "Số giờ online",
+          "amount": 5123
+        },
+        {
+          "item_name": "Số giờ vận doanh",
+          "amount": 2035
+        },
+        {
+          "item_name": "Tổng số chuyến",
+          "amount": 45
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income statistics app screen showing weekly earnings breakdown for 9/2026, Tuần 3."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 319.0,
+      "ai_inference": 4567.8,
+      "total": 4989.6
+    }
+  },
+  {
+    "file": "108 - Bike/IMG_20261027_181535 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 4337.2,
+    "webp_size_kb": 63.4,
+    "blur_variance": 507.8,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 2890510
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 2828510
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -568778
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 2321732
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 2321732,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a smartphone screen showing a ride-hailing or delivery driver income summary (Thống kê thu nhập) for the period 07/2026 (07 - 13)."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 370.1,
+      "ai_inference": 4139.2,
+      "total": 4565.1
+    }
+  },
+  {
+    "file": "16 - Bike/Bản sao của IMG_20261022_163814 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2256.9,
+    "webp_size_kb": 46.1,
+    "blur_variance": 304.0,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 1019000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 997000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -170623
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 848377
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income statistics screen displayed on a smartphone showing earnings for 21 - 27 09/2026."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 316.7,
+      "ai_inference": 4362.1,
+      "total": 4788.4
+    }
+  },
+  {
+    "file": "24 - Bike/IMG_20261023_131306.jpg",
+    "raw_size_kb": 2277.5,
+    "webp_size_kb": 49.4,
+    "blur_variance": 188.9,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 5453466
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 5362466
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -1051797
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 4401669
+        },
+        {
+          "item_name": "Số giờ online",
+          "amount": 7011
+        },
+        {
+          "item_name": "Tổng số chuyến",
+          "amount": 100
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a smartphone screen showing an income statistics app interface in Vietnamese."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 281.3,
+      "ai_inference": 4175.9,
+      "total": 4507.3
+    }
+  },
+  {
+    "file": "32 - Bike/Bản sao của IMG_20261023_141111 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 1827.2,
+    "webp_size_kb": 26.3,
+    "blur_variance": 107.8,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 2464000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 2393000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -499760
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 1964240
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income statistics screen displayed on a smartphone."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 278.3,
+      "ai_inference": 4190.7,
+      "total": 4511.5
+    }
+  },
+  {
+    "file": "37 - Car/Bản sao của IMG_20261023_152854 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2477.9,
+    "webp_size_kb": 56.6,
+    "blur_variance": 191.9,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 3195000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 3163000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -2443807
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 751193
+        },
+        {
+          "item_name": "Số giờ online",
+          "amount": 2927
+        },
+        {
+          "item_name": "Số giờ vận doanh",
+          "amount": 1451
+        },
+        {
+          "item_name": "Tổng số chuyến",
+          "amount": 25
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a smartphone screen displaying earnings/income summary."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 325.4,
+      "ai_inference": 4740.7,
+      "total": 5194.7
+    }
+  },
+  {
+    "file": "44 - Car/IMG_1792810211413_1792819515001.jpg",
+    "raw_size_kb": 167.2,
+    "webp_size_kb": 72.4,
+    "blur_variance": 466.4,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 5915000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 5845000
+        },
+        {
+          "item_name": "Chiết khấu + thuẽ",
+          "amount": -1373776
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 4541224
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a smartphone screen displaying earnings statistics (Thống kê thu nhập)."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 284.7,
+      "ai_inference": 5875.8,
+      "total": 6218.8
+    }
+  },
+  {
+    "file": "56 - Car/Bản sao của IMG_20261024_165536 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2804.8,
+    "webp_size_kb": 36.5,
+    "blur_variance": 336.6,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 1360000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 1350000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -313438
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 1046562
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a smartphone screen displaying an earnings dashboard (Thống kê thu nhập)."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 291.6,
+      "ai_inference": 4367.0,
+      "total": 4723.4
+    }
+  },
+  {
+    "file": "62 - Car/Bản sao của IMG_20261024_180445 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 1554.6,
+    "webp_size_kb": 27.8,
+    "blur_variance": 154.7,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 8918400
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 8665400
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -6725424
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 2192976
+        },
+        {
+          "item_name": "Số giờ online",
+          "amount": 12918
+        },
+        {
+          "item_name": "Số giờ vận doanh",
+          "amount": 2840
+        },
+        {
+          "item_name": "Tổng số chuyến",
+          "amount": 90
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo of a mobile app screen showing earnings statistics (Thống kê thu nhập)."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 277.3,
+      "ai_inference": 4375.0,
+      "total": 4764.2
+    }
+  },
+  {
+    "file": "69 - Car/IMG_20261026_120247 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2767.6,
+    "webp_size_kb": 39.3,
+    "blur_variance": 350.6,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 0,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "The image shows a smartphone screen displaying a mobile app interface in Vietnamese."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 320.0,
+      "ai_inference": 3764.3,
+      "total": 4128.5
+    }
+  },
+  {
+    "file": "75 - Bike/IMG_20261026_131852 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2269.0,
+    "webp_size_kb": 49.7,
+    "blur_variance": 407.5,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 3847671
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 3781671
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -743594
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 3104077
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 3847671,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income statement screenshot from a mobile app showing earnings for 14 - 20 / 09/2026."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 328.5,
+      "ai_inference": 4842.0,
+      "total": 5217.9
+    }
+  },
+  {
+    "file": "81 - Bike/IMG_20261026_145448 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2538.5,
+    "webp_size_kb": 46.9,
+    "blur_variance": 399.3,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 4059000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 3969000
+        },
+        {
+          "item_name": "Chiết khấu",
+          "amount": -1483940
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 2575060
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 4059000,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Earnings report displayed on a mobile phone screen."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 301.9,
+      "ai_inference": 5674.3,
+      "total": 6017.0
+    }
+  },
+  {
+    "file": "87 - Car/IMG_20261026_162040 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2374.6,
+    "webp_size_kb": 52.6,
+    "blur_variance": 191.5,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 9181500
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 9074500
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -6989328
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 2192172
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 9181500,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Photo shows a mobile phone screen displaying an earnings report in Vietnamese."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 322.2,
+      "ai_inference": 4205.3,
+      "total": 4629.4
+    }
+  },
+  {
+    "file": "93 - Car/IMG_20261027_095604 - Đoàn Hải Yến-SBD1.jpg",
+    "raw_size_kb": 2801.6,
+    "webp_size_kb": 102.1,
+    "blur_variance": 699.7,
+    "is_sharp": true,
+    "is_tampered_forensic": false,
+    "tamper_reason": "clean",
+    "facts": {
+      "vendor_name": null,
+      "tax_id": null,
+      "receipt_serial": null,
+      "line_items": [
+        {
+          "item_name": "Tổng thu nhập",
+          "amount": 5713000
+        },
+        {
+          "item_name": "Doanh số",
+          "amount": 5649000
+        },
+        {
+          "item_name": "Chiết khấu + thuế",
+          "amount": -4371394
+        },
+        {
+          "item_name": "Thu nhập ròng",
+          "amount": 1341606
+        }
+      ],
+      "raw_subtotal": 0,
+      "vat_amount": 0,
+      "raw_total": 5713000,
+      "has_signature": false,
+      "unchecked_boxes_count": 0,
+      "is_screen_photo": true,
+      "is_manipulated_or_photoshopped": false,
+      "tamper_evidence": null,
+      "notes": "Income report displayed on a mobile phone screen."
+    },
+    "verdict": "SCREEN_PHOTO",
+    "ai_error": null,
+    "timing_ms": {
+      "normalization": 338.2,
+      "ai_inference": 7595.2,
+      "total": 8017.2
+    }
+  }
+]
