@@ -331,7 +331,7 @@ digraph G {
     subgraph cluster_admin_controls {
         label="3. Admin Live Moderation & Dispatch Controls";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt ép] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
+        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
         mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         action_approve [label="Force Approve:\\nPatch status=APPROVED -> Credit payout & sync client", fillcolor="#dcfce7", color="#16a34a"];
         action_reject [label="Confirm Reject:\\nBot informs driver with reason code in group thread", fillcolor="#fee2e2", color="#dc2626"];
@@ -346,7 +346,7 @@ digraph G {
     allow_appeal -> mod_action;
 
     mod_action -> mod_dispatch;
-    mod_dispatch -> action_approve [label="[Duyệt ép]"];
+    mod_dispatch -> action_approve [label="[Duyệt]"];
     mod_dispatch -> action_reject [label="[Từ chối]"];
     mod_dispatch -> action_warn [label="[Cảnh cáo]"];
     action_approve -> bot_reply;

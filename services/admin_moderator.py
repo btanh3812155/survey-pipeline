@@ -41,7 +41,7 @@ async def forward_flagged_survey_to_admin_group(
         "inline_keyboard": [
             [
                 {
-                    "text": "✅ Duyệt ép (Force Approve)",
+                    "text": "✅ Duyệt",
                     "callback_data": f"admin_approve:{submission_id}",
                 },
                 {
