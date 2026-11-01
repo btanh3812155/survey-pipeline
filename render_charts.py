@@ -303,54 +303,54 @@ CHART_5 = COMMON_HEADER + """
 }
 """
 
-# Chart 6: Component 5 Telegram UX & Moderation (Balanced TB layout)
+# Chart 6: Component 5 Telegram UX & Moderation (Unified Group Hub)
 CHART_6 = """
 digraph G {
     graph [rankdir=TB, bgcolor="white", dpi=180, nodesep=0.35, ranksep=0.45, fontname="Helvetica, Arial, sans-serif", fontsize=13, fontcolor="#111827", pad="0.3,0.3"];
     node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
     edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
 
-    subgraph cluster_driver_retake {
-        label="Stage 1: Driver Feedback & 1-Click Retake (Private 1-to-1 DM)";
+    subgraph cluster_group_hub {
+        label="1. Telegram Group Operational Hub (Drivers + Admins + Bot in Same Group)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        rej_in [label="Survey Rejection Notice\\n(Exact Retake Guidance)", fillcolor="#fee2e2", color="#dc2626"];
-        deep_link [label="1-Click Telegram Deep Link\\nt.me/bot?start=fix_ID_slot", fillcolor="#ffffff", color="#64748b"];
-        priv_dm [label="Driver Taps Link -> Opens Private 1-to-1 DM\\n(Driver strictly sees ONLY their own chat!)", fillcolor="#e0f2fe", color="#0284c7"];
-        snap_fix [label="Driver Snaps & Sends Replacement Photo\\n(Patches Slot in DB & R2 -> Approved!)", fillcolor="#dcfce7", color="#16a34a"];
+        tg_group [label="Telegram Group Chat / Forum\\n(Drivers interact with Bot; Admins monitor all activity live)", fillcolor="#e0f2fe", color="#0284c7"];
+        driver_post [label="Driver Interacts in Group:\\nPosts replacement photo / taps buttons / asks bot", fillcolor="#ffffff", color="#64748b"];
+        bot_reply [label="Bot Direct Reply in Group:\\nQuotes driver with specific retake guidance & inline buttons", fillcolor="#dcfce7", color="#16a34a"];
+        admin_monitor [label="Admins Live Oversight:\\nAdmins see all driver uploads, tickets & bot replies in real time", fillcolor="#fef3c7", color="#d97706"];
     }
 
     subgraph cluster_appeal_limit {
-        label="Stage 2: Rate-Limited Human Appeal (Max 3 / 8 Hours)";
+        label="2. Rate-Limited Appeal & Ephemeral Privacy Popups";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        appeal_btn [label="Driver Taps Inline Button:\\n🙋 Yêu cầu người thật kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
+        appeal_btn [label="Driver Taps Inline Button in Group:\\n🙋 Yêu cầu người thật kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
         redis_limit [label="Redis Counter Check:\\nAppeals in Last 8 Hours?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        block_appeal [label="Block Appeal (> 3 in 8h):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H", fillcolor="#fee2e2", color="#dc2626"];
-        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement Counter (8h TTL) & status=APPEAL_PENDING", fillcolor="#dcfce7", color="#16a34a"];
+        block_popup [label="Ephemeral Popup Alert (showAlert=True):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H\\n(Only tapping driver sees popup; others see nothing!)", fillcolor="#fee2e2", color="#dc2626"];
+        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement 8h Counter & Alert Admins in Group", fillcolor="#dcfce7", color="#16a34a"];
     }
 
-    subgraph cluster_mod_group {
-        label="Stage 3: Telegram Admin Moderation Group & 3-Mode Dispatch";
+    subgraph cluster_admin_controls {
+        label="3. Admin Live Moderation & Dispatch Controls";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        admin_group [label="Telegram Admin Moderation Group\\n(Alerts with Photo + Driver Phone + Reason)", fillcolor="#fee2e2", color="#dc2626"];
-        mod_action [label="Admins Moderate with 1-Click Buttons\\n[Duyệt ép] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
-        mod_dispatch [label="Moderator Dispatch Controls", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        mode1 [label="Mode 1: Internal Mod Note\\n(Stays in Admin Group Only)", fillcolor="#f3f4f6", color="#6b7280"];
-        mode2 [label="Mode 2: Targeted Message (/send)\\n(Relayed Privately to Driver 1-to-1 DM)", fillcolor="#e0f2fe", color="#0284c7"];
-        mode3 [label="Mode 3: Fleet Broadcast (/broadcast)\\n(Pushed Individually to All Driver DMs)", fillcolor="#ede9fe", color="#7c3aed"];
+        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt ép] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
+        mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        action_approve [label="Force Approve:\\nPatch status=APPROVED -> Credit payout & sync client", fillcolor="#dcfce7", color="#16a34a"];
+        action_reject [label="Confirm Reject:\\nBot informs driver with reason code in group thread", fillcolor="#fee2e2", color="#dc2626"];
+        action_warn [label="Formal Warning:\\nBot issues compliance warning to driver", fillcolor="#fee2e2", color="#dc2626"];
     }
 
-    rej_in -> deep_link -> priv_dm -> snap_fix;
-    rej_in -> appeal_btn -> redis_limit;
-    redis_limit -> block_appeal [label="> 3 Appeals"];
+    tg_group -> driver_post -> bot_reply;
+    tg_group -> admin_monitor;
+    bot_reply -> appeal_btn -> redis_limit;
+    redis_limit -> block_popup [label="> 3 Appeals"];
     redis_limit -> allow_appeal [label="<= 3 Appeals"];
-    allow_appeal -> admin_group -> mod_action;
+    allow_appeal -> mod_action;
 
-    admin_group -> mod_dispatch;
-    mod_dispatch -> mode1 [label="Internal Chat"];
-    mod_dispatch -> mode2 [label="Direct Reply"];
-    mod_dispatch -> mode3 [label="Broadcast"];
-    mode2 -> priv_dm;
-    mode3 -> priv_dm;
+    mod_action -> mod_dispatch;
+    mod_dispatch -> action_approve [label="[Duyệt ép]"];
+    mod_dispatch -> action_reject [label="[Từ chối]"];
+    mod_dispatch -> action_warn [label="[Cảnh cáo]"];
+    action_approve -> bot_reply;
+    action_reject -> bot_reply;
 }
 """
 
