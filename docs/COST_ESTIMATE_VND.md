@@ -2,8 +2,8 @@
 ## Survey Verification Pipeline — Financial & Staffing Breakdown
 
 - **Tỷ giá quy đổi tiêu chuẩn:** $1\text{ USD} \approx 25.400\text{ VNĐ}$
-- **Hệ thống mục tiêu:** Đường ống xác minh biên nhận / doanh thu khảo sát đội xe công nghệ (GSM / Xanh SM)
-- **Tài liệu tham chiếu kiến trúc:** `docs/INTERNAL_SYSTEM_SPEC.md`
+- **Định mức dữ liệu khảo sát:** **Trung bình 10 ảnh / phiếu khảo sát** (Đầu xe, đuôi xe, 2 bên thân xe, 4 lốp, đồng hồ ODO, nội thất/phiếu kiểm tra)
+- **Hệ thống mục tiêu:** Đường ống xác minh biên nhận / kiểm định phương tiện đội xe công nghệ (GSM / Xanh SM / VinFast)
 
 ---
 
@@ -47,41 +47,41 @@ Mô hình tài chính được phân tích chi tiết qua 3 giai đoạn mở r�
 
 ### 2.2 Bảng chi phí hạ tầng & API chi tiết theo 3 giai đoạn
 
-#### Giai đoạn 1: Hiện tại (300 phiếu/tháng, 5 tài xế)
-*Quy mô thử nghiệm kỹ thuật — Tận dụng tối đa các gói Free Tier.*
+#### Giai đoạn 1: Hiện tại (300 phiếu/tháng, 5 tài xế — Định mức 10 ảnh/phiếu)
+*Quy mô thử nghiệm: 300 phiếu x 10 ảnh = 3.000 ảnh chính + 15% chụp lại = 3.450 ảnh WebP.*
 
-| STT | Dịch vụ | Quy cách / Gói sử dụng | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Ghi chú kỹ thuật |
+| STT | Dịch vụ | Quy cách / Gói thực tế | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Cơ sở tính toán chi tiết |
 | :---: | :--- | :--- | :---: | :---: | :--- |
-| 1 | **Máy chủ Cloud** | Droplet 1–2 vCPU, 2–4GB RAM (Hetzner / DO) | 304.800 VNĐ | $12.00 | Đủ tải chạy toàn bộ Docker stack đơn lẻ |
-| 2 | **Cơ sở dữ liệu** | PostgreSQL tích hợp trên VPS hoặc Supabase Free | 0 VNĐ | $0.00 | Nằm trọn trong gói miễn phí 500MB |
-| 3 | **Cloudflare R2** | Lưu trữ ~15 MB WebP, 300 lượt tải lên | 0 VNĐ | $0.00 | Dưới ngưỡng miễn phí (10GB & 1M ops) |
-| 4 | **AI Vision API** | 300 lượt gọi (DeepSeek Flash + Gemini Flash) | 1.270 VNĐ | $0.05 | Thực tế được bù bởi hạn mức tín dụng miễn phí |
-| 5 | **Zalo ZNS** | 300 tin nhắn cảm ơn chính thức (250đ/tin) | 75.000 VNĐ | $2.95 | Gửi trực tiếp tới số điện thoại tài xế |
-| 6 | **Telegram Bot API** | Telegram Bot API Webhook | 0 VNĐ | $0.00 | Không giới hạn tin nhắn |
-| 7 | **Tên miền & SSL** | Domain .com/.vn (~$12/năm) + Caddy TLS 1.3 | 25.400 VNĐ | $1.00 | SSL tự động kích hoạt bởi Caddy |
-| 8 | **Lark Base** | Workspace Bytedance Lark Cloud | 0 VNĐ | $0.00 | Gói tiêu chuẩn tích hợp Webhook |
-| 9 | **Google Drive** | Service Account Drive Export | 0 VNĐ | $0.00 | Lưu trữ báo cáo đối soát |
-| **TỔNG** | **Hạ tầng & API Giai đoạn 1** | | **406.470 VNĐ** | **$16.00** | **4.877.640 VNĐ / năm ($192.03)** |
-
+| 1 | **Máy chủ Cloud (DO SGP1)** | Droplet 1–2 vCPU, 2–4GB RAM | 304.800 VNĐ | $12.00 | Chạy toàn bộ Docker stack đơn lẻ (Caddy, App, Redis, DB) |
+| 2 | **Cơ sở dữ liệu (PostgreSQL)** | PostgreSQL container hoặc Supabase Free | 0 VNĐ | $0.00 | Nằm trọn trong gói miễn phí 500MB |
+| 3 | **Cloudflare R2 Storage** | 3.450 ảnh WebP (~170 MB), 3.450 lượt tải | 0 VNĐ | $0.00 | Miễn phí 100% (dưới ngưỡng 10GB & 1M ops), **$0 egress** |
+| 4 | **AI Vision API (10 ảnh/phiếu)** | **3.450 ảnh (3.000 ảnh + 450 chụp lại) + chat** | **25.400 VNĐ** | **$1.00** | **10 ảnh/phiếu (2.600 tokens/phiếu)** + 15% chụp lại + 50 lượt chat |
+| 5 | **Giám sát & Sentry (Monitoring)** | Sentry Developer (miễn phí 5.000 lỗi/tháng) | 0 VNĐ | $0.00 | Miễn phí cho gói thử nghiệm |
+| 6 | **Tên miền & SSL Caddy** | Tên miền quốc tế + SSL Caddy | 25.400 VNĐ | $1.00 | Caddy tự động gia hạn chứng chỉ HTTPS |
+| 7 | **Telegram Bot & Lark Base** | Gói chuẩn tích hợp Webhook | 0 VNĐ | $0.00 | Miễn phí 100% |
+| **SUB** | **HẠ TẦNG KỸ THUẬT THUẦN TÚY** | *(Server + DB + 10-ảnh AI + R2 + SSL)* | **355.600 VNĐ** | **$14.00** | **Chi phí kỹ thuật thực tế 10 ảnh/phiếu** |
+| **8a** | **Zalo ZNS (Kịch bản Tối ưu Hybrid)** | Gửi ZNS cho 5 tài xế mới (250đ/tin) | **1.250 VNĐ** | **$0.05** | Onboard 5 tài xế ban đầu làm quen OA |
+| 8b | *Zalo ZNS (Kịch bản Toàn phần 100%)* | *Gửi ZNS cho cả 300 phiếu (250đ/tin)* | *75.000 VNĐ* | *$2.95* | *Gửi thông báo ZNS trên từng phiếu* |
+| **TỔNG** | **HẠ TẦNG + ZNS HYBRID (KHUYÊN DÙNG)** | **Kỹ thuật thuần túy + ZNS Hybrid** | **356.850 VNĐ** | **$14.05** | **~4.282.200 VNĐ / năm ($168.59)** |
+| **TỔNG** | *HẠ TẦNG + ZNS TOÀN PHẦN (100% ZNS)* | *Kỹ thuật thuần túy + 300 tin ZNS* | *430.600 VNĐ* | *$16.95* | *~5.167.200 VNĐ / năm ($203.43)* |
 ---
 
 #### Giai đoạn 2: Mục tiêu ban đầu (60.000 phiếu/tháng, ~1.000 tài xế hoạt động)
 *Vận hành thương mại ổn định (2.000 phiếu/ngày ÷ 2 phiếu/tài xế/ngày = 1.000 tài xế).*
-
-| STT | Dịch vụ | Quy cách / Gói thực tế | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Cơ sở tính toán chi tiết |
+| STT | Dịch vụ | Quy cách / Gói thực tế | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Cơ sở tính toán chi tiết (10 ảnh/phiếu) |
 | :---: | :--- | :--- | :---: | :---: | :--- |
-| 1 | **Máy chủ Cloud (DO SGP1)** | Droplet 2–4 vCPU, 4–8GB RAM | 609.600 – 1.219.200 VNĐ | $24.00 – $48.00 | Chạy 4 Uvicorn workers, Redis cache, chịu tải burst 15–20 req/s |
-| 2 | **Cơ sở dữ liệu (Managed DB)** | DO / Supabase Managed PostgreSQL | 762.000 – 1.524.000 VNĐ | $30.00 – $60.00 | Cụm có PgBouncer connection pool, sao lưu tự động & dự phòng failover |
-| 3 | **Cloudflare R2 Storage** | 240.000 ảnh WebP mới/tháng (~12GB) | 50.800 – 76.200 VNĐ | $2.00 – $3.00 | Lưu trữ tích lũy cả năm ($0.015/GB), **$0 băng thông tải ra** |
-| 4 | **AI Vision API (4 ảnh/phiếu)** | 240.000 ảnh + 15% chụp lại + chat | 558.800 – 762.000 VNĐ | $22.00 – $30.00 | **4 ảnh/phiếu (1.600 tokens/phiếu)** + lượt chụp lại + chat hỏi đáp |
-| 5 | **Giám sát & Sentry (Monitoring)** | Sentry error tracking + Uptime check | 254.000 – 508.000 VNĐ | $10.00 – $20.00 | Giám sát lỗi hệ thống, cảnh báo sự cố 24/7 |
+| 1 | **Máy chủ Cloud (DO SGP1)** | Droplet 2–4 vCPU, 4–8GB RAM | 609.600 – 1.219.200 VNĐ | $24.00 – $48.00 | Chạy 4 Uvicorn workers, Redis cache, xử lý burst 15–20 req/s |
+| 2 | **Cơ sở dữ liệu (Managed DB)** | DO / Supabase Managed PostgreSQL | 762.000 – 1.524.000 VNĐ | $30.00 – $60.00 | Cụm có PgBouncer pool, sao lưu tự động & dự phòng failover |
+| 3 | **Cloudflare R2 Storage** | 690.000 ảnh WebP mới/tháng (~34GB) | 76.200 – 127.000 VNĐ | $3.00 – $5.00 | Lưu trữ tích lũy cả năm ($0.015/GB), **$0 băng thông tải ra** |
+| 4 | **AI Vision API (10 ảnh/phiếu)** | **690.000 ảnh (600k ảnh + 90k chụp lại) + chat** | **939.800 – 1.143.000 VNĐ** | **$37.00 – $45.00** | **10 ảnh/phiếu (2.600 tokens/phiếu)** + 15% chụp lại + 10k chat turns |
+| 5 | **Giám sát & Sentry (Monitoring)** | Sentry team tier + Uptime alert 24/7 | 254.000 – 508.000 VNĐ | $10.00 – $20.00 | Giám sát lỗi hệ thống, cảnh báo sự cố 24/7 |
 | 6 | **Tên miền & SSL Caddy** | Tên miền quốc tế + SSL Caddy | 25.400 VNĐ | $1.00 | Caddy tự động gia hạn chứng chỉ HTTPS |
 | 7 | **Telegram Bot & Lark Base** | Gói chuẩn tích hợp Webhook | 0 VNĐ | $0.00 | Hoàn toàn miễn phí |
-| **SUB** | **HẠ TẦNG KỸ THUẬT ĐẦY ĐỦ** | *(Server + DB HA + 4-ảnh AI + R2 + Sentry)* | **2.260.600 – 4.090.800 VNĐ** | **$89.00 – $162.00** | **Khớp chính xác mức ~$90 – $140/tháng đã thảo luận!** |
+| **SUB** | **HẠ TẦNG KỸ THUẬT ĐẦY ĐỦ** | *(Server + DB HA + 10-ảnh AI + R2 + Sentry)* | **2.667.000 – 4.546.600 VNĐ** | **$105.00 – $179.00** | **Hạ tầng hoàn chỉnh cho 600.000 ảnh/tháng** |
 | **8a** | **Zalo ZNS (Kịch bản Tối ưu Hybrid)** | Gửi ZNS cho ~1.000 tài xế mới + OA | **650.000 – 1.500.000 VNĐ** | **$25.00 – $60.00** | Onboard tài xế mới làm quen, thông báo thường nhật qua Telegram/OA |
 | 8b | *Zalo ZNS (Kịch bản Toàn phần 100%)* | *Gửi ZNS cho cả 60.000 phiếu (250đ/tin)* | *15.000.000 VNĐ* | *$590.55* | *Gửi lặp lại cho cả 2 phiếu/ngày của mỗi tài xế* |
-| **TỔNG** | **HẠ TẦNG + ZNS HYBRID (KHUYÊN DÙNG)** | **Kỹ thuật đầy đủ + ZNS Hybrid** | **2.910.600 – 5.590.800 VNĐ** | **$114.00 – $222.00** | **~35 – 67 triệu VNĐ / năm** |
-| **TỔNG** | *HẠ TẦNG + ZNS TOÀN PHẦN (100% ZNS)* | *Kỹ thuật đầy đủ + 60k tin ZNS* | *17.260.600 – 19.090.800 VNĐ* | *$679.00 – $752.00* | *~207 – 229 triệu VNĐ / năm* |
+| **TỔNG** | **HẠ TẦNG + ZNS HYBRID (KHUYÊN DÙNG)** | **Kỹ thuật đầy đủ + ZNS Hybrid** | **3.317.000 – 6.046.600 VNĐ** | **$130.00 – $239.00** | **~39.8 – 72.5 triệu VNĐ / năm** |
+| **TỔNG** | *HẠ TẦNG + ZNS TOÀN PHẦN (100% ZNS)* | *Kỹ thuật đầy đủ + 60k tin ZNS* | *17.667.000 – 19.546.600 VNĐ* | *$695.00 – $769.00* | *~212 – 234 triệu VNĐ / năm* |
 ---
 
 #### Giai đoạn 3: Quy mô 10x (600.000 phiếu/tháng, 1.000–2.000 tài xế)
