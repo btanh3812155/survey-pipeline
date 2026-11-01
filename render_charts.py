@@ -2,8 +2,9 @@ import os
 import subprocess
 
 OUTPUT_DIR = "/home/ebylxn/projects/survey-pipeline/docs/charts"
+DOT_DIR = os.path.join(OUTPUT_DIR, "dot")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
+os.makedirs(DOT_DIR, exist_ok=True)
 COMMON_HEADER = """
 digraph G {
     graph [
@@ -399,13 +400,12 @@ CHARTS = [
 ]
 
 for name, dot_src in CHARTS:
-    dot_file = os.path.join(OUTPUT_DIR, f"{name}.dot")
+    dot_file = os.path.join(DOT_DIR, f"{name}.dot")
     png_file = os.path.join(OUTPUT_DIR, f"{name}.png")
     jpg_file = os.path.join(OUTPUT_DIR, f"{name}.jpg")
 
     with open(dot_file, "w", encoding="utf-8") as f:
         f.write(dot_src)
-
     # 1. render via Graphviz dot to high-res PNG
     subprocess.run(["dot", "-Tpng", dot_file, "-o", png_file], check=True)
 
