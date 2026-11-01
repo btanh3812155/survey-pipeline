@@ -180,6 +180,7 @@ class DualModelVisionClient:
                     temperature=0.0,
                     max_tokens=2048,
                     timeout=self.timeout_seconds,
+                    extra_body={"thinking_config": {"thinking_budget": 0}},  # strictly NO REASONING tokens!
                 )
                 break
             except Exception as e:
