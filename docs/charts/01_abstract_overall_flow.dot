@@ -55,7 +55,7 @@ digraph G {
         caddy [label="Caddy TLS 1.3 Reverse Proxy\n(25MB Body Cap)", fillcolor="#ffffff", color="#64748b"];
         fastapi [label="FastAPI Ingestion Gateway\n(4 Uvicorn Workers)", fillcolor="#e0f2fe", color="#0284c7"];
         redis [label="Redis 7 Cache & Queue\n(Session Locks & 3/8h Appeal Limit)", fillcolor="#fee2e2", color="#dc2626"];
-        sanitizer [label="In-Memory Sanitizer\n(EXIF, ELA, Blur, Exposure)", fillcolor="#ffffff", color="#64748b"];
+        sanitizer [label="In-Memory Dual-Bound Sanitizer\n(Short <= 720, Long <= 2160 WebP)", fillcolor="#ffffff", color="#64748b"];
         dual_ai [label="Dual AI Vision Extraction\nPrimary: DeepSeek Flash (2.0s)\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
         rules [label="Python Deterministic Rule Engine\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
         outbox_worker [label="Background Outbox Worker\n(SKIP LOCKED Poller)", fillcolor="#fef3c7", color="#d97706"];
@@ -72,7 +72,7 @@ digraph G {
         r2 [label="Cloudflare R2 Storage\n(Permanent $0 Egress Archive)", fillcolor="#fef3c7", color="#d97706"];
         gdrive [label="Google Drive Folder\n(Customer Deliverable Reports & Photos)", fillcolor="#dcfce7", color="#16a34a"];
         lark_cloud [label="Bytedance Lark Cloud Workspace\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
-        zns [label="Zalo ZNS Gateway\n(Official Thank-You to Driver - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
+        zns [label="Zalo ZNS Gateway\n(Official Thank-You to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
     driver -> caddy [label="Submit Form"];

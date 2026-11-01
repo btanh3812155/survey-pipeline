@@ -64,7 +64,7 @@ CHART_1 = COMMON_HEADER + """
         caddy [label="Caddy TLS 1.3 Reverse Proxy\\n(25MB Body Cap)", fillcolor="#ffffff", color="#64748b"];
         fastapi [label="FastAPI Ingestion Gateway\\n(4 Uvicorn Workers)", fillcolor="#e0f2fe", color="#0284c7"];
         redis [label="Redis 7 Cache & Queue\\n(Session Locks & 3/8h Appeal Limit)", fillcolor="#fee2e2", color="#dc2626"];
-        sanitizer [label="In-Memory Sanitizer\\n(EXIF, ELA, Blur, Exposure)", fillcolor="#ffffff", color="#64748b"];
+        sanitizer [label="In-Memory Dual-Bound Sanitizer\\n(Short <= 720, Long <= 2160 WebP)", fillcolor="#ffffff", color="#64748b"];
         dual_ai [label="Dual AI Vision Extraction\\nPrimary: DeepSeek Flash (2.0s)\\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
         rules [label="Python Deterministic Rule Engine\\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
         outbox_worker [label="Background Outbox Worker\\n(SKIP LOCKED Poller)", fillcolor="#fef3c7", color="#d97706"];
@@ -81,7 +81,7 @@ CHART_1 = COMMON_HEADER + """
         r2 [label="Cloudflare R2 Storage\\n(Permanent $0 Egress Archive)", fillcolor="#fef3c7", color="#d97706"];
         gdrive [label="Google Drive Folder\\n(Customer Deliverable Reports & Photos)", fillcolor="#dcfce7", color="#16a34a"];
         lark_cloud [label="Bytedance Lark Cloud Workspace\\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
-        zns [label="Zalo ZNS Gateway\\n(Official Thank-You to Driver - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
+        zns [label="Zalo ZNS Gateway\\n(Official Thank-You to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
     driver -> caddy [label="Submit Form"];
@@ -164,30 +164,30 @@ digraph G {
         exif_scan [label="Scan EXIF Tag 305\\n(Detect Photoshop, Canva, Snapseed, Lightroom)", fillcolor="#ffffff", color="#64748b"];
         ela_scan [label="Error Level Analysis (ELA)\\n(Detect Localized Splicing/Cloning)", fillcolor="#ffffff", color="#64748b"];
         tamper_gate [label="Digital Tampering Found?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_tamper [label="Liberal Reject:\\nDIGITAL_TAMPERING", fillcolor="#fee2e2", color="#dc2626"];
+        rej_tamper [label="Reject:\\nDIGITAL_TAMPERING", fillcolor="#fee2e2", color="#dc2626"];
     }
 
     subgraph cluster_normalize {
         label="Stage 2: In-Memory Normalization & Bug Elimination";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        draft_scale [label="libjpeg C Draft Scaling\\nim.draft('RGB', (1024, 1024))\\n(85% RAM Reduction)", fillcolor="#ffffff", color="#64748b"];
+        draft_scale [label="libjpeg C Draft Scaling\\nim.draft('RGB', (720, 720))\\n(85% RAM Reduction)", fillcolor="#ffffff", color="#64748b"];
         exif_trans [label="Pillow exif_transpose\\n(Auto-Rotate Mobile Orientation)", fillcolor="#ffffff", color="#64748b"];
         purge_exif [label="Purge EXIF Metadata (exif=b'')\\n(Kills Double-Rotation Bug)", fillcolor="#ffffff", color="#64748b"];
         alpha_canvas [label="White Canvas Alpha Composite\\n(Kills RGBA/P Blackout Bug)", fillcolor="#ffffff", color="#64748b"];
-        webp_enc [label="Lanczos 1024px WebP Encoding\\n(Quality 82, ~49KB Payload)", fillcolor="#ffffff", color="#64748b"];
+        webp_enc [label="Lanczos Dual-Bound WebP Encoding\\n(Short <= 720, Long <= 2160, Ratio <= 6)\\n(Quality 82, ~49KB Payload)", fillcolor="#ffffff", color="#64748b"];
     }
 
     subgraph cluster_quality {
         label="Stage 3: Physical Quality & Exposure Pre-Filters";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
         blur_gate [label="OpenCV Laplacian Blur Check\\n(Variance >= 100.0)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_blur [label="Liberal Reject:\\nIMAGE_TOO_BLURRY", fillcolor="#fee2e2", color="#dc2626"];
+        rej_blur [label="Reject:\\nIMAGE_TOO_BLURRY", fillcolor="#fee2e2", color="#dc2626"];
         is_screen [label="Digital UI Screenshot Check\\n(is_digital_screenshot)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         exempt_screen [label="EXEMPT From Exposure Checks\\n(Dark Mode & Light Themes 100% Safe)", fillcolor="#dcfce7", color="#16a34a"];
         p95_check [label="Physical Photo: 95th Percentile\\np95 Peak Brightness < 35?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_dark [label="Liberal Reject:\\nIMAGE_TOO_DARK", fillcolor="#fee2e2", color="#dc2626"];
+        rej_dark [label="Reject:\\nIMAGE_TOO_DARK", fillcolor="#fee2e2", color="#dc2626"];
         glare_check [label="Specular Glare Check\\n(Flash Halo Destroys Text Edges?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_glare [label="Liberal Reject:\\nSPECULAR_GLARE", fillcolor="#fee2e2", color="#dc2626"];
+        rej_glare [label="Reject:\\nSPECULAR_GLARE", fillcolor="#fee2e2", color="#dc2626"];
         pass_quality [label="Quality Gate PASSED\\n(Hand off to Fleet Screening & AI)", fillcolor="#dcfce7", color="#16a34a"];
     }
 
@@ -214,19 +214,19 @@ digraph G {
     node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
     edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
 
-    img_in [label="Sanitized 1024px WebP Image", fillcolor="#e0f2fe", color="#0284c7"];
+    img_in [label="Sanitized Dual-Bound WebP Image\\n(Short <= 720, Long <= 2160)", fillcolor="#e0f2fe", color="#0284c7"];
 
     subgraph cluster_fleet_fraud {
         label="Stage 1: Multi-Layer Fleet Fraud Screening";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
         dhash [label="dHash Stock Image Match?\\n(Hamming Distance <= 6)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_stock [label="Liberal Reject:\\nSTOCK_IMAGE_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
+        rej_stock [label="Reject:\\nSTOCK_PHOTO_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
         fft [label="2D FFT Spectral Analysis\\n(Diffusion Ratio > 1.35?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_ai [label="Liberal Reject:\\nAI_GENERATED_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
+        rej_ai [label="Reject:\\nAI_GENERATED_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
         veh_tracker [label="Vehicle Persistence Tracker\\n(Match Plate & Type in DB)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_veh [label="Liberal Reject:\\nVEHICLE_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
+        rej_veh [label="Reject:\\nVEHICLE_UNREGISTERED", fillcolor="#fee2e2", color="#dc2626"];
         income_check [label="Income Sanity Engine\\n(Bounds & Micro-Ride Math)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_income [label="Liberal Reject:\\nOUTLANDISH_INCOME", fillcolor="#fee2e2", color="#dc2626"];
+        rej_income [label="Reject:\\nINCOME_EXCEEDS_THRESHOLD", fillcolor="#fee2e2", color="#dc2626"];
     }
 
     subgraph cluster_dual_ai {
@@ -242,7 +242,7 @@ digraph G {
         label="Stage 3: Deterministic Compliance Evaluation";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
         py_rules [label="Python Deterministic Rule Engine\\n(Validates Math, Signature, Tax Code)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_rules [label="Liberal Reject:\\nMISSING_FIELDS / ARITHMETIC_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
+        rej_rules [label="Reject:\\nMISSING_FIELDS / CALCULATION_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
         approved [label="Survey Fully Approved!\\n(Hand off to Persistence)", fillcolor="#dcfce7", color="#16a34a"];
     }
 
@@ -279,6 +279,7 @@ CHART_5 = COMMON_HEADER + """
         sql_tx [label="PostgreSQL Atomic Transaction\\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
         sub_table [label="INSERT survey_submissions\\n(status = APPROVED)", fillcolor="#e0f2fe", color="#0284c7"];
         outbox_table [label="INSERT outbox_events\\n(status = PENDING)", fillcolor="#fee2e2", color="#dc2626"];
+        tg_push [label="Telegram Bot API Push\\n(Dispatches Instant Approval Notice to Driver)", fillcolor="#e0f2fe", color="#0284c7"];
 
         poller [label="Background Outbox Worker\\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
         r2_upload [label="Cloudflare R2 Object Storage\\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
@@ -288,12 +289,12 @@ CHART_5 = COMMON_HEADER + """
         gdrive_folder [label="Customer Delivery Folder\\n(YYYY-MM-DD/Client_Spreadsheet.xlsx)", fillcolor="#dcfce7", color="#16a34a"];
 
         lark_sync [label="Lark Base Bi-directional Sync\\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
-        zns_notify [label="Zalo ZNS Official Thank-You\\n(Delivered to Driver Phone - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
+        zns_notify [label="Zalo ZNS Official Thank-You\\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
-
     approved_in -> sql_tx;
     sql_tx -> sub_table;
     sql_tx -> outbox_table;
+    sub_table -> tg_push [label="Committed State -> Immediate Push"];
     outbox_table -> poller [label="Poll Events"];
     poller -> r2_upload;
     poller -> ledger_credit;
@@ -310,47 +311,52 @@ digraph G {
     node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
     edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
 
-    subgraph cluster_group_hub {
-        label="1. Telegram Group Operational Hub (Drivers + Admins + Bot in Same Group)";
+    subgraph cluster_driver_flow {
+        label="1. Driver Private 1-to-1 Chat (Isolated & Privacy-Guaranteed)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        tg_group [label="Telegram Group Chat / Forum\\n(Drivers interact with Bot; Admins monitor all activity live)", fillcolor="#e0f2fe", color="#0284c7"];
-        driver_post [label="Driver Interacts in Group:\\nPosts replacement photo / taps buttons / asks bot", fillcolor="#ffffff", color="#64748b"];
-        bot_reply [label="Bot Direct Reply in Group:\\nQuotes driver with specific retake guidance & inline buttons", fillcolor="#dcfce7", color="#16a34a"];
-        admin_monitor [label="Admins Live Oversight:\\nAdmins see all driver uploads, tickets & bot replies in real time", fillcolor="#fef3c7", color="#d97706"];
+        driver_dm [label="Driver in Private 1-to-1 DM with Bot\\n(Driver strictly sees ONLY their own chat & results)", fillcolor="#e0f2fe", color="#0284c7"];
+        bot_msg [label="Bot Rejection / Notice in DM:\\nQuotes exact guidance & shows appeal button", fillcolor="#dcfce7", color="#16a34a"];
+        retake_photo [label="Driver Snaps & Sends Replacement Photo in DM\\n(Patches Slot in DB & R2 -> Approved!)", fillcolor="#dcfce7", color="#16a34a"];
+        appeal_btn [label="Driver Taps Inline Button in DM:\\n🙋 Yêu cầu kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
+    }
+
+    subgraph cluster_relay_group {
+        label="2. Management Group Relay & Live Supervision (All Activity Forwarded)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
+        admin_group [label="Telegram Management / Admin Group(s)\\n(Bot relays ALL driver messages, photos & bot replies live)", fillcolor="#fef3c7", color="#d97706"];
+        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt] [Từ chối] [Cảnh cáo] [Đổi xe]", fillcolor="#ffffff", color="#64748b"];
     }
 
     subgraph cluster_appeal_limit {
-        label="2. Rate-Limited Appeal & Ephemeral Privacy Popups";
+        label="3. Rate-Limited Appeal & Quota Notification (Max 3 / 8h)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        appeal_btn [label="Driver Taps Inline Button in Group:\\n🙋 Yêu cầu người thật kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
         redis_limit [label="Redis Counter Check:\\nAppeals in Last 8 Hours?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        block_popup [label="Ephemeral Popup Alert (showAlert=True):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H\\n(Only tapping driver sees popup; others see nothing!)", fillcolor="#fee2e2", color="#dc2626"];
-        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement 8h Counter & Alert Admins in Group", fillcolor="#dcfce7", color="#16a34a"];
+        block_popup [label="Block Appeal (> 3 in 8h):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H\\n(Driver informed of quota exhaustion)", fillcolor="#fee2e2", color="#dc2626"];
+        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement 8h Counter & Forward Ticket to Management Group\\n(Bot notifies: Còn X/3 lượt trong 8h)", fillcolor="#dcfce7", color="#16a34a"];
     }
 
-    subgraph cluster_admin_controls {
-        label="3. Admin Live Moderation & Dispatch Controls";
-        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt] [Từ chối] [Cảnh cáo]", fillcolor="#ffffff", color="#64748b"];
-        mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        action_approve [label="Force Approve:\\nPatch status=APPROVED -> Credit payout & sync client", fillcolor="#dcfce7", color="#16a34a"];
-        action_reject [label="Confirm Reject:\\nBot informs driver with reason code in group thread", fillcolor="#fee2e2", color="#dc2626"];
-        action_warn [label="Formal Warning:\\nBot issues compliance warning to driver", fillcolor="#fee2e2", color="#dc2626"];
-    }
-
-    tg_group -> driver_post -> bot_reply;
-    tg_group -> admin_monitor;
-    bot_reply -> appeal_btn -> redis_limit;
+    driver_dm -> bot_msg;
+    bot_msg -> retake_photo;
+    bot_msg -> appeal_btn -> redis_limit;
     redis_limit -> block_popup [label="> 3 Appeals"];
     redis_limit -> allow_appeal [label="<= 3 Appeals"];
-    allow_appeal -> mod_action;
+    allow_appeal -> admin_group;
+    driver_dm -> admin_group [label="Bot Relays All Activity", color="#0284c7"];
+    bot_msg -> admin_group [label="Bot Relays All Activity", color="#0284c7"];
+    admin_group -> mod_action;
+    mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+    action_approve [label="[Duyệt] -> Payout Credited & Client Synced", fillcolor="#dcfce7", color="#16a34a"];
+    action_reject [label="[Từ chối] -> Rejection Confirmed", fillcolor="#fee2e2", color="#dc2626"];
+    action_warn [label="[Cảnh cáo] -> Warning Dispatched", fillcolor="#fee2e2", color="#dc2626"];
+    action_change [label="[Đổi xe] -> Update Persistent Vehicle Plate & Audit", fillcolor="#ede9fe", color="#7c3aed"];
 
     mod_action -> mod_dispatch;
-    mod_dispatch -> action_approve [label="[Duyệt]"];
-    mod_dispatch -> action_reject [label="[Từ chối]"];
-    mod_dispatch -> action_warn [label="[Cảnh cáo]"];
-    action_approve -> bot_reply;
-    action_reject -> bot_reply;
+    mod_dispatch -> action_approve [label="Click Duyệt"];
+    mod_dispatch -> action_reject [label="Click Từ chối"];
+    mod_dispatch -> action_warn [label="Click Cảnh cáo"];
+    mod_dispatch -> action_change [label="Click Đổi xe"];
+    action_approve -> driver_dm [label="Relayed to Driver DM", color="#16a34a"];
+    action_reject -> driver_dm [label="Relayed to Driver DM", color="#dc2626"];
 }
 """
 

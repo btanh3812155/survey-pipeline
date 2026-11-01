@@ -4,19 +4,19 @@ digraph G {
     node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
     edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
 
-    img_in [label="Sanitized 1024px WebP Image", fillcolor="#e0f2fe", color="#0284c7"];
+    img_in [label="Sanitized Dual-Bound WebP Image\n(Short <= 720, Long <= 2160)", fillcolor="#e0f2fe", color="#0284c7"];
 
     subgraph cluster_fleet_fraud {
         label="Stage 1: Multi-Layer Fleet Fraud Screening";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
         dhash [label="dHash Stock Image Match?\n(Hamming Distance <= 6)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_stock [label="Liberal Reject:\nSTOCK_IMAGE_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
+        rej_stock [label="Reject:\nSTOCK_PHOTO_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
         fft [label="2D FFT Spectral Analysis\n(Diffusion Ratio > 1.35?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_ai [label="Liberal Reject:\nAI_GENERATED_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
+        rej_ai [label="Reject:\nAI_GENERATED_DETECTED", fillcolor="#fee2e2", color="#dc2626"];
         veh_tracker [label="Vehicle Persistence Tracker\n(Match Plate & Type in DB)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_veh [label="Liberal Reject:\nVEHICLE_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
+        rej_veh [label="Reject:\nVEHICLE_UNREGISTERED", fillcolor="#fee2e2", color="#dc2626"];
         income_check [label="Income Sanity Engine\n(Bounds & Micro-Ride Math)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_income [label="Liberal Reject:\nOUTLANDISH_INCOME", fillcolor="#fee2e2", color="#dc2626"];
+        rej_income [label="Reject:\nINCOME_EXCEEDS_THRESHOLD", fillcolor="#fee2e2", color="#dc2626"];
     }
 
     subgraph cluster_dual_ai {
@@ -32,7 +32,7 @@ digraph G {
         label="Stage 3: Deterministic Compliance Evaluation";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
         py_rules [label="Python Deterministic Rule Engine\n(Validates Math, Signature, Tax Code)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        rej_rules [label="Liberal Reject:\nMISSING_FIELDS / ARITHMETIC_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
+        rej_rules [label="Reject:\nMISSING_FIELDS / CALCULATION_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
         approved [label="Survey Fully Approved!\n(Hand off to Persistence)", fillcolor="#dcfce7", color="#16a34a"];
     }
 
