@@ -212,3 +212,36 @@ def test_mask_aware_quality_checks_on_transparent_images():
     # 2. Mask-aware glare: Does NOT trigger false specular glare despite 60% white canvas!
     is_glared, _ = detect_specular_glare_obliteration(norm_img)
     assert is_glared is False
+
+def test_admin_query_submission_dossier():
+    import asyncio
+    from services.admin_moderator import query_submission_dossier, render_dossier_message
+    from fastapi.testclient import TestClient
+    from main import app
+
+    async def _test():
+        dossier = await query_submission_dossier("VN-9921", db_pool=None)
+        assert dossier["submission_id"] == "VN-9921"
+        assert dossier["status"] == "REJECTED"
+        assert "0988123456" in dossier["driver_phone"]
+
+        # test HTML message formatting for admins
+        report_text = render_dossier_message(dossier)
+        assert "HỒ SƠ TRA CỨU DỮ LIỆU PHIẾU #VN-9921" in report_text
+        assert "0988123456" in report_text
+        assert "29E-123.45" in report_text
+
+    asyncio.run(_test())
+
+    # test Telegram webhook /query command integration
+    client = TestClient(app)
+    payload = {
+        "message": {
+            "chat": {"id": -1001234567890},
+            "from": {"id": 111222},
+            "text": "/query VN-9921"
+        }
+    }
+    resp = client.post("/webhook/telegram", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "query_command_handled"

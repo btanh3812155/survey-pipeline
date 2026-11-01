@@ -17,6 +17,10 @@ from services.auth_lark import (
     verify_lark_signature,
     handle_lark_challenge_handshake,
 )
+from services.admin_moderator import (
+    query_submission_dossier,
+    render_dossier_message,
+)
 from services.vision_ai import DualModelVisionClient
 from services.evaluator import evaluate_survey_compliance
 from services.templates_vn import render_telegram_verdict
@@ -211,6 +215,26 @@ async def telegram_webhook_ingress(
     message = body.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text", "")
+    # 1. Handle Admin 1-Click Database Query Callback
+    cq = body.get("callback_query")
+    if cq:
+        data = cq.get("data", "")
+        cq_chat_id = cq.get("message", {}).get("chat", {}).get("id")
+        if data.startswith("admin_query:"):
+            sub_id = data.split(":", 1)[1]
+            dossier = await query_submission_dossier(sub_id)
+            report_text = render_dossier_message(dossier)
+            await send_telegram_notification(cq_chat_id, report_text)
+            return {"status": "query_handled"}
+
+    # 2. Handle /query or /check slash command in Admin Group
+    if text.startswith("/query ") or text.startswith("/check "):
+        parts = text.split(" ", 1)
+        sub_id = parts[1].strip().lstrip("#")
+        dossier = await query_submission_dossier(sub_id)
+        report_text = render_dossier_message(dossier)
+        await send_telegram_notification(chat_id, report_text)
+        return {"status": "query_command_handled"}
 
     if text == "/start":
         welcome_msg = (
@@ -218,5 +242,4 @@ async def telegram_webhook_ingress(
             "Mọi phiếu khảo sát nộp qua form sẽ được tự động kiểm tra và phản hồi kết quả trực tiếp tại đây trong vòng 3 giây."
         )
         await send_telegram_notification(chat_id, welcome_msg)
-
     return {"status": "ok"}
