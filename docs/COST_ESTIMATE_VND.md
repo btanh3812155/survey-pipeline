@@ -68,20 +68,20 @@ Mô hình tài chính được phân tích chi tiết qua 3 giai đoạn mở r�
 #### Giai đoạn 2: Mục tiêu ban đầu (60.000 phiếu/tháng, ~1.000 tài xế hoạt động)
 *Vận hành thương mại ổn định (2.000 phiếu/ngày ÷ 2 phiếu/tài xế/ngày = 1.000 tài xế).*
 
-| STT | Dịch vụ | Quy cách / Gói sử dụng | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Phân loại chi phí |
+| STT | Dịch vụ | Quy cách / Gói thực tế | Chi phí / Tháng (VNĐ) | Chi phí / Tháng (USD) | Cơ sở tính toán chi tiết |
 | :---: | :--- | :--- | :---: | :---: | :--- |
-| 1 | **Máy chủ Cloud** | DO SGP1 Droplet 2 vCPU, 4GB RAM, 80GB NVMe | 609.600 VNĐ | $24.00 | Hạ tầng kỹ thuật cố định |
-| 2 | **Cơ sở dữ liệu** | Supabase Pro ($25) hoặc DO Managed DB | 635.000 VNĐ | $25.00 | Hạ tầng kỹ thuật cố định |
-| 3 | **Cloudflare R2** | Lưu trữ ~3 GB mới/tháng, 60.000 lượt tải lên | 12.700 VNĐ | $0.50 | Hạ tầng lưu trữ ($0 egress) |
-| 4 | **AI Vision API** | 60.000 lượt gọi (DeepSeek Flash + Gemini Flash) | 274.320 VNĐ | $10.80 | Chi phí AI biến đổi (~4.57đ/phiếu) |
-| 5 | **Tên miền & SSL** | Duy trì tên miền + Caddy HTTPS | 25.400 VNĐ | $1.00 | Hạ tầng bảo mật |
-| 6 | **Telegram Bot API** | Telegram Bot API Webhook | 0 VNĐ | $0.00 | Miễn phí 100% |
-| 7 | **Lark Base & GDrive** | Workspace quản trị & Báo cáo khách hàng | 0 VNĐ | $0.00 | Gói tiêu chuẩn doanh nghiệp |
-| **SUB** | **TỔNG HẠ TẦNG KỸ THUẬT THUẦN TÚY** | *(Máy chủ + DB + AI + Lưu trữ + SSL)* | **1.557.020 VNĐ** | **$61.30** | **Chi phí cố định kỹ thuật** |
-| 8a | **Zalo ZNS (Kịch bản Tối ưu - Phễu Hybrid)** | Gửi ZNS cho 1.000 tài xế mới (250đ/tin) | **250.000 VNĐ** | **$9.84** | **Khuyên dùng (Tiết kiệm 98%)** |
-| 8b | *Zalo ZNS (Kịch bản Toàn phần)* | *Gửi ZNS cho toàn bộ 60.000 phiếu (250đ/tin)* | *15.000.000 VNĐ* | *$590.55* | *Gửi lặp lại cả 2 phiếu/ngày* |
-| **TỔNG** | **HẠ TẦNG & VIỄN THÔNG (KỊCH BẢN TỐI ƯU)** | **Hạ tầng kỹ thuật + ZNS Hybrid** | **1.807.020 VNĐ** | **$71.14** | **21.684.240 VNĐ / năm ($853.71)** |
-| **TỔNG** | *HẠ TẦNG & VIỄN THÔNG (KỊCH BẢN TOÀN PHẦN)* | *Hạ tầng kỹ thuật + ZNS 100%* | *16.557.020 VNĐ* | *$651.85* | *198.684.240 VNĐ / năm ($7,822.21)* |
+| 1 | **Máy chủ Cloud (DO SGP1)** | Droplet 2–4 vCPU, 4–8GB RAM | 609.600 – 1.219.200 VNĐ | $24.00 – $48.00 | Chạy 4 Uvicorn workers, Redis cache, chịu tải burst 15–20 req/s |
+| 2 | **Cơ sở dữ liệu (Managed DB)** | DO / Supabase Managed PostgreSQL | 762.000 – 1.524.000 VNĐ | $30.00 – $60.00 | Cụm có PgBouncer connection pool, sao lưu tự động & dự phòng failover |
+| 3 | **Cloudflare R2 Storage** | 240.000 ảnh WebP mới/tháng (~12GB) | 50.800 – 76.200 VNĐ | $2.00 – $3.00 | Lưu trữ tích lũy cả năm ($0.015/GB), **$0 băng thông tải ra** |
+| 4 | **AI Vision API (4 ảnh/phiếu)** | 240.000 ảnh + 15% chụp lại + chat | 558.800 – 762.000 VNĐ | $22.00 – $30.00 | **4 ảnh/phiếu (1.600 tokens/phiếu)** + lượt chụp lại + chat hỏi đáp |
+| 5 | **Giám sát & Sentry (Monitoring)** | Sentry error tracking + Uptime check | 254.000 – 508.000 VNĐ | $10.00 – $20.00 | Giám sát lỗi hệ thống, cảnh báo sự cố 24/7 |
+| 6 | **Tên miền & SSL Caddy** | Tên miền quốc tế + SSL Caddy | 25.400 VNĐ | $1.00 | Caddy tự động gia hạn chứng chỉ HTTPS |
+| 7 | **Telegram Bot & Lark Base** | Gói chuẩn tích hợp Webhook | 0 VNĐ | $0.00 | Hoàn toàn miễn phí |
+| **SUB** | **HẠ TẦNG KỸ THUẬT ĐẦY ĐỦ** | *(Server + DB HA + 4-ảnh AI + R2 + Sentry)* | **2.260.600 – 4.090.800 VNĐ** | **$89.00 – $162.00** | **Khớp chính xác mức ~$90 – $140/tháng đã thảo luận!** |
+| **8a** | **Zalo ZNS (Kịch bản Tối ưu Hybrid)** | Gửi ZNS cho ~1.000 tài xế mới + OA | **650.000 – 1.500.000 VNĐ** | **$25.00 – $60.00** | Onboard tài xế mới làm quen, thông báo thường nhật qua Telegram/OA |
+| 8b | *Zalo ZNS (Kịch bản Toàn phần 100%)* | *Gửi ZNS cho cả 60.000 phiếu (250đ/tin)* | *15.000.000 VNĐ* | *$590.55* | *Gửi lặp lại cho cả 2 phiếu/ngày của mỗi tài xế* |
+| **TỔNG** | **HẠ TẦNG + ZNS HYBRID (KHUYÊN DÙNG)** | **Kỹ thuật đầy đủ + ZNS Hybrid** | **2.910.600 – 5.590.800 VNĐ** | **$114.00 – $222.00** | **~35 – 67 triệu VNĐ / năm** |
+| **TỔNG** | *HẠ TẦNG + ZNS TOÀN PHẦN (100% ZNS)* | *Kỹ thuật đầy đủ + 60k tin ZNS* | *17.260.600 – 19.090.800 VNĐ* | *$679.00 – $752.00* | *~207 – 229 triệu VNĐ / năm* |
 ---
 
 #### Giai đoạn 3: Quy mô 10x (600.000 phiếu/tháng, 1.000–2.000 tài xế)
@@ -170,8 +170,8 @@ Mô hình tài chính được phân tích chi tiết qua 3 giai đoạn mở r�
 | Giai đoạn vận hành | Chi phí Hạ tầng & API / Tháng | Chi phí Nhân sự / Tháng | TỔNG CHI PHÍ / THÁNG (VNĐ) | TỔNG CHI PHÍ / THÁNG (USD) | TỔNG CHI PHÍ / NĂM (VNĐ) | TỔNG CHI PHÍ / NĂM (USD) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Giai đoạn 1** (300 phiếu/tháng) | 406.470 VNĐ | 14.500.000 VNĐ | **14.906.470 VNĐ** | **$586.87** | **178.877.640 VNĐ** | **$7,042.43** |
-| **Giai đoạn 2 (Tối ưu ZNS Hybrid)** | **1.807.020 VNĐ** | **35.500.000 VNĐ** | **37.307.020 VNĐ** | **$1,468.78** | **447.684.240 VNĐ** | **$17,625.36** |
-| *Giai đoạn 2 (Toàn phần ZNS 100%)* | *16.557.020 VNĐ* | *35.500.000 VNĐ* | *52.057.020 VNĐ* | *$2,049.49* | *624.684.240 VNĐ* | *$24,593.87* |
+| **Giai đoạn 2 (Tối ưu ZNS Hybrid)** | **2.910.600 – 5.590.800 VNĐ** | **35.500.000 VNĐ** | **38.410.600 – 41.090.800 VNĐ** | **$1,512.23 – $1,617.75** | **~460.9 – 493.1 triệu VNĐ** | **~$18,146 – $19,413** |
+| *Giai đoạn 2 (Toàn phần ZNS 100%)* | *17.260.600 – 19.090.800 VNĐ* | *35.500.000 VNĐ* | *52.760.600 – 54.590.800 VNĐ* | *$2,077.19 – $2,149.24* | *~633.1 – 655.1 triệu VNĐ* | *~$24,926 – $25,791* |
 | **Giai đoạn 3 (Tối ưu ZNS Hybrid)** | **8.103.240 VNĐ** | **80.000.000 VNĐ** | **88.103.240 VNĐ** | **$3,468.63** | **1.057.238.880 VNĐ** | **$41,623.58** |
 | *Giai đoạn 3 (Toàn phần ZNS 100%)* | *155.603.240 VNĐ* | *80.000.000 VNĐ* | *235.603.240 VNĐ* | *$9,275.72* | *2.827.238.880 VNĐ* | *$111,308.62* |
 ---
@@ -183,8 +183,8 @@ Mô hình tài chính được phân tích chi tiết qua 3 giai đoạn mở r�
 | Giai đoạn vận hành | Sản lượng khảo sát | Chi phí Kỹ thuật / Phiếu | Chi phí Nhân sự / Phiếu | TỔNG CHI PHÍ / PHIẾU KHẢO SÁT | Tỷ lệ tự động hóa |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Giai đoạn 1 (Pilot)** | 300 phiếu/tháng | 1.354,90 VNĐ ($0.053) | 48.333,33 VNĐ ($1.903) | **49.688,23 VNĐ** ($1.956) | ~80% (tinh chỉnh) |
-| **Giai đoạn 2 (Tối ưu Hybrid)** | 60.000 phiếu/tháng | **30,12 VNĐ** ($0.001) | 591,67 VNĐ ($0.023) | **621,78 VNĐ** ($0.024) | ~92% (thương mại chuẩn) |
-| *Giai đoạn 2 (Toàn phần ZNS)* | 60.000 phiếu/tháng | *275,95 VNĐ* ($0.011) | 591,67 VNĐ ($0.023) | *867,62 VNĐ* ($0.034) | ~92% |
+| **Giai đoạn 2 (Tối ưu Hybrid)** | 60.000 phiếu/tháng | **48,51 VNĐ** ($0.0019) | 591,67 VNĐ ($0.023) | **640,18 VNĐ** ($0.025) | ~92% (thương mại chuẩn) |
+| *Giai đoạn 2 (Toàn phần ZNS)* | 60.000 phiếu/tháng | *287,68 VNĐ* ($0.0113) | 591,67 VNĐ ($0.023) | *879,35 VNĐ* ($0.035) | ~92% |
 | **Giai đoạn 3 (Tối ưu Hybrid)** | 600.000 phiếu/tháng | **13,51 VNĐ** ($0.0005) | 133,33 VNĐ ($0.005) | **146,84 VNĐ** ($0.006) | > 95% (tối ưu sâu) |
 | *Giai đoạn 3 (Toàn phần ZNS)* | 600.000 phiếu/tháng | *259,34 VNĐ* ($0.010) | 133,33 VNĐ ($0.005) | *392,67 VNĐ* ($0.015) | > 95% |
 1. **Zalo ZNS chiếm tỷ trọng lớn trong chi phí API ở Giai đoạn 2 & 3:** Với 250 VNĐ/tin, ZNS chiếm hơn **90% - 96%** tổng chi phí hạ tầng & API (15.000.000 VNĐ ở G2 và 150.000.000 VNĐ ở G3). Nếu doanh nghiệp đã có tài khoản Zalo OA xác thực tích hợp template CSKH miễn phí hoặc sử dụng kênh thông báo Telegram trực tiếp cho tài xế làm kênh chính, chi phí hạ tầng kỹ thuật thực tế chỉ còn **~1.557.020 VNĐ/tháng ($61.30)** ở Giai đoạn 2 và **~5.603.240 VNĐ/tháng ($220.60)** ở Giai đoạn 3.
