@@ -59,10 +59,12 @@ def sanitize_and_normalize_image(
     has_alpha = im.mode in ("RGBA", "LA") or (
         im.mode == "P" and "transparency" in im.info
     )
+    alpha_mask = None
     if has_alpha:
         alpha_img = im.convert("RGBA")
+        alpha_mask = alpha_img.split()[3]
         canvas = Image.new("RGB", alpha_img.size, (255, 255, 255))
-        canvas.paste(alpha_img, mask=alpha_img.split()[3])
+        canvas.paste(alpha_img, mask=alpha_mask)
         im = canvas
     elif im.mode != "RGB":
         im = im.convert("RGB")
@@ -84,6 +86,11 @@ def sanitize_and_normalize_image(
         new_w = max(1, int(round(w * scale)))
         new_h = max(1, int(round(h * scale)))
         im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        if alpha_mask is not None:
+            alpha_mask = alpha_mask.resize((new_w, new_h), Image.Resampling.NEAREST)
+
+    if alpha_mask is not None:
+        im.info["alpha_mask"] = np.array(alpha_mask)
     # 4. encode to WebP with stripped EXIF (preventing double-rotation downstream)
     output_buf = io.BytesIO()
     im.save(output_buf, format="WEBP", quality=webp_quality, exif=b"")
@@ -149,5 +156,61 @@ def detect_image_manipulation(raw_bytes: bytes, pil_img: Image.Image) -> Tuple[b
             return True, "phát hiện bất thường mức nén điểm ảnh cục bộ (ELA splice)"
     except Exception:
         pass
+
+    return False, "clean"
+
+
+def detect_optical_underexposure(pil_img: Image.Image) -> Tuple[bool, str]:
+    """
+    Checks for camera optical underexposure using 95th percentile dynamic range.
+    Mask-aware: Completely ignores synthetic white canvas background pixels.
+    """
+    gray = np.array(pil_img.convert("L"))
+    alpha_mask = pil_img.info.get("alpha_mask")
+
+    if alpha_mask is not None:
+        valid_pixels = gray[alpha_mask > 30]
+        if len(valid_pixels) == 0:
+            return True, "ảnh không chứa dữ liệu hợp lệ"
+        p95 = np.percentile(valid_pixels, 95)
+    else:
+        p95 = np.percentile(gray, 95)
+
+    if p95 < 35:
+        return True, "ảnh chụp quá tối không đủ ánh sáng để đọc"
+
+    return False, "clean"
+
+
+def detect_specular_glare_obliteration(pil_img: Image.Image) -> Tuple[bool, str]:
+    """
+    Checks for specular reflection bloom that obliterates text/numbers.
+    Mask-aware: Ignores synthetic white canvas so transparent images NEVER trigger false glare.
+    """
+    gray = np.array(pil_img.convert("L"))
+    alpha_mask = pil_img.info.get("alpha_mask")
+
+    if alpha_mask is not None:
+        foreground_mask = alpha_mask > 30
+        saturated_mask = (gray >= 250) & foreground_mask
+        fg_pixel_count = np.sum(foreground_mask)
+        if fg_pixel_count == 0:
+            return False, "clean"
+        saturated_ratio = np.sum(saturated_mask) / fg_pixel_count
+    else:
+        saturated_mask = gray >= 250
+        saturated_ratio = np.mean(saturated_mask)
+
+    if saturated_ratio < 0.08:
+        return False, "clean"
+
+    sobel_edges = cv2.Sobel(gray, cv2.CV_64F, 1, 1)
+    if np.sum(saturated_mask) > 0:
+        edge_density_in_white_zone = np.mean(np.abs(sobel_edges)[saturated_mask])
+        if edge_density_in_white_zone > 15.0:
+            return False, "clean_white_paper"
+
+    if saturated_ratio > 0.25:
+        return True, "ảnh bị lóa sáng chói đèn làm mất chữ/số"
 
     return False, "clean"

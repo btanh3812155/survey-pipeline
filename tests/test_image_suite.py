@@ -191,3 +191,24 @@ def test_dual_edge_scaling_and_ribbon_protection():
     with pytest.raises(ValueError) as exc:
         sanitize_and_normalize_image(buf.getvalue(), max_aspect_ratio=6.0)
     assert "tỷ lệ khung hình bất thường" in str(exc.value)
+
+def test_mask_aware_quality_checks_on_transparent_images():
+    from services.normalizer import detect_optical_underexposure, detect_specular_glare_obliteration
+
+    # Create an RGBA image where 60% of the image is transparent, and 40% is a pitch-black dark subject (15/255)
+    dark_rgba = Image.new("RGBA", (500, 500), (0, 0, 0, 0)) # transparent border
+    draw = ImageDraw.Draw(dark_rgba)
+    draw.rectangle([150, 150, 350, 350], fill=(15, 15, 15, 255)) # pitch black subject
+
+    buf = io.BytesIO()
+    dark_rgba.save(buf, format="PNG")
+    _, norm_img = sanitize_and_normalize_image(buf.getvalue())
+
+    # 1. Mask-aware underexposure: Correctly catches dark subject despite the newly inserted white canvas!
+    is_dark, dark_reason = detect_optical_underexposure(norm_img)
+    assert is_dark is True
+    assert "quá tối" in dark_reason
+
+    # 2. Mask-aware glare: Does NOT trigger false specular glare despite 60% white canvas!
+    is_glared, _ = detect_specular_glare_obliteration(norm_img)
+    assert is_glared is False
