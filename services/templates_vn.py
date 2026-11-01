@@ -5,7 +5,7 @@ TEMPLATES_VN = {
         "✅ <b>PHIẾU KHẢO SÁT ĐÃ ĐƯỢC DUYỆT THÀNH CÔNG</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"
         "• Trạng thái: <b>Hợp lệ (Approved)</b>\n"
-        "• Thù lao dự kiến: <b>25.000 VNĐ</b>\n\n"
+        "• Thù lao: <b>Đã tự động ghi nhận theo chính sách</b>\n\n"
         "🎉 <i>Hệ thống đã tự động ghi nhận vào bảng thanh toán của bạn. Cảm ơn bạn!</i>"
     ),
     "MISSING_FIELDS": (
@@ -58,18 +58,18 @@ TEMPLATES_VN = {
         "• Mã phiếu: <code>#{submission_id}</code>\n"
         "• Trạng thái: <b>Nghi vấn cần kiểm tra lại (Suspicious)</b>\n"
         "• Chi tiết: <i>{collaborator_note}</i>\n\n"
-        "👉 <i>Hệ thống đã tự động chuyển phiếu của anh tới ban quản trị để xác minh thêm. Kết quả sẽ được cập nhật trong 10-15 phút nhé!</i>"
+        "👉 <i>Hệ thống đã tự động chuyển phiếu của bạn tới ban quản trị để xác minh thêm. Kết quả sẽ được cập nhật trong ít phút nhé!</i>"
     ),
     "APPEAL_ACCEPTED": (
         "✅ <b>ĐÃ TIẾP NHẬN YÊU CẦU KHIẾU NẠI</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"
         "• Trạng thái: <b>Đã chuyển người thật kiểm tra lại</b>\n\n"
-        "👉 <i>Quản trị viên sẽ trực tiếp đối soát ảnh gốc của anh. Kết quả sẽ được thông báo ngay tại đây!</i>"
+        "👉 <i>Quản trị viên sẽ trực tiếp đối soát ảnh gốc của bạn. Kết quả sẽ được thông báo ngay tại đây!</i>"
     ),
     "APPEAL_RATE_LIMITED": (
-        "⚠️ <b>ANH ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI HÔM NAY</b>\n\n"
-        "• Giới hạn: <b>Tối đa 1 lần yêu cầu người thật kiểm tra / 24 giờ</b>\n\n"
-        "👉 <i>Để đảm bảo tốc độ hệ thống, vui lòng kiểm tra lại ảnh chụp rõ nét và nộp phiếu mới nhé!</i>"
+        "⚠️ <b>BẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG PHIÊN NÀY</b>\n\n"
+        "• Giới hạn: <b>Tối đa 3 lần yêu cầu người thật kiểm tra trong vòng 8 giờ</b>\n\n"
+        "👉 <i>Để tiết kiệm lượt khiếu nại, vui lòng kiểm tra lại ảnh chụp rõ nét và nộp phiếu mới nhé!</i>"
     ),
 }
 
