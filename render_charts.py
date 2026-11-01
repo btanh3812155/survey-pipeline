@@ -49,8 +49,8 @@ CHART_1 = COMMON_HEADER + """
         color="#d1d5db";
         fontcolor="#1f2937";
         
-        driver [label="Driver on Mobile\\n(Lark Form + Telegram Group)", fillcolor="#e0f2fe", color="#0284c7"];
-        tg_hub [label="Telegram Group Operational Hub\\n(Drivers interact with Bot; Admins monitor live)", fillcolor="#e0f2fe", color="#0284c7"];
+        driver [label="Driver on Mobile\\n(Lark Form + Private 1-to-1 DM t.me/TenBot)", fillcolor="#e0f2fe", color="#0284c7"];
+        tg_admin_group [label="Telegram Admin Management Group\\n(Bot auto-relays submissions, photos & replies via copyMessage/forwardMessage;\\nAdmins monitor live & execute 1-click moderation or reply back)", fillcolor="#fef3c7", color="#d97706"];
         staff [label="Management on Company PCs\\n(Lark Base: Admin, QC, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
         clients [label="Paying Business Clients\\n(Google Drive Customer Folder)", fillcolor="#fef3c7", color="#d97706"];
     }
@@ -85,14 +85,19 @@ CHART_1 = COMMON_HEADER + """
         zns [label="Zalo ZNS Gateway\\n(Official Thank-You to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
-    driver -> caddy [label="Submit Form"];
+    driver -> caddy [label="Submit Form / Webhook"];
     caddy -> fastapi;
     fastapi -> redis [dir=both, label="Lock / Limit"];
-    fastapi -> sanitizer -> dual_ai -> rules;
+    fastapi -> sanitizer;
+    sanitizer -> dual_ai [label="Pass Quality"];
+    sanitizer -> driver [label="Reject Notice / Retake (Private DM)", style=dashed, color="#dc2626"];
+    dual_ai -> rules [label="Extracted"];
+    dual_ai -> driver [label="AI Fail / Reject (Private DM)", style=dashed, color="#dc2626"];
     rules -> postgres [label="Approved (Atomic Commit)"];
-    rules -> tg_hub [label="Rejection Notice / 1-Click Retake", style=dashed, color="#dc2626"];
-    driver -> tg_hub [label="Interacts / Retakes Photo / Appeals", color="#0284c7"];
-    tg_hub -> fastapi [label="1-Click Admin Moderation / Retake", color="#dc2626"];
+    rules -> driver [label="Rejection Notice / 1-Click Retake (Private DM)", style=dashed, color="#dc2626"];
+    driver -> tg_admin_group [label="Bot Auto-Relays Driver Submissions, Photos & Replies\\n(copyMessage / forwardMessage)", color="#0284c7"];
+    tg_admin_group -> fastapi [label="Admin 1-Click Moderation / Reply Callback", color="#dc2626"];
+    fastapi -> driver [label="Relay Admin Reply back to Driver DM", style=dashed, color="#16a34a"];
     postgres -> outbox_worker [dir=both];
     outbox_worker -> r2;
     outbox_worker -> gdrive -> clients;
@@ -190,7 +195,13 @@ digraph G {
         glare_check [label="Specular Glare Check\\n(Flash Halo Destroys Text Edges?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         rej_glare [label="Reject:\\nSPECULAR_GLARE", fillcolor="#fee2e2", color="#dc2626"];
         pass_quality [label="Quality Gate PASSED\\n(Hand off to Fleet Screening & AI)", fillcolor="#dcfce7", color="#16a34a"];
+        tg_reject_push_c2 [label="Route to Telegram Bot Response\\n(Dispatches Rejection Notice + 1-Click Retake Deep Link)", fillcolor="#fee2e2", color="#dc2626"];
     }
+
+    rej_tamper -> tg_reject_push_c2;
+    rej_blur -> tg_reject_push_c2;
+    rej_dark -> tg_reject_push_c2;
+    rej_glare -> tg_reject_push_c2;
 
     raw_in -> exif_scan -> ela_scan -> tamper_gate;
     tamper_gate -> rej_tamper [label="Yes"];
@@ -245,7 +256,15 @@ digraph G {
         py_rules [label="Python Deterministic Rule Engine\\n(Validates Math, Signature, Tax Code)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         rej_rules [label="Reject:\\nMISSING_FIELDS / CALCULATION_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
         approved [label="Survey Fully Approved!\\n(Hand off to Persistence)", fillcolor="#dcfce7", color="#16a34a"];
+        tg_reject_push_c3 [label="Route to Telegram Bot Response\\n(Dispatches Rejection Notice + 1-Click Appeal Button)", fillcolor="#fee2e2", color="#dc2626"];
     }
+
+    rej_stock -> tg_reject_push_c3;
+    rej_ai -> tg_reject_push_c3;
+    rej_veh -> tg_reject_push_c3;
+    income_check -> rej_income [label="Outlandish Math"];
+    rej_income -> tg_reject_push_c3;
+    rej_rules -> tg_reject_push_c3;
 
     img_in -> dhash;
     dhash -> rej_stock [label="Matched Stock"];
@@ -254,7 +273,7 @@ digraph G {
     fft -> veh_tracker [label="Natural Photo"];
     veh_tracker -> rej_veh [label="Plate Mismatch"];
     veh_tracker -> income_check [label="Vehicle Matches"];
-    income_check -> rej_income [label="Outlandish Math"];
+
     income_check -> ai_router [label="Realistic Income"];
 
     ai_router -> ds_flash [label="Try Primary"];
@@ -276,11 +295,11 @@ CHART_5 = COMMON_HEADER + """
         fillcolor="#f8fafc";
         color="#cbd5e1";
 
-        approved_in [label="Approved Survey Event", fillcolor="#dcfce7", color="#16a34a"];
+        survey_event_in [label="Survey Event\\n(Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
         sql_tx [label="PostgreSQL Atomic Transaction\\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
-        sub_table [label="INSERT survey_submissions\\n(status = APPROVED)", fillcolor="#e0f2fe", color="#0284c7"];
-        outbox_table [label="INSERT outbox_events\\n(status = PENDING)", fillcolor="#fee2e2", color="#dc2626"];
-        tg_push [label="Telegram Bot API Push\\n(Dispatches Instant Approval Notice to Driver)", fillcolor="#e0f2fe", color="#0284c7"];
+        sub_table [label="INSERT survey_submissions\\n(status: APPROVED or REJECTED)", fillcolor="#e0f2fe", color="#0284c7"];
+        outbox_table [label="INSERT outbox_events\\n(status = PENDING for Approved)", fillcolor="#fee2e2", color="#dc2626"];
+        tg_push [label="Telegram Bot Response\\n(Pushed directly to Driver DM:\\nApproval Confirmation or Rejection + Retake Link)", fillcolor="#e0f2fe", color="#0284c7"];
 
         poller [label="Background Outbox Worker\\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
         r2_upload [label="Cloudflare R2 Object Storage\\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
@@ -292,10 +311,10 @@ CHART_5 = COMMON_HEADER + """
         lark_sync [label="Lark Base Bi-directional Sync\\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
         zns_notify [label="Zalo ZNS Official Thank-You\\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
-    approved_in -> sql_tx;
+    survey_event_in -> sql_tx;
     sql_tx -> sub_table;
-    sql_tx -> outbox_table;
-    sub_table -> tg_push [label="Committed State -> Immediate Push"];
+    sql_tx -> outbox_table [label="If Approved"];
+    sub_table -> tg_push [label="Direct DM Push to Driver\\n(Approved or Rejected)"];
     outbox_table -> poller [label="Poll Events"];
     poller -> r2_upload;
     poller -> ledger_credit;
@@ -305,35 +324,41 @@ CHART_5 = COMMON_HEADER + """
 }
 """
 
-# Chart 6: Component 5 Telegram UX & Moderation (Unified Group Hub)
+# Chart 6: Component 5 Telegram UX & Moderation (Private DM + Admin Group Relay)
 CHART_6 = """
 digraph G {
     graph [rankdir=TB, bgcolor="white", dpi=180, nodesep=0.35, ranksep=0.45, fontname="Helvetica, Arial, sans-serif", fontsize=13, fontcolor="#111827", pad="0.3,0.3"];
     node [fontname="Helvetica, Arial, sans-serif", fontsize=11, fontcolor="#111827", shape=box, style="rounded,filled", fillcolor="#f9fafb", color="#9ca3af", penwidth=1.5, margin="0.2,0.12"];
     edge [fontname="Helvetica, Arial, sans-serif", fontsize=10, fontcolor="#4b5563", color="#4b5563", penwidth=1.3, arrowsize=0.85];
 
-    subgraph cluster_driver_flow {
-        label="1. Driver Private 1-to-1 Chat (Isolated & Privacy-Guaranteed)";
+    subgraph cluster_stage1 {
+        label="Stage 1: Driver Private 1-to-1 DM (100% Isolated Privacy: t.me/TenBot)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        driver_dm [label="Driver in Private 1-to-1 DM with Bot\\n(Driver strictly sees ONLY their own chat & results)", fillcolor="#e0f2fe", color="#0284c7"];
-        bot_msg [label="Bot Rejection / Notice in DM:\\nQuotes exact guidance & shows appeal button", fillcolor="#dcfce7", color="#16a34a"];
-        retake_photo [label="Driver Snaps & Sends Replacement Photo in DM\\n(Patches Slot in DB & R2 -> Approved!)", fillcolor="#dcfce7", color="#16a34a"];
+        driver_dm [label="Driver in Private 1-to-1 DM with Bot\\n(Strictly sees ONLY their own chat, submissions & bot notices)", fillcolor="#e0f2fe", color="#0284c7"];
+        bot_msg [label="Bot Direct Notice / Rejection in DM:\\nQuotes exact guidance & shows 1-click appeal button", fillcolor="#dcfce7", color="#16a34a"];
+        retake_photo [label="Driver Snaps & Sends Replacement Photo in DM\\n(Patches Slot in DB & R2 -> Auto-Approved!)", fillcolor="#dcfce7", color="#16a34a"];
         appeal_btn [label="Driver Taps Inline Button in DM:\\n🙋 Yêu cầu kiểm tra lại", fillcolor="#fef3c7", color="#d97706"];
     }
 
-    subgraph cluster_relay_group {
-        label="2. Management Group Relay & Live Supervision (All Activity Forwarded)";
+    subgraph cluster_stage2 {
+        label="Stage 2: Automated Relay via Telegram Bot API (copyMessage / forwardMessage)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        admin_group [label="Telegram Management / Admin Group(s)\\n(Bot relays ALL driver messages, photos & bot replies live)", fillcolor="#fef3c7", color="#d97706"];
-        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt] [Từ chối] [Cảnh cáo] [Đổi xe]", fillcolor="#ffffff", color="#64748b"];
+        relay_worker [label="Automated Relay Handler (FastAPI / Bot API)\\n• Driver messages & photos -> copyMessage / forwardMessage to Admin Group\\n• Bot outbound notices -> mirrored to Admin Group with driver context\\n• reply_to_message on relayed message routes back to Driver chat_id", fillcolor="#e0e7ff", color="#4338ca"];
+        redis_limit [label="Redis Counter Check (Rate Limit):\\nAppeals in Last 8 Hours?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        block_popup [label="Block Appeal (> 3 in 8h):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H\\n(Driver informed of quota exhaustion in DM)", fillcolor="#fee2e2", color="#dc2626"];
+        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement 8h Counter & Forward Ticket to Admin Group\\n(Bot notifies: Còn X/3 lượt trong 8h)", fillcolor="#dcfce7", color="#16a34a"];
     }
 
-    subgraph cluster_appeal_limit {
-        label="3. Rate-Limited Appeal & Quota Notification (Max 3 / 8h)";
+    subgraph cluster_stage3 {
+        label="Stage 3: Admin Live Supervision & Moderation Controls in Admin Group";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
-        redis_limit [label="Redis Counter Check:\\nAppeals in Last 8 Hours?", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-        block_popup [label="Block Appeal (> 3 in 8h):\\nBẠN ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI TRONG 8H\\n(Driver informed of quota exhaustion)", fillcolor="#fee2e2", color="#dc2626"];
-        allow_appeal [label="Allow Appeal (<= 3 in 8h):\\nIncrement 8h Counter & Forward Ticket to Management Group\\n(Bot notifies: Còn X/3 lượt trong 8h)", fillcolor="#dcfce7", color="#16a34a"];
+        admin_group [label="Telegram Admin Management Group\\n(Supervisors monitor live feed of all driver interactions & appeals)", fillcolor="#fef3c7", color="#d97706"];
+        mod_action [label="Admins Moderate Directly in Group\\n1-Click Buttons: [Duyệt] [Từ chối] [Cảnh cáo] [Đổi xe]\\nOr reply directly to relayed message", fillcolor="#ffffff", color="#64748b"];
+        mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
+        action_approve [label="[Duyệt] -> Payout Credited & Client Synced", fillcolor="#dcfce7", color="#16a34a"];
+        action_reject [label="[Từ chối] -> Rejection Confirmed", fillcolor="#fee2e2", color="#dc2626"];
+        action_warn [label="[Cảnh cáo] -> Warning Dispatched", fillcolor="#fee2e2", color="#dc2626"];
+        action_change [label="[Đổi xe] -> Update Persistent Vehicle Plate & Audit", fillcolor="#ede9fe", color="#7c3aed"];
     }
 
     driver_dm -> bot_msg;
@@ -341,23 +366,22 @@ digraph G {
     bot_msg -> appeal_btn -> redis_limit;
     redis_limit -> block_popup [label="> 3 Appeals"];
     redis_limit -> allow_appeal [label="<= 3 Appeals"];
-    allow_appeal -> admin_group;
-    driver_dm -> admin_group [label="Bot Relays All Activity", color="#0284c7"];
-    bot_msg -> admin_group [label="Bot Relays All Activity", color="#0284c7"];
+    
+    driver_dm -> relay_worker [label="Driver messages & photos", color="#0284c7"];
+    bot_msg -> relay_worker [label="Bot status responses", color="#0284c7"];
+    allow_appeal -> relay_worker [label="Appeal ticket", color="#0284c7"];
+    
+    relay_worker -> admin_group [label="Automated copyMessage / forwardMessage", color="#0284c7"];
     admin_group -> mod_action;
-    mod_dispatch [label="Admin Action Choice", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
-    action_approve [label="[Duyệt] -> Payout Credited & Client Synced", fillcolor="#dcfce7", color="#16a34a"];
-    action_reject [label="[Từ chối] -> Rejection Confirmed", fillcolor="#fee2e2", color="#dc2626"];
-    action_warn [label="[Cảnh cáo] -> Warning Dispatched", fillcolor="#fee2e2", color="#dc2626"];
-    action_change [label="[Đổi xe] -> Update Persistent Vehicle Plate & Audit", fillcolor="#ede9fe", color="#7c3aed"];
-
     mod_action -> mod_dispatch;
     mod_dispatch -> action_approve [label="Click Duyệt"];
     mod_dispatch -> action_reject [label="Click Từ chối"];
     mod_dispatch -> action_warn [label="Click Cảnh cáo"];
     mod_dispatch -> action_change [label="Click Đổi xe"];
+    
     action_approve -> driver_dm [label="Relayed to Driver DM", color="#16a34a"];
     action_reject -> driver_dm [label="Relayed to Driver DM", color="#dc2626"];
+    mod_action -> driver_dm [label="Admin reply_to_message relayed to Driver DM", style=dashed, color="#4338ca"];
 }
 """
 

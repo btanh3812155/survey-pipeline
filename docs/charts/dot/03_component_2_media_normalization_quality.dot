@@ -37,7 +37,13 @@ digraph G {
         glare_check [label="Specular Glare Check\n(Flash Halo Destroys Text Edges?)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         rej_glare [label="Reject:\nSPECULAR_GLARE", fillcolor="#fee2e2", color="#dc2626"];
         pass_quality [label="Quality Gate PASSED\n(Hand off to Fleet Screening & AI)", fillcolor="#dcfce7", color="#16a34a"];
+        tg_reject_push_c2 [label="Route to Telegram Bot Response\n(Dispatches Rejection Notice + 1-Click Retake Deep Link)", fillcolor="#fee2e2", color="#dc2626"];
     }
+
+    rej_tamper -> tg_reject_push_c2;
+    rej_blur -> tg_reject_push_c2;
+    rej_dark -> tg_reject_push_c2;
+    rej_glare -> tg_reject_push_c2;
 
     raw_in -> exif_scan -> ela_scan -> tamper_gate;
     tamper_gate -> rej_tamper [label="Yes"];

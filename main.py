@@ -2,7 +2,9 @@ import secrets
 import json
 import httpx
 import logging
+from typing import Optional
 from contextlib import asynccontextmanager
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status
 from fastapi.responses import JSONResponse
 
@@ -33,15 +35,29 @@ vision_client = DualModelVisionClient(
 )
 
 http_client: httpx.AsyncClient = None
+try:
+    redis_client: Optional[aioredis.Redis] = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+except Exception:
+    redis_client = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client
+    global http_client, redis_client
     http_client = httpx.AsyncClient(timeout=10.0)
+    if redis_client is None:
+        try:
+            redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        except Exception as e:
+            logger.warning(f"could not initialize redis: {e}")
+            redis_client = None
     yield
+    if redis_client:
+        try:
+            await redis_client.aclose()
+        except Exception:
+            pass
     await http_client.aclose()
-
 
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 
@@ -102,6 +118,20 @@ async def lark_webhook_ingress(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid lark signature",
             )
+    # 2b. replay attack prevention via redis nonce cache
+    if x_lark_request_nonce and redis_client:
+        nonce_key = f"lock:lark_nonce:{x_lark_request_nonce}"
+        try:
+            is_new = await redis_client.set(nonce_key, "1", nx=True, ex=300)
+            if not is_new:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Replay attack detected: nonce already used",
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"redis nonce caching error: {e}")
 
     # 3. parse survey event payload
     try:

@@ -39,8 +39,8 @@ digraph G {
         color="#d1d5db";
         fontcolor="#1f2937";
         
-        driver [label="Driver on Mobile\n(Lark Form + Telegram Group)", fillcolor="#e0f2fe", color="#0284c7"];
-        tg_hub [label="Telegram Group Operational Hub\n(Drivers interact with Bot; Admins monitor live)", fillcolor="#e0f2fe", color="#0284c7"];
+        driver [label="Driver on Mobile\n(Lark Form + Private 1-to-1 DM t.me/TenBot)", fillcolor="#e0f2fe", color="#0284c7"];
+        tg_admin_group [label="Telegram Admin Management Group\n(Bot auto-relays submissions, photos & replies via copyMessage/forwardMessage;\nAdmins monitor live & execute 1-click moderation or reply back)", fillcolor="#fef3c7", color="#d97706"];
         staff [label="Management on Company PCs\n(Lark Base: Admin, QC, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
         clients [label="Paying Business Clients\n(Google Drive Customer Folder)", fillcolor="#fef3c7", color="#d97706"];
     }
@@ -75,14 +75,19 @@ digraph G {
         zns [label="Zalo ZNS Gateway\n(Official Thank-You to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
-    driver -> caddy [label="Submit Form"];
+    driver -> caddy [label="Submit Form / Webhook"];
     caddy -> fastapi;
     fastapi -> redis [dir=both, label="Lock / Limit"];
-    fastapi -> sanitizer -> dual_ai -> rules;
+    fastapi -> sanitizer;
+    sanitizer -> dual_ai [label="Pass Quality"];
+    sanitizer -> driver [label="Reject Notice / Retake (Private DM)", style=dashed, color="#dc2626"];
+    dual_ai -> rules [label="Extracted"];
+    dual_ai -> driver [label="AI Fail / Reject (Private DM)", style=dashed, color="#dc2626"];
     rules -> postgres [label="Approved (Atomic Commit)"];
-    rules -> tg_hub [label="Rejection Notice / 1-Click Retake", style=dashed, color="#dc2626"];
-    driver -> tg_hub [label="Interacts / Retakes Photo / Appeals", color="#0284c7"];
-    tg_hub -> fastapi [label="1-Click Admin Moderation / Retake", color="#dc2626"];
+    rules -> driver [label="Rejection Notice / 1-Click Retake (Private DM)", style=dashed, color="#dc2626"];
+    driver -> tg_admin_group [label="Bot Auto-Relays Driver Submissions, Photos & Replies\n(copyMessage / forwardMessage)", color="#0284c7"];
+    tg_admin_group -> fastapi [label="Admin 1-Click Moderation / Reply Callback", color="#dc2626"];
+    fastapi -> driver [label="Relay Admin Reply back to Driver DM", style=dashed, color="#16a34a"];
     postgres -> outbox_worker [dir=both];
     outbox_worker -> r2;
     outbox_worker -> gdrive -> clients;

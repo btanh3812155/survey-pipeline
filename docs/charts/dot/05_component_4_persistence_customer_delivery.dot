@@ -38,11 +38,11 @@ digraph G {
         fillcolor="#f8fafc";
         color="#cbd5e1";
 
-        approved_in [label="Approved Survey Event", fillcolor="#dcfce7", color="#16a34a"];
+        survey_event_in [label="Survey Event\n(Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
         sql_tx [label="PostgreSQL Atomic Transaction\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
-        sub_table [label="INSERT survey_submissions\n(status = APPROVED)", fillcolor="#e0f2fe", color="#0284c7"];
-        outbox_table [label="INSERT outbox_events\n(status = PENDING)", fillcolor="#fee2e2", color="#dc2626"];
-        tg_push [label="Telegram Bot API Push\n(Dispatches Instant Approval Notice to Driver)", fillcolor="#e0f2fe", color="#0284c7"];
+        sub_table [label="INSERT survey_submissions\n(status: APPROVED or REJECTED)", fillcolor="#e0f2fe", color="#0284c7"];
+        outbox_table [label="INSERT outbox_events\n(status = PENDING for Approved)", fillcolor="#fee2e2", color="#dc2626"];
+        tg_push [label="Telegram Bot Response\n(Pushed directly to Driver DM:\nApproval Confirmation or Rejection + Retake Link)", fillcolor="#e0f2fe", color="#0284c7"];
 
         poller [label="Background Outbox Worker\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
         r2_upload [label="Cloudflare R2 Object Storage\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
@@ -54,10 +54,10 @@ digraph G {
         lark_sync [label="Lark Base Bi-directional Sync\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
         zns_notify [label="Zalo ZNS Official Thank-You\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
-    approved_in -> sql_tx;
+    survey_event_in -> sql_tx;
     sql_tx -> sub_table;
-    sql_tx -> outbox_table;
-    sub_table -> tg_push [label="Committed State -> Immediate Push"];
+    sql_tx -> outbox_table [label="If Approved"];
+    sub_table -> tg_push [label="Direct DM Push to Driver\n(Approved or Rejected)"];
     outbox_table -> poller [label="Poll Events"];
     poller -> r2_upload;
     poller -> ledger_credit;

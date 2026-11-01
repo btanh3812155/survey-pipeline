@@ -28,24 +28,52 @@ TEMPLATES_VN = {
         "👉 <i>Quy định khảo sát yêu cầu chụp trực tiếp từ phiếu giấy thực tế. Ảnh chụp màn hình sẽ không được duyệt.</i>"
     ),
     "DIGITAL_TAMPERING": (
-        "❌ <b>PHÁT HIỆN DẤU HIỆU CHỈNH SỬA ẢNH (PHOTOSHOP)</b>\n\n"
+        "❌ <b>ẢNH CHỤP CÓ DẤU HIỆU ĐÃ QUA CHỈNH SỬA</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"
-        "• Lỗi vi phạm: <b>Ảnh có dấu hiệu can thiệp kỹ thuật số / tẩy xóa</b>\n"
         "• Chi tiết: {collaborator_note}\n\n"
-        "👉 <i>Quy định bắt buộc nộp ảnh nguyên bản chụp trực tiếp từ camera. Ảnh chỉnh sửa qua phần mềm sẽ bị từ chối duyệt.</i>"
+        "👉 <i>Quy định bắt buộc nộp ảnh nguyên bản chụp trực tiếp từ camera. Vui lòng chụp lại ảnh gốc nhé!</i>"
+    ),
+    "IMAGE_MANIPULATION_DETECTED": (
+        "❌ <b>ẢNH CHỤP CÓ DẤU HIỆU ĐÃ QUA CHỈNH SỬA</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Quy định bắt buộc nộp ảnh nguyên bản chụp trực tiếp từ camera. Vui lòng chụp lại ảnh gốc nhé!</i>"
     ),
     "DUPLICATE": (
-        "❌ <b>PHÁT HIỆN ẢNH TRÙNG LẶP (DUPLICATE)</b>\n\n"
+        "❌ <b>PHÁT HIỆN ẢNH TRÙNG LẶP</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"
-        "• Lỗi vi phạm: <b>Phiếu này đã được nộp trước đó trên hệ thống</b>\n\n"
-        "👉 <i>Vui lòng không sử dụng lại ảnh khảo sát cũ để tránh vi phạm chính sách cộng tác viên.</i>"
+        "• Chi tiết: Ảnh này đã được nộp trước đó trong hệ thống.\n\n"
+        "👉 <i>Vui lòng không sử dụng lại ảnh cũ để đảm bảo tính hợp lệ của khảo sát.</i>"
+    ),
+    "STOCK_PHOTO_DETECTED": (
+        "❌ <b>ẢNH CHỤP TRÙNG KHỚP ẢNH MẠNG / QUẢNG CÁO</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Chi tiết: Hệ thống nhận diện ảnh lấy từ nguồn internet hoặc hình quảng cáo.\n\n"
+        "👉 <i>Quy định bắt buộc chụp xe thực tế đang vận hành. Vui lòng chụp lại nhé!</i>"
+    ),
+    "VEHICLE_UNREGISTERED": (
+        "❌ <b>PHƯƠNG TIỆN KHÔNG TRÙNG KHỚP XE ĐĂNG KÝ</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Nếu bạn đã đổi xe mới phục vụ công việc, vui lòng bấm nút bên dưới để quản trị viên hỗ trợ cập nhật xe nhé!</i>"
+    ),
+    "INCOME_EXCEEDS_THRESHOLD": (
+        "❌ <b>SỐ LIỆU DOANH THU VƯỢT QUÁ NGƯỠNG CHO PHÉP</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Vui lòng kiểm tra lại số liệu đã điền trên form hoặc chụp lại màn hình ứng dụng tài xế nhé!</i>"
+    ),
+    "AVERAGE_FARE_OUT_OF_RANGE": (
+        "❌ <b>GIÁ CƯỚC BÌNH QUÂN BẤT THƯỜNG</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Vui lòng kiểm tra lại số chuyến và tổng doanh thu trên màn hình ứng dụng nhé!</i>"
     ),
     "ARITHMETIC_MISMATCH": (
-        "❌ <b>LỖI SAI LỆCH SỐ TIỀN TRÊN HÓA ĐƠN</b>\n\n"
+        "❌ <b>SỐ LIỆU DOANH THU KHÔNG KHỚP</b>\n\n"
         "• Mã phiếu: <code>#{submission_id}</code>\n"
-        "• Lỗi phát hiện: <b>Tổng tiền không khớp các khoản chi tiết</b>\n"
-        "• Ghi chú: {collaborator_note}\n\n"
-        "👉 <i>Vui lòng kiểm tra lại số liệu trên hóa đơn và gửi lại.</i>"
+        "• Chi tiết: {collaborator_note}\n\n"
+        "👉 <i>Vui lòng đối soát lại số liệu giữa doanh số, chiết khấu và thực nhận nhé!</i>"
     ),
     "MANUAL_REVIEW": (
         "⏳ <b>HỆ THỐNG ĐANG CHUYỂN DUYỆT THỦ CÔNG</b>\n\n"
@@ -96,13 +124,13 @@ def render_telegram_verdict(
     )
 
 
-def render_appeal_keyboard(submission_id: str) -> dict:
+def render_appeal_keyboard(submission_id: str, remaining_appeals: int = 3) -> dict:
     """Returns Telegram inline keyboard allowing rate-limited appeal request."""
     return {
         "inline_keyboard": [
             [
                 {
-                    "text": "🙋 Yêu cầu người thật kiểm tra lại",
+                    "text": "Yêu cầu kiểm tra lại",
                     "callback_data": f"appeal:{submission_id}",
                 }
             ]

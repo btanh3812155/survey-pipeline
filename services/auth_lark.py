@@ -1,3 +1,4 @@
+import time
 import hashlib
 import hmac
 import json
@@ -19,13 +20,30 @@ def verify_lark_signature(
     Verifies Bytedance Lark Base webhook signature using raw SHA256 string concatenation.
     Note: Lark does NOT use HMAC; it concatenates timestamp + nonce + key + body and hashes with SHA256.
     """
-    if not (timestamp and nonce and expected_signature):
+    if not (timestamp and nonce and expected_signature and encrypt_key is not None and raw_body is not None):
         return False
 
-    content = timestamp.encode("utf-8") + nonce.encode("utf-8") + encrypt_key.encode("utf-8") + raw_body
-    computed = hashlib.sha256(content).hexdigest()
-    return hmac.compare_digest(computed, expected_signature)
+    if not isinstance(encrypt_key, str) or not isinstance(raw_body, (bytes, bytearray)):
+        return False
 
+    try:
+        ts_int = int(timestamp)
+        if abs(time.time() - ts_int) > 300:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    try:
+        content = (
+            timestamp.encode("utf-8")
+            + nonce.encode("utf-8")
+            + encrypt_key.encode("utf-8")
+            + raw_body
+        )
+        computed = hashlib.sha256(content).hexdigest()
+        return hmac.compare_digest(computed, expected_signature)
+    except Exception:
+        return False
 
 def decrypt_lark_payload(encrypt_key: str, encrypted_b64: str) -> str:
     """

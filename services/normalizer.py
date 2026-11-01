@@ -1,4 +1,5 @@
 import io
+import warnings
 import cv2
 import numpy as np
 from PIL import Image, ImageOps, ImageFile, UnidentifiedImageError
@@ -7,6 +8,7 @@ from typing import Tuple, Optional
 # prevent decompression bombs while allowing normal high-res phone captures
 Image.MAX_IMAGE_PIXELS = 35_000_000
 ImageFile.LOAD_TRUNCATED_IMAGES = False
+warnings.simplefilter("error", Image.DecompressionBombWarning)
 
 # attempt HEIC format registration for native iOS uploads
 try:
@@ -43,7 +45,7 @@ def sanitize_and_normalize_image(
         # libjpeg-turbo C-level draft scaling for large JPEG files
         if im.format == "JPEG" and min(im.size) > max_short_edge * 2:
             im.draft("RGB", (max_short_edge, max_short_edge))
-            im.load()
+        im.load()
     except Exception as e:
         raise ValueError(f"malformed or unreadable image stream: {e}")
 

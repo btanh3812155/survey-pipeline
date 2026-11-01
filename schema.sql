@@ -102,3 +102,19 @@ CREATE TABLE IF NOT EXISTS online_stock_images (
 
 CREATE INDEX IF NOT EXISTS idx_stock_dhash 
 ON online_stock_images (image_dhash);
+
+-- 7. Vehicle Change Audit & History Ledger
+CREATE TABLE IF NOT EXISTS vehicle_change_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    driver_phone VARCHAR(20) NOT NULL REFERENCES driver_registered_vehicles(driver_phone) ON DELETE CASCADE,
+    previous_plate VARCHAR(32) NOT NULL,
+    new_plate VARCHAR(32) NOT NULL,
+    previous_vehicle_type VARCHAR(16) NOT NULL,
+    new_vehicle_type VARCHAR(16) NOT NULL,
+    changed_by_admin_id BIGINT,
+    change_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_veh_change_phone 
+ON vehicle_change_history (driver_phone, created_at DESC);

@@ -1,3 +1,4 @@
+import math
 from typing import Tuple, Optional
 from pydantic import BaseModel
 
@@ -48,6 +49,23 @@ def analyze_driver_income(
     """
     vtype = "BIKE" if "BIKE" in vehicle_type.upper() else "CAR"
     cfg = INCOME_BENCHMARKS[vtype]
+    # 0. Check for valid positive finite gross income (VULN-FRAUD-06)
+    try:
+        val = float(gross_income)
+        if math.isnan(val) or math.isinf(val) or val <= 0:
+            return IncomeAnalysisResult(
+                is_valid=False,
+                status_code="INCOME_EXCEEDS_THRESHOLD",
+                flag_reason="Thu nhập khai báo không hợp lệ (phải là số dương lớn hơn 0).",
+                suggested_action="AUTO_REJECT",
+            )
+    except (TypeError, ValueError):
+        return IncomeAnalysisResult(
+            is_valid=False,
+            status_code="INCOME_EXCEEDS_THRESHOLD",
+            flag_reason="Thu nhập khai báo không hợp lệ (phải là số dương lớn hơn 0).",
+            suggested_action="AUTO_REJECT",
+        )
 
     # 1. Check Outlandish Hard Ceiling (Auto-Reject)
     hard_limit = cfg["monthly_hard_reject"] if period == "monthly" else (cfg["daily_gross_max"] * 3)

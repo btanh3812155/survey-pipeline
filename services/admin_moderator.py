@@ -51,7 +51,11 @@ async def forward_flagged_survey_to_admin_group(
             ],
             [
                 {
-                    "text": "⚠️ Cảnh cáo tài xế (Warn)",
+                    "text": "🔄 Cho phép đổi xe",
+                    "callback_data": f"admin_change_veh:{submission_id}:{driver_phone}",
+                },
+                {
+                    "text": "⚠️ Cảnh cáo",
                     "callback_data": f"admin_warn:{submission_id}:{driver_phone}",
                 }
             ],

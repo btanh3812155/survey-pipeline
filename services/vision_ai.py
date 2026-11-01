@@ -19,10 +19,11 @@ class ReceiptLineItem(BaseModel):
             return 0
         if isinstance(v, (int, float)):
             return int(v)
-        if isinstance(v, str):
-            clean = re.sub(r"[^0-9\-]", "", v)
-            return int(clean) if clean and clean != "-" else 0
-        return 0
+        try:
+            clean = re.sub(r"[^0-9]", "", str(v))
+            return int(clean) if clean else 0
+        except Exception:
+            return 0
 
 
 class ExtractedReceiptFacts(BaseModel):
@@ -41,10 +42,11 @@ class ExtractedReceiptFacts(BaseModel):
             return 0
         if isinstance(v, (int, float)):
             return int(v)
-        if isinstance(v, str):
-            clean = re.sub(r"[^0-9\-]", "", v)
-            return int(clean) if clean and clean != "-" else 0
-        return 0
+        try:
+            clean = re.sub(r"[^0-9]", "", str(v))
+            return int(clean) if clean else 0
+        except Exception:
+            return 0
     has_signature: bool = False
     unchecked_boxes_count: int = 0
     is_screen_photo: bool = False

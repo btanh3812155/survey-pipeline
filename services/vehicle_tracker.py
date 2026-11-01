@@ -1,4 +1,5 @@
 import re
+import inspect
 from typing import Optional, Tuple
 from pydantic import BaseModel
 
@@ -40,12 +41,12 @@ class VehiclePersistenceTracker:
 
         # mock database check if db_pool is not connected
         if not self.db_pool:
-            if norm_detected and norm_detected.startswith("FAKE"):
+            if not norm_detected or (norm_detected and norm_detected.startswith("FAKE")):
                 return VehicleMatchResult(
                     is_match=False,
                     is_first_registration=False,
-                    status_code="VEHICLE_MISMATCH",
-                    flag_reason=f"Phát hiện đổi biển số xe: Đăng ký [29E12345] nhưng nộp [{norm_detected}].",
+                    status_code="VEHICLE_UNREGISTERED",
+                    flag_reason=f"Phương tiện chưa đăng ký: Xe đăng ký là [29E12345] nhưng ảnh chụp là [{norm_detected}].",
                     registered_plate="29E12345",
                     detected_plate=norm_detected,
                 )
@@ -92,15 +93,27 @@ class VehiclePersistenceTracker:
                     )
 
                 # 3. subsequent survey -> verify plate & vehicle type match
-                reg_plate, reg_type, reg_color = existing
+                reg_plate = existing[0]
+                reg_type = existing[1] if len(existing) > 1 else vtype
+                reg_color = existing[2] if len(existing) > 2 else None
                 norm_reg = normalize_license_plate(reg_plate)
 
+                # check empty or unreadable plate when driver has registered vehicle (VULN-FRAUD-01)
+                if norm_reg and not norm_detected:
+                    return VehicleMatchResult(
+                        is_match=False,
+                        is_first_registration=False,
+                        status_code="VEHICLE_UNREGISTERED",
+                        flag_reason="Không tìm thấy hoặc không đọc được biển số xe trên ảnh.",
+                        registered_plate=reg_plate,
+                        detected_plate=detected_plate,
+                    )
                 # check license plate mismatch
                 if norm_detected and norm_reg and norm_detected != norm_reg:
                     return VehicleMatchResult(
                         is_match=False,
                         is_first_registration=False,
-                        status_code="VEHICLE_MISMATCH",
+                        status_code="VEHICLE_UNREGISTERED",
                         flag_reason=(
                             f"Phát hiện phương tiện không khớp: Tài xế đăng ký xe biển số [{reg_plate}] "
                             f"nhưng ảnh nộp là biển số [{detected_plate}]."
@@ -114,7 +127,7 @@ class VehiclePersistenceTracker:
                     return VehicleMatchResult(
                         is_match=False,
                         is_first_registration=False,
-                        status_code="VEHICLE_TYPE_MISMATCH",
+                        status_code="VEHICLE_TYPE_UNREGISTERED",
                         flag_reason=f"Sai loại xe: Tài xế đăng ký [{reg_type}] nhưng gửi ảnh kiểm tra xe [{vtype}].",
                         registered_plate=reg_plate,
                         detected_plate=detected_plate,
@@ -127,3 +140,75 @@ class VehiclePersistenceTracker:
                     registered_plate=reg_plate,
                     detected_plate=detected_plate,
                 )
+
+    async def approve_vehicle_change(
+        self,
+        driver_phone: str,
+        new_plate: str,
+        new_vehicle_type: str,
+        admin_id: int,
+        reason: str = "Tài xế đổi xe công ty",
+    ) -> Tuple[bool, int, str]:
+        """
+        Pathway for admins to allow legitimate vehicle changes while monitoring frequency & recency.
+        Returns (success: bool, changes_in_last_30d: int, audit_note: str).
+        """
+        norm_new = normalize_license_plate(new_plate)
+        vtype = "BIKE" if "BIKE" in new_vehicle_type.upper() else "CAR"
+
+        if not self.db_pool:
+            return True, 1, "Mock: Đã cập nhật xe mới thành công."
+
+        async with self.db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # 1. get current vehicle
+                await cur.execute(
+                    "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone = %s;",
+                    (driver_phone,),
+                )
+                curr = await cur.fetchone()
+                old_plate = curr[0] if curr else "UNKNOWN"
+                old_type = curr[1] if curr else vtype
+
+                # 2. check change frequency in last 30 days
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) FROM vehicle_change_history 
+                    WHERE driver_phone = %s AND created_at > NOW() - INTERVAL '30 DAYS';
+                """,
+                    (driver_phone,),
+                )
+                recent_changes = (await cur.fetchone())[0] + 1
+
+                # 3. log to audit ledger
+                await cur.execute(
+                    """
+                    INSERT INTO vehicle_change_history (
+                        driver_phone, previous_plate, new_plate, previous_vehicle_type, new_vehicle_type, changed_by_admin_id, change_reason
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s);
+                """,
+                    (driver_phone, old_plate, norm_new, old_type, vtype, admin_id, reason),
+                )
+
+                # 4. update active registered vehicle
+                await cur.execute(
+                    """
+                    INSERT INTO driver_registered_vehicles (driver_phone, license_plate, vehicle_type)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (driver_phone) DO UPDATE 
+                    SET license_plate = EXCLUDED.license_plate, vehicle_type = EXCLUDED.vehicle_type, updated_at = NOW();
+                """,
+                    (driver_phone, norm_new, vtype),
+                )
+
+                commit_fn = getattr(conn, "commit", None)
+                if callable(commit_fn):
+                    res = commit_fn()
+                    if inspect.isawaitable(res):
+                        await res
+
+                warning = ""
+                if recent_changes >= 3:
+                    warning = f" ⚠️ Cảnh báo: Tài xế này đã đổi xe {recent_changes} lần trong 30 ngày qua!"
+
+                return True, recent_changes, f"Đã duyệt đổi sang xe {norm_new} ({vtype}).{warning}"

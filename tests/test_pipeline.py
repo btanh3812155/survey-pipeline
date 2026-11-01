@@ -21,7 +21,8 @@ from services.templates_vn import render_telegram_verdict
 
 
 def test_lark_signature_raw_sha256_verification():
-    timestamp = "1730380800"
+    import time
+    timestamp = str(int(time.time()))
     nonce = "abc123nonce"
     encrypt_key = "my_secret_key"
     body = b'{"type":"event_callback","event":{"submission_id":"sub_001"}}'

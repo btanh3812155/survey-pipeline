@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import inspect
 from typing import Optional
 import psycopg
 from psycopg.rows import dict_row
@@ -49,38 +50,55 @@ async def process_outbox_batch(conn_str: str, batch_size: int = 50) -> int:
                         (event_ids,),
                     )
 
-                    # 2. process each event
+                    # 2. process each event with isolated sub-transactions (savepoints)
                     for ev in events:
-                        payload = ev["payload"]
-                        submission_id = ev["aggregate_id"]
+                        try:
+                            async with conn.transaction():
+                                payload = ev["payload"]
+                                submission_id = ev["aggregate_id"]
 
-                        if ev["event_type"] == "SURVEY_APPROVED":
-                            collab_id = payload.get("collaborator_id")
-                            payout_amount = payload.get("payout_vnd", 25000)
+                                if ev["event_type"] == "SURVEY_APPROVED":
+                                    collab_id = payload.get("collaborator_id")
+                                    payout_amount = payload.get("payout_vnd", 25000)
 
-                            # credit financial ledger idempotently
+                                    # credit financial ledger idempotently
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO collaborator_billing_ledger (
+                                            collaborator_id, submission_id, payout_amount_vnd, payout_status
+                                        ) VALUES (%s, %s, %s, 'PENDING_PAYOUT')
+                                        ON CONFLICT (submission_id) DO NOTHING;
+                                    """,
+                                        (collab_id, submission_id, payout_amount),
+                                    )
+
+                                # mark as processed
+                                await cur.execute(
+                                    """
+                                    UPDATE outbox_events
+                                    SET status = 'PROCESSED', processed_at = NOW()
+                                    WHERE id = %s;
+                                """,
+                                    (ev["id"],),
+                                )
+                                processed_count += 1
+                        except Exception as e:
+                            logger.error(f"failed event {ev['id']}: {e}")
                             await cur.execute(
                                 """
-                                INSERT INTO collaborator_billing_ledger (
-                                    collaborator_id, submission_id, payout_amount_vnd, payout_status
-                                ) VALUES (%s, %s, %s, 'PENDING_PAYOUT')
-                                ON CONFLICT (submission_id) DO NOTHING;
+                                UPDATE outbox_events
+                                SET retry_count = retry_count + 1,
+                                    status = CASE WHEN retry_count >= 5 THEN 'FAILED' ELSE 'PENDING' END
+                                WHERE id = %s;
                             """,
-                                (collab_id, submission_id, payout_amount),
+                                (ev["id"],),
                             )
 
-                        # mark as processed
-                        await cur.execute(
-                            """
-                            UPDATE outbox_events
-                            SET status = 'PROCESSED', processed_at = NOW()
-                            WHERE id = %s;
-                        """,
-                            (ev["id"],),
-                        )
-                        processed_count += 1
-
-            await conn.commit()
+            commit_fn = getattr(conn, "commit", None)
+            if callable(commit_fn):
+                res = commit_fn()
+                if inspect.isawaitable(res):
+                    await res
     except Exception as e:
         logger.error(f"error processing outbox batch: {e}")
 

@@ -34,7 +34,15 @@ digraph G {
         py_rules [label="Python Deterministic Rule Engine\n(Validates Math, Signature, Tax Code)", shape=diamond, fillcolor="#fef3c7", color="#d97706"];
         rej_rules [label="Reject:\nMISSING_FIELDS / CALCULATION_MISMATCH", fillcolor="#fee2e2", color="#dc2626"];
         approved [label="Survey Fully Approved!\n(Hand off to Persistence)", fillcolor="#dcfce7", color="#16a34a"];
+        tg_reject_push_c3 [label="Route to Telegram Bot Response\n(Dispatches Rejection Notice + 1-Click Appeal Button)", fillcolor="#fee2e2", color="#dc2626"];
     }
+
+    rej_stock -> tg_reject_push_c3;
+    rej_ai -> tg_reject_push_c3;
+    rej_veh -> tg_reject_push_c3;
+    income_check -> rej_income [label="Outlandish Math"];
+    rej_income -> tg_reject_push_c3;
+    rej_rules -> tg_reject_push_c3;
 
     img_in -> dhash;
     dhash -> rej_stock [label="Matched Stock"];
@@ -43,7 +51,7 @@ digraph G {
     fft -> veh_tracker [label="Natural Photo"];
     veh_tracker -> rej_veh [label="Plate Mismatch"];
     veh_tracker -> income_check [label="Vehicle Matches"];
-    income_check -> rej_income [label="Outlandish Math"];
+
     income_check -> ai_router [label="Realistic Income"];
 
     ai_router -> ds_flash [label="Try Primary"];

@@ -1,7 +1,7 @@
 import io
 import json
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from typing import Tuple, List, Optional
 from pydantic import BaseModel
 
@@ -49,10 +49,9 @@ def detect_ai_generated_fft_anomalies(pil_img: Image.Image) -> Tuple[bool, float
     # mask out low frequencies
     y, x = np.ogrid[:h, :w]
     mask = (x - center_x) ** 2 + (y - center_y) ** 2 > r**2
-    high_freq_energy = np.mean(magnitude_spectrum[mask])
-    total_energy = np.mean(magnitude_spectrum)
-
-    ratio = high_freq_energy / (total_energy + 1e-8)
+    outer = magnitude_spectrum[mask]
+    center = magnitude_spectrum[~mask]
+    ratio = np.mean(outer) / (np.mean(center) + 1e-8)
     # natural photos have decaying high-frequency spectrum; synthetic diffusion has elevated grid peaks
     is_suspicious_ai = bool(ratio > 1.35)
     return is_suspicious_ai, float(ratio)
@@ -84,10 +83,12 @@ class OnlineStockAndAIDetector:
         2. Forensic FFT frequency spectrum anomalies.
         3. Multimodal AI generative inspection flags.
         """
-        # 1. Online Stock Image Database Check
+        # 1. Online Stock Image Database Check (original & horizontally mirrored)
         target_hash = compute_dhash_int(pil_img)
+        mirrored_hash = compute_dhash_int(ImageOps.mirror(pil_img))
         for stock_hash in self.known_stock_hashes:
-            if hamming_distance(target_hash, stock_hash) <= 6:
+            dist = min(hamming_distance(target_hash, stock_hash), hamming_distance(mirrored_hash, stock_hash))
+            if dist <= 6:
                 return SyntheticImageDetectionResult(
                     is_flagged=True,
                     status_code="STOCK_IMAGE_DETECTED",
