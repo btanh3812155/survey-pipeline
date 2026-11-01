@@ -53,6 +53,24 @@ TEMPLATES_VN = {
         "• Trạng thái: <b>Đang chờ quản lý kiểm tra</b>\n\n"
         "👉 <i>Phiếu của bạn cần xem xét thêm. Kết quả sẽ được cập nhật trong ít phút!</i>"
     ),
+    "SUSPICIOUS_NEEDS_REVIEW": (
+        "⏳ <b>PHIẾU KHẢO SÁT ĐANG CHỜ QUẢN TRỊ VIÊN XÉT DUYỆT</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Trạng thái: <b>Nghi vấn cần kiểm tra lại (Suspicious)</b>\n"
+        "• Chi tiết: <i>{collaborator_note}</i>\n\n"
+        "👉 <i>Hệ thống đã tự động chuyển phiếu của anh tới ban quản trị để xác minh thêm. Kết quả sẽ được cập nhật trong 10-15 phút nhé!</i>"
+    ),
+    "APPEAL_ACCEPTED": (
+        "✅ <b>ĐÃ TIẾP NHẬN YÊU CẦU KHIẾU NẠI</b>\n\n"
+        "• Mã phiếu: <code>#{submission_id}</code>\n"
+        "• Trạng thái: <b>Đã chuyển người thật kiểm tra lại</b>\n\n"
+        "👉 <i>Quản trị viên sẽ trực tiếp đối soát ảnh gốc của anh. Kết quả sẽ được thông báo ngay tại đây!</i>"
+    ),
+    "APPEAL_RATE_LIMITED": (
+        "⚠️ <b>ANH ĐÃ DÙNG HẾT LƯỢT KHIẾU NẠI HÔM NAY</b>\n\n"
+        "• Giới hạn: <b>Tối đa 1 lần yêu cầu người thật kiểm tra / 24 giờ</b>\n\n"
+        "👉 <i>Để đảm bảo tốc độ hệ thống, vui lòng kiểm tra lại ảnh chụp rõ nét và nộp phiếu mới nhé!</i>"
+    ),
 }
 
 
@@ -76,3 +94,17 @@ def render_telegram_verdict(
         missing_list=formatted_missing,
         collaborator_note=note,
     )
+
+
+def render_appeal_keyboard(submission_id: str) -> dict:
+    """Returns Telegram inline keyboard allowing rate-limited appeal request."""
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🙋 Yêu cầu người thật kiểm tra lại",
+                    "callback_data": f"appeal:{submission_id}",
+                }
+            ]
+        ]
+    }

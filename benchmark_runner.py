@@ -27,16 +27,20 @@ def sample_representative_images(max_samples: int = 15):
 async def run_benchmark():
     files = sample_representative_images(15)
     print(f"selected {len(files)} representative images from GSM dataset")
-
-    # initialize vision client with Gemini API key from environment
+    # initialize vision client with Gemini & DeepSeek API keys from environment
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    client = DualModelVisionClient(gemini_api_key=gemini_key)
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    client = DualModelVisionClient(
+        gemini_api_key=gemini_key,
+        deepseek_api_key=deepseek_key,
+        deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    )
 
     results = []
     for idx, fpath in enumerate(files):
         t0 = time.perf_counter()
         rel_name = os.path.relpath(fpath, DATASET_DIR)
-        print(f"[{idx+1}/{len(files)}] processing {rel_name}...")
+        print(f"[{idx+1}/{len(files)}] comparing Gemini vs DeepSeek on {rel_name}...")
 
         with open(fpath, "rb") as f:
             raw_bytes = f.read()
@@ -54,28 +58,67 @@ async def run_benchmark():
         # 3. photoshop / tamper check (forensic metadata + ELA)
         is_tampered_forensic, tamper_reason = detect_image_manipulation(raw_bytes, pil_img)
 
-        # 4. vision AI extraction
-        t_ai_start = time.perf_counter()
-        ai_error = None
-        facts = None
+        # prepare messages payload for vision extraction
+        import base64
+        b64_img = base64.b64encode(webp_bytes).decode("utf-8")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "extract visual facts from this survey/receipt photo strictly into JSON format. "
+                    "output fields: vendor_name, tax_id, receipt_serial, line_items [{item_name, amount}], "
+                    "raw_subtotal (int), vat_amount (int), raw_total (int), has_signature (bool), "
+                    "unchecked_boxes_count (int), is_screen_photo (bool), is_manipulated_or_photoshopped (bool), "
+                    "tamper_evidence (string or null), notes (string or null)."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "extract document facts:"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{b64_img}", "detail": "high"}},
+                ],
+            },
+        ]
+
+        # 4a. Gemini 3.5 Flash run
+        t_gemini_start = time.perf_counter()
+        gemini_facts = None
+        gemini_err = None
         try:
-            facts = await client.extract_facts(webp_bytes)
+            if client.gemini_client:
+                gemini_facts = await client._call_gemini(messages)
+            else:
+                gemini_err = "GEMINI_API_KEY not set"
         except Exception as e:
-            ai_error = str(e)
-            print(f"   [!] AI Extraction failed for {rel_name}: {e}")
-        t_ai = (time.perf_counter() - t_ai_start) * 1000
-        # 5. deterministic evaluation
+            gemini_err = str(e)
+        t_gemini = (time.perf_counter() - t_gemini_start) * 1000
+
+        # 4b. DeepSeek Flash run
+        t_ds_start = time.perf_counter()
+        ds_facts = None
+        ds_err = None
+        try:
+            if client.deepseek_client:
+                ds_facts = await client._call_deepseek(messages)
+            else:
+                ds_err = "DEEPSEEK_API_KEY not configured in env"
+        except Exception as e:
+            ds_err = str(e)
+        t_ds = (time.perf_counter() - t_ds_start) * 1000
+
+        # 5. deterministic evaluation on primary facts
+        primary_facts = ds_facts or gemini_facts
         eval_res = None
-        if facts:
-            # combine forensic tamper detection with AI tamper flag
-            if is_tampered_forensic and not facts.is_manipulated_or_photoshopped:
-                facts.is_manipulated_or_photoshopped = True
-                facts.tamper_evidence = tamper_reason
-            eval_res = evaluate_survey_compliance(facts)
+        if primary_facts:
+            if is_tampered_forensic and not primary_facts.is_manipulated_or_photoshopped:
+                primary_facts.is_manipulated_or_photoshopped = True
+                primary_facts.tamper_evidence = tamper_reason
+            eval_res = evaluate_survey_compliance(primary_facts)
 
         total_ms = (time.perf_counter() - t0) * 1000
-        verdict = eval_res.reason_code if eval_res else ("AI_ERROR" if ai_error else "REJECTED_BLUR")
-        print(f"   -> Verdict: {verdict} | Total: {total_ms:.1f}ms (Norm: {t_norm:.1f}ms, AI: {t_ai:.1f}ms)")
+        verdict = eval_res.reason_code if eval_res else "REJECTED_BLUR"
+
         results.append({
             "file": rel_name,
             "raw_size_kb": round(file_size_kb, 1),
@@ -83,15 +126,18 @@ async def run_benchmark():
             "blur_variance": round(blur_var, 1),
             "is_sharp": is_sharp,
             "is_tampered_forensic": is_tampered_forensic,
-            "tamper_reason": tamper_reason,
-            "facts": facts.model_dump() if facts else None,
+            "gemini_3_5_flash": {
+                "latency_ms": round(t_gemini, 1),
+                "facts": gemini_facts.model_dump() if gemini_facts else None,
+                "error": gemini_err,
+            },
+            "deepseek_flash": {
+                "latency_ms": round(t_ds, 1),
+                "facts": ds_facts.model_dump() if ds_facts else None,
+                "error": ds_err,
+            },
             "verdict": verdict,
-            "ai_error": ai_error,
-            "timing_ms": {
-                "normalization": round(t_norm, 1),
-                "ai_inference": round(t_ai, 1),
-                "total": round(total_ms, 1),
-            }
+            "total_ms": round(total_ms, 1),
         })
         if idx < len(files) - 1:
             await asyncio.sleep(1.0)

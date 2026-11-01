@@ -141,7 +141,7 @@ def test_income_sanitizer_arithmetic_mismatch():
     )
     assert res_math_error.is_valid is False
     assert res_math_error.status_code == "ARITHMETIC_MISMATCH"
-    assert res_math_error.suggested_action == "ESCALATE_ADMIN"
+    assert res_math_error.suggested_action == "REJECT"
 
 
 def test_income_sanitizer_suspicious_ride_fare():
@@ -155,4 +155,4 @@ def test_income_sanitizer_suspicious_ride_fare():
     )
     assert res_fare.is_valid is False
     assert res_fare.status_code == "SUSPICIOUS_RIDE_FARE"
-    assert res_fare.suggested_action == "ESCALATE_ADMIN"
+    assert res_fare.suggested_action == "REJECT"

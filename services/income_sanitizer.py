@@ -72,7 +72,7 @@ def analyze_driver_income(
                 f"Thu nhập ({gross_income:,} VNĐ) cao bất thường so với mức trung bình ({soft_max:,} VNĐ). "
                 f"Cần giám sát/admin xác minh lại phiếu lương hoặc ứng dụng tài xế."
             ),
-            suggested_action="ESCALATE_ADMIN",
+            suggested_action="REJECT",
         )
 
     # 3. Micro Check: Money Made Per Ride & Trip Counts
@@ -89,7 +89,7 @@ def analyze_driver_income(
                     f"Giá cước bình quân ({int(avg_fare):,} VNĐ/cuốc qua {trips_count} chuyến) "
                     f"nằm ngoài dải thực tế ({fare_min:,} - {fare_max:,} VNĐ)."
                 ),
-                suggested_action="ESCALATE_ADMIN",
+                suggested_action="REJECT",
             )
 
     # 4. Arithmetic Reconciliation: Gross - Discount - Tax == Net
@@ -104,7 +104,7 @@ def analyze_driver_income(
                     f"Số học không khớp: Doanh số ({gross_income:,}đ) - Chiết khấu ({platform_discount:,}đ) "
                     f"không khớp Thu nhập thực nhận ({net_income:,}đ)."
                 ),
-                suggested_action="ESCALATE_ADMIN",
+                suggested_action="REJECT",
             )
 
     return IncomeAnalysisResult(
