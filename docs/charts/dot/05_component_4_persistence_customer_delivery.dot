@@ -32,36 +32,39 @@ digraph G {
         arrowsize=0.85
     ];
 
-    subgraph cluster_persistence {
-        label="Component 4: Persistence, Transactional Outbox & Delivery";
-        style="rounded,filled";
-        fillcolor="#f8fafc";
-        color="#cbd5e1";
+    subgraph cluster_ssot_hub {
+        label="Component 4: Domestic PostgreSQL SSOT & Legal Audit Engine (Vietnam Hosted)";
+        style="rounded,filled"; fillcolor="#ecfdf5"; color="#059669"; fontcolor="#065f46";
 
-        survey_event_in [label="Survey Event\n(Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
+        survey_event_in [label="Survey Event (Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
         sql_tx [label="PostgreSQL Atomic Transaction\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
-        sub_table [label="INSERT survey_submissions\n(status: APPROVED or REJECTED)", fillcolor="#e0f2fe", color="#0284c7"];
-        outbox_table [label="INSERT outbox_events\n(status = PENDING for Approved)", fillcolor="#fee2e2", color="#dc2626"];
-        tg_push [label="Telegram Bot Response\n(Pushed directly to Driver DM:\nApproval Confirmation or Rejection + Retake Link)", fillcolor="#e0f2fe", color="#0284c7"];
+        sub_table [label="INSERT survey_submissions (SSOT Master)\n• Status: APPROVED or REJECTED\n• Cryptographic Seal: audit_seal_hash (SHA-256)\n• Sensitive Data: GPS Coordinates + Touchscreen Signature", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
+        audit_log [label="INSERT system_audit_log (Immutable Audit Trail)\n• Timestamp, Component, Action, Actor ID, IP\n• Full Factual Trace for Decree 13 / A05 Inspection", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
+        outbox_table [label="INSERT outbox_events\n(status = PENDING for Approved Events)", fillcolor="#fee2e2", color="#dc2626"];
+        tg_push [label="Telegram Bot API Push\n(Dispatches Instant Notice to Driver DM)", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    subgraph cluster_downstream_dispatch {
+        label="Downstream Consumers (Projected from PostgreSQL SSOT)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
 
         poller [label="Background Outbox Worker\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
-        r2_upload [label="Cloudflare R2 Object Storage\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
-        ledger_credit [label="Credit Payout to Ledger\ncollaborator_billing_ledger", fillcolor="#dcfce7", color="#16a34a"];
-
-        gdrive_sync [label="Google Drive API Delivery\n(Service Account Upload)", fillcolor="#e0e7ff", color="#4338ca"];
-        gdrive_folder [label="Customer Delivery Folder\n(YYYY-MM-DD/Client_Spreadsheet.xlsx)", fillcolor="#dcfce7", color="#16a34a"];
-
-        lark_sync [label="Lark Base Bi-directional Sync\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
+        s3_upload [label="Domestic Encrypted S3 / MinIO\n(Permanent Vehicle Photo Storage in VN)", fillcolor="#ffffff", color="#64748b"];
+        ledger_credit [label="Financial Payout Credit\ncollaborator_billing_ledger (ACID Payout Audit)", fillcolor="#dcfce7", color="#16a34a"];
+        gdrive_sync [label="Google Drive API Customer Delivery\n(Curated Client Spreadsheets & Photos)", fillcolor="#fef3c7", color="#d97706"];
+        lark_sync [label="Lark Base Management Sync\n(Updates Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
         zns_notify [label="Zalo ZNS Official Thank-You\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
+
     survey_event_in -> sql_tx;
     sql_tx -> sub_table;
-    sql_tx -> outbox_table [label="If Approved"];
-    sub_table -> tg_push [label="Direct DM Push to Driver\n(Approved or Rejected)"];
-    outbox_table -> poller [label="Poll Events"];
-    poller -> r2_upload;
+    sql_tx -> audit_log;
+    sql_tx -> outbox_table;
+    sub_table -> tg_push [label="Committed State -> Immediate Push"];
+    outbox_table -> poller [label="Poll Events (SSOT Driven)"];
+    poller -> s3_upload;
     poller -> ledger_credit;
-    poller -> gdrive_sync -> gdrive_folder;
+    poller -> gdrive_sync;
     poller -> lark_sync;
     poller -> zns_notify;
 }

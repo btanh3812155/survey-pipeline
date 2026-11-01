@@ -40,70 +40,65 @@ digraph G {
     ];
 """
 
-# Chart 1: Abstract Overall Flow
 CHART_1 = COMMON_HEADER + """
     subgraph cluster_edge {
-        label="1. Edge Tier (Vietnam)";
-        style="rounded,filled";
-        fillcolor="#f3f4f6";
-        color="#d1d5db";
-        fontcolor="#1f2937";
+        label="1. Edge & Client Tier (Vietnam)";
+        style="rounded,filled"; fillcolor="#f3f4f6"; color="#d1d5db"; fontcolor="#1f2937";
         
-        driver [label="Driver on Mobile\\n(Lark Form + Private 1-to-1 DM t.me/TenBot)", fillcolor="#e0f2fe", color="#0284c7"];
-        tg_admin_group [label="Telegram Admin Management Group\\n(Bot auto-relays submissions, photos & replies via copyMessage/forwardMessage;\\nAdmins monitor live & execute 1-click moderation or reply back)", fillcolor="#fef3c7", color="#d97706"];
-        staff [label="Management on Company PCs\\n(Lark Base: Admin, QC, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
-        clients [label="Paying Business Clients\\n(Google Drive Customer Folder)", fillcolor="#fef3c7", color="#d97706"];
+        driver [label="Driver on Mobile\\n(Lark Form + Private 1-to-1 Telegram DM)", fillcolor="#e0f2fe", color="#0284c7"];
+        tg_admin_group [label="Telegram Admin Management Group\\n(Bot relays driver DMs; Admins monitor live & moderate)", fillcolor="#fef3c7", color="#d97706"];
+        staff [label="Management on Company PCs\\n(Lark Base: Admin Grid, QC, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
+        clients [label="Paying Business Clients\\n(Google Drive Customer Deliverables)", fillcolor="#fef3c7", color="#d97706"];
     }
 
-    subgraph cluster_cloud {
-        label="2. Cloud Processing Core (Singapore SGP1)";
-        style="rounded,filled";
-        fillcolor="#f8fafc";
-        color="#cbd5e1";
-        fontcolor="#1e293b";
+    subgraph cluster_domestic_ssot {
+        label="2. Domestic Data Sovereignty Tier (Vietnam Hosted SSOT - Decree 13 / Decree 53 Compliant)";
+        style="rounded,filled"; fillcolor="#ecfdf5"; color="#059669"; fontcolor="#065f46";
 
-        caddy [label="Caddy TLS 1.3 Reverse Proxy\\n(25MB Body Cap)", fillcolor="#ffffff", color="#64748b"];
+        postgres [label="PostgreSQL Master SSOT Database (Vietnam Hosted)\\n• survey_submissions (Authoritative Master Record)\\n• collaborator_billing_ledger (Financial ACID Audit)\\n• system_audit_log (Immutable Decree 13 Legal Audit Trail)\\n• driver_registered_vehicles & vehicle_change_history", fillcolor="#dcfce7", color="#16a34a", penwidth=2.5];
+        local_s3 [label="Domestic Secure Object Storage (S3 / MinIO in Vietnam)\\n(Encrypted Vehicle Photos & Touchscreen Finger Signatures)", fillcolor="#dcfce7", color="#16a34a"];
+    }
+
+    subgraph cluster_stateless_core {
+        label="3. Stateless Fast-Path Processing Core";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1"; fontcolor="#1e293b";
+
+        caddy [label="Caddy TLS 1.3 Reverse Proxy\\n(25MB Request Cap)", fillcolor="#ffffff", color="#64748b"];
         fastapi [label="FastAPI Ingestion Gateway\\n(4 Uvicorn Workers)", fillcolor="#e0f2fe", color="#0284c7"];
-        redis [label="Redis 7 Cache & Queue\\n(Session Locks & 3/8h Appeal Limit)", fillcolor="#fee2e2", color="#dc2626"];
+        redis [label="Redis 7 Cache & Rate Limiter\\n(Session Locks & 3/8h Appeal Counter)", fillcolor="#fee2e2", color="#dc2626"];
         sanitizer [label="In-Memory Dual-Bound Sanitizer\\n(Short <= 720, Long <= 2160 WebP)", fillcolor="#ffffff", color="#64748b"];
-        dual_ai [label="Dual AI Vision Extraction\\nPrimary: DeepSeek Flash (2.0s)\\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
-        rules [label="Python Deterministic Rule Engine\\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
-        outbox_worker [label="Background Outbox Worker\\n(SKIP LOCKED Poller)", fillcolor="#fef3c7", color="#d97706"];
+        dual_ai [label="Dual AI Ephemeral Vision Extraction\\nPrimary: DeepSeek Flash (2.0s)\\nBackup: Gemini 3.5 (No Reasoning)\\n(Zero Persistent Data Stored on AI Servers)", fillcolor="#e0e7ff", color="#4338ca"];
+        rules [label="Python Deterministic Rule Engine\\n(Immune to Prompt Injection)", fillcolor="#ffffff", color="#64748b"];
+        outbox_worker [label="Background Outbox Worker\\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
     }
 
-    subgraph cluster_storage {
-        label="3. Storage & Downstream Outputs";
-        style="rounded,filled";
-        fillcolor="#f3f4f6";
-        color="#d1d5db";
-        fontcolor="#1f2937";
+    subgraph cluster_downstream_projections {
+        label="4. Downstream Views & Telephony";
+        style="rounded,filled"; fillcolor="#f3f4f6"; color="#d1d5db"; fontcolor="#1f2937";
 
-        postgres [label="PostgreSQL Database\\n(survey_submissions + outbox_events)", fillcolor="#e0f2fe", color="#0284c7"];
-        r2 [label="Cloudflare R2 Storage\\n(Permanent $0 Egress Archive)", fillcolor="#fef3c7", color="#d97706"];
-        gdrive [label="Google Drive Folder\\n(Customer Deliverable Reports & Photos)", fillcolor="#dcfce7", color="#16a34a"];
-        lark_cloud [label="Bytedance Lark Cloud Workspace\\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
+        gdrive [label="Google Drive API Customer Sync\\n(Clean Spreadsheets & Curated Photos)", fillcolor="#fef3c7", color="#d97706"];
+        lark_cloud [label="Bytedance Lark Cloud Workspace\\n(Operational Projection View)", fillcolor="#ede9fe", color="#7c3aed"];
         zns [label="Zalo ZNS Gateway\\n(Official Thank-You to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
     driver -> caddy [label="Submit Form / Webhook"];
     caddy -> fastapi;
     fastapi -> redis [dir=both, label="Lock / Limit"];
-    fastapi -> sanitizer;
-    sanitizer -> dual_ai [label="Pass Quality"];
-    sanitizer -> driver [label="Reject Notice / Retake (Private DM)", style=dashed, color="#dc2626"];
-    dual_ai -> rules [label="Extracted"];
-    dual_ai -> driver [label="AI Fail / Reject (Private DM)", style=dashed, color="#dc2626"];
-    rules -> postgres [label="Approved (Atomic Commit)"];
+    fastapi -> sanitizer -> dual_ai -> rules;
+    
+    rules -> postgres [label="1. Commit SSOT Master & Audit Trail", color="#16a34a", penwidth=2.0];
     rules -> driver [label="Rejection Notice / 1-Click Retake (Private DM)", style=dashed, color="#dc2626"];
-    driver -> tg_admin_group [label="Bot Auto-Relays Driver Submissions, Photos & Replies\\n(copyMessage / forwardMessage)", color="#0284c7"];
-    tg_admin_group -> fastapi [label="Admin 1-Click Moderation / Reply Callback", color="#dc2626"];
-    fastapi -> driver [label="Relay Admin Reply back to Driver DM", style=dashed, color="#16a34a"];
-    postgres -> outbox_worker [dir=both];
-    outbox_worker -> r2;
+    
+    driver -> tg_admin_group [label="Bot Relays Submissions & Photos live", color="#0284c7"];
+    tg_admin_group -> fastapi [label="Admin 1-Click Moderation: Duyệt / Từ chối / Đổi xe", color="#dc2626"];
+    fastapi -> driver [label="Relay Admin Decision back to Driver DM", style=dashed, color="#16a34a"];
+    
+    postgres -> outbox_worker [dir=both, label="2. Poll Events (SSOT Driven)", color="#059669"];
+    outbox_worker -> local_s3 [label="Store Encrypted Images"];
     outbox_worker -> gdrive -> clients;
     outbox_worker -> lark_cloud;
     lark_cloud -> staff [dir=both, label="Manage / QC / Telesales"];
-    outbox_worker -> zns -> driver [label="ZNS Thank-You"];
+    outbox_worker -> zns -> driver;
 }
 """
 
@@ -287,38 +282,41 @@ digraph G {
 }
 """
 
-# Chart 5: Component 4 Persistence & Delivery
+# Chart 5: Component 4 Persistence & Delivery (SSOT Hub Architecture)
 CHART_5 = COMMON_HEADER + """
-    subgraph cluster_persistence {
-        label="Component 4: Persistence, Transactional Outbox & Delivery";
-        style="rounded,filled";
-        fillcolor="#f8fafc";
-        color="#cbd5e1";
+    subgraph cluster_ssot_hub {
+        label="Component 4: Domestic PostgreSQL SSOT & Legal Audit Engine (Vietnam Hosted)";
+        style="rounded,filled"; fillcolor="#ecfdf5"; color="#059669"; fontcolor="#065f46";
 
-        survey_event_in [label="Survey Event\\n(Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
+        survey_event_in [label="Survey Event (Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
         sql_tx [label="PostgreSQL Atomic Transaction\\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
-        sub_table [label="INSERT survey_submissions\\n(status: APPROVED or REJECTED)", fillcolor="#e0f2fe", color="#0284c7"];
-        outbox_table [label="INSERT outbox_events\\n(status = PENDING for Approved)", fillcolor="#fee2e2", color="#dc2626"];
-        tg_push [label="Telegram Bot Response\\n(Pushed directly to Driver DM:\\nApproval Confirmation or Rejection + Retake Link)", fillcolor="#e0f2fe", color="#0284c7"];
+        sub_table [label="INSERT survey_submissions (SSOT Master)\\n• Status: APPROVED or REJECTED\\n• Cryptographic Seal: audit_seal_hash (SHA-256)\\n• Sensitive Data: GPS Coordinates + Touchscreen Signature", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
+        audit_log [label="INSERT system_audit_log (Immutable Audit Trail)\\n• Timestamp, Component, Action, Actor ID, IP\\n• Full Factual Trace for Decree 13 / A05 Inspection", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
+        outbox_table [label="INSERT outbox_events\\n(status = PENDING for Approved Events)", fillcolor="#fee2e2", color="#dc2626"];
+        tg_push [label="Telegram Bot API Push\\n(Dispatches Instant Notice to Driver DM)", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    subgraph cluster_downstream_dispatch {
+        label="Downstream Consumers (Projected from PostgreSQL SSOT)";
+        style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
 
         poller [label="Background Outbox Worker\\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
-        r2_upload [label="Cloudflare R2 Object Storage\\n(Upload WebP, $0 Egress)", fillcolor="#ffffff", color="#64748b"];
-        ledger_credit [label="Credit Payout to Ledger\\ncollaborator_billing_ledger", fillcolor="#dcfce7", color="#16a34a"];
-
-        gdrive_sync [label="Google Drive API Delivery\\n(Service Account Upload)", fillcolor="#e0e7ff", color="#4338ca"];
-        gdrive_folder [label="Customer Delivery Folder\\n(YYYY-MM-DD/Client_Spreadsheet.xlsx)", fillcolor="#dcfce7", color="#16a34a"];
-
-        lark_sync [label="Lark Base Bi-directional Sync\\n(Updates Management Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
+        s3_upload [label="Domestic Encrypted S3 / MinIO\\n(Permanent Vehicle Photo Storage in VN)", fillcolor="#ffffff", color="#64748b"];
+        ledger_credit [label="Financial Payout Credit\\ncollaborator_billing_ledger (ACID Payout Audit)", fillcolor="#dcfce7", color="#16a34a"];
+        gdrive_sync [label="Google Drive API Customer Delivery\\n(Curated Client Spreadsheets & Photos)", fillcolor="#fef3c7", color="#d97706"];
+        lark_sync [label="Lark Base Management Sync\\n(Updates Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
         zns_notify [label="Zalo ZNS Official Thank-You\\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
     }
+
     survey_event_in -> sql_tx;
     sql_tx -> sub_table;
-    sql_tx -> outbox_table [label="If Approved"];
-    sub_table -> tg_push [label="Direct DM Push to Driver\\n(Approved or Rejected)"];
-    outbox_table -> poller [label="Poll Events"];
-    poller -> r2_upload;
+    sql_tx -> audit_log;
+    sql_tx -> outbox_table;
+    sub_table -> tg_push [label="Committed State -> Immediate Push"];
+    outbox_table -> poller [label="Poll Events (SSOT Driven)"];
+    poller -> s3_upload;
     poller -> ledger_credit;
-    poller -> gdrive_sync -> gdrive_folder;
+    poller -> gdrive_sync;
     poller -> lark_sync;
     poller -> zns_notify;
 }

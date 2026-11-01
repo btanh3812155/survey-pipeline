@@ -17,22 +17,31 @@ CREATE TABLE IF NOT EXISTS authorized_users (
 );
 
 -- 2. Master Survey Submissions
+-- 2. Master Survey Submissions (Authoritative SSOT Record)
 CREATE TABLE IF NOT EXISTS survey_submissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     submission_id VARCHAR(64) UNIQUE NOT NULL,
     collaborator_id BIGINT NOT NULL REFERENCES authorized_users(telegram_user_id),
+    driver_phone VARCHAR(20),
+    driver_name TEXT,
     receipt_serial_no VARCHAR(64),
     store_tax_id VARCHAR(32),
     image_r2_url TEXT,
+    signature_r2_url TEXT,
+    gps_latitude DOUBLE PRECISION,
+    gps_longitude DOUBLE PRECISION,
+    gps_accuracy_meters REAL,
     image_dhash BIT(64),
     embedding vector(384),
-    status VARCHAR(32) NOT NULL CHECK (status IN ('APPROVED', 'REJECTED', 'MANUAL_REVIEW')),
+    status VARCHAR(32) NOT NULL CHECK (status IN ('APPROVED', 'REJECTED', 'APPEAL_PENDING', 'MANUAL_REVIEW')),
     rejection_reason TEXT,
     raw_extracted_facts JSONB,
+    audit_seal_hash VARCHAR(64), -- Immutable SHA-256 seal (phone + ts + gps + signature)
+    moderated_by_admin_id BIGINT,
+    moderated_at TIMESTAMPTZ,
+    moderation_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- Crucial: Partial Unique Index strictly for APPROVED submissions!
 -- Allows legitimate re-submissions of receipts previously rejected for blur/glare.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_serial_tax_approved 
 ON survey_submissions (receipt_serial_no, store_tax_id) 
@@ -118,3 +127,24 @@ CREATE TABLE IF NOT EXISTS vehicle_change_history (
 
 CREATE INDEX IF NOT EXISTS idx_veh_change_phone 
 ON vehicle_change_history (driver_phone, created_at DESC);
+
+-- 8. Immutable System-Wide Audit Log (Decree 13 / DPIA Compliance)
+CREATE TABLE IF NOT EXISTS system_audit_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    component_name VARCHAR(64) NOT NULL, -- 'INGRESS', 'NORMALIZER', 'ANTI_FRAUD', 'AI_VISION', 'EVALUATOR', 'MODERATION', 'OUTBOX'
+    action VARCHAR(64) NOT NULL, -- 'WEBHOOK_RECEIVED', 'EXIF_SCANNED', 'AI_EXTRACTED', 'SURVEY_REJECTED', 'ADMIN_OVERRIDE', 'ZNS_SENT'
+    entity_type VARCHAR(32) NOT NULL, -- 'SURVEY', 'DRIVER', 'VEHICLE', 'PAYOUT'
+    entity_id VARCHAR(64) NOT NULL,
+    actor_type VARCHAR(16) NOT NULL CHECK (actor_type IN ('SYSTEM', 'DRIVER', 'ADMIN')),
+    actor_id VARCHAR(64), -- Telegram ID or 'SYSTEM'
+    ip_address VARCHAR(45),
+    details JSONB NOT NULL,
+    tamper_evident_hash VARCHAR(64) -- SHA256(prev_hash + timestamp + action + details)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_entity 
+ON system_audit_log (entity_type, entity_id, event_timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_component 
+ON system_audit_log (component_name, event_timestamp DESC);
