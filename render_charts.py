@@ -48,9 +48,10 @@ CHART_1 = COMMON_HEADER + """
         color="#d1d5db";
         fontcolor="#1f2937";
         
-        driver [label="Driver on Mobile\\n(Lark Form + Private Telegram Bot)", fillcolor="#e0f2fe", color="#0284c7"];
-        staff [label="Management on Company PCs\\n(Lark Base Workspace Dashboard)", fillcolor="#ede9fe", color="#7c3aed"];
-        clients [label="Paying Business Clients\\n(Google Drive Deliverable Folder)", fillcolor="#fef3c7", color="#d97706"];
+        driver [label="Driver on Mobile\\n(Lark Form + Telegram Group)", fillcolor="#e0f2fe", color="#0284c7"];
+        tg_hub [label="Telegram Group Operational Hub\\n(Drivers interact with Bot; Admins monitor live)", fillcolor="#e0f2fe", color="#0284c7"];
+        staff [label="Management on Company PCs\\n(Lark Base: Admin, QC, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
+        clients [label="Paying Business Clients\\n(Google Drive Customer Folder)", fillcolor="#fef3c7", color="#d97706"];
     }
 
     subgraph cluster_cloud {
@@ -60,12 +61,12 @@ CHART_1 = COMMON_HEADER + """
         color="#cbd5e1";
         fontcolor="#1e293b";
 
-        caddy [label="Caddy TLS 1.3 Reverse Proxy\\n(25MB Request Cap)", fillcolor="#ffffff", color="#64748b"];
+        caddy [label="Caddy TLS 1.3 Reverse Proxy\\n(25MB Body Cap)", fillcolor="#ffffff", color="#64748b"];
         fastapi [label="FastAPI Ingestion Gateway\\n(4 Uvicorn Workers)", fillcolor="#e0f2fe", color="#0284c7"];
         redis [label="Redis 7 Cache & Queue\\n(Session Locks & 3/8h Appeal Limit)", fillcolor="#fee2e2", color="#dc2626"];
         sanitizer [label="In-Memory Sanitizer\\n(EXIF, ELA, Blur, Exposure)", fillcolor="#ffffff", color="#64748b"];
-        dual_ai [label="Dual AI Extraction\\nPrimary: DeepSeek Flash\\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
-        rules [label="Python Deterministic Rules\\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
+        dual_ai [label="Dual AI Vision Extraction\\nPrimary: DeepSeek Flash (2.0s)\\nBackup: Gemini 3.5 (No Reasoning)", fillcolor="#e0e7ff", color="#4338ca"];
+        rules [label="Python Deterministic Rule Engine\\n(Immune to Prompt Injection)", fillcolor="#dcfce7", color="#16a34a"];
         outbox_worker [label="Background Outbox Worker\\n(SKIP LOCKED Poller)", fillcolor="#fef3c7", color="#d97706"];
     }
 
@@ -78,26 +79,25 @@ CHART_1 = COMMON_HEADER + """
 
         postgres [label="PostgreSQL Database\\n(survey_submissions + outbox_events)", fillcolor="#e0f2fe", color="#0284c7"];
         r2 [label="Cloudflare R2 Storage\\n(Permanent $0 Egress Archive)", fillcolor="#fef3c7", color="#d97706"];
-        gdrive [label="Google Drive Folder\\n(Curated Client Spreadsheets & Photos)", fillcolor="#dcfce7", color="#16a34a"];
-        lark_cloud [label="Bytedance Lark Cloud\\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
-        zns [label="Zalo ZNS Service\\n(Thank-You to Driver Phone - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
-        admin_tg [label="Telegram Admin Mod Group\\n(1-Click Moderation Buttons)", fillcolor="#fee2e2", color="#dc2626"];
+        gdrive [label="Google Drive Folder\\n(Customer Deliverable Reports & Photos)", fillcolor="#dcfce7", color="#16a34a"];
+        lark_cloud [label="Bytedance Lark Cloud Workspace\\n(Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
+        zns [label="Zalo ZNS Gateway\\n(Official Thank-You to Driver - No Consent)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
     driver -> caddy [label="Submit Form"];
     caddy -> fastapi;
-    fastapi -> redis [dir=both, label="Lock / Cache"];
+    fastapi -> redis [dir=both, label="Lock / Limit"];
     fastapi -> sanitizer -> dual_ai -> rules;
     rules -> postgres [label="Approved (Atomic Commit)"];
-    rules -> driver [label="Rejected / Retake Deep Link", style=dashed, color="#dc2626"];
-    rules -> admin_tg [label="Appealed (Max 3/8h)", style=dashed, color="#d97706"];
+    rules -> tg_hub [label="Rejection Notice / 1-Click Retake", style=dashed, color="#dc2626"];
+    driver -> tg_hub [label="Interacts / Retakes Photo / Appeals", color="#0284c7"];
+    tg_hub -> fastapi [label="1-Click Admin Moderation / Retake", color="#dc2626"];
     postgres -> outbox_worker [dir=both];
     outbox_worker -> r2;
     outbox_worker -> gdrive -> clients;
     outbox_worker -> lark_cloud;
-    lark_cloud -> staff [dir=both, label="Manage / Review"];
+    lark_cloud -> staff [dir=both, label="Manage / QC / Telesales"];
     outbox_worker -> zns -> driver [label="ZNS Thank-You"];
-    admin_tg -> fastapi [label="1-Click Override", color="#dc2626"];
 }
 """
 
