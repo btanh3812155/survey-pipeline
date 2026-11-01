@@ -47,7 +47,7 @@ def test_vehicle_persistence_and_mismatch():
             detected_vehicle_type="CAR",
         )
         assert res_mismatch.is_match is False
-        assert res_mismatch.status_code == "VEHICLE_MISMATCH"
+        assert res_mismatch.status_code == "VEHICLE_UNREGISTERED"
 
     asyncio.run(_test())
 def test_online_stock_image_detection():
@@ -156,3 +156,38 @@ def test_income_sanitizer_suspicious_ride_fare():
     assert res_fare.is_valid is False
     assert res_fare.status_code == "SUSPICIOUS_RIDE_FARE"
     assert res_fare.suggested_action == "REJECT"
+
+def test_dual_edge_scaling_and_ribbon_protection():
+    import pytest
+
+    # 1. Standard 4:3 phone capture (4000 x 3000)
+    # Clamped by short edge (720): 3000 -> 720, 4000 -> 960 (Aspect ratio 4:3 preserved!)
+    img_4_3 = Image.new("RGB", (4000, 3000), (200, 200, 200))
+    buf = io.BytesIO()
+    img_4_3.save(buf, format="JPEG")
+    _, norm_4_3 = sanitize_and_normalize_image(buf.getvalue(), max_short_edge=720, max_long_edge=2160)
+    assert norm_4_3.size == (960, 720)
+
+    # 2. Modern tall 20:9 smartphone screen (1080 x 2400)
+    # Clamped by short edge (720): 1080 -> 720, 2400 -> 1600 (Aspect ratio 20:9 preserved!)
+    img_tall = Image.new("RGB", (1080, 2400), (200, 200, 200))
+    buf = io.BytesIO()
+    img_tall.save(buf, format="JPEG")
+    _, norm_tall = sanitize_and_normalize_image(buf.getvalue(), max_short_edge=720, max_long_edge=2160)
+    assert norm_tall.size == (720, 1600)
+
+    # 3. Continuous long receipt (1000 x 4000, aspect ratio 4:1)
+    # Clamped by long edge (2160): 4000 -> 2160, 1000 -> 540 (Aspect ratio 4:1 preserved!)
+    img_long = Image.new("RGB", (1000, 4000), (200, 200, 200))
+    buf = io.BytesIO()
+    img_long.save(buf, format="JPEG")
+    _, norm_long = sanitize_and_normalize_image(buf.getvalue(), max_short_edge=720, max_long_edge=2160)
+    assert norm_long.size == (540, 2160)
+
+    # 4. Absurd ribbon image (50 x 1000, aspect ratio 20:1 > max 6.0) -> Rejects safely!
+    img_ribbon = Image.new("RGB", (50, 1000), (200, 200, 200))
+    buf = io.BytesIO()
+    img_ribbon.save(buf, format="JPEG")
+    with pytest.raises(ValueError) as exc:
+        sanitize_and_normalize_image(buf.getvalue(), max_aspect_ratio=6.0)
+    assert "tỷ lệ khung hình bất thường" in str(exc.value)

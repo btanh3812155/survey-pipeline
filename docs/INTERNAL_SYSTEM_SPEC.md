@@ -28,12 +28,23 @@ The pipeline is an automated, real-time survey verification, anti-fraud, and fin
   - Sizing: Basic Droplet (2 vCPU, 4GB RAM, 80GB NVMe) easily handles 20k submissions/day for $24/mo.
 - **Cloud Agnosticism:** The entire stack is containerized via standard `docker-compose.yml` (Caddy, FastAPI, PostgreSQL, Redis). It can be deployed identically on Hetzner Singapore, AWS (`ap-southeast-1`), or on-premise hardware without code changes.
 
-### 2.2 Ingress & Security Layer (Caddy)
+### 2.2 DigitalOcean Role-Based Access Control (RBAC) & Team Security
+- **Does DigitalOcean support RBAC? Yes.** DigitalOcean supports multi-user **Teams**, **Custom Roles**, and **Project-based IAM**:
+  1. **Built-in Organization Roles:**
+     - `Owner`: Full administrative, member, and billing control.
+     - `Member`: Can manage droplets, databases, and network resources within assigned projects.
+     - `Biller`: View invoices, manage payment cards, download tax receipts. **Strictly locked out from servers, databases, and code.**
+  2. **Project-Level Isolation:** Resources are partitioned into Projects (`Production-GSM`, `Staging`). Developers and contractors can be scoped strictly to a specific project.
+  3. **Custom Scoped Roles:** Permissions can be assigned per resource category (e.g. `Droplet Operator`, `Database Administrator`, `Read-Only Viewer`).
+  4. **Scoped API Tokens:** Personal Access Tokens (PATs) can be restricted to specific permissions (e.g. read-only metrics vs full resource write).
+  - *Comparison with AWS:* DigitalOcean RBAC is not as infinitely granular as AWS IAM (which has thousands of individual JSON condition blocks), but it is clean, team-focused, and completely prevents junior devs from accessing billing or deleting production clusters without the nightmare complexity of AWS IAM policy debugging.
+
+### 2.3 Ingress & Security Layer (Caddy)
 - Caddy automatically terminates TLS 1.3 using free Let's Encrypt certificates.
 - Enforces a hard **25MB request body cap** to prevent memory exhaustion attacks.
 - Reverse proxies to 4 Uvicorn workers with HTTP keep-alive connection pooling.
 
-### 2.3 Webhook Cryptographic Verification
+### 2.4 Webhook Cryptographic Verification
 - **Lark Base Webhooks:** Lark does **not** use HMAC. Verification hashes raw byte concatenation:
   $$\text{Signature} = \text{hex}(\text{sha256}(\text{timestamp} + \text{nonce} + \text{encrypt\_key} + \text{raw\_body}))$$
   Evaluated in constant time using `secrets.compare_digest`.
@@ -45,13 +56,20 @@ The pipeline is an automated, real-time survey verification, anti-fraud, and fin
 
 ## 3. Media Sanitization & Image Scaling Specification
 
-### 3.1 Scaling Behavior: Max Edge Clamping vs Forced Square
-- **Specification:** The pipeline **clamps the maximum edge to 1024px while preserving original aspect ratio** using `im.thumbnail((1024, 1024), Image.Resampling.LANCZOS)`.
-- It **never** stretches, distorts, or forces images into a square $1024 \times 1024$.
-  - An input of $3072 \times 2048$ scales to $1024 \times 683$.
-  - An input of $3072 \times 3072$ scales to $1024 \times 1024$.
-  - An image already smaller than 1024px is left untouched.
-
+### 3.1 Scaling Behavior: 720px Short Edge & 2160px Long Edge Dual-Bound
+- **Specification:** The pipeline applies a **dual-bound aspect-ratio preserving downscale**:
+  - **Maximum Short Edge:** **720px**
+  - **Maximum Long Edge:** **2160px**
+  - **Maximum Aspect Ratio:** **6.0 : 1** (safeguards against absurd ribbon/strip files like 50x5000).
+- **Mathematical Formulation:**
+  $$\text{scale} = \min\left(1.0, \frac{2160}{\max(w, h)}, \frac{720}{\min(w, h)}\right)$$
+  $$\text{new\_w} = w \times \text{scale}, \quad \text{new\_h} = h \times \text{scale}$$
+- **Behavior across Device Formats:**
+  - Standard 4:3 camera photo ($4000 \times 3000$): Short edge clamps to 720 -> Result: **$960 \times 720$** (crisp, zero distortion).
+  - Modern tall smartphone screen ($1080 \times 2400$, 20:9): Short edge clamps to 720 -> Result: **$720 \times 1600$** (tall UI preserved!).
+  - Long multi-item receipt ($1000 \times 4000$, 4:1): Long edge clamps to 2160 -> Result: **$540 \times 2160$** (all items readable!).
+  - Lark square crop ($3072 \times 3072$): Clamps to **$720 \times 720$**.
+  - Extreme corrupted ribbon ($50 \times 1000$, 20:1 > 6:1): Safely rejected with descriptive error.
 ### 3.2 Bug Eliminators
 1. **Memory Spike Elimination:** High-res smartphone captures (48MP - 50MP) can allocate ~196MB of uncompressed raster RAM. Applying libjpeg-turbo C draft scaling (`im.draft('RGB', (1024, 1024))`) decodes at 1/4 scale in C, slashing memory allocation by **85%** (~12MB peak).
 2. **Double-Rotation Elimination:** `ImageOps.exif_transpose` rotates the pixel matrix upright, and EXIF orientation headers are explicitly wiped (`exif=b""`) when saving WebP. Downstream clients never apply a second rotation.

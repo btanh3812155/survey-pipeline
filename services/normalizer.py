@@ -2,7 +2,7 @@ import io
 import cv2
 import numpy as np
 from PIL import Image, ImageOps, ImageFile, UnidentifiedImageError
-from typing import Tuple
+from typing import Tuple, Optional
 
 # prevent decompression bombs while allowing normal high-res phone captures
 Image.MAX_IMAGE_PIXELS = 35_000_000
@@ -17,7 +17,12 @@ except ImportError:
 
 
 def sanitize_and_normalize_image(
-    raw_bytes: bytes, max_dimension: int = 1024, webp_quality: int = 82
+    raw_bytes: bytes,
+    max_short_edge: int = 720,
+    max_long_edge: int = 2160,
+    max_aspect_ratio: float = 6.0,
+    webp_quality: int = 82,
+    max_dimension: Optional[int] = None,
 ) -> Tuple[bytes, Image.Image]:
     """
     Sanitizes, normalizes orientation, flattens alpha channels,
@@ -28,13 +33,16 @@ def sanitize_and_normalize_image(
     - Zero alpha blackout (RGBA, LA, and P modes composited over white canvas)
     - Memory safe (libjpeg draft scaling pre-allocated)
     """
+    if max_dimension is not None:
+        max_short_edge = min(max_short_edge, max_dimension)
+        max_long_edge = min(max_long_edge, max_dimension)
     stream = io.BytesIO(raw_bytes)
     
     try:
         im = Image.open(stream)
         # libjpeg-turbo C-level draft scaling for large JPEG files
-        if im.format == "JPEG" and max(im.size) > max_dimension * 2:
-            im.draft("RGB", (max_dimension, max_dimension))
+        if im.format == "JPEG" and min(im.size) > max_short_edge * 2:
+            im.draft("RGB", (max_short_edge, max_short_edge))
             im.load()
     except Exception as e:
         raise ValueError(f"malformed or unreadable image stream: {e}")
@@ -57,10 +65,23 @@ def sanitize_and_normalize_image(
     elif im.mode != "RGB":
         im = im.convert("RGB")
 
-    # 3. downscale using Lanczos to bounded dimension
-    if max(im.size) > max_dimension:
-        im.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+    # 3. dual-bound aspect-ratio preserving downscale
+    # accommodates long tall phone screens (20:9, 21:9) and long receipts without distortion
+    w, h = im.size
+    long_edge = max(w, h)
+    short_edge = min(w, h)
 
+    if short_edge > 0 and (long_edge / short_edge) > max_aspect_ratio:
+        raise ValueError(f"tỷ lệ khung hình bất thường ({long_edge / short_edge:.1f}:1), vượt quá ngưỡng cho phép")
+
+    scale_long = max_long_edge / long_edge if long_edge > max_long_edge else 1.0
+    scale_short = max_short_edge / short_edge if short_edge > max_short_edge else 1.0
+    scale = min(1.0, scale_long, scale_short)
+
+    if scale < 1.0:
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
     # 4. encode to WebP with stripped EXIF (preventing double-rotation downstream)
     output_buf = io.BytesIO()
     im.save(output_buf, format="WEBP", quality=webp_quality, exif=b"")
