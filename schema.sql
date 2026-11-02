@@ -11,18 +11,30 @@ CREATE TABLE IF NOT EXISTS authorized_users (
     telegram_user_id BIGINT PRIMARY KEY,
     username TEXT,
     full_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('COLLABORATOR', 'ADMIN')),
+    role TEXT NOT NULL CHECK (role IN ('COLLABORATOR', 'DRIVER', 'ADMIN')),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 1b. Pseudonymized Driver Identity Vault (Decree 13 / GDPR PII Isolation)
+CREATE TABLE IF NOT EXISTS driver_identity_vault (
+    driver_id VARCHAR(32) PRIMARY KEY, -- e.g. 'DRV-84920'
+    driver_phone VARCHAR(20) UNIQUE NOT NULL,
+    driver_name TEXT,
+    is_scrubbed BOOLEAN NOT NULL DEFAULT FALSE,
+    scrubbed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_driver_vault_phone ON driver_identity_vault (driver_phone);
 
 -- 2. Master Survey Submissions
 -- 2. Master Survey Submissions (Authoritative SSOT Record)
 CREATE TABLE IF NOT EXISTS survey_submissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     submission_id VARCHAR(64) UNIQUE NOT NULL,
-    collaborator_id BIGINT NOT NULL REFERENCES authorized_users(telegram_user_id),
-    driver_phone VARCHAR(20),
+    collaborator_id BIGINT REFERENCES authorized_users(telegram_user_id),
+    driver_id VARCHAR(32) REFERENCES driver_identity_vault(driver_id),
+    driver_phone VARCHAR(20), -- NULL for REJECTED submissions or scrubbed records
     driver_name TEXT,
     receipt_serial_no VARCHAR(64),
     store_tax_id VARCHAR(32),
@@ -134,12 +146,14 @@ ON vehicle_change_history (driver_phone, created_at DESC);
 CREATE TABLE IF NOT EXISTS system_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    component_name VARCHAR(64) NOT NULL, -- 'INGRESS', 'NORMALIZER', 'ANTI_FRAUD', 'AI_VISION', 'EVALUATOR', 'MODERATION', 'OUTBOX'
-    action VARCHAR(64) NOT NULL, -- 'WEBHOOK_RECEIVED', 'EXIF_SCANNED', 'AI_EXTRACTED', 'SURVEY_REJECTED', 'ADMIN_OVERRIDE', 'ZNS_SENT'
-    entity_type VARCHAR(32) NOT NULL, -- 'SURVEY', 'DRIVER', 'VEHICLE', 'PAYOUT'
+    hop_number INT, -- Sequence hop: 1=INGEST, 2=NORMALIZER, 3=ANTI_FRAUD, 4=AI_VISION, 5=EVALUATOR, 6=TG_NOTIFY, 7=OUTBOX, 8=DOWNSTREAM
+    hop_name VARCHAR(64), -- 'HOP_1_INGEST', 'HOP_2_NORMALIZER', etc.
+    component_name VARCHAR(64) NOT NULL,
+    action VARCHAR(64) NOT NULL,
+    entity_type VARCHAR(32) NOT NULL, -- 'SURVEY', 'DRIVER', 'VEHICLE', 'PAYOUT', 'CHAT'
     entity_id VARCHAR(64) NOT NULL,
     actor_type VARCHAR(16) NOT NULL CHECK (actor_type IN ('SYSTEM', 'DRIVER', 'ADMIN')),
-    actor_id VARCHAR(64), -- Telegram ID or 'SYSTEM'
+    actor_id VARCHAR(64), -- Telegram ID, Driver ID, or 'SYSTEM'
     ip_address VARCHAR(45),
     details JSONB NOT NULL,
     tamper_evident_hash VARCHAR(64) -- SHA256(prev_hash + timestamp + action + details)
@@ -150,3 +164,35 @@ ON system_audit_log (entity_type, entity_id, event_timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS idx_audit_component 
 ON system_audit_log (component_name, event_timestamp DESC);
+
+-- 9. Internal Telegram Conversation Logger (Decree 13 Compliant Audit Trail)
+CREATE TABLE IF NOT EXISTS telegram_chat_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_user_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    role VARCHAR(16) NOT NULL CHECK (role IN ('COLLABORATOR', 'DRIVER', 'ADMIN', 'SYSTEM')),
+    direction VARCHAR(8) NOT NULL CHECK (direction IN ('INBOUND', 'OUTBOUND')),
+    message_text TEXT,
+    is_scrubbed BOOLEAN NOT NULL DEFAULT FALSE,
+    scrubbed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_history_user 
+ON telegram_chat_history (telegram_user_id, created_at DESC);
+
+-- 10. Automated 36-Hour Ephemeral Message Deletion Queue (Telegram Privacy)
+CREATE TABLE IF NOT EXISTS telegram_sent_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delete_after TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '36 hours'),
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_pending_deletions 
+ON telegram_sent_messages (delete_after ASC) 
+WHERE is_deleted = FALSE;

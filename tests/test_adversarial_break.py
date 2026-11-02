@@ -797,8 +797,8 @@ class TestAdversarialTelegramAndRateLimits:
         mock_cursor.fetchall.return_value = events
 
         async def mock_execute(query, params=None):
-            # Event 2 has collaborator_id = None -> trigger DB not-null constraint error
-            if params and len(params) > 0 and params[0] is None:
+            # Event 2 has collaborator_id = None -> trigger DB not-null constraint error on billing ledger insert
+            if "collaborator_billing_ledger" in query and params and len(params) > 0 and params[0] is None:
                 raise ValueError("violates not-null constraint on collaborator_id")
             return None
 

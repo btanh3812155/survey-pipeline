@@ -52,6 +52,27 @@ The pipeline is an automated, real-time survey verification, anti-fraud, and fin
 - **Telegram Webhook:** Validates `X-Telegram-Bot-Api-Secret-Token` via `secrets.compare_digest`.
 - **Deduplication:** Redis executes `SETNX lock:submission:{id} 1 EX 60`. Duplicate webhook retries are dropped with an immediate `200 OK`.
 
+### 2.5 Company Domain Access & DNS Routing Architecture
+To connect the survey verification pipeline to the company's domain (e.g., `survey.company.com` or `api-survey.company.com`):
+1. **Subdomain A-Record Delegation:**
+   - In the company's DNS management panel (Cloudflare, GoDaddy, Namecheap, Route53, or Vietnamese registrar):
+     - **Record Type:** `A`
+     - **Name / Host:** `survey` (or `api-survey`)
+     - **IPv4 Address:** `<DROPLET_RESERVED_IP>` (e.g. `128.199.xxx.xxx`)
+     - **TTL:** `300` seconds (5 minutes for agile cutover).
+     - *(Optional Dual-Stack)*: Add an `AAAA` record pointing to the Droplet's public IPv6 address.
+2. **Zero-Touch Automatic TLS via Caddy:**
+   - In `Caddyfile`, configure the domain:
+     ```caddyfile
+     survey.company.com {
+         encode zstd gzip
+         reverse_proxy fast-validator:8000
+     }
+     ```
+   - Caddy automatically provisions and auto-renews free Let's Encrypt / ZeroSSL TLS certificates with zero manual certbot intervention.
+3. **Cloudflare Proxy / Zero-Trust Option (No Open Ports):**
+   - If using Cloudflare proxy (orange cloud), Caddy can terminate Cloudflare Origin CA certificates, or the team can spin up `cloudflared` tunnel in docker-compose, allowing the server to accept traffic with ports 80/443 closed at the droplet firewall.
+
 ---
 
 ## 3. Media Sanitization & Image Scaling Specification
@@ -75,6 +96,19 @@ The pipeline is an automated, real-time survey verification, anti-fraud, and fin
 2. **Double-Rotation Elimination:** `ImageOps.exif_transpose` rotates the pixel matrix upright, and EXIF orientation headers are explicitly wiped (`exif=b""`) when saving WebP. Downstream clients never apply a second rotation.
 3. **Alpha Blackout Elimination:** All alpha-bearing modes (`RGBA`, `LA`, and palette `P` mode with `transparency` metadata) are composited over a pure `#FFFFFF` white canvas. Black receipt text never collapses into black backgrounds.
 4. **Compression:** Encoded to WebP (quality 82), reducing average file size from 2.2MB down to **49.4KB** (93.9% bandwidth reduction).
+
+### 3.3 Custom WebRTC Mobile Camera Form (Anti-Gallery Upload)
+- **The Lark Base Mobile Exploit:** Lark Base open web forms use standard `<input type="file">`. On mobile browsers (Safari/Chrome), this prompts drivers: *"Take Photo or Choose from Photo Library"*. Fraudulent drivers exploit this to upload pre-saved photos, images shared by other drivers, or edited screenshots from their camera roll.
+- **The Solution: In-House WebRTC Live Camera App (`/camera-form`):**
+  1. **Strict Hardware Stream Enforcement:**
+     - Invokes `navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } })`.
+     - Completely bypasses the mobile OS file picker and gallery selection dialog.
+  2. **Real-Time On-Screen Viewfinder:**
+     - Renders the live video stream directly on canvas with alignment guides for receipts, vehicle plates, and odometer screens.
+     - Captures snapshots directly from the hardware video stream buffer (`ctx.drawImage(video, 0, 0)`), guaranteeing that every pixel originates from the live physical camera sensor.
+  3. **Client-Side Integrity Watermark & Fast Upload:**
+     - Watermarks frame with client timestamp and accelerometer stability metrics.
+     - Encodes directly to lightweight WebP (quality 80) and streams directly to `/api/v1/survey/submit-webrtc`.
 
 ---
 
@@ -114,6 +148,13 @@ The pipeline explicitly scans raw uncompressed bytes for forensics **before** au
 - **Micro-Ride Check:** Verifies average fare per ride ($\frac{\text{gross}}{\text{trips}}$). Out-of-range averages reject as `AVERAGE_FARE_OUT_OF_RANGE`.
 - **Accounting Reconciliation:** Verifies $\text{Gross} - \text{Discount} - \text{Tax} == \text{Net}$. Discrepancies > 5% reject as `ARITHMETIC_MISMATCH`.
 
+
+### 5.4 Driver Pseudonymization & Identity Vault (`driver_id` Tokenization)
+- **Least Privilege & Decree 13 Compliance:** Raw driver phone numbers are classified as sensitive PII under Vietnamese law. They must NEVER be passed across internal microservice hops, redis queues, or analytics workers.
+- **The Identity Vault (`driver_identity_vault`):**
+  - Upon first encounter, the driver's phone number is securely bound to an opaque token: `driver_id` (e.g. `DRV-8A2F9`).
+  - All subsequent database queries, Redis rate-limiting keys, AI vision prompts, and Outbox event payloads refer strictly to `driver_id`.
+  - The raw phone number is stored in an encrypted/isolated vault and is only accessed by the final Zalo ZNS worker at the very edge of delivery.
 ---
 
 ## 6. Dual-Model AI Vision Engine
@@ -155,6 +196,27 @@ No raw technical codes (e.g. `INCOME_EXCEEDS_THRESHOLD`) are shown to drivers. E
 - Mismatch: *"Số liệu doanh thu không khớp với chi tiết các khoản, bạn vui lòng đối soát lại nhé!"*
 - Vehicle: *"Phương tiện không trùng khớp xe đã đăng ký. Nếu bạn đổi xe mới, vui lòng bấm nút bên dưới để quản trị viên hỗ trợ nhé!"*
 
+
+### 7.5 Driver & Collaborator Role Separation
+- **Role RBAC:** `authorized_users` explicitly distinguishes `DRIVER` vs `COLLABORATOR`:
+  - **COLLABORATOR:** Fleet leaders and agency recruiters submitting surveys on behalf of drivers or monitoring regional teams; receives aggregated payout ledgers.
+  - **DRIVER:** Individual vehicle operators; submits vehicle data, checks survey status, appeals rejections, or requests personal data erasure.
+- Both roles interact through the Telegram bot with role-specific views and permission boundaries.
+
+### 7.6 Internal Telegram Conversation Logging & Data Scrubbing (Decree 13 / GDPR)
+- **Internal Message Persistence:** All bot conversations are logged to `telegram_chat_history` (rather than relying on Telegram-level ephemeral message settings).
+- **Right to Erasure (`/scrub_my_data`):**
+  - Drivers can trigger automated personal data erasure.
+  - The system sets `driver_phone = NULL`, `driver_name = '[SCRUBBED]'` across `driver_identity_vault` and `survey_submissions`, and anonymizes chat logs.
+  - Emits an immutable audit record in `system_audit_log` proving compliance with Decree 13 Article 16.
+
+### 7.7 Automated 36-Hour Ephemeral Message Deletion Queue
+- Ephemeral messages sent to drivers are tracked in `telegram_sent_messages` with `delete_after = NOW() + INTERVAL '36 hours'`.
+- A background cleanup task invokes Telegram API `deleteMessage(chat_id, message_id)` once 36 hours elapse, ensuring zero residual sensitive chat history on mobile devices.
+
+### 7.8 Sanitized Rejection Image Dispatching
+- When a submission is rejected for physical flaws (blur, glare, framing), an illustrative crop/image is sent with the rejection notice.
+- **Sanitization Requirement:** Before transmission to Telegram, the image is passed through `sanitize_rejection_image_and_metadata()` which strips all EXIF/GPS tags and blurs any sensitive facial or license plate regions.
 ---
 
 ## 8. Data Persistence, Outbox & Downstream Outputs
@@ -182,6 +244,25 @@ No raw technical codes (e.g. `INCOME_EXCEEDS_THRESHOLD`) are shown to drivers. E
 - Sends automated official thank-you to driver phone number via Zalo Notification Service.
 - Legal consent is captured in the Lark form once and for all; ZNS message focuses purely on thank-you and connection for future surveys.
 
+
+### 8.4 Granular Hop-by-Hop Audit Logging (`system_audit_log` Hop Chain)
+Every single piece of data is audited across 8 deterministic sequential hops with cryptographic SHA-256 block hashing ($H_n = \text{SHA256}(H_{n-1} + \text{ts} + \text{action} + \text{details})$):
+1. **`HOP_1_INGEST`:** Webhook / WebRTC payload reception & signature validation.
+2. **`HOP_2_NORMALIZER`:** Dual-bound scaling, EXIF auto-rotation, RGB flattening, Laplacian blur check.
+3. **`HOP_3_ANTI_FRAUD`:** pHash 64-bit Hamming index search & DINOv2 vector similarity lookup.
+4. **`HOP_4_AI_VISION`:** DeepSeek / Gemini Flash multimodal fact extraction.
+5. **`HOP_5_EVALUATOR`:** Business rule validation, license plate check, income sanity check.
+6. **`HOP_6_TG_NOTIFY`:** Notification dispatch to collaborator/driver Telegram chat & 36h queue.
+7. **`HOP_7_OUTBOX`:** Atomic commit of master record and decoupled transactional outbox events.
+8. **`HOP_8_DOWNSTREAM`:** Independent execution by per-flow workers (Billing, R2, GDrive, Lark, ZNS).
+
+### 8.5 Zero-PII Rejected Submission Persistence
+- Rejected submissions are permanently recorded in `survey_submissions` for fleet auditability.
+- **Strict PII Stripping:**
+  - `status = 'REJECTED'`
+  - `driver_phone = NULL` (bound only to pseudonymized `driver_id`).
+  - `image_r2_url = NULL` and `signature_r2_url = NULL` (unapproved raw photos are NEVER persisted to cloud storage).
+  - Retains only rejection reason code, pHash bitmask, forensic scores, and tamper-evident SHA-256 seal.
 ---
 
 ## 9. Verification & Empirical Benchmark Summary
