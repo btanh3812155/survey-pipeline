@@ -33,38 +33,38 @@ digraph G {
     ];
 
     subgraph cluster_ssot_hub {
-        label="Component 4: Domestic PostgreSQL SSOT & Legal Audit Engine (Vietnam Hosted)";
+        label="Component 4: PostgreSQL SSOT & Fan-Out Outbox Engine (Vietnam Hosted)";
         style="rounded,filled"; fillcolor="#ecfdf5"; color="#059669"; fontcolor="#065f46";
 
         survey_event_in [label="Survey Event (Approved or Rejected)", fillcolor="#e0f2fe", color="#0284c7"];
         sql_tx [label="PostgreSQL Atomic Transaction\n(BEGIN ... COMMIT)", fillcolor="#ffffff", color="#64748b"];
         sub_table [label="INSERT survey_submissions (SSOT Master)\n• Status: APPROVED or REJECTED\n• Cryptographic Seal: audit_seal_hash (SHA-256)\n• Sensitive Data: GPS Coordinates + Touchscreen Signature", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
         audit_log [label="INSERT system_audit_log (Immutable Audit Trail)\n• Timestamp, Component, Action, Actor ID, IP\n• Full Factual Trace for Decree 13 / A05 Inspection", fillcolor="#dcfce7", color="#16a34a", penwidth=2.0];
-        outbox_table [label="INSERT outbox_events\n(status = PENDING for Approved Events)", fillcolor="#fee2e2", color="#dc2626"];
+        
+        outbox_fanout [label="INSERT outbox_events (Decoupled Per-Flow Tasks)\n• Task 1: flow_target = 'BILLING'\n• Task 2: flow_target = 'R2_UPLOAD'\n• Task 3: flow_target = 'GDRIVE_EXPORT'\n• Task 4: flow_target = 'LARK_SYNC'\n• Task 5: flow_target = 'ZALO_ZNS'", fillcolor="#fee2e2", color="#dc2626", penwidth=2.0];
         tg_push [label="Telegram Bot API Push\n(Dispatches Instant Notice to Driver DM)", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
-    subgraph cluster_downstream_dispatch {
-        label="Downstream Consumers (Projected from PostgreSQL SSOT)";
+    subgraph cluster_dedicated_workers {
+        label="Dedicated Independent Outbox Workers (Failure Isolation: If 1 fails, only it retries!)";
         style="rounded,filled"; fillcolor="#f8fafc"; color="#cbd5e1";
 
-        poller [label="Background Outbox Worker\n(SELECT FOR UPDATE SKIP LOCKED)", fillcolor="#fef3c7", color="#d97706"];
-        s3_upload [label="Domestic Encrypted S3 / MinIO\n(Permanent Vehicle Photo Storage in VN)", fillcolor="#ffffff", color="#64748b"];
-        ledger_credit [label="Financial Payout Credit\ncollaborator_billing_ledger (ACID Payout Audit)", fillcolor="#dcfce7", color="#16a34a"];
-        gdrive_sync [label="Google Drive API Customer Delivery\n(Curated Client Spreadsheets & Photos)", fillcolor="#fef3c7", color="#d97706"];
-        lark_sync [label="Lark Base Management Sync\n(Updates Admin Grid, QC Kanban, Telesales)", fillcolor="#ede9fe", color="#7c3aed"];
-        zns_notify [label="Zalo ZNS Official Thank-You\n(Delivered to Driver Phone)", fillcolor="#e0f2fe", color="#0284c7"];
+        w_billing [label="Worker 1: Billing Outbox Worker\n(Polls flow_target='BILLING')\n-> Credits collaborator_billing_ledger", fillcolor="#dcfce7", color="#16a34a"];
+        w_r2 [label="Worker 2: R2/S3 Upload Worker\n(Polls flow_target='R2_UPLOAD')\n-> Uploads WebP image to Cloudflare R2", fillcolor="#ffffff", color="#64748b"];
+        w_gdrive [label="Worker 3: Google Drive Client Worker\n(Polls flow_target='GDRIVE_EXPORT')\n-> Appends clean row to client spreadsheet", fillcolor="#fef3c7", color="#d97706"];
+        w_lark [label="Worker 4: Lark Base Sync Worker\n(Polls flow_target='LARK_SYNC')\n-> Updates Management Dashboard", fillcolor="#ede9fe", color="#7c3aed"];
+        w_zalo [label="Worker 5: Zalo ZNS Outreach Worker\n(Polls flow_target='ZALO_ZNS')\n-> Sends official thank-you to driver phone", fillcolor="#e0f2fe", color="#0284c7"];
     }
 
     survey_event_in -> sql_tx;
     sql_tx -> sub_table;
     sql_tx -> audit_log;
-    sql_tx -> outbox_table;
+    sql_tx -> outbox_fanout;
     sub_table -> tg_push [label="Committed State -> Immediate Push"];
-    outbox_table -> poller [label="Poll Events (SSOT Driven)"];
-    poller -> s3_upload;
-    poller -> ledger_credit;
-    poller -> gdrive_sync;
-    poller -> lark_sync;
-    poller -> zns_notify;
+    
+    outbox_fanout -> w_billing [label="Independent Queue", color="#16a34a"];
+    outbox_fanout -> w_r2 [label="Independent Queue"];
+    outbox_fanout -> w_gdrive [label="Independent Queue (If GDrive 500, ONLY Worker 3 retries!)", color="#d97706"];
+    outbox_fanout -> w_lark [label="Independent Queue"];
+    outbox_fanout -> w_zalo [label="Independent Queue"];
 }

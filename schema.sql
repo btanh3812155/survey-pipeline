@@ -56,21 +56,23 @@ CREATE INDEX IF NOT EXISTS idx_surveys_embedding_hnsw
 ON survey_submissions USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
 
--- 3. Transactional Outbox Table for Downstream Events
+-- 3. Transactional Outbox Table for Downstream Events (Decoupled Per-Flow Target)
 CREATE TABLE IF NOT EXISTS outbox_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR(64) NOT NULL,
+    flow_target VARCHAR(32) NOT NULL DEFAULT 'ALL' CHECK (flow_target IN ('ALL', 'BILLING', 'R2_UPLOAD', 'GDRIVE_EXPORT', 'LARK_SYNC', 'ZALO_ZNS')),
     aggregate_id VARCHAR(64) NOT NULL,
     payload JSONB NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
     retry_count INT NOT NULL DEFAULT 0,
+    last_error TEXT,
     locked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbox_pending 
-ON outbox_events (status, created_at ASC) 
+CREATE INDEX IF NOT EXISTS idx_outbox_flow_pending 
+ON outbox_events (flow_target, status, created_at ASC) 
 WHERE status = 'PENDING';
 
 -- 4. Collaborator Financial Billing Ledger
