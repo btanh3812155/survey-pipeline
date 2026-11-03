@@ -1,8 +1,10 @@
+import os
 import secrets
 import json
 import httpx
 import logging
-from typing import Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
@@ -112,6 +114,40 @@ async def upload_form_schema(schema: FormSchema):
         "message": f"Biểu mẫu '{schema.title}' đã sẵn sàng hoạt động!",
     }
 
+DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+os.makedirs(os.path.dirname(DEV_STORAGE_FILE), exist_ok=True)
+
+def append_dev_submission(record: dict):
+    records = []
+    if os.path.exists(DEV_STORAGE_FILE):
+        try:
+            with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except Exception:
+            records = []
+    records.append(record)
+    with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+@app.get("/api/v1/dev/submissions")
+async def get_dev_submissions():
+    """Inspects all surveys currently saved in temporary dev test storage."""
+    if not os.path.exists(DEV_STORAGE_FILE):
+        return {"count": 0, "submissions": []}
+    try:
+        with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"count": len(data), "submissions": data}
+    except Exception as e:
+        return {"count": 0, "submissions": [], "error": str(e)}
+
+@app.delete("/api/v1/dev/submissions")
+async def clear_dev_submissions():
+    """Clears all records in temporary dev test storage."""
+    if os.path.exists(DEV_STORAGE_FILE):
+        os.remove(DEV_STORAGE_FILE)
+    return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
+
 
 @app.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
@@ -124,42 +160,64 @@ async def submit_webrtc_survey(
     trip_count: Optional[str] = Form("0"),
     odometer_km: Optional[str] = Form("0"),
     signature_png: Optional[str] = Form(None),
+    is_test_mode: Optional[bool] = Form(False),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
-    submission_id = f"VN-{secrets.token_hex(3).upper()}"
+    submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(3).upper()}"
     raw_bytes = await survey_photo.read()
 
-    # 1. normalize and check blur
-    is_sharp, blur_var = compute_laplacian_blur_score(raw_bytes)
-    if not is_sharp:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "REJECTED",
-                "submission_id": submission_id,
-                "reason": "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!",
-                "blur_score": blur_var,
-            },
-        )
-
+    # 1. normalize image and compute blur score on PIL image
     try:
-        norm_bytes = sanitize_and_normalize_image(raw_bytes)
+        norm_bytes, pil_im = sanitize_and_normalize_image(raw_bytes)
     except Exception as e:
         return JSONResponse(
             status_code=200,
             content={
                 "status": "REJECTED",
                 "submission_id": submission_id,
+                "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
                 "reason": f"Không thể giải mã ảnh: {str(e)}",
             },
         )
 
-    # 2. AI vision audit
-    ai_res = await vision_client.audit_survey_image(norm_bytes, mime_type="image/webp")
-    compliance = evaluate_survey_compliance(ai_res)
+    is_sharp, blur_var = compute_laplacian_blur_score(pil_im)
+    if not is_sharp:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "REJECTED",
+                "submission_id": submission_id,
+                "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+                "reason": "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!",
+                "blur_score": blur_var,
+            },
+        )
 
-    # 3. persist survey into database if pool active
-    if db_pool:
+    # 2. AI vision audit
+    facts = await vision_client.extract_facts(norm_bytes)
+    compliance = evaluate_survey_compliance(facts)
+    ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
+    is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+    status_str = "APPROVED" if is_approved else "REJECTED"
+    reason_str = compliance.collaborator_note or compliance.reason_code
+
+    # 3. If in test mode, route strictly to temporary dev storage (Bypasses prod DB & Outbox)
+    if is_test_mode:
+        dev_record = {
+            "submission_id": submission_id,
+            "mode": "TEST_DEV_MODE",
+            "driver_phone": driver_phone,
+            "driver_name": driver_name,
+            "license_plate": license_plate,
+            "vehicle_type": vehicle_type,
+            "status": status_str,
+            "reason": reason_str,
+            "ai_result": ai_res,
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        append_dev_submission(dev_record)
+        logger.info(f"[DEV TEST MODE] Saved #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
+    elif db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
@@ -176,8 +234,8 @@ async def submit_webrtc_survey(
                             driver_phone,
                             driver_name or "Tài xế",
                             f"SN-{license_plate or 'AUTO'}",
-                            "APPROVED" if compliance.is_compliant else "REJECTED",
-                            compliance.feedback_message_vi if not compliance.is_compliant else None,
+                            status_str,
+                            reason_str if not is_approved else None,
                             json.dumps(ai_res),
                         ),
                     )
@@ -200,9 +258,10 @@ async def submit_webrtc_survey(
     return JSONResponse(
         status_code=200,
         content={
-            "status": "APPROVED" if compliance.is_compliant else "REJECTED",
+            "status": status_str,
             "submission_id": submission_id,
-            "reason": compliance.feedback_message_vi,
+            "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+            "reason": reason_str,
             "driver_phone": driver_phone,
             "detected_plate": ai_res.get("detected_plate"),
             "gross_revenue": gross_revenue,

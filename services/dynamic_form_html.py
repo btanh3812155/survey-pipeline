@@ -471,6 +471,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật GPS</button>
     </div>
 
+
+    <!-- Dev Test Mode Banner -->
+    <div id="testModeBanner" style="background: rgba(30, 41, 59, 0.6); border: 1.5px solid rgba(245, 158, 11, 0.4); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; font-size: 0.82rem; color: #fbbf24;">
+        <span>🧪 <b>Chế độ Thử nghiệm:</b> <span id="testModeStatus">TẮT (Ghi vào Prod DB)</span></span>
+        <button type="button" id="btnToggleTestMode" style="background:#f59e0b; color:#0f172a; border:none; padding:5px 12px; border-radius:6px; font-weight:700; cursor:pointer;" onclick="toggleTestMode()">Bật Test Mode</button>
+    </div>
     <header>
         <h1>{schema.title}</h1>
         <p>{schema.description or ''}</p>
@@ -534,6 +540,34 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let activeSignatureTargetQId = null;
 
         // Elements
+        let isTestMode = Boolean({str(schema.settings.is_test_mode).lower()}) || window.location.search.includes('test=1') || window.location.search.includes('mode=test');
+
+        function updateTestModeUI() {{
+            const banner = document.getElementById('testModeBanner');
+            const statusTxt = document.getElementById('testModeStatus');
+            const toggleBtn = document.getElementById('btnToggleTestMode');
+            if (isTestMode) {{
+                statusTxt.textContent = "BẬT (Lưu vào Dev Storage tạm)";
+                banner.style.background = "rgba(245, 158, 11, 0.25)";
+                banner.style.borderColor = "#f59e0b";
+                toggleBtn.textContent = "Tắt Test (Về Prod)";
+                toggleBtn.style.background = "#2563eb";
+                toggleBtn.style.color = "#fff";
+            }} else {{
+                statusTxt.textContent = "TẮT (Ghi vào Prod DB)";
+                banner.style.background = "rgba(30, 41, 59, 0.6)";
+                banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
+                toggleBtn.textContent = "Bật Test Mode";
+                toggleBtn.style.background = "#f59e0b";
+                toggleBtn.style.color = "#0f172a";
+            }}
+        }}
+
+        function toggleTestMode() {{
+            isTestMode = !isTestMode;
+            updateTestModeUI();
+        }}
+
         const container = document.getElementById('questionsContainer');
         const modal = document.getElementById('paperModal');
         const sigCanvas = document.getElementById('modalSigCanvas');
@@ -856,6 +890,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     formData.append(k, answers[k]);
                 }}
             }}
+            formData.append('is_test_mode', isTestMode ? 'true' : 'false');
+
 
             // Attach standard aliases
             if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
@@ -886,6 +922,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         window.addEventListener('DOMContentLoaded', () => {{
             renderForm();
             requestGps();
+            updateTestModeUI();
         }});
     </script>
 </body>

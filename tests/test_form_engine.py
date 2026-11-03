@@ -94,3 +94,49 @@ def test_api_upload_and_render_arbitrary_form():
     assert html_resp.status_code == 200
     assert "Khảo Sát Ý Kiến Khách Hàng" in html_resp.text
     assert "Đánh giá độ hài lòng" in html_resp.text
+
+def test_dev_test_mode_submission_routing(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    import io
+    from PIL import Image, ImageDraw
+    client = TestClient(app)
+
+    # Create mock sharp photo with lines
+    img = Image.new("RGB", (600, 800), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    for i in range(100, 700, 20):
+        draw.line([(50, i), (550, i)], fill=(0, 0, 0), width=4)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+
+    # 1. Clear any previous dev submissions
+    client.delete("/api/v1/dev/submissions")
+
+    # 2. Submit with is_test_mode = True
+    resp = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "driver_phone": "0988123456",
+            "license_plate": "29E-123.45",
+            "is_test_mode": "true",
+            "driver_name": "Tài xế Test Mode"
+        },
+        files={"survey_photo": ("test.jpg", buf, "image/jpeg")}
+    )
+    assert resp.status_code == 200
+    res_json = resp.json()
+    assert res_json["mode"] == "TEST_DEV_MODE"
+    assert res_json["submission_id"].startswith("DEV-")
+
+    # 3. Inspect temporary dev storage endpoint
+    get_resp = client.get("/api/v1/dev/submissions")
+    assert get_resp.status_code == 200
+    dev_data = get_resp.json()
+    assert dev_data["count"] >= 1
+    assert any(s["submission_id"] == res_json["submission_id"] for s in dev_data["submissions"])
+
+    # 4. Clean up dev storage
+    del_resp = client.delete("/api/v1/dev/submissions")
+    assert del_resp.status_code == 200
+    assert del_resp.json()["status"] == "cleared"

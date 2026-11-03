@@ -46,6 +46,7 @@ class FormSettings(BaseModel):
     notify_telegram_chat_id: Optional[int] = None
     notify_email: Optional[str] = None
     decree13_required: bool = True
+    is_test_mode: bool = False
 
 class FormSchema(BaseModel):
     form_id: str
