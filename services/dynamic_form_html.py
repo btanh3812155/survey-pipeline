@@ -1,0 +1,861 @@
+import json
+from services.form_engine import FormSchema
+
+def render_dynamic_form_html(schema: FormSchema) -> str:
+    schema_json = schema.model_dump_json()
+
+    return f"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#090d16">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>{schema.title}</title>
+    <style>
+        :root {{
+            --bg: #090d16;
+            --surface: #131b2e;
+            --surface-hover: #1c2742;
+            --border: #23314f;
+            --accent: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }}
+
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            padding: env(safe-area-inset-top, 12px) 14px env(safe-area-inset-bottom, 24px) 14px;
+            overflow-x: hidden;
+            touch-action: manipulation;
+        }}
+
+        /* GPS Authorization Sticky Banner */
+        .gps-banner {{
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 14px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.82rem;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }}
+
+        .gps-status-text {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 600;
+        }}
+
+        .gps-status-text.ok {{ color: var(--success); }}
+        .gps-status-text.prompt {{ color: var(--warning); }}
+
+        .btn-gps {{
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+
+        header {{
+            text-align: center;
+            margin-bottom: 16px;
+        }}
+
+        header h1 {{
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -0.02em;
+        }}
+
+        header p {{
+            font-size: 0.85rem;
+            color: var(--muted);
+            margin-top: 4px;
+        }}
+
+        /* Question Cards */
+        .question-card {{
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transition: all 0.3s ease;
+        }}
+
+        .question-card.hidden {{
+            display: none !important;
+        }}
+
+        .q-header {{
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+
+        .q-title-row {{
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }}
+
+        .q-title {{
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.35;
+        }}
+
+        .q-required {{
+            color: var(--danger);
+            font-weight: 700;
+            margin-left: 2px;
+        }}
+
+        .q-desc {{
+            font-size: 0.8rem;
+            color: var(--muted);
+            line-height: 1.4;
+        }}
+
+        .btn-sample {{
+            align-self: flex-start;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #93c5fd;
+            font-size: 0.74rem;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 2px;
+        }}
+
+        .sample-preview-box {{
+            display: none;
+            background: rgba(15, 23, 42, 0.7);
+            border-left: 3px solid #60a5fa;
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 0.78rem;
+            color: #e2e8f0;
+            margin-top: 4px;
+        }}
+
+        .q-input {{
+            background: var(--bg);
+            border: 1.5px solid var(--border);
+            color: #fff;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            outline: none;
+            width: 100%;
+        }}
+
+        .q-input:focus {{
+            border-color: var(--accent);
+        }}
+
+        .q-error {{
+            color: var(--danger);
+            font-size: 0.78rem;
+            font-weight: 600;
+            display: none;
+        }}
+
+        /* Choices */
+        .choices-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+
+        .choice-item {{
+            background: var(--bg);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }}
+
+        .choice-item.selected {{
+            border-color: var(--accent);
+            background: rgba(37, 99, 235, 0.12);
+            color: #93c5fd;
+        }}
+
+        /* Viewfinder Section */
+        .camera-container {{
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            max-height: 40dvh;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        video {{
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }}
+
+        .captured-img {{
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: none;
+        }}
+
+        .camera-overlay {{
+            position: absolute;
+            top: 10%; left: 10%; right: 10%; bottom: 10%;
+            border: 2px dashed rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        .btn-camera-snap {{
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 4px solid #fff;
+            background: linear-gradient(135deg, #10b981, #059669);
+            margin: 10px auto 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }}
+
+        .btn-camera-retake {{
+            background: var(--surface-hover);
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: none;
+            margin: 10px auto 0 auto;
+            cursor: pointer;
+        }}
+
+        /* Signature Question Trigger Card */
+        .sig-preview-card {{
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            background: rgba(255,255,255,0.02);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }}
+
+        .sig-preview-img {{
+            max-height: 70px;
+            display: none;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+        }}
+
+        /* Paper Signature Modal Popup */
+        .modal-paper-overlay {{
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(6px);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }}
+
+        .paper-sheet {{
+            background: #ffffff;
+            color: #0f172a;
+            width: 100%;
+            max-width: 480px;
+            border-radius: 16px;
+            padding: 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+            border-top: 6px solid #2563eb;
+        }}
+
+        .paper-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+
+        .paper-header h3 {{
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #0f172a;
+        }}
+
+        .paper-canvas-wrap {{
+            position: relative;
+            background: #f8fafc;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 10px;
+            height: 220px;
+            touch-action: none;
+            overflow: hidden;
+        }}
+
+        #modalSigCanvas {{
+            width: 100%;
+            height: 100%;
+            display: block;
+        }}
+
+        .paper-footer {{
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+        }}
+
+        .btn-modal {{
+            flex: 1;
+            padding: 12px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            border: none;
+        }}
+
+        .btn-modal.cancel {{ background: #e2e8f0; color: #475569; }}
+        .btn-modal.clear {{ background: #fef3c7; color: #b45309; }}
+        .btn-modal.confirm {{ background: #2563eb; color: #fff; }}
+
+        /* Confirmation Dialog Modal */
+        .confirm-modal-overlay {{
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+
+        .confirm-box {{
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            max-width: 380px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }}
+
+        /* Buttons & Actions */
+        .btn-submit {{
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #fff;
+            border: none;
+            padding: 16px;
+            border-radius: 12px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            width: 100%;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+            margin-top: 10px;
+        }}
+
+        .btn-reset-form {{
+            background: transparent;
+            color: #f87171;
+            border: 1.5px solid rgba(239, 68, 68, 0.3);
+            padding: 12px;
+            border-radius: 12px;
+            font-size: 0.88rem;
+            font-weight: 600;
+            width: 100%;
+            cursor: pointer;
+            margin-top: 10px;
+        }}
+
+        .decree13-notice {{
+            font-size: 0.76rem;
+            color: var(--muted);
+            text-align: center;
+            margin-top: 14px;
+            line-height: 1.4;
+        }}
+    </style>
+</head>
+<body>
+    <!-- GPS Banner -->
+    <div class="gps-banner" id="gpsBanner">
+        <div class="gps-status-text prompt" id="gpsStatusText">
+            📍 Chưa bật vị trí GPS
+        </div>
+        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật GPS</button>
+    </div>
+
+    <header>
+        <h1>{schema.title}</h1>
+        <p>{schema.description or ''}</p>
+    </header>
+
+    <form id="dynamicForm" onsubmit="return false;">
+        <div id="questionsContainer"></div>
+
+        <button type="button" class="btn-submit" id="btnSubmitForm" onclick="handleSubmit()">
+            <span>🚀 Gửi Biểu Mẫu</span>
+        </button>
+
+        <button type="button" class="btn-reset-form" onclick="promptResetForm()">
+            <span>🔄 Làm lại từ đầu (Reset)</span>
+        </button>
+
+        <p class="decree13-notice">
+            🔒 Biểu mẫu được bảo vệ & lưu trữ theo <b>Nghị định 13/2023/NĐ-CP</b>. Dữ liệu hình ảnh và GPS được mã hóa bảo mật.
+        </p>
+    </form>
+
+    <!-- Paper Signature Modal -->
+    <div class="modal-paper-overlay" id="paperModal">
+        <div class="paper-sheet">
+            <div class="paper-header">
+                <h3>Tờ Giấy Ký Tên Điện Tử</h3>
+                <span style="font-size: 0.8rem; color: #64748b;">Dùng ngón tay ký tên</span>
+            </div>
+            <div class="paper-canvas-wrap">
+                <canvas id="modalSigCanvas"></canvas>
+            </div>
+            <div class="paper-footer">
+                <button type="button" class="btn-modal cancel" onclick="closeSigModal()">Đóng</button>
+                <button type="button" class="btn-modal clear" onclick="clearModalSig()">Ký lại</button>
+                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()">Xác nhận ✅</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Confirmation Modal -->
+    <div class="confirm-modal-overlay" id="confirmResetModal">
+        <div class="confirm-box">
+            <h3 style="color:#ef4444; font-size:1.1rem;">Làm lại từ đầu?</h3>
+            <p style="font-size:0.85rem; color:#cbd5e1;">Toàn bộ câu trả lời, ảnh chụp và chữ ký sẽ bị xóa hoàn toàn.</p>
+            <div style="display:flex; gap:10px;">
+                <button type="button" style="flex:1; padding:10px; border-radius:8px; border:none; background:#334155; color:#fff;" onclick="closeResetModal()">Hủy</button>
+                <button type="button" style="flex:1; padding:10px; border-radius:8px; border:none; background:#ef4444; color:#fff; font-weight:700;" onclick="executeResetForm()">Đồng ý xóa</button>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="hiddenCameraCanvas" style="display:none;"></canvas>
+
+    <script>
+        const SCHEMA = {schema_json};
+        const answers = {{}};
+        let gpsCoordinates = null;
+        let activeVideoStream = null;
+        let activeSignatureTargetQId = null;
+
+        // Elements
+        const container = document.getElementById('questionsContainer');
+        const modal = document.getElementById('paperModal');
+        const sigCanvas = document.getElementById('modalSigCanvas');
+        const sigCtx = sigCanvas.getContext('2d');
+        let isDrawing = false;
+        let hasModalSignature = false;
+
+        // 1. GPS Request
+        function requestGps() {{
+            if (!navigator.geolocation) {{
+                alert("Trình duyệt của bạn không hỗ trợ định vị GPS!");
+                return;
+            }}
+            document.getElementById('gpsStatusText').textContent = "📍 Đang lấy tọa độ vệ tinh...";
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {{
+                    gpsCoordinates = {{
+                        latitude: pos.coords.latitude,
+                        longitude: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy
+                    }};
+                    const txt = document.getElementById('gpsStatusText');
+                    txt.textContent = `✅ GPS: ${{pos.coords.latitude.toFixed(4)}}, ${{pos.coords.longitude.toFixed(4)}} (±${{Math.round(pos.coords.accuracy)}}m)`;
+                    txt.className = "gps-status-text ok";
+                    document.getElementById('btnRequestGps').style.display = 'none';
+                }},
+                (err) => {{
+                    const txt = document.getElementById('gpsStatusText');
+                    txt.textContent = "⚠️ Quyền định vị bị từ chối";
+                    txt.className = "gps-status-text prompt";
+                }},
+                {{ enableHighAccuracy: true, timeout: 10000 }}
+            );
+        }}
+
+        // 2. Render Form from Schema
+        function renderForm() {{
+            container.innerHTML = '';
+            SCHEMA.questions.forEach((q, idx) => {{
+                const card = document.createElement('div');
+                card.className = "question-card";
+                card.id = `card_${{q.id}}`;
+                card.dataset.qid = q.id;
+
+                let sampleHtml = '';
+                if (q.sample_response) {{
+                    sampleHtml = `
+                        <button type="button" class="btn-sample" onclick="toggleSample('${{q.id}}')">
+                            💡 Câu trả lời mẫu
+                        </button>
+                        <div class="sample-preview-box" id="sample_${{q.id}}">${{q.sample_response}}</div>
+                    `;
+                }}
+
+                card.innerHTML = `
+                    <div class="q-header">
+                        <div class="q-title-row">
+                            <span class="q-title">${{idx + 1}}. ${{q.title}} ${{q.required ? '<span class="q-required">*</span>' : ''}}</span>
+                        </div>
+                        ${{q.description ? `<p class="q-desc">${{q.description}}</p>` : ''}}
+                        ${{sampleHtml}}
+                    </div>
+                    <div class="q-body" id="body_${{q.id}}"></div>
+                    <div class="q-error" id="err_${{q.id}}"></div>
+                `;
+
+                container.appendChild(card);
+                renderQuestionInput(q, card.querySelector(`#body_${{q.id}}`));
+            }});
+
+            evaluateConditionals();
+        }}
+
+        function toggleSample(qid) {{
+            const el = document.getElementById(`sample_${{qid}}`);
+            el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+        }}
+
+        function renderQuestionInput(q, parent) {{
+            if (q.type === 'text') {{
+                const inp = document.createElement('input');
+                inp.type = 'text';
+                inp.className = 'q-input';
+                inp.placeholder = 'Nhập câu trả lời...';
+                inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                parent.appendChild(inp);
+            }} else if (q.type === 'number') {{
+                const inp = document.createElement('input');
+                inp.type = 'number';
+                inp.className = 'q-input';
+                inp.placeholder = 'Nhập số...';
+                inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                parent.appendChild(inp);
+            }} else if (q.type === 'dropdown') {{
+                const sel = document.createElement('select');
+                sel.className = 'q-input';
+                sel.innerHTML = '<option value="">-- Chọn một mục --</option>' + 
+                    (q.options || []).map(o => `<option value="${{o}}">${{o}}</option>`).join('');
+                sel.onchange = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                parent.appendChild(sel);
+            }} else if (q.type === 'single_choice') {{
+                const list = document.createElement('div');
+                list.className = 'choices-list';
+                (q.options || []).forEach(opt => {{
+                    const item = document.createElement('div');
+                    item.className = 'choice-item';
+                    item.textContent = opt;
+                    item.onclick = () => {{
+                        list.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
+                        item.classList.add('selected');
+                        answers[q.id] = opt;
+                        evaluateConditionals();
+                    }};
+                    list.appendChild(item);
+                }});
+                parent.appendChild(list);
+            }} else if (q.type === 'camera_webrtc') {{
+                parent.innerHTML = `
+                    <div class="camera-container" id="cam_${{q.id}}">
+                        <video id="vid_${{q.id}}" autoplay playsinline muted></video>
+                        <img id="img_${{q.id}}" class="captured-img" alt="Captured">
+                        <div class="camera-overlay" id="overlay_${{q.id}}"></div>
+                    </div>
+                    <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
+                    </button>
+                    <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">🔄 Chụp lại</button>
+                `;
+                initCameraForQ(q.id);
+            }} else if (q.type === 'signature') {{
+                parent.innerHTML = `
+                    <div class="sig-preview-card" onclick="openSigModal('${{q.id}}')">
+                        <img id="sigImg_${{q.id}}" class="sig-preview-img" alt="Signature">
+                        <div id="sigBtnLabel_${{q.id}}" style="display:flex; align-items:center; gap:6px; font-weight:700; color:#60a5fa;">
+                            ✍️ Bấm vào đây để ký tên trên giấy
+                        </div>
+                    </div>
+                `;
+            }}
+        }}
+
+        // 3. Conditional Logic Branching
+        function evaluateConditionals() {{
+            SCHEMA.questions.forEach(q => {{
+                if (q.conditional) {{
+                    const parentVal = answers[q.conditional.depends_on_question_id];
+                    const card = document.getElementById(`card_${{q.id}}`);
+                    let isMatch = false;
+
+                    if (q.conditional.operator === 'equals') {{
+                        isMatch = (parentVal === q.conditional.expected_value);
+                    }} else if (q.conditional.operator === 'in') {{
+                        isMatch = Array.isArray(q.conditional.expected_value) && q.conditional.expected_value.includes(parentVal);
+                    }}
+
+                    if (isMatch) {{
+                        card.classList.remove('hidden');
+                    }} else {{
+                        card.classList.add('hidden');
+                        delete answers[q.id];
+                    }}
+                }}
+            }});
+        }}
+
+        // 4. WebRTC Camera
+        async function initCameraForQ(qid) {{
+            const vid = document.getElementById(`vid_${{qid}}`);
+            if (!vid) return;
+            try {{
+                const stream = await navigator.mediaDevices.getUserMedia({{
+                    video: {{ facingMode: {{ ideal: "environment" }}, width: {{ ideal: 1920 }}, height: {{ ideal: 1080 }} }},
+                    audio: false
+                }});
+                activeVideoStream = stream;
+                vid.srcObject = stream;
+            }} catch(e) {{
+                console.warn("Camera failed:", e);
+            }}
+        }}
+
+        function snapPhoto(qid) {{
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const img = document.getElementById(`img_${{qid}}`);
+            const overlay = document.getElementById(`overlay_${{qid}}`);
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            const retakeBtn = document.getElementById(`retake_${{qid}}`);
+            const cvs = document.getElementById('hiddenCameraCanvas');
+
+            if (!vid || !vid.videoWidth) return;
+            if (navigator.vibrate) navigator.vibrate(50);
+
+            const scale = Math.min(1.0, 1280 / Math.max(vid.videoWidth, vid.videoHeight));
+            cvs.width = Math.round(vid.videoWidth * scale);
+            cvs.height = Math.round(vid.videoHeight * scale);
+            const ctx = cvs.getContext('2d');
+            ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+
+            cvs.toBlob(blob => {{
+                answers[qid] = blob;
+                img.src = URL.createObjectURL(blob);
+                img.style.display = 'block';
+                vid.style.display = 'none';
+                overlay.style.display = 'none';
+                snapBtn.style.display = 'none';
+                retakeBtn.style.display = 'block';
+            }}, 'image/webp', 0.82);
+        }}
+
+        function retakeCam(qid) {{
+            delete answers[qid];
+            document.getElementById(`img_${{qid}}`).style.display = 'none';
+            document.getElementById(`vid_${{qid}}`).style.display = 'block';
+            document.getElementById(`overlay_${{qid}}`).style.display = 'flex';
+            document.getElementById(`snap_${{qid}}`).style.display = 'flex';
+            document.getElementById(`retake_${{qid}}`).style.display = 'none';
+        }}
+
+        // 5. Paper Signature Modal
+        function openSigModal(qid) {{
+            activeSignatureTargetQId = qid;
+            modal.style.display = 'flex';
+            sigCanvas.width = sigCanvas.parentElement.clientWidth;
+            sigCanvas.height = sigCanvas.parentElement.clientHeight;
+            sigCtx.strokeStyle = "#090d16";
+            sigCtx.lineWidth = 2.5;
+            sigCtx.lineCap = "round";
+            clearModalSig();
+        }}
+
+        function closeSigModal() {{ modal.style.display = 'none'; }}
+        function clearModalSig() {{
+            sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+            hasModalSignature = false;
+        }}
+
+        function confirmModalSig() {{
+            if (!hasModalSignature) {{
+                alert("Vui lòng dùng ngón tay vẽ chữ ký trước khi bấm Xác nhận!");
+                return;
+            }}
+            const dataUrl = sigCanvas.toDataURL('image/png');
+            answers[activeSignatureTargetQId] = dataUrl;
+
+            const previewImg = document.getElementById(`sigImg_${{activeSignatureTargetQId}}`);
+            const label = document.getElementById(`sigBtnLabel_${{activeSignatureTargetQId}}`);
+            previewImg.src = dataUrl;
+            previewImg.style.display = 'block';
+            label.textContent = "✍️ Chữ ký đã ghi nhận (Bấm để ký lại)";
+            closeSigModal();
+        }}
+
+        function getSigPos(e) {{
+            const r = sigCanvas.getBoundingClientRect();
+            const cx = e.touches ? e.touches[0].clientX : e.clientX;
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            return {{ x: cx - r.left, y: cy - r.top }};
+        }}
+
+        sigCanvas.addEventListener('mousedown', (e) => {{ isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }});
+        sigCanvas.addEventListener('mousemove', (e) => {{ if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }});
+        window.addEventListener('mouseup', () => isDrawing = false);
+
+        sigCanvas.addEventListener('touchstart', (e) => {{ e.preventDefault(); isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }}, {{ passive: false }});
+        sigCanvas.addEventListener('touchmove', (e) => {{ e.preventDefault(); if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }}, {{ passive: false }});
+        window.addEventListener('touchend', () => isDrawing = false);
+
+        // 6. Reset Form with Confirmation
+        function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
+        function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
+        function executeResetForm() {{
+            for (let k in answers) delete answers[k];
+            closeResetModal();
+            renderForm();
+            alert("Biểu mẫu đã được xóa làm lại từ đầu!");
+        }}
+
+        // 7. Submit Handler
+        async function handleSubmit() {{
+            // Client validation
+            for (let q of SCHEMA.questions) {{
+                const val = answers[q.id];
+                if (q.conditional) {{
+                    const pVal = answers[q.conditional.depends_on_question_id];
+                    if (q.conditional.operator === 'equals' && pVal !== q.conditional.expected_value) continue;
+                }}
+                if (q.required && (!val || val === "")) {{
+                    alert(`Vui lòng trả lời câu hỏi bắt buộc: '${{q.title}}'`);
+                    return;
+                }}
+                if (q.validation && q.validation.regex_pattern && val) {{
+                    const reg = new RegExp(q.validation.regex_pattern);
+                    if (!reg.test(String(val))) {{
+                        alert(q.validation.regex_error_message || `Dữ liệu '${{q.title}}' không đúng định dạng!`);
+                        return;
+                    }}
+                }}
+            }}
+
+            const btn = document.getElementById('btnSubmitForm');
+            btn.disabled = true;
+            btn.textContent = "⏳ Đang gửi & thẩm định AI...";
+
+            const formData = new FormData();
+            for (let k in answers) {{
+                if (answers[k] instanceof Blob) {{
+                    formData.append('survey_photo', answers[k], 'survey_camera.webp');
+                }} else {{
+                    formData.append(k, answers[k]);
+                }}
+            }}
+
+            // Attach standard aliases
+            if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
+            if (answers['license_plate']) formData.append('license_plate', answers['license_plate']);
+            if (answers['driver_signature']) formData.append('signature_png', answers['driver_signature']);
+
+            if (gpsCoordinates) {{
+                formData.append('gps_latitude', gpsCoordinates.latitude);
+                formData.append('gps_longitude', gpsCoordinates.longitude);
+            }}
+
+            try {{
+                const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
+                const res = await resp.json();
+                if (res.status === 'APPROVED') {{
+                    alert(`✅ PHÊ DUYỆT THÀNH CÔNG!\\nMã phiếu: #${{res.submission_id}}\\n${{res.reason || ''}}`);
+                }} else {{
+                    alert(`❌ CHƯA HỢP LỆ!\\nLý do: ${{res.reason || 'Dữ liệu không khớp'}}\\nVui lòng kiểm tra lại.`);
+                }}
+            }} catch(e) {{
+                alert("Lỗi kết nối máy chủ! Vui lòng thử lại.");
+            }} finally {{
+                btn.disabled = false;
+                btn.textContent = "🚀 Gửi Biểu Mẫu";
+            }}
+        }}
+
+        window.addEventListener('DOMContentLoaded', () => {{
+            renderForm();
+            requestGps();
+        }});
+    </script>
+</body>
+</html>
+"""
