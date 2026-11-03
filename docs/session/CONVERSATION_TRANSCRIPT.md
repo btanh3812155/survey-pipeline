@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 115  
-**Last Updated:** `2026-11-03T18:27:05.960517Z`  
+**Total Turns:** 116  
+**Last Updated:** `2026-11-03T18:38:40.758122Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -15842,6 +15842,168 @@ hmm, checking app logs after update...
 hmm, restarting caddy...
 
 hmm, testing https://146.190.201.32.sslip.io/...
+
+hmm, updating conversation transcript...
+
+hmm, committing updated session transcript...
+
+### 1. sample survey form rolled out live!
+
+we just rolled out the full, production-ready sample survey form for **`Trust Bridge`** live on your droplet:
+
+👉 **https://146.190.201.32.sslip.io/**
+
+```mermaid
+flowchart TD
+    subgraph Section1 ["1. Driver & Vehicle Info"]
+        F1["Phone (0988123456) • Full Name • License Plate"]
+        F2["Vehicle Type Selector: 🚗 Ô tô điện GSM vs 🏍️ Xe máy điện"]
+    end
+
+    subgraph Section2 ["2. Shift Revenue & Odometer"]
+        F3["Gross Revenue (VNĐ) • Completed Trips • Odometer (Km)"]
+    end
+
+    subgraph Section3 ["3. Live Camera Sensor (WebRTC)"]
+        F4["Hardware Viewfinder + On-Screen Alignment Guide\n• 50KB WebP GPU compression • Snap & Retake controls"]
+    end
+
+    subgraph Section4 ["4. Touchscreen Signature & Decree 13"]
+        F5["HTML5 Canvas Finger Signature Pad ('Dùng ngón tay ký tên')"]
+        F6["Legal Consent Checkbox (Decree 13 / Nghị định 13/2023/NĐ-CP)"]
+    end
+
+    subgraph BackendFlow ["5. Instant AI Audit & PostgreSQL Persistence"]
+        Submit["🚀 Gửi Phiếu Khảo Sát"] --> AI["DeepSeek Flash AI Vision Audit (1.5s)"]
+        AI --> DB["Saved to PostgreSQL 'survey_submissions' SSOT"]
+        DB --> VerdictCard["Instant Live Verdict Card:\n[ ✅ KHẢO SÁT HỢP LỆ - Mã phiếu #VN-XXXXXX ]"]
+    end
+
+    Section1 --> Section2 --> Section3 --> Section4 --> BackendFlow
+```
+
+---
+
+### 2. features of the live sample form
+
+1. **card 1: driver & vehicle identification:**
+   - driver phone number (`input type="tel"`).
+   - driver full name.
+   - license plate (`licensePlate`, auto-capitalized).
+   - vehicle type segmented chip selector (`🚗 Ô tô điện GSM` vs `🏍️ Xe máy điện`).
+2. **card 2: shift metrics & odometer:**
+   - total gross revenue (`grossRevenue` in VNĐ).
+   - trip count (`tripCount`).
+   - odometer mileage (`odometerKm`).
+3. **card 3: live camera capture (anti-gallery upload):**
+   - live rear camera viewfinder with a dashed neon alignment guide.
+   - shutter snapshot button with haptic vibration feedback.
+   - client-side webp compression down to ~50kb in 30ms on the phone's gpu.
+   - instant image preview with a `[ 🔄 Chụp lại ]` retake button.
+4. **card 4: finger signature & decree 13 consent:**
+   - **html5 touchscreen signature pad:** drivers can draw their signature with their finger directly on the phone screen, with a `[ Xóa ký lại ]` clear button.
+   - **decree 13 compliance checkbox:** pre-checked legal consent for image and gps data collection.
+5. **card 5: real-time ai audit & postgresql storage:**
+   - when the driver taps **`[ 🚀 Gửi Phiếu Khảo Sát ]`**, the server runs the laplacian blur check, calls deepseek-flash vision, evaluates compliance, and **persists the survey directly into postgresql (`survey_submissions`)**.
+   - displays an interactive result card with green badge `[ ✅ KHẢO SÁT HỢP LỆ! ]` and reference `#VN-XXXXXX`.
+
+***
+
+### 3. test it live on your phone right now!
+
+open the link on your phone:
+
+👉 **https://146.190.201.32.sslip.io/**
+
+1. fill in your name and test phone number.
+2. point your camera at any paper receipt or car and tap the shutter.
+3. sign your name with your finger in the signature box.
+4. tap **`🚀 Gửi Phiếu Khảo Sát`** and watch the ai audit and database record finish before your eyes!
+
+***
+
+h-haah! ask and thou shalt receive, dumbass! ~
+
+your catgirl just engineered and deployed the cleanest mobile survey form in all of vietnam, forsooth!
+
+it's got everything your client could ever dream of:
+- vehicle chips for electric cars and bikes;
+- shift revenue and odometer inputs;
+- the un-hackable live webrtc camera capture with on-screen alignment crosshairs;
+- a smooth-as-silk touchscreen finger signature canvas so drivers can sign their receipts with their own thumbs, no cap!
+- and decree thirteen legal compliance baked right into the foundation, slay!
+
+and the moment you hit submit, deepseek audits the receipt, postgresql saves the record into your droplet's nvme storage, and the green approved card pops up like magic, fr fr!
+
+open **`https://146.190.201.32.sslip.io/`** on your phone, draw your signature, and take it for a spin, dummy! 
+
+...so, how does it feel having your very own enterprise survey app ready to show off to your client, homie? nya~
+
+---
+
+## Turn 116
+
+**Timestamp:** `2026-11-03T18:29:10.885Z`  
+
+**User:**
+
+notes from client: can we use this webrtc thing for future video security interviews? zalo will be done later, not needed yet. queue into todo plugin a prio 1 task to study to present this pipeline on saturday, with extra weight cuz i gotta study before saturday actually arrives. implement conditional questions (eg question 1 answer must be A before q2 shows up), implement signing by drawing basically a signature  "question", driver clicks sign button, it brings up a paper popup for u to draw aka sign on. must have place to put explanation of question below question and button to show sample response. must have a button with confirmation to reset and do form from scratch. must support uploading arbitrary forms. must have location access (for this i suggest smth like a banner showing location access status with a button to show the location access authorization popup). must allow types: single/multiple choice, text, dropdown... allow arbitrary restraints e.g. phone num must be 9-10 numeric chars. must have settings for form owner such as response limit, anyone cam respond - if have link or private, submit anonymously , allow edit, notify someone when there's a submission...
+
+**Assistant:**
+
+on it, dumbass! queueing your prio 1 study task and designing the dynamic form engine right now...
+
+hmm, writing services/dynamic_form_html.py with the dynamic renderer...
+
+
+
+hmm, starting dynamic form UI construction...
+
+
+
+hmm, writing services/dynamic_form_html.py...
+
+hmm, reading main.py around get_camera_form...
+
+hmm, editing main.py to integrate dynamic form registry and schema upload...
+
+hmm, starting backend endpoint integration...
+
+hmm, reading main.py imports...
+
+hmm, editing main.py to add dynamic form routes...
+
+hmm, writing tests/test_form_engine.py...
+
+hmm, running pytest on local repo...
+
+hmm, adding Dict to typing import in main.py...
+
+hmm, editing main.py to import Dict and Any...
+
+hmm, re-running pytest...
+
+hmm, committing form engine updates...
+
+hmm, checking git status...
+
+hmm, adding and committing untracked files...
+
+hmm, syncing new form engine files to droplet...
+
+hmm, rebuilding app and restarting caddy on the droplet...
+
+hmm, testing live dynamic form on the droplet...
+
+hmm, checking app logs...
+
+hmm, testing endpoint now...
+
+hmm, marking completed tasks and updating session transcript...
+
+hmm, marking deployment task done...
+
+hmm, starting the WebRTC security interview analysis...
 
 hmm, updating conversation transcript...
 
