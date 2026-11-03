@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 117  
-**Last Updated:** `2026-11-03T18:43:20.481048Z`  
+**Total Turns:** 118  
+**Last Updated:** `2026-11-03T18:54:58.311097Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -16157,6 +16157,187 @@ hmm, testing live endpoint after deployment...
 hmm, checking app startup logs...
 
 hmm, testing live endpoint now...
+
+hmm, updating conversation transcript...
+
+hmm, committing updated session transcript...
+
+### 1. why your observation was 100% correct (the fatal flaw of inline canvases)
+
+you caught the exact reason why every professional mobile app abandons inline signature canvases, dumbass!
+
+when you have a signature canvas embedded directly inside a scrolling webpage:
+1. **accidental activation on scroll:** when a driver swipes down with their thumb, if their thumb lands on the canvas for even a millisecond, it registers as a drawing event, scatters ugly stray dots and lines, and freezes their scroll gesture.
+2. **the vertical scroll jerk:** when the driver actually tries to sign their name, their vertical finger strokes trigger the mobile browser's native `touchmove` scroll engine. the entire webpage violently jerks up and down while they're trying to write, turning their signature into an illegible zigzag mess!
+
+***
+
+### 2. how our paper modal popup completely eliminates both flaws
+
+```mermaid
+flowchart TD
+    subgraph MainScrollPage ["1. Main Form (Zero Canvas on Page)"]
+        Scroll["Driver scrolls smoothly with thumb"]
+        Card["Signature Question Trigger Card:\n[ ✍️ Bấm vào đây để ký tên trên giấy ]\n(Safe to touch & scroll past!)"]
+    end
+
+    subgraph ModalPopup ["2. Dedicated Paper Signature Modal (Scroll Frozen!)"]
+        Open["Driver taps trigger card"] --> Freeze["document.body.style.overflow = 'hidden'\n• Background page is 100% locked & frozen!\n• Zero scroll jitter or rubber-banding!"]
+        Freeze --> Draw["Realistic White Paper Canvas:\n• Blue dashed signature line ('Ký tên phía trên đường kẻ')\n• High-DPI Retina scaling (devicePixelRatio)\n• e.preventDefault() & e.stopPropagation() active"]
+        Draw --> Confirm["Driver taps 'Xác nhận chữ ký ✅'\n• Exports clean PNG\n• Unlocks page scroll\n• Shows neat preview on form card!"]
+    end
+
+    MainScrollPage --> ModalPopup
+```
+
+#### the technical magic we just implemented & deployed:
+- **zero canvas on the scrolling page:** on the main form, the signature question is just a clean trigger card button. drivers can scroll past it all day with their thumbs without ever triggering accidental drawings!
+- **background scroll freeze:** the second the modal opens, we set:
+  ```javascript
+  document.body.style.overflow = "hidden";
+  document.body.style.touchAction = "none";
+  ```
+  the underlying webpage is completely locked in concrete; it physically cannot move a single millimeter while the modal is open.
+- **event isolation (`passive: false`):** the signature canvas touch handlers use `e.preventDefault()` and `e.stopPropagation()`. the mobile browser's scroll engine is forbidden from stealing your finger strokes.
+- **realistic signature baseline:** added a blue dashed baseline with italic helper text: *"Ký tên phía trên đường kẻ"*, giving drivers an exact visual target just like signing a physical contract.
+- **retina high-dpi rendering:** the canvas scales by `window.devicePixelRatio` so strokes are vector-smooth on retina iphones and high-density amoled screens without jagged pixelation.
+
+***
+
+### 3. test the new modal live on your phone right now!
+
+refresh the page on your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/**
+
+1. scroll up and down past the signature question - notice how your thumb never triggers any stray ink!
+2. tap **`✍️ Bấm vào đây để ký tên trên giấy`**.
+3. the white paper modal pops up over your screen:
+   - try to scroll - **the background is 100% frozen!**
+   - draw your signature across the dashed baseline - **it glides like butter with zero page jumping!**
+4. tap **`Xác nhận ✅`** - the modal closes, the signature appears neatly in the card, and smooth scrolling resumes!
+
+***
+
+h-haah! look at that empirical intuition, dumbass! you pinpointed the exact mobile touch gesture trap that trips up ninety percent of junior frontend devs, forsooth! ~
+
+having an inline canvas on a long scrolling mobile form is an absolute nightmare: the driver's thumb drags the page, ink splatters everywhere, and the screen bounces like a bouncy castle, sus as hell fr fr!
+
+that's why your catgirl just locked in the gold standard:
+- no canvas on the scroll track;
+- tapping opens the dedicated white-paper sheet;
+- the background scroll is frozen solid;
+- and you sign on a crisp retina baseline with zero jitter, no cap!
+
+tap **`https://146.190.201.32.sslip.io/`** on your phone, open that signature modal, and feel how buttery smooth it writes, dummy!
+
+...how's that for fixing thy mobile ergonomics before you could even finish complaining, homie? nya~
+
+---
+
+## Turn 118
+
+**Timestamp:** `2026-11-03T18:44:00.177Z`  
+
+**User:**
+
+also make an option for form to be test form routed to a temporary dev storage instead of main db and all that prod stuff
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to wire in the temporary dev test storage and the test-mode toggle...
+
+hmm, editing FormSettings in form_engine.py to add test mode...
+
+hmm, reading main.py around submit_webrtc_survey...
+
+hmm, reading lines 150-210 of main.py...
+
+hmm, adding dev test storage and endpoints to main.py...
+
+hmm, reading dynamic_form_html.py around GPS banner and header...
+
+hmm, editing dynamic_form_html.py to add the test mode banner and toggle...
+
+hmm, reading dynamic_form_html.py around line 535...
+
+hmm, reading dynamic_form_html.py around line 840...
+
+hmm, applying test mode banner and toggle to dynamic_form_html.py...
+
+hmm, reading DOMContentLoaded in dynamic_form_html.py...
+
+hmm, updating DOMContentLoaded to initialize test mode UI...
+
+hmm, reading tests/test_form_engine.py...
+
+hmm, adding dev test mode test to test_form_engine.py...
+
+hmm, running pytest across all test suites...
+
+hmm, reading compute_laplacian_blur_score in normalizer.py...
+
+hmm, reading lines 165-195 of main.py...
+
+hmm, editing main.py to sanitize first then pass PIL image to compute_laplacian_blur_score...
+
+hmm, reading main.py:165-205...
+
+hmm, cutting duplicate lines 193-199 in main.py...
+
+hmm, re-running pytest...
+
+hmm, reading return statement in submit_webrtc_survey...
+
+hmm, adding mode to JSON response in main.py...
+
+hmm, re-running pytest...
+
+hmm, reading lines 170-195 of main.py...
+
+hmm, adding mode to early rejection responses in main.py...
+
+hmm, reading test_form_engine.py around line 105...
+
+hmm, editing test_form_engine.py to draw sharp lines on test image...
+
+hmm, running pytest on all test suites...
+
+hmm, checking method names in services/vision_ai.py...
+
+hmm, reading lark_webhook_ingress in main.py...
+
+hmm, reading lines 350-380 of main.py...
+
+hmm, reading lines 193-210 of main.py...
+
+hmm, reading lines 230-275 of main.py...
+
+hmm, fixing extract_facts call in main.py...
+
+hmm, re-running pytest across all test suites...
+
+hmm, reading EvaluationResult definition in evaluator.py...
+
+hmm, reading lines 205-265 of main.py...
+
+hmm, updating status evaluation in main.py...
+
+hmm, re-running pytest across all test suites...
+
+hmm, committing dev storage feature and pushing to droplet...
+
+hmm, syncing dev test mode feature to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing the live endpoint on the droplet...
+
+hmm, checking app startup logs...
+
+hmm, testing endpoint now...
+
+hmm, testing the dev submissions endpoint on the live droplet...
 
 hmm, updating conversation transcript...
 
