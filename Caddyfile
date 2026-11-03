@@ -1,4 +1,4 @@
-api.yourdomain.com {
+146.190.201.32.sslip.io {
     # automatic Let's Encrypt TLS reverse proxy
     reverse_proxy app:8000 {
         header_up Host {host}
