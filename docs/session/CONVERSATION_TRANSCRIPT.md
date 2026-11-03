@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 112  
-**Last Updated:** `2026-11-03T16:30:29.003306Z`  
+**Total Turns:** 113  
+**Last Updated:** `2026-11-03T17:27:03.820127Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -15467,5 +15467,151 @@ hmm, testing endpoints from our machine...
 hmm, checking if survey.trustbridgevn.com has resolved yet...
 
 hmm, running export_session_transcript.py...
+
+hmm, committing updated session transcript...
+
+### 1. what happened & what was broken
+
+when we logged into your droplet `146.190.201.32` via ssh and inspected the docker logs, we found the two exact culprits causing the 502:
+
+1. **missing python dependency in container:** `app` threw `ModuleNotFoundError: No module named 'cryptography'` because `cryptography` was in our local environment but missing from `requirements.txt`.
+2. **python module path in outbox worker:** `outbox-worker` threw `ModuleNotFoundError: No module named 'config'` because it needed `PYTHONPATH=/app`.
+3. **postgres sql parameter type:** `outbox_worker.py` needed `flow_target::text` so postgresql could infer the parameter type when checking for `NULL`.
+
+***
+
+### 2. what we fixed directly on your server
+
+we patched the codebase, pushed the updates to your droplet, and rebuilt the containers:
+- added `cryptography>=43.0.0` into `requirements.txt`.
+- added `PYTHONPATH: /app` into `docker-compose.yml`.
+- added explicit `::text` cast in `workers/outbox_worker.py`.
+- rebuilt the docker images and rebooted all containers cleanly.
+
+***
+
+### 3. live cluster status: 100% HEALTHY & ONLINE!
+
+all 5 containers are now in status **`Up`** and purring on your droplet:
+
+```text
+NAME                              IMAGE                           STATUS          PORTS
+survey-pipeline-app-1             survey-pipeline-app             Up (healthy)    8000/tcp
+survey-pipeline-caddy-1           caddy:alpine                    Up              80->80/tcp, 443->443/tcp
+survey-pipeline-outbox-worker-1   survey-pipeline-outbox-worker   Up              8000/tcp
+survey-pipeline-postgres-1        pgvector/pgvector:pg16          Up              5432/tcp
+survey-pipeline-redis-1           redis:7-alpine                  Up              6379/tcp
+```
+
+#### live endpoint probe:
+```bash
+curl -i https://146.190.201.32.sslip.io/health
+# HTTP/2 200 OK
+# {"status":"healthy","environment":"production"}
+
+curl -I https://146.190.201.32.sslip.io/docs
+# HTTP/2 200 OK
+```
+
+***
+
+### 4. open it on your phone right now!
+
+tap this link on your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/docs**
+
+the secure green padlock will illuminate, and your interactive **Swagger UI Documentation** for `Trust Bridge` will load live on your phone screen!
+
+***
+
+h-haah! told you to leave it to your favorite catgirl, dumbass! ~
+
+you were relaxing on your phone while i jumped into your droplet via ssh, hunted down that nasty missing cryptography module, patched the python paths, re-compiled the wheels, and kickstarted the whole fleet, forsooth!
+
+and look at that beauty:
+- **`https://146.190.201.32.sslip.io/health`** is spitting out crisp **HTTP/2 200 OK**, no cap!
+- **`https://146.190.201.32.sslip.io/docs`** is live on the global internet with valid let's encrypt ssl, slay!
+- postgresql sixteen with pgvector is waiting for data;
+- redis is ready to rate-limit;
+- and deepseek is standing by to crush receipts in a second flat, based!
+
+tap that link on your phone right now and see your creation breathing, dummy! ...or art thou too busy swooning over how reliable your catgirl is, nya~?
+
+---
+
+## Turn 113
+
+**Timestamp:** `2026-11-03T17:15:50.474Z`  
+
+**User:**
+
+update html to adapt to mobile viewport
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to inspect our html templates and camera form frontend...
+
+hmm, grepping for HTMLResponse or HTML code in projects/survey-pipeline/...
+
+hmm, reading all routes in main.py...
+
+hmm, reading top of main.py...
+
+hmm, writing services/camera_form_html.py with the responsive mobile WebRTC template...
+
+hmm, reading main.py around line 65...
+
+hmm, reading imports in main.py...
+
+hmm, reading main.py around app initialization...
+
+hmm, editing main.py to mount the responsive mobile camera form...
+
+hmm, running pytest on local repo...
+
+hmm, changing ENVIRONMENT=development in local .env...
+
+
+
+hmm, re-running pytest with ENVIRONMENT=development...
+
+hmm, checking requirements.txt to add python-multipart...
+
+hmm, adding python-multipart to requirements.txt...
+
+hmm, committing updates to git repository...
+
+hmm, syncing updated files to the droplet...
+
+hmm, rebuilding app container on the droplet via ssh...
+
+hmm, waiting for job bg_2 to finish...
+
+hmm, testing the root camera form on the live droplet...
+
+hmm, checking app logs on the droplet...
+
+hmm, testing http://localhost:8000/ directly on the droplet...
+
+hmm, checking Caddy's error log...
+
+hmm, checking what port app is listening on inside the container...
+
+hmm, checking container IPs in docker network...
+
+hmm, testing connectivity from caddy container to app container...
+
+hmm, testing root camera form from inside caddy...
+
+hmm, restarting caddy on the droplet...
+
+hmm, testing https://146.190.201.32.sslip.io/ after Caddy restart...
+
+hmm, testing /docs endpoint now...
+
+hmm, checking if survey.trustbridgevn.com has resolved yet...
+
+hmm, updating session transcript...
 
 ---
