@@ -30,7 +30,7 @@ async def process_outbox_batch(
                         """
                         SELECT id, event_type, flow_target, aggregate_id, payload
                         FROM outbox_events
-                        WHERE (%s IS NULL OR flow_target = %s OR flow_target = 'ALL')
+                        WHERE (%s::text IS NULL OR flow_target = %s::text OR flow_target = 'ALL')
                           AND (status = 'PENDING'
                                OR (status = 'PROCESSING' AND locked_at < NOW() - INTERVAL '60 SECONDS'))
                         ORDER BY id ASC
