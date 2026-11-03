@@ -2,7 +2,7 @@
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
 **Total Turns:** 118  
-**Last Updated:** `2026-11-03T18:54:58.311097Z`  
+**Last Updated:** `2026-11-03T18:57:04.824866Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -16338,6 +16338,91 @@ hmm, checking app startup logs...
 hmm, testing endpoint now...
 
 hmm, testing the dev submissions endpoint on the live droplet...
+
+hmm, updating conversation transcript...
+
+hmm, committing updated session transcript...
+
+### 1. dev test mode & temporary storage: deployed & live!
+
+we implemented and rolled out a dedicated **Dev Test Mode** that completely isolates test submissions from your production database and downstream business triggers:
+
+```mermaid
+flowchart TD
+    Submit["User Submits Form"] --> Check{"Is Test Mode Active?\n(?mode=test or Header Toggle)"}
+    
+    Check -- Yes (Test Mode) --> Dev["Temporary Dev Storage (data/dev_test_submissions.json)\n• ID: #DEV-XXXXXX\n• Real DeepSeek AI Vision Audit\n• ZERO production DB writes\n• ZERO outbox event dispatches\n• ZERO billing ledger mutations"]
+    
+    Check -- No (Production) --> Prod["Production PostgreSQL SSOT\n• ID: #VN-XXXXXX\n• Writes to 'survey_submissions'\n• Dispatches Outbox events (Billing, R2, Telegram)"]
+```
+
+---
+
+### 2. features of the dev test mode
+
+1. **interactive on-screen toggle in header:**
+   - at the top of the form, there is a dedicated amber banner:
+     `🧪 Chế độ Thử nghiệm: TẮT (Ghi vào Prod DB) [ Bật Test Mode ]`
+   - clicking the button switches it to:
+     `🧪 Chế độ Thử nghiệm: BẬT (Lưu vào Dev Storage tạm) [ Tắt Test (Về Prod) ]`
+2. **url query parameter support:**
+   - you can share a dedicated test link with testers:
+     👉 **https://146.190.201.32.sslip.io/?mode=test**
+   - the form automatically opens in test mode, displaying the prominent amber banner!
+3. **full real-time ai audit without database pollution:**
+   - when submitting in test mode, the server **still runs the real DeepSeek-flash AI vision audit and blur checks** so you can see live AI accuracy in real time!
+   - submission IDs are prefixed with **`#DEV-XXXXXX`**.
+   - the submission is appended to a temporary JSON vault (`data/dev_test_submissions.json`).
+   - **production database tables (`survey_submissions`, `collaborator_billing_ledger`, `driver_registered_vehicles`) and Outbox event queues are completely bypassed!**
+4. **dev storage inspection & cleanup endpoints:**
+   - **view all dev submissions:**
+     ```bash
+     curl https://146.190.201.32.sslip.io/api/v1/dev/submissions
+     # returns: {"count": X, "submissions": [...]}
+     ```
+   - **wipe dev storage clean in 1 second:**
+     ```bash
+     curl -X DELETE https://146.190.201.32.sslip.io/api/v1/dev/submissions
+     # returns: {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
+     ```
+
+***
+
+### 3. test it live on your phone right now!
+
+open the test link on your phone:
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+1. notice the amber **`🧪 Chế độ Thử nghiệm: BẬT`** banner at the top.
+2. snap any picture, sign your name in the paper modal, and tap **`🚀 Gửi Biểu Mẫu`**.
+3. you will get your live DeepSeek AI verdict with a **`#DEV-XXXXXX`** reference ID, completely free of any production baggage!
+
+***
+
+h-haah! smart thinking, dumbass! ~
+
+you don't want thy client or QA testers spamming five hundred fake tests into the production database, triggering phantom payouts, and messing up your financial reports, forsooth!
+
+that's why your catgirl just gave thee a sandbox shield:
+- open **`?mode=test`** (or tap the toggle button right on the header);
+- the amber warning banner lights up;
+- the server runs the full deepseek vision check so you can test image clarity and receipt detection live;
+- but it routes the record straight into the temporary dev storage vault, completely shielding your production postgresql tables and financial ledgers, no cap!
+
+and whenever you're done testing, one call to `DELETE /api/v1/dev/submissions` wipes the whole staging slate clean, slay!
+
+tap **`https://146.190.201.32.sslip.io/?mode=test`** on your phone, test out that test mode badge, and watch how cleanly it isolates your data, dummy!
+
+...how's that for having a production-grade staging environment right in your pocket, homie? nya~
+
+gimme a sec, dumbass! let's compile the ultimate slide-by-slide presentation study guide and speaking script for saturday right now...
+
+hmm, committing presentation study guide to git...
+
+hmm, pushing presentation study guide to droplet...
+
+hmm, marking presentation prep done in todo...
 
 hmm, updating conversation transcript...
 
