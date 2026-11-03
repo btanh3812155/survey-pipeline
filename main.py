@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
+from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 from services.camera_form_html import CAMERA_FORM_HTML
@@ -40,16 +41,22 @@ vision_client = DualModelVisionClient(
 )
 
 http_client: httpx.AsyncClient = None
+db_pool: Optional[AsyncConnectionPool] = None
 try:
     redis_client: Optional[aioredis.Redis] = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 except Exception:
     redis_client = None
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, redis_client
+    global http_client, redis_client, db_pool
     http_client = httpx.AsyncClient(timeout=10.0)
+    try:
+        db_pool = AsyncConnectionPool(conninfo=settings.DATABASE_URL, min_size=1, max_size=10, open=False)
+        await db_pool.open()
+    except Exception as e:
+        logger.warning(f"Could not open DB pool: {e}")
+        db_pool = None
     if redis_client is None:
         try:
             redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -57,6 +64,11 @@ async def lifespan(app: FastAPI):
             logger.warning(f"could not initialize redis: {e}")
             redis_client = None
     yield
+    if db_pool:
+        try:
+            await db_pool.close()
+        except Exception:
+            pass
     if redis_client:
         try:
             await redis_client.aclose()
@@ -83,6 +95,12 @@ async def submit_webrtc_survey(
     survey_photo: UploadFile = File(...),
     driver_phone: str = Form(...),
     license_plate: Optional[str] = Form(None),
+    driver_name: Optional[str] = Form(None),
+    vehicle_type: Optional[str] = Form("CAR"),
+    gross_revenue: Optional[str] = Form("0"),
+    trip_count: Optional[str] = Form("0"),
+    odometer_km: Optional[str] = Form("0"),
+    signature_png: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
     submission_id = f"VN-{secrets.token_hex(3).upper()}"
@@ -117,6 +135,45 @@ async def submit_webrtc_survey(
     ai_res = await vision_client.audit_survey_image(norm_bytes, mime_type="image/webp")
     compliance = evaluate_survey_compliance(ai_res)
 
+    # 3. persist survey into database if pool active
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO survey_submissions (
+                            submission_id, driver_phone, driver_name, receipt_serial_no,
+                            status, rejection_reason, raw_extracted_facts
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (submission_id) DO NOTHING;
+                        """,
+                        (
+                            submission_id,
+                            driver_phone,
+                            driver_name or "Tài xế",
+                            f"SN-{license_plate or 'AUTO'}",
+                            "APPROVED" if compliance.is_compliant else "REJECTED",
+                            compliance.feedback_message_vi if not compliance.is_compliant else None,
+                            json.dumps(ai_res),
+                        ),
+                    )
+                    if license_plate:
+                        await cur.execute(
+                            """
+                            INSERT INTO driver_registered_vehicles (
+                                driver_phone, license_plate, vehicle_type
+                            ) VALUES (%s, %s, %s)
+                            ON CONFLICT (driver_phone) DO UPDATE 
+                            SET license_plate = EXCLUDED.license_plate,
+                                vehicle_type = EXCLUDED.vehicle_type;
+                            """,
+                            (driver_phone, license_plate.upper(), vehicle_type or "CAR"),
+                        )
+                    await conn.commit()
+        except Exception as e:
+            logger.error(f"failed to persist survey to DB: {e}")
+
     return JSONResponse(
         status_code=200,
         content={
@@ -125,6 +182,8 @@ async def submit_webrtc_survey(
             "reason": compliance.feedback_message_vi,
             "driver_phone": driver_phone,
             "detected_plate": ai_res.get("detected_plate"),
+            "gross_revenue": gross_revenue,
+            "trip_count": trip_count,
         },
     )
 
