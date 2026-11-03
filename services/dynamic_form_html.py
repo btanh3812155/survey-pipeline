@@ -356,6 +356,25 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             overflow: hidden;
         }}
 
+        .sig-baseline {{
+            position: absolute;
+            bottom: 45px;
+            left: 20px;
+            right: 20px;
+            border-bottom: 1.5px dashed #94a3b8;
+            pointer-events: none;
+        }}
+
+        .sig-baseline-text {{
+            position: absolute;
+            bottom: 22px;
+            left: 20px;
+            font-size: 0.72rem;
+            color: #94a3b8;
+            pointer-events: none;
+            font-style: italic;
+        }}
+
         #modalSigCanvas {{
             width: 100%;
             height: 100%;
@@ -482,6 +501,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             </div>
             <div class="paper-canvas-wrap">
                 <canvas id="modalSigCanvas"></canvas>
+                <div class="sig-baseline"></div>
+                <div class="sig-baseline-text">Ký tên phía trên đường kẻ</div>
             </div>
             <div class="paper-footer">
                 <button type="button" class="btn-modal cancel" onclick="closeSigModal()">Đóng</button>
@@ -735,15 +756,27 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         function openSigModal(qid) {{
             activeSignatureTargetQId = qid;
             modal.style.display = 'flex';
-            sigCanvas.width = sigCanvas.parentElement.clientWidth;
-            sigCanvas.height = sigCanvas.parentElement.clientHeight;
+            document.body.style.overflow = 'hidden';
+            document.body.style.touchAction = 'none';
+
+            // High-DPI retina scaling
+            const dpr = window.devicePixelRatio || 1;
+            const r = sigCanvas.parentElement.getBoundingClientRect();
+            sigCanvas.width = r.width * dpr;
+            sigCanvas.height = r.height * dpr;
+            sigCtx.scale(dpr, dpr);
             sigCtx.strokeStyle = "#090d16";
             sigCtx.lineWidth = 2.5;
             sigCtx.lineCap = "round";
             clearModalSig();
         }}
 
-        function closeSigModal() {{ modal.style.display = 'none'; }}
+        function closeSigModal() {{
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+            document.body.style.touchAction = '';
+        }}
+
         function clearModalSig() {{
             sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
             hasModalSignature = false;
@@ -776,10 +809,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         sigCanvas.addEventListener('mousemove', (e) => {{ if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }});
         window.addEventListener('mouseup', () => isDrawing = false);
 
-        sigCanvas.addEventListener('touchstart', (e) => {{ e.preventDefault(); isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }}, {{ passive: false }});
-        sigCanvas.addEventListener('touchmove', (e) => {{ e.preventDefault(); if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }}, {{ passive: false }});
+        sigCanvas.addEventListener('touchstart', (e) => {{ e.preventDefault(); e.stopPropagation(); isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }}, {{ passive: false }});
+        sigCanvas.addEventListener('touchmove', (e) => {{ e.preventDefault(); e.stopPropagation(); if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }}, {{ passive: false }});
         window.addEventListener('touchend', () => isDrawing = false);
-
         // 6. Reset Form with Confirmation
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
