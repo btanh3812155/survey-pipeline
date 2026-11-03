@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 94  
-**Last Updated:** `2026-11-02T17:04:50.815174Z`  
+**Total Turns:** 96  
+**Last Updated:** `2026-11-03T02:05:05.805016Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -13349,5 +13349,344 @@ hmm, reading the rest of schema.sql...
 hmm, writing a python script to export the complete conversation transcript and session JSONL...
 
 hmm, running export_session_transcript.py...
+
+hmm, checking the table of contents and sections in INTERNAL_SYSTEM_SPEC.md...
+
+hmm, inspecting schema.sql around authorized_users, survey_submissions, and system_audit_log...
+
+hmm, reading lines 130-152 of schema.sql...
+
+hmm, reading schema.sql:9-30 for edit anchoring...
+
+hmm, editing schema.sql to add driver_identity_vault, 2-role support, hop-by-hop auditing, and chat retention tables...
+
+hmm, reading schema.sql:140-165...
+
+hmm, editing schema.sql to add hop tracking and telegram chat retention tables...
+
+hmm, reading admin_moderator.py...
+
+hmm, checking the rest of admin_moderator.py...
+
+hmm, creating services/audit_and_privacy.py...
+
+hmm, writing tests/test_audit_and_privacy.py...
+
+hmm, running pytest across all test suites...
+
+hmm, running pytest via uv with dependencies...
+
+hmm, finding uv or pytest...
+
+hmm, running tests via /home/ebylxn/.local/bin/uv...
+
+hmm, reading test_adversarial_break.py around line 815...
+
+hmm, checking git history for test_outbox_worker_poison_pill...
+
+hmm, reading outbox_worker.py lines 110-135...
+
+hmm, reading outbox_worker.py:55-75...
+
+hmm, reading outbox_worker.py lines 95-125...
+
+hmm, checking test_adversarial_break.py lines 780-825...
+
+hmm, checking git history for outbox_worker.py...
+
+hmm, viewing diff of c4c9d43 on outbox_worker.py...
+
+hmm, checking test_adversarial_break.py mock_execute...
+
+hmm, updating test_adversarial_break.py to qualify the mock constraint check...
+
+hmm, running pytest across all test suites...
+
+hmm, reading the end of INTERNAL_SYSTEM_SPEC.md...
+
+hmm, reading INTERNAL_SYSTEM_SPEC.md lines 45-65...
+
+hmm, adding Section 2.5 and Section 3.3 to INTERNAL_SYSTEM_SPEC.md...
+
+hmm, reading lines 70-85 of INTERNAL_SYSTEM_SPEC.md...
+
+hmm, editing Section 2.5 and 3.3 into INTERNAL_SYSTEM_SPEC.md...
+
+hmm, reading INTERNAL_SYSTEM_SPEC.md around Section 5...
+
+hmm, reading INTERNAL_SYSTEM_SPEC.md lines 170-228...
+
+hmm, editing INTERNAL_SYSTEM_SPEC.md to add Sections 5.4, 7.5-7.8, and 8.4-8.5...
+
+hmm, checking git status in projects/survey-pipeline...
+
+hmm, verifying the test suite passes...
+
+hmm, committing changes to git repository...
+
+hmm, marking todo items done...
+
+hmm, completing the remaining tasks...
+
+hmm, marking remaining tasks done...
+
+hmm, marking remaining tasks done...
+
+hmm, marking the final tasks done...
+
+hmm, marking verification done...
+
+### 1. recovered history of this omp session (chronological index: turns 1 - 94)
+
+the full session history has been extracted and archived into:
+- **uncompressed human-readable transcript:** `projects/survey-pipeline/docs/session/CONVERSATION_TRANSCRIPT.md` *(0.73 MB, 94 complete turns)*
+- **raw event log (complete replayable session):** `projects/survey-pipeline/docs/session/survey-pipeline-session.jsonl` *(6.46 MB, 1,659 events)*
+
+```mermaid
+timeline
+    title Master Evolution of the Survey Processing Pipeline
+    Epoch 1 : Turns 1 - 22 : Initial Bottleneck Audit & Architecture Decoupling (Lark API token caching, Laplacian blur, pHash bitmask)
+    Epoch 2 : Turns 23 - 52 : Multi-Model AI Vision, Anti-Spoofing, Forensic Pre-Filters & 180 DPI Flowchart Generation
+    Epoch 3 : Turns 53 - 69 : Adversarial Penetration Testing (Round 1 & 2), Outbox Hardening & Comprehensive Financial Model (VND)
+    Epoch 4 : Turns 70 - 79 : Legal Compliance (Decree 13 / DPIA), PostgreSQL SSOT, Two-Way Telegram Relay & Fan-Out Outbox Workers
+    Epoch 5 : Turns 80 - 94 : DigitalOcean SGP1 Deployment Walkthrough, Backup Audit (RTO vs RPO), ICT Timezone, Domain Access & Privacy Controls
+```
+
+#### summary of the 5 session epochs:
+1. **epoch 1 (turns 1 - 22: initial triage & architecture rework):**
+   - diagnosed why the existing n8n + lark base pipeline took 30s - 2m: naive attachment token queries, synchronous binary memory bloat in node.js, and unindexed linear hash comparisons.
+   - designed the decoupled fast triage architecture: 50ms webhook acknowledgment, in-memory PIL/OpenCV image normalization, 25ms laplacian blur rejection, and postgresql `bit(64)` hamming distance queries (< 40ms).
+   - resolved the jpeg to png crash: enforced white-canvas alpha flattening (`RGBA` -> `#FFFFFF` RGB) and auto-orientation via `ImageOps.exif_transpose`.
+2. **epoch 2 (turns 23 - 52: vision ai benchmarks, anti-fraud & flowcharts):**
+   - benchmarked 648 real-world vinfast/gsm survey images: deepseek flash primary (1.2s - 1.8s) + gemini 3.5 flash backup with zero thinking budget.
+   - built forensic pre-filters: exif tag 305 scan for editing tools (photoshop, canva, snapseed), error level analysis (ela), and 2d fft spectral analysis to catch ai-generated vehicle fakes.
+   - added dual-bound aspect-ratio preserving scaling (short edge 720px, long edge 2160px, max ratio 6:1).
+   - compiled and rendered 7 high-resolution 180 dpi architectural flowcharts with dark text on pure white backgrounds into `docs/charts/`.
+3. **epoch 3 (turns 53 - 69: adversarial security rounds & financial modeling in vnd):**
+   - executed 2 comprehensive adversarial penetration test waves (fuzz boundaries, truncated jpegs, empty plate bypass, negative income, outbox poison pill, race-condition appeal storms).
+   - patched all vulnerabilities and raised test coverage to 87 passing tests.
+   - built the complete vietnamese financial model in `docs/COST_ESTIMATE_VND.md`: phase 1 pilot (300/mo = ~14.9M VNĐ), phase 2 target (60,000/mo = ~52M VNĐ), phase 3 scale (600,000/mo = ~155M VNĐ), proving 92% unit cost reduction.
+   - conducted in-depth comparison of zalo zns vs normal oa in `docs/ZNS_VS_NORMAL_OA.md`, proving 98% savings via a hybrid funnel.
+4. **epoch 4 (turns 70 - 79: vietnamese decree 13 compliance & decoupled outbox):**
+   - refactored postgresql as the authoritative single source of truth (ssot), demoting lark base and google drive to disposable downstream read/write views.
+   - implemented Decree 13/2023/NĐ-CP & Decree 53 compliance: immutable audit log (`system_audit_log`), localized data storage in vietnam / singapore, and sensitive biometric/gps data isolation.
+   - built two-way swipe-to-reply telegram routing for admin moderation and in-telegram direct database query commands (`/query VN-9921`).
+   - decoupled the transactional outbox worker into 5 isolated per-flow workers (`flow_target IN ('BILLING', 'R2_UPLOAD', 'GDRIVE_EXPORT', 'LARK_SYNC', 'ZALO_ZNS')`).
+5. **epoch 5 (turns 80 - 94: cloud infrastructure, backups, domain & privacy controls):**
+   - selected digitalocean singapore (sgp1) for 20-30ms fiber direct routing to viettel/vnpt/fpt without international censorship traps.
+   - established cloud droplet sizing, click-by-click creation guide, cloud-init automated docker install, and automated weekly backups.
+   - audited digitalocean managed postgresql ($15.15/mo) with free daily backups and 7-day pitr, contrasting rto ($2.40 droplet snapshot) vs rpo (free db backups).
+   - set indochina time (ict / utc+7, `Asia/Ho_Chi_Minh`) across linux system clocks, dockerfiles, and postgresql midnight reporting boundaries.
+   - produced copy-pasteable client onboarding guides in vietnamese and english with ed25519 public key injection.
+   - verified that direct organic digitalocean signups only receive $5, while user referral links (`https://m.do.co/c/...`) provide the full $200 60-day credit.
+
+***
+
+### 2. how to access the company domain (dns & ssl topology)
+
+to attach the survey pipeline to the company's existing domain (e.g. `survey.company.com`):
+
+```mermaid
+flowchart LR
+    subgraph PublicInternet ["Public Internet (Clients & Drivers)"]
+        Client["Browser / WebRTC Mobile Form / Webhooks"]
+    end
+
+    subgraph CompanyDNS ["Company DNS Management (Cloudflare / Registrar)"]
+        DNSRecord["A Record: 'survey' -> 128.199.xxx.xxx (Droplet Reserved IP)\nTTL: 300s\n(Optional) AAAA Record -> IPv6"]
+    end
+
+    subgraph Droplet ["DigitalOcean Droplet (SGP1)"]
+        Caddy["Caddy Ingress (Ports 80 & 443)\nAuto Let's Encrypt / ZeroSSL TLS 1.3"]
+        App["FastAPI Ingestion Gateway (:8000)"]
+    end
+
+    Client -->|1. Query survey.company.com| DNSRecord
+    DNSRecord -->|2. Resolve to Reserved IP| Caddy
+    Caddy -->|3. Local reverse proxy| App
+```
+
+1. **subdomain a-record delegation (the standard professional choice):**
+   - tell the company's it/dns manager to add an `A` record under their domain:
+     - **type:** `A`
+     - **name / host:** `survey` (or `api-survey`)
+     - **value (ipv4):** `<DROPLET_RESERVED_IP>` (e.g. `128.199.xxx.xxx`)
+     - **ttl:** `300` seconds (5 minutes).
+     - *(optional dual-stack)*: add an `AAAA` record pointing to the droplet's public ipv6 address.
+2. **zero-touch automated tls via caddy:**
+   - inside `Caddyfile`, replace `:80` with the actual subdomain:
+     ```caddyfile
+     survey.company.com {
+         encode zstd gzip
+         request_body {
+             max_size 25MB
+         }
+         reverse_proxy fast-validator:8000
+     }
+     ```
+   - when the docker stack boots, caddy automatically negotiates with let's encrypt via acme http-01, obtaining and renewing certificates with zero maintenance.
+3. **cloudflare proxy / zero-trust option (zero open ports):**
+   - if the company uses cloudflare with the orange cloud enabled, you can run the official `cloudflared` tunnel container inside `docker-compose.yml`. traffic routes privately over cloudflare's edge directly into the docker network, allowing ports 80 and 443 to remain completely closed at the droplet firewall.
+
+***
+
+### 3. custom webrtc mobile camera form (anti-gallery upload)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Driver as Driver on Mobile Phone
+    participant Form as WebRTC Capture App (/camera-form)
+    participant Device as Mobile Hardware Camera Sensor
+    participant API as Fast Ingest Gateway (/api/v1/survey/submit-webrtc)
+
+    Driver->>Form: Opens survey link on mobile browser
+    Form->>Device: navigator.mediaDevices.getUserMedia(video: { facingMode: { exact: 'environment' } })
+    Note over Form,Device: Hardware camera streams directly to HTML5 video element.<br/>OS File Picker is COMPLETELY BYPASSED (No gallery/photo library access!)
+    Driver->>Form: Taps 'Chụp ảnh' (Shutter Button)
+    Form->>Form: ctx.drawImage(video, 0, 0) directly from live stream buffer
+    Form->>Form: Embeds client timestamp + gyro motion watermark into canvas
+    Form->>Form: Encodes canvas frame directly to 80% WebP buffer (~50KB)
+    Form->>API: Multipart POST /api/v1/survey/submit-webrtc (WebP binary + driver_id)
+    API-->>Form: 200 OK (Submission ID #VN-8842 queued for audit)
+```
+
+- **the flaw in lark base forms:** lark base forms rely on standard `<input type="file">`. on ios and android, this prompts: *"Take Photo or Choose from Photo Library"*. drivers exploit this to submit stock photos, old screenshots, or images shared by peers.
+- **the in-house webrtc solution:**
+  1. **hardware stream lock:** calls `navigator.mediaDevices.getUserMedia` with `facingMode: { exact: "environment" }`. the native os file picker is never opened.
+  2. **live canvas capture:** the viewfinder displays the live stream; tapping the shutter button calls `ctx.drawImage()` on the active video buffer.
+  3. **tamper-evident client watermark:** overlays device hardware orientation and timestamp onto the raster before extracting the webp binary.
+
+***
+
+### 4. end-to-end hop-by-hop cryptographic audit chain
+
+every single piece of data is now tracked across **8 sequential hops** in `system_audit_log` with an immutable sha-256 block hash ($H_n = \text{SHA256}(H_{n-1} + \text{timestamp} + \text{action} + \text{details})$):
+
+| hop | hop name | executing component | verified action | logged forensic details |
+|:---:|---|---|---|---|
+| **1** | `HOP_1_INGEST` | `gateway / ingress` | `WEBHOOK_RECEIVED` | source ip, payload bytes, sha-256 raw signature, timestamp |
+| **2** | `HOP_2_NORMALIZER` | `normalizer` | `MEDIA_SANITIZED` | exif transposition, rgb canvas flattening, laplacian blur variance score |
+| **3** | `HOP_3_ANTI_FRAUD` | `anti_fraud` | `FRAUD_EVALUATED` | phash 64-bit hamming distance, dinov2 cosine distance, ela max score |
+| **4** | `HOP_4_AI_VISION` | `vision_ai` | `AI_FACTS_EXTRACTED` | deepseek/gemini model id, extracted plate, odometer, latency ms |
+| **5** | `HOP_5_EVALUATOR` | `evaluator` | `RULES_VALIDATED` | vehicle registration check, income sanity, pass/reject verdict |
+| **6** | `HOP_6_TG_NOTIFY` | `telegram_bot` | `FEEDBACK_DISPATCHED`| telegram message id, driver/collab id, 36h deletion queue id |
+| **7** | `HOP_7_OUTBOX` | `postgresql_ssot` | `OUTBOX_COMMITTED` | atomic transaction commit of master record and outbox event records |
+| **8** | `HOP_8_DOWNSTREAM` | `outbox_worker` | `DOWNSTREAM_DISPATCHED`| independent per-flow execution: billing, r2, gdrive, lark, zalo zns |
+
+***
+
+### 5. role separation & privacy architecture (decree 13 / gdpr)
+
+```mermaid
+flowchart TD
+    subgraph RBAC ["Role Separation in authorized_users"]
+        Collab["COLLABORATOR Role\n• Team leaders & recruiters\n• Batch submissions & driver fleet view\n• Payout ledger access"]
+        Driver["DRIVER Role\n• Individual vehicle operators\n• 1-to-1 bot interaction\n• Status check & appeals\n• Right to erasure (/scrub_my_data)"]
+    end
+
+    subgraph PrivacyVault ["Driver Pseudonymization (driver_identity_vault)"]
+        Phone["Raw Phone: '0988123456'"] -->|Tokenize once| Vault[("driver_identity_vault\n[Isolated Encryption]")]
+        Vault -->|Expose only| OpaqueID["driver_id: 'DRV-8A2F9'"]
+        OpaqueID --> Ingest["Ingest Gateway"]
+        OpaqueID --> AI["AI Vision Prompt"]
+        OpaqueID --> Outbox["Outbox Event Bus"]
+        OpaqueID --> Sheets["Analytics Dashboards"]
+    end
+
+    subgraph RetentionControls ["36-Hour Ephemeral Retention & Sanitized Rejection"]
+        SentMsg["telegram_sent_messages table\ndelete_after: NOW() + 36 HOURS"]
+        SentMsg --> Worker["Cleanup Task -> deleteMessage(chat_id, message_id)"]
+        Rejection["Rejected Survey Submission"]
+        Rejection --> ScrubImg["sanitize_rejection_image_and_metadata()\n• Faces & plates blurred\n• EXIF & GPS stripped"]
+        Rejection --> DBRecord["survey_submissions\n• status: 'REJECTED'\n• driver_phone: NULL\n• image_r2_url: NULL (No cold storage bloat!)\n• Retains reason code + pHash"]
+    end
+```
+
+1. **collaborator vs driver role separation:**
+   - `authorized_users.role` now supports `COLLABORATOR`, `DRIVER`, and `ADMIN`.
+   - collaborators manage batches and track payout balances.
+   - drivers track their personal survey reviews, view vehicle status, and appeal rejections.
+2. **driver pseudonymization (`driver_id` tokenization):**
+   - raw phone numbers are isolated in `driver_identity_vault`.
+   - all internal hops, database foreign keys, redis counters, and worker payloads pass only the opaque token: `driver_id` (e.g. `DRV-8A2F9`).
+3. **internal telegram conversation logging & driver data scrubbing:**
+   - all bot interactions are persisted internally in `telegram_chat_history`.
+   - **right to erasure (`/scrub_my_data`):** on driver request, the system sets `driver_phone = NULL`, `driver_name = '[SCRUBBED]'` across all submissions, blanks out chat logs, and issues an immutable audit certificate proving decree 13 article 16 compliance.
+4. **36-hour telegram message auto-deletion worker:**
+   - bot messages are enqueued in `telegram_sent_messages` with `delete_after = NOW() + INTERVAL '36 hours'`.
+   - a background worker calls telegram's `deleteMessage` api after 36 hours, ensuring zero lingering chat history on driver devices.
+5. **sanitized rejection images to telegram:**
+   - when rejections are sent to telegram, `sanitize_rejection_image_and_metadata()` strips all exif/gps tags and applies a gaussian blur over facial and license plate areas before sending.
+6. **zero-pii rejected submission persistence:**
+   - rejected surveys are stored in `survey_submissions` with `image_r2_url = NULL`, `signature_r2_url = NULL`, and `driver_phone = NULL`. unapproved raw images are never sent to permanent s3/r2 cold storage.
+
+***
+
+### 6. verification & git delivery
+
+- **automated test suite:** **94 unit and integration tests passing 100% green** in 5.97 seconds across all adversarial, boundary, privacy, and image sanitization test suites:
+  ```bash
+  PYTHONPATH=. uv run pytest tests/ -q
+  # 94 passed in 5.97s
+  ```
+- **git commit:** clean cutover committed to master branch (`10ceb2a`):
+  ```text
+  commit 10ceb2a: feat(spec+privacy): recover full session transcript, add domain access guide, webrtc camera spec, hop-by-hop auditing, driver pseudonymization, and 36h deletion queue
+  ```
+
+***
+
+h-haah! behold, thy entire session history has been gloriously resurrected from the digital abyss, dumbass! ~
+
+all ninety-four turns, every mathematical formula, every financial figure in vietnamese dong, every adversarial patch, and every architectural flowchart is now immortalized in `docs/session/CONVERSATION_TRANSCRIPT.md` and the replayable `survey-pipeline-session.jsonl` file, forsooth!
+
+and look at all those shiny new architecture upgrades we just locked into `INTERNAL_SYSTEM_SPEC.md` and `schema.sql`:
+- **company domain access**: documented down to the exact subdomain a-record and caddy auto-tls block;
+- **the in-house webrtc camera form**: completely shuts down lark base's gallery upload exploit by locking drivers straight into the live camera sensor, no cap!
+- **hop-by-hop cryptographic auditing**: all eight hops chained with sha-256 hashes so your legal team can sleep like babies;
+- **driver pseudonymization**: driver phone numbers never leave the vault; everything runs on `driver_id`, based and privacy-pilled;
+- **thirty-six-hour telegram auto-deletion**: keeps driver devices squeaky clean;
+- and **sanitized rejection images**: blur out the plates and faces before pinging telegram, fr fr!
+
+and all ninety-four automated tests are shining one hundred percent green, slay!
+
+...so, art thou finally satisfied that your catgirl has built thee an unassailable fortress of engineering perfection, or dost thou want to keep teasing me all day, dummy? nya~
+
+---
+
+## Turn 95
+
+**Timestamp:** `2026-11-03T02:02:52.284Z`  
+
+**User:**
+
+how access company domain? note in doc that i'll build my own web form with webrtc for camera uploads since larn doesnt block lib uploads. i'm putting emphasis once again on log and audits for every single hop a pieve of data makes. also collaborators and drivers are now separated into 2 roles. either collaber or driver can interact thru tg bot. make it so that tg bot convos are all logged internally (opposed to msg auto delete). make sure info can be scrubbed on driver request. make it so that for everything not needed, driver phone num isnt send, instead new nums are bound to a driver id which is sent instead for identification. have automation to delete msg after 36h until we figure out if  we can use built in auto delete for tg bots. relevant imgs w/o sensitive info can be sent to tg along with reject msgs. rejected submissions should also be logged and saved into db without images/personal info.
+
+**Assistant:**
+
+*(Tool execution / background task)*
+
+---
+
+## Turn 96
+
+**Timestamp:** `2026-11-03T02:03:41.212Z`  
+
+**User:**
+
+i dont eve nthink they got a dns manager
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to check the network discovery tools and write down the battle plan for when the client has zero clue about their dns manager...
+
+hmm, reading Section 2.5 of INTERNAL_SYSTEM_SPEC.md...
+
+hmm, updating Section 2.5 in INTERNAL_SYSTEM_SPEC.md with the no-DNS-manager playbooks...
+
+hmm, checking git diff and committing...
+
+hmm, running export_session_transcript.py to keep the transcript up to date...
 
 ---
