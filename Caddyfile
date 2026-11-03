@@ -1,18 +1,13 @@
-survey.trustbridgevn.com, 146.190.201.32.sslip.io {
-    # automatic Let's Encrypt TLS reverse proxy
-    reverse_proxy app:8000 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-    }
-
-    # request size ceiling to prevent memory bombs
+146.190.201.32.sslip.io {
+    reverse_proxy app:8000
     request_body {
         max_size 25MB
     }
+}
 
-    log {
-        output file /var/log/caddy/access.log
+survey.trustbridgevn.com {
+    reverse_proxy app:8000
+    request_body {
+        max_size 25MB
     }
 }

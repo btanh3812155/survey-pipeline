@@ -40,6 +40,7 @@ services:
     command: python workers/outbox_worker.py
     environment:
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
+      - PYTHONPATH=/app
     depends_on:
       - postgres
 
