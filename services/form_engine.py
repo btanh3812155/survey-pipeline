@@ -122,13 +122,38 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         decree13_required=True
     ),
     questions=[
+        # Question 1: Signature First!
+        FormQuestion(
+            id="driver_signature",
+            title="1. Chữ ký điện tử của tài xế",
+            type=QuestionType.SIGNATURE,
+            required=True,
+            description="Dùng ngón tay ký tên trên tờ giấy điện tử để xác thực người lập phiếu",
+            sample_response="Bấm nút 'Ký tên' và vẽ chữ ký ngón tay trên bảng pop-up"
+        ),
+        # Question 2: Consent Choice
+        FormQuestion(
+            id="consent_choice",
+            title="2. Điều khoản Cam kết & Xử lý Dữ liệu (Nghị định 13)",
+            type=QuestionType.SINGLE_CHOICE,
+            required=True,
+            options=["Tôi đồng ý", "Tôi không đồng ý"],
+            description="Bạn bắt buộc phải chọn 'Tôi đồng ý' để mở khóa các câu hỏi tiếp theo của khảo sát",
+            sample_response="Tôi đồng ý"
+        ),
+        # Subsequent Questions - ALL CONDITIONAL on consent_choice == 'Tôi đồng ý'
         FormQuestion(
             id="driver_phone",
-            title="Số điện thoại tài xế",
+            title="3. Số điện thoại tài xế",
             type=QuestionType.TEXT,
             required=True,
             description="Số điện thoại chính chủ dùng để nhận mã xác nhận và thanh toán phụ cấp",
             sample_response="0988123456 hoặc 0912345678",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            ),
             validation=ValidationRule(
                 regex_pattern=r"^0[0-9]{9,10}$",
                 regex_error_message="Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số!"
@@ -136,25 +161,35 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="driver_name",
-            title="Họ và tên tài xế",
+            title="4. Họ và tên tài xế",
             type=QuestionType.TEXT,
             required=True,
             description="Họ tên đầy đủ theo giấy phép lái xe",
-            sample_response="Nguyễn Văn An"
+            sample_response="Nguyễn Văn An",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            )
         ),
         FormQuestion(
             id="vehicle_type",
-            title="Loại phương tiện đang vận hành",
+            title="5. Loại phương tiện đang vận hành",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
             options=["Ô tô điện VinFast (GSM)", "Xe máy điện (GSM Bike)", "Xe cá nhân khác"],
             description="Chọn đúng loại phương tiện của ca làm việc hiện tại",
-            sample_response="Ô tô điện VinFast (GSM)"
+            sample_response="Ô tô điện VinFast (GSM)",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            )
         ),
-        # Conditional Question: Only shows if driver operates Car
+        # Nested Conditional: Only shows if vehicle_type == "Ô tô điện VinFast (GSM)"
         FormQuestion(
             id="car_model",
-            title="Dòng xe VinFast đang chạy",
+            title="6. Dòng xe VinFast đang chạy",
             type=QuestionType.DROPDOWN,
             required=True,
             options=["VF 5 Plus", "VF e34", "VF 6", "VF 7", "VF 8", "VF 9"],
@@ -168,11 +203,16 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="license_plate",
-            title="Biển số xe",
+            title="7. Biển số xe",
             type=QuestionType.TEXT,
             required=True,
             description="Biển số xe đăng ký (dạng 29E-xxx.xx hoặc 51G-xxx.xx)",
             sample_response="29E-123.45",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            ),
             validation=ValidationRule(
                 regex_pattern=r"^[0-9]{2}[A-Z]{1,2}-[0-9]{3}\.[0-9]{2}$|^[0-9]{2}[A-Z]{1,2}[0-9]{4,5}$",
                 regex_error_message="Biển số xe không đúng định dạng chuẩn (VD: 29E-123.45 hoặc 51H12345)!"
@@ -180,32 +220,34 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="gross_revenue",
-            title="Tổng doanh thu ca xe (VNĐ)",
+            title="8. Tổng doanh thu ca xe (VNĐ)",
             type=QuestionType.NUMBER,
             required=False,
             description="Tổng số tiền hiển thị trên ứng dụng tài xế cuối ca",
             sample_response="1250000",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            ),
             validation=ValidationRule(min_value=0, max_value=50000000)
         ),
         FormQuestion(
             id="camera_receipt",
-            title="Chụp ảnh màn hình doanh thu hoặc đồng hồ xe",
+            title="9. Chụp ảnh màn hình doanh thu hoặc đồng hồ xe",
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
             description="Chụp trực tiếp từ camera phần cứng, khóa chức năng chọn ảnh thư viện để đảm bảo tính xác thực",
             sample_response="Đặt hóa đơn hoặc đồng hồ xe rõ nét trong khung căn chỉnh",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            ),
             sample_images=[
                 "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
                 "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"
             ],
-        ),
-        FormQuestion(
-            id="driver_signature",
-            title="Chữ ký điện tử của tài xế",
-            type=QuestionType.SIGNATURE,
-            required=True,
-            description="Dùng ngón tay ký tên trực tiếp trên giấy điện tử để xác nhận bàn giao ca",
-            sample_response="Bấm nút 'Ký tên' và vẽ chữ ký ngón tay trên bảng pop-up"
         )
     ]
 )

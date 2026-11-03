@@ -34,7 +34,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             -webkit-tap-highlight-color: transparent;
         }}
 
-        body {{
+        html, body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
@@ -44,6 +44,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             padding: env(safe-area-inset-top, 12px) 14px env(safe-area-inset-bottom, 24px) 14px;
             overflow-x: hidden;
             touch-action: manipulation;
+            overscroll-behavior: none;
+            overscroll-behavior-y: none;
+            -webkit-overflow-scrolling: touch;
         }}
 
         /* GPS Authorization Sticky Banner */
@@ -312,12 +315,19 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             display: none;
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(6px);
-            z-index: 9999;
+            width: 100vw;
+            height: 100dvh;
+            height: 100svh;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.88);
+            backdrop-filter: blur(8px);
+            z-index: 99999;
             align-items: center;
             justify-content: center;
-            padding: 16px;
+            padding: 14px;
+            overscroll-behavior: none;
+            overscroll-behavior-y: none;
+            touch-action: none;
         }}
 
         .paper-sheet {{
@@ -750,12 +760,15 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     }}
 
                     if (isMatch) {{
+                        const wasHidden = card.classList.contains('hidden');
                         card.classList.remove('hidden');
+                        if (wasHidden && q.type === 'camera_webrtc') {{
+                            initCameraForQ(q.id);
+                        }}
                     }} else {{
                         card.classList.add('hidden');
                         delete answers[q.id];
                     }}
-                }}
             }});
         }}
 
@@ -872,12 +885,21 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             document.getElementById(`retake_${{qid}}`).style.display = 'none';
         }}
 
-        // 5. Paper Signature Modal
+        // 5. Paper Signature Modal with Foolproof iOS/Android Address-Bar Scroll Lock
+        let savedScrollY = 0;
+
         function openSigModal(qid) {{
             activeSignatureTargetQId = qid;
-            modal.style.display = 'flex';
+            savedScrollY = window.pageYOffset || document.documentElement.scrollTop;
+
+            // Lock body firmly in place to prevent address bar pull-down and scroll jerks
+            document.body.style.position = 'fixed';
+            document.body.style.top = `-${{savedScrollY}}px`;
+            document.body.style.width = '100%';
             document.body.style.overflow = 'hidden';
             document.body.style.touchAction = 'none';
+
+            modal.style.display = 'flex';
 
             // High-DPI retina scaling
             const dpr = window.devicePixelRatio || 1;
@@ -893,9 +915,20 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function closeSigModal() {{
             modal.style.display = 'none';
+            document.body.style.position = '';
+            document.body.style.top = '';
+            document.body.style.width = '';
             document.body.style.overflow = '';
             document.body.style.touchAction = '';
+            window.scrollTo(0, savedScrollY);
         }}
+
+        modal.addEventListener('touchmove', (e) => {{
+            if (e.target !== sigCanvas) {{
+                e.preventDefault();
+                e.stopPropagation();
+            }}
+        }}, {{ passive: false }});
 
         function clearModalSig() {{
             sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);

@@ -13,14 +13,15 @@ from services.form_engine import (
 
 def test_default_schema_valid_submission():
     valid_answers = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Nguyễn Văn An",
         "vehicle_type": "Ô tô điện VinFast (GSM)",
         "car_model": "VF 5 Plus",
         "license_plate": "29E-123.45",
         "gross_revenue": "1500000",
-        "camera_receipt": "mock_blob",
-        "driver_signature": "data:image/png;base64,mock"
+        "camera_receipt": "mock_blob"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, valid_answers)
     assert is_valid is True
@@ -28,12 +29,13 @@ def test_default_schema_valid_submission():
 
 def test_regex_constraint_invalid_phone():
     invalid_answers = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi đồng ý",
         "driver_phone": "12345", # Fails ^0[0-9]{9,10}$
         "driver_name": "Nguyễn Văn An",
         "vehicle_type": "Xe máy điện (GSM Bike)",
         "license_plate": "29E-123.45",
-        "camera_receipt": "mock_blob",
-        "driver_signature": "data:image/png;base64,mock"
+        "camera_receipt": "mock_blob"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_answers)
     assert is_valid is False
@@ -42,14 +44,25 @@ def test_regex_constraint_invalid_phone():
 def test_conditional_question_branching():
     # When vehicle_type is "Xe máy điện", car_model is conditional and should be skipped
     bike_answers = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Trần Văn Bình",
         "vehicle_type": "Xe máy điện (GSM Bike)",
         "license_plate": "59A-999.88",
-        "camera_receipt": "mock_blob",
-        "driver_signature": "data:image/png;base64,mock"
+        "camera_receipt": "mock_blob"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, bike_answers)
+    assert is_valid is True
+    assert err is None
+
+def test_conditional_no_consent_skips_subsequent_questions():
+    # When user chooses "Tôi không đồng ý", questions 3-9 are skipped
+    no_consent_answers = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi không đồng ý"
+    }
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, no_consent_answers)
     assert is_valid is True
     assert err is None
 
