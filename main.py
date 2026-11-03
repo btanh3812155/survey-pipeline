@@ -5,8 +5,9 @@ import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
-from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form
+from fastapi.responses import JSONResponse, HTMLResponse
+from services.camera_form_html import CAMERA_FORM_HTML
 
 from config import settings
 from services.normalizer import (
@@ -69,6 +70,63 @@ app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/camera-form", response_class=HTMLResponse)
+async def get_camera_form():
+    """Renders the mobile-optimized WebRTC live camera capture form."""
+    return HTMLResponse(content=CAMERA_FORM_HTML, status_code=200)
+
+
+@app.post("/api/v1/survey/submit-webrtc")
+async def submit_webrtc_survey(
+    survey_photo: UploadFile = File(...),
+    driver_phone: str = Form(...),
+    license_plate: Optional[str] = Form(None),
+):
+    """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
+    submission_id = f"VN-{secrets.token_hex(3).upper()}"
+    raw_bytes = await survey_photo.read()
+
+    # 1. normalize and check blur
+    is_sharp, blur_var = compute_laplacian_blur_score(raw_bytes)
+    if not is_sharp:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "REJECTED",
+                "submission_id": submission_id,
+                "reason": "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!",
+                "blur_score": blur_var,
+            },
+        )
+
+    try:
+        norm_bytes = sanitize_and_normalize_image(raw_bytes)
+    except Exception as e:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "REJECTED",
+                "submission_id": submission_id,
+                "reason": f"Không thể giải mã ảnh: {str(e)}",
+            },
+        )
+
+    # 2. AI vision audit
+    ai_res = await vision_client.audit_survey_image(norm_bytes, mime_type="image/webp")
+    compliance = evaluate_survey_compliance(ai_res)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "APPROVED" if compliance.is_compliant else "REJECTED",
+            "submission_id": submission_id,
+            "reason": compliance.feedback_message_vi,
+            "driver_phone": driver_phone,
+            "detected_plate": ai_res.get("detected_plate"),
+        },
+    )
 
 
 async def send_telegram_notification(chat_id: int, text: str):
