@@ -2,13 +2,15 @@ import secrets
 import json
 import httpx
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 from services.camera_form_html import CAMERA_FORM_HTML
+from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
+from services.dynamic_form_html import render_dynamic_form_html
 
 from config import settings
 from services.normalizer import (
@@ -83,11 +85,32 @@ app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
 
+FORM_REGISTRY: Dict[str, FormSchema] = {
+    "default": DEFAULT_TRUST_BRIDGE_SCHEMA,
+    "gsm_fleet_survey": DEFAULT_TRUST_BRIDGE_SCHEMA,
+}
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/camera-form", response_class=HTMLResponse)
-async def get_camera_form():
-    """Renders the mobile-optimized WebRTC live camera capture form."""
-    return HTMLResponse(content=CAMERA_FORM_HTML, status_code=200)
+@app.get("/forms/{form_id}", response_class=HTMLResponse)
+async def get_dynamic_form(form_id: str = "default"):
+    """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
+    schema = FORM_REGISTRY.get(form_id, DEFAULT_TRUST_BRIDGE_SCHEMA)
+    return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+
+
+@app.post("/api/v1/forms/upload-schema")
+async def upload_form_schema(schema: FormSchema):
+    """Allows form owners to upload arbitrary survey schemas with custom rules and constraints."""
+    FORM_REGISTRY[schema.form_id] = schema
+    return {
+        "status": "success",
+        "form_id": schema.form_id,
+        "title": schema.title,
+        "form_url": f"/forms/{schema.form_id}",
+        "question_count": len(schema.questions),
+        "message": f"Biểu mẫu '{schema.title}' đã sẵn sàng hoạt động!",
+    }
 
 
 @app.post("/api/v1/survey/submit-webrtc")
