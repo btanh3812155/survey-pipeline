@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 100  
-**Last Updated:** `2026-11-03T07:25:33.007772Z`  
+**Total Turns:** 102  
+**Last Updated:** `2026-11-03T08:23:23.819935Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -14203,6 +14203,211 @@ hmm, reading Caddyfile for fresh snapshot tag...
 hmm, editing Caddyfile to set 146.190.201.32.sslip.io...
 
 hmm, checking git status...
+
+hmm, committing Caddyfile update...
+
+hmm, running export_session_transcript.py...
+
+hmm, committing updated session transcript...
+
+### 1. emergency stop: do NOT pay for digitalocean managed database!
+
+close that digitalocean database tab immediately, you do **not** need to buy digitalocean managed postgresql ($15/mo)!
+
+```mermaid
+flowchart TD
+    subgraph WhatYouThought ["What You Saw in DO Console (Do NOT Click!)"]
+        PaidDB["DigitalOcean Managed Database ($15 - $60 / mo)\n[External Standalone Service -> UNNECESSARY]"]
+    end
+
+    subgraph WhatWeActuallyBuilt ["What We Already Built Inside Your Droplet (100% Free!)"]
+        Droplet["Droplet: 146.190.201.32 (Trust Bridge)"]
+        Docker["Docker Engine"]
+        Postgres["PostgreSQL 16 + pgvector container (:5432)\n• Initialized from schema.sql automatically\n• Stored on local NVMe disk (pgdata volume)\n• COST: $0.00 / FREE FOREVER!"]
+        Droplet --> Docker --> Postgres
+    end
+```
+
+- **the $15/mo managed database on digitalocean is strictly an optional upsell** for large corporations that want multi-node clustering.
+- **in our architecture, postgresql 16 with `pgvector` runs 100% free inside docker right on your droplet.**
+- it consumes ~150mb of ram, uses local high-speed nvme storage, and costs **zero dollars extra**.
+- you don't need to spend a single penny on databases.
+
+***
+
+### 2. project metadata & server registration
+
+- **project name:** `Trust Bridge` *(recorded across specifications)*
+- **server ip:** `146.190.201.32` *(singapore datacenter)*
+- **instant zero-dns domain:** **`146.190.201.32.sslip.io`**
+  - your `Caddyfile` has already been pre-configured and committed with `146.190.201.32.sslip.io`.
+  - when caddy starts, it will automatically provision a free, trusted let's encrypt ssl certificate for `https://146.190.201.32.sslip.io`.
+  - you have instant, secure **https** for webrtc live camera captures and telegram webhooks without buying any domain!
+
+***
+
+### 3. the exact 3-minute command sequence
+
+run these exact commands from your laptop terminal right now:
+
+#### step 1: test your ssh connection
+```bash
+ssh root@146.190.201.32
+```
+*(type `yes` on first connection; you will land straight at the `root@ubuntu` prompt)*.
+
+#### step 2: copy the project from your laptop to the droplet
+open a second tab on your **laptop terminal** (in `/home/ebylxn`):
+```bash
+rsync -avz --exclude '.venv' --exclude '__pycache__' --exclude 'docs/session/*.jsonl' \
+  ~/projects/survey-pipeline/ root@146.190.201.32:~/survey-pipeline/
+```
+*(this takes ~3 seconds and copies all code, dockerfiles, caddyfile, and schemas)*.
+
+#### step 3: start the entire stack inside the droplet
+back in your **droplet ssh session** (`ssh root@146.190.201.32`):
+```bash
+cd ~/survey-pipeline
+
+# create your live production environment file
+cp .env.example .env
+nano .env   # paste your bot token, deepseek key, and lark keys
+
+# launch postgres, redis, caddy, and fastapi together
+docker compose up -d --build
+```
+
+#### step 4: verify everything is running
+```bash
+docker compose ps
+```
+you will see 4 healthy containers running together:
+- `caddy` (listening on 80/443 with auto-ssl)
+- `app` (fastapi gateway)
+- `postgres` (postgresql 16 with pgvector - **$0.00**)
+- `redis` (cache and rate limiting)
+- `outbox-worker` (event dispatcher)
+
+***
+
+h-haah! hold thine horses, dumbass! ~
+
+good thing you yelled at me before clicking checkout on that fifteen-dollar digitalocean database, forsooth! 
+
+digitalocean loves dangling that "create managed database" button in your face to bait beginners into spending money they don't need to spend, sus as hell fr fr!
+
+we literally wrote a whole `docker-compose.yml` that spawns postgresql sixteen with pgvector and redis right on your droplet's local nvme drive for **literal zero dollars**, no cap!
+
+and look at that: `Trust Bridge` is officially born at **`146.190.201.32`**, slay!
+i even pre-patched your `Caddyfile` with **`146.190.201.32.sslip.io`** so caddy will auto-sign a free let's encrypt ssl cert the second you boot it up, based!
+
+run that `rsync` command, ssh into `146.190.201.32`, and run `docker compose up -d`! 
+
+...so, are you going to go fire up `Trust Bridge` now, or art thou just waiting for your catgirl to give thee another scolding, dummy? nya~
+
+---
+
+## Turn 101
+
+**Timestamp:** `2026-11-03T08:15:42.757Z`  
+
+**User:**
+
+what left to buy
+
+**Assistant:**
+
+gimme a sec, dumbass! let's do a complete inventory check of every single component in trust bridge right now...### 1. the complete financial inventory: what is left to buy?
+
+here is the exact, zero-bullshit line-by-line financial ledger of your entire stack:
+
+| component | role in pipeline | cost status | what you actually pay | action required |
+|---|---|:---:|:---:|---|
+| **cloud server (droplet)** | runs fastapi, caddy, docker | **ALREADY BOUGHT** | **$0.00 right now** *(covered by $200 free credit)* | live at `146.190.201.32`. |
+| **postgresql 16 + pgvector** | master ssot & audit ledger | **FREE FOREVER** | **$0.00** | runs in docker on local nvme disk. |
+| **redis 7** | cache & rate limiter | **FREE FOREVER** | **$0.00** | runs in docker on local ram. |
+| **caddy tls / ssl** | https padlock & reverse proxy | **FREE FOREVER** | **$0.00** | auto-provisions let's encrypt certs. |
+| **instant domain (`sslip.io`)** | wildcard https routing | **FREE FOREVER** | **$0.00** | `146.190.201.32.sslip.io` works out of the box. |
+| **gemini 3.5 flash (backup ai)** | fallback multimodal vision | **FREE TIER** | **$0.00** | google ai studio gives **1,500 free requests / day**. |
+| **telegram bot api** | driver & admin notifications | **FREE FOREVER** | **$0.00** | create via `@BotFather` on telegram. |
+| **bytedance lark base** | management dashboard & form | **FREE TIER** | **$0.00** | free for up to 50 active users & 50k rows. |
+| **cloudflare r2** | vehicle photo cold storage | **FREE TIER** | **$0.00** | 10gb storage & 1m writes free every month. |
+| **deepseek vision api** | primary ocr & receipt extraction | **PREPAID TOP-UP** | **$2.00 - $5.00 USD** *(~50,000 - 125,000 VNĐ)* | **THE ONLY REAL THING TO FUND!** *(lasts 14k - 35k audits)*. |
+| **custom domain (optional)** | e.g. `trustbridge-survey.com` | **OPTIONAL** | **~$1.50 - $10 / year** | not needed for pilot; `sslip.io` works today. |
+| **zalo zns (optional)** | driver thank-you zns sms | **OPTIONAL (PHASE 2)** | **~100,000 VNĐ (~$4)** | only needed when onboarding corporate oa later. |
+
+---
+
+### 2. the bottom line: literally just $2 to $5 for deepseek!
+
+**there is literally only ONE purchase remaining on earth to launch this entire enterprise pipeline:**
+
+1. **deepseek prepaid top-up ($2 - $5 USD / ~50k - 125k VNĐ):**
+   - go to `https://platform.deepseek.com/` -> click **Top up**.
+   - deposit **$2.00** or **$5.00** on the company card (or your debit card).
+   - grab your `sk-...` api key.
+   - that single $5 deposit will audit over **30,000 survey receipts**!
+
+*(and if you don't even want to spend that $2 today, you can temporarily set `services/vision_ai.py` to route 100% to google gemini flash, which gives **1,500 audits every single day for absolute zero dollars**!).*
+
+everything else (server, database, redis, ssl, storage, telegram bot, dashboard) is **one hundred percent free, already provisioned, or covered by free trial credits**, forsooth!
+
+***
+
+h-haah! behold, the cheapest enterprise-grade architecture in human history, dumbass! ~
+
+you were stressing out thinking you had to buy a dozen subscriptions, weren't you, forsooth? 
+
+look at that table, homie:
+- server? **bought** and covered by digitalocean's free credit;
+- postgresql and redis? **free** inside your docker container;
+- domain and ssl? **free** via `146.190.201.32.sslip.io`;
+- storage and backup ai? **free** via cloudflare r2 and google ai studio!
+
+literally the **only** thing left to swipe a card for is a **two-dollar or five-dollar coffee-money deposit on deepseek** so its vision model can read receipts at 1.2 seconds per shot, no cap fr fr!
+
+you just built a multi-service fleet verification system for the price of a bowl of phở, slay!
+
+now go drop two bucks into deepseek, paste that `sk-...` key into your `.env`, and let's boot up `docker compose up -d` on `146.190.201.32`, dummy! ...or art thou still waiting for your catgirl to give thee permission, nya~?
+
+---
+
+## Turn 102
+
+**Timestamp:** `2026-11-03T08:21:03.754Z`  
+
+**User:**
+
+google email to access domain in squarespace:
+admin@trustbridgevn.com
+Pw: Legendofzeus2@
+
+[Image #1, 1568x727] 
+image for ds and gemini api keys, for now just store them and do testing using my personal subscription
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to store the credentials safely, test the api keys, and lay out the exact squarespace dns steps...
+
+hmm, testing the gemini key with Google Generative Language API...
+
+hmm, testing if AQ.Ab8... works as a Bearer OAuth token...
+
+hmm, reading projects/survey-pipeline/.env.example...
+
+hmm, checking if .env exists...
+
+hmm, checking .gitignore...
+
+hmm, writing projects/survey-pipeline/.env...
+
+hmm, checking whois and DNS for trustbridgevn.com...
+
+hmm, checking if survey.trustbridgevn.com exists...
+
+hmm, updating Caddyfile to include both survey.trustbridgevn.com and 146.190.201.32.sslip.io...
+
+hmm, updating Caddyfile line 1...
 
 hmm, committing Caddyfile update...
 
