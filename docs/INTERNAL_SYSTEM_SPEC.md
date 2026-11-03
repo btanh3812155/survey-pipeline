@@ -73,6 +73,26 @@ To connect the survey verification pipeline to the company's domain (e.g., `surv
 3. **Cloudflare Proxy / Zero-Trust Option (No Open Ports):**
    - If using Cloudflare proxy (orange cloud), Caddy can terminate Cloudflare Origin CA certificates, or the team can spin up `cloudflared` tunnel in docker-compose, allowing the server to accept traffic with ports 80/443 closed at the droplet firewall.
 
+4. **Battlefield Playbook: When the Client Lacks a DNS Manager or Technical Staff:**
+   - **Step 1: 5-Second DNS Detective (Find who holds the keys):**
+     Run `dig NS company.com +short` or `whois company.com`.
+     - If nameservers end in `matbao.vn` -> Domain is hosted at Mắt Bão (`id.matbao.net`).
+     - If nameservers end in `pavietnam.vn` -> Domain is hosted at P.A Việt Nam (`support.pavietnam.vn`).
+     - If nameservers end in `domaincontrol.com` -> Domain is on GoDaddy.
+     - If nameservers end in `cloudflare.com` -> Domain is on Cloudflare.
+     Tell the client: *"Tên miền công ty mình đang đặt tại [Nhà cung cấp]. Anh/chị nhờ kế toán tìm email hóa đơn gia hạn thường niên hoặc nhờ bạn kỹ thuật website thêm 1 bản ghi A là xong ạ."*
+   - **Step 2: Agency Delegation Template (Zero Client Friction):**
+     If an external web design agency manages their WordPress/hosting, send them this snippet:
+     > *"Em chào anh/chị kỹ thuật, bên em đang tích hợp cổng khảo sát cho công ty. Nhờ anh/chị tạo giúp 1 subdomain `survey.company.com` trỏ bản ghi A về IP: `<DROPLET_IP>`, TTL 300s. Em cảm ơn ạ!"*
+   - **Step 3: Zero-DNS Instant HTTPS Workaround (`sslip.io` / `nip.io`):**
+     Both WebRTC camera access (`getUserMedia`) and Telegram Webhooks strictly require trusted SSL/TLS (HTTPS). If the client cannot access DNS immediately:
+     - Point Caddy to `<DROPLET_IP>.sslip.io` (e.g. `128.199.50.84.sslip.io`).
+     - `sslip.io` automatically resolves to the droplet IP globally with zero DNS configuration.
+     - Caddy automatically obtains a trusted Let's Encrypt SSL certificate for it in 15 seconds.
+     - The entire WebRTC camera form, API webhooks, and Telegram bot can run immediately without waiting for company DNS approval.
+   - **Step 4: Dedicated Companion Domain ($1.50 - $10 on Company Card):**
+     If the corporate domain is tied in bureaucracy or has fragile email configurations (MX/SPF/DKIM), buy a dedicated companion domain (e.g. `company-survey.com` or `company-survey.vn`) directly on Cloudflare Registrar or Namecheap using the company credit card. This grants the pipeline 100% operational autonomy with zero risk to the corporate website.
+
 ---
 
 ## 3. Media Sanitization & Image Scaling Specification
