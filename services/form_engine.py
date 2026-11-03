@@ -33,6 +33,7 @@ class FormQuestion(BaseModel):
     required: bool = True
     description: Optional[str] = None
     sample_response: Optional[str] = None
+    sample_images: Optional[List[str]] = None # List of sample image URLs for visual guidance
     options: Optional[List[str]] = None # For single_choice, multiple_choice, dropdown
     validation: Optional[ValidationRule] = None
     conditional: Optional[ConditionalRule] = None # Logic branching
@@ -192,7 +193,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
             description="Chụp trực tiếp từ camera phần cứng, khóa chức năng chọn ảnh thư viện để đảm bảo tính xác thực",
-            sample_response="Đặt hóa đơn hoặc đồng hồ xe rõ nét trong khung căn chỉnh"
+            sample_response="Đặt hóa đơn hoặc đồng hồ xe rõ nét trong khung căn chỉnh",
+            sample_images=[
+                "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
+                "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"
+            ],
         ),
         FormQuestion(
             id="driver_signature",

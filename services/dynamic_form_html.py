@@ -463,12 +463,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
     </style>
 </head>
 <body>
-    <!-- GPS Banner -->
+    <!-- GPS Authorization Banner -->
     <div class="gps-banner" id="gpsBanner">
         <div class="gps-status-text prompt" id="gpsStatusText">
-            📍 Chưa bật vị trí GPS
+            📍 Vui lòng bấm để cấp quyền định vị GPS
         </div>
-        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật GPS</button>
+        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Cấp quyền GPS</button>
     </div>
 
 
@@ -576,12 +576,13 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let hasModalSignature = false;
 
         // 1. GPS Request
+        // 1. GPS Request (Triggered ONLY on user button click)
         function requestGps() {{
             if (!navigator.geolocation) {{
                 alert("Trình duyệt của bạn không hỗ trợ định vị GPS!");
                 return;
             }}
-            document.getElementById('gpsStatusText').textContent = "📍 Đang lấy tọa độ vệ tinh...";
+            document.getElementById('gpsStatusText').textContent = "📍 Đang lấy tọa độ...";
             navigator.geolocation.getCurrentPosition(
                 (pos) => {{
                     gpsCoordinates = {{
@@ -589,15 +590,13 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         longitude: pos.coords.longitude,
                         accuracy: pos.coords.accuracy
                     }};
-                    const txt = document.getElementById('gpsStatusText');
-                    txt.textContent = `✅ GPS: ${{pos.coords.latitude.toFixed(4)}}, ${{pos.coords.longitude.toFixed(4)}} (±${{Math.round(pos.coords.accuracy)}}m)`;
-                    txt.className = "gps-status-text ok";
-                    document.getElementById('btnRequestGps').style.display = 'none';
+                    // Once authorized: Close/hide the banner completely as requested!
+                    const banner = document.getElementById('gpsBanner');
+                    if (banner) banner.style.display = 'none';
                 }},
                 (err) => {{
                     const txt = document.getElementById('gpsStatusText');
-                    txt.textContent = "⚠️ Quyền định vị bị từ chối";
-                    txt.className = "gps-status-text prompt";
+                    txt.textContent = "⚠️ Quyền định vị bị từ chối hoặc chưa bật GPS";
                 }},
                 {{ enableHighAccuracy: true, timeout: 10000 }}
             );
@@ -613,12 +612,30 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 card.dataset.qid = q.id;
 
                 let sampleHtml = '';
-                if (q.sample_response) {{
+                if (q.sample_response || (q.sample_images && q.sample_images.length > 0)) {{
+                    let imagesHtml = '';
+                    if (q.sample_images && q.sample_images.length > 0) {{
+                        imagesHtml = `
+                            <div style="display:flex; gap:10px; margin-top:8px; overflow-x:auto; padding:6px 0;">
+                                ${{q.sample_images.map(imgUrl => `
+                                    <div style="flex-shrink:0; text-align:center;">
+                                        <a href="${{imgUrl}}" target="_blank">
+                                            <img src="${{imgUrl}}" style="width:140px; height:95px; object-fit:cover; border-radius:8px; border:1.5px solid #3b82f6;" alt="Ảnh mẫu">
+                                        </a>
+                                        <div style="font-size:0.7rem; color:#94a3b8; margin-top:3px;">(Bấm để phóng to)</div>
+                                    </div>
+                                `).join('')}}
+                            </div>
+                        `;
+                    }}
                     sampleHtml = `
                         <button type="button" class="btn-sample" onclick="toggleSample('${{q.id}}')">
-                            💡 Câu trả lời mẫu
+                            💡 ${{q.sample_images && q.sample_images.length > 0 ? 'Xem hình ảnh mẫu' : 'Xem câu trả lời mẫu'}}
                         </button>
-                        <div class="sample-preview-box" id="sample_${{q.id}}">${{q.sample_response}}</div>
+                        <div class="sample-preview-box" id="sample_${{q.id}}">
+                            ${{q.sample_response ? `<div style="font-weight:600; margin-bottom:4px;">${{q.sample_response}}</div>` : ''}}
+                            ${{imagesHtml}}
+                        </div>
                     `;
                 }}
 
@@ -687,14 +704,23 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }} else if (q.type === 'camera_webrtc') {{
                 parent.innerHTML = `
                     <div class="camera-container" id="cam_${{q.id}}">
-                        <video id="vid_${{q.id}}" autoplay playsinline muted></video>
+                        <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
                         <img id="img_${{q.id}}" class="captured-img" alt="Captured">
-                        <div class="camera-overlay" id="overlay_${{q.id}}"></div>
+                        <div class="camera-overlay" id="overlay_${{q.id}}">
+                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">Căn chỉnh hóa đơn / xe vào khung</span>
+                        </div>
                     </div>
-                    <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
-                    </button>
-                    <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">🔄 Chụp lại</button>
+                    <div id="camErr_${{q.id}}" style="display:none; text-align:center; padding:10px; font-size:0.8rem; color:#f87171;">
+                        Không thể mở camera phần cứng tự động. Vui lòng bấm nút chụp bên dưới:
+                    </div>
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:10px;">
+                        <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
+                        </button>
+                        <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">🔄 Chụp lại</button>
+                        <input type="file" id="fileFallback_${{q.id}}" accept="image/*" capture="environment" style="display:none;" onchange="handleFallbackCapture(this, '${{q.id}}')">
+                        <button type="button" id="btnFallback_${{q.id}}" style="display:none; background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:0.82rem; font-weight:600;" onclick="document.getElementById('fileFallback_${{q.id}}').click()">📷 Chụp ảnh qua ứng dụng máy ảnh</button>
+                    </div>
                 `;
                 initCameraForQ(q.id);
             }} else if (q.type === 'signature') {{
@@ -733,21 +759,81 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }});
         }}
 
-        // 4. WebRTC Camera
+        // 4. WebRTC Camera Initialization with Automatic Fallbacks
         async function initCameraForQ(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             if (!vid) return;
+
+            vid.setAttribute('playsinline', '');
+            vid.setAttribute('webkit-playsinline', '');
+            vid.setAttribute('muted', '');
+            vid.muted = true;
+
             try {{
-                const stream = await navigator.mediaDevices.getUserMedia({{
-                    video: {{ facingMode: {{ ideal: "environment" }}, width: {{ ideal: 1920 }}, height: {{ ideal: 1080 }} }},
-                    audio: false
-                }});
+                let stream = null;
+                try {{
+                    stream = await navigator.mediaDevices.getUserMedia({{
+                        video: {{ facingMode: {{ ideal: "environment" }}, width: {{ ideal: 1920 }}, height: {{ ideal: 1080 }} }},
+                        audio: false
+                    }});
+                }} catch(e1) {{
+                    // Fallback to basic video constraint if environment facingMode fails
+                    stream = await navigator.mediaDevices.getUserMedia({{ video: true, audio: false }});
+                }}
                 activeVideoStream = stream;
                 vid.srcObject = stream;
-            }} catch(e) {{
-                console.warn("Camera failed:", e);
+                await vid.play().catch(e => console.log("Auto-play blocked:", e));
+            }} catch(err) {{
+                console.warn("Hardware camera unavailable:", err);
+                const errBox = document.getElementById(`camErr_${{qid}}`);
+                const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+                const snapBtn = document.getElementById(`snap_${{qid}}`);
+                if (errBox) errBox.style.display = 'block';
+                if (fallbackBtn) fallbackBtn.style.display = 'inline-block';
+                if (snapBtn) snapBtn.style.display = 'none';
             }}
         }}
+
+        function handleFallbackCapture(input, qid) {{
+            if (input.files && input.files[0]) {{
+                const file = input.files[0];
+                const img = document.getElementById(`img_${{qid}}`);
+                const vid = document.getElementById(`vid_${{qid}}`);
+                const overlay = document.getElementById(`overlay_${{qid}}`);
+                const retakeBtn = document.getElementById(`retake_${{qid}}`);
+                const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+
+                answers[qid] = file;
+                img.src = URL.createObjectURL(file);
+                img.style.display = 'block';
+                if (vid) vid.style.display = 'none';
+                if (overlay) overlay.style.display = 'none';
+                if (retakeBtn) retakeBtn.style.display = 'inline-block';
+                if (fallbackBtn) fallbackBtn.style.display = 'none';
+            }}
+        }}
+
+        function retakeCam(qid) {{
+            delete answers[qid];
+            const img = document.getElementById(`img_${{qid}}`);
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const overlay = document.getElementById(`overlay_${{qid}}`);
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            const retakeBtn = document.getElementById(`retake_${{qid}}`);
+            const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+
+            img.style.display = 'none';
+            if (activeVideoStream) {{
+                vid.style.display = 'block';
+                overlay.style.display = 'flex';
+                snapBtn.style.display = 'flex';
+                retakeBtn.style.display = 'none';
+            }} else {{
+                fallbackBtn.style.display = 'inline-block';
+                retakeBtn.style.display = 'none';
+            }}
+        }}
+
 
         function snapPhoto(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
@@ -921,8 +1007,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         window.addEventListener('DOMContentLoaded', () => {{
             renderForm();
-            requestGps();
             updateTestModeUI();
+            // NOTE: requestGps() is NOT called on load to prevent competing browser prompts!
         }});
     </script>
 </body>
