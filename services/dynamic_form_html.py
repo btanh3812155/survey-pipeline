@@ -1022,14 +1022,22 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
             try {{
                 const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
+                if (!resp.ok) {{
+                    const errBody = await resp.text();
+                    alert(`Lỗi máy chủ (${{resp.status}}): ${{errBody || 'Vui lòng thử lại sau giây lát.'}}`);
+                    return;
+                }}
                 const res = await resp.json();
                 if (res.status === 'APPROVED') {{
                     alert(`BÁO CÁO HỢP LỆ!\\nMã phiếu: #${{res.submission_id}}\\n${{res.reason || ''}}`);
+                }} else if (res.status === 'MANUAL_REVIEW') {{
+                    alert(`ĐÃ TIẾP NHẬN BÁO CÁO!\\nMã phiếu: #${{res.submission_id}}\\n${{res.reason || 'Hệ thống chuyển ca xe sang chờ kiểm tra thủ công.'}}`);
                 }} else {{
                     alert(`CẦN KIỂM TRA LẠI!\\nLý do: ${{res.reason || 'Dữ liệu không khớp'}}\\nVui lòng kiểm tra lại.`);
                 }}
             }} catch(e) {{
-                alert("Lỗi kết nối máy chủ! Vui lòng thử lại.");
+                console.error("Submit error:", e);
+                alert(`Lỗi kết nối máy chủ: ${{e.message || 'Vui lòng kiểm tra lại mạng.'}}`);
             }} finally {{
                 btn.disabled = false;
                 btn.textContent = "Gửi Báo Cáo";

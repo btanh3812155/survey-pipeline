@@ -193,14 +193,20 @@ async def submit_webrtc_survey(
             },
         )
 
-    # 2. AI vision audit
-    facts = await vision_client.extract_facts(norm_bytes)
-    compliance = evaluate_survey_compliance(facts)
-    ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
-    is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
-    status_str = "APPROVED" if is_approved else "REJECTED"
-    reason_str = compliance.collaborator_note or compliance.reason_code
-
+    # 2. AI vision audit with graceful failover
+    try:
+        facts = await vision_client.extract_facts(norm_bytes)
+        compliance = evaluate_survey_compliance(facts)
+        ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
+        is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+        status_str = "APPROVED" if is_approved else "REJECTED"
+        reason_str = compliance.collaborator_note or compliance.reason_code
+    except Exception as ai_err:
+        logger.error(f"Vision AI call failed: {ai_err}")
+        ai_res = {"status": "manual_review", "error": str(ai_err)}
+        is_approved = True
+        status_str = "MANUAL_REVIEW"
+        reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
     # 3. If in test mode, route strictly to temporary dev storage (Bypasses prod DB & Outbox)
     if is_test_mode:
         dev_record = {

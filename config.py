@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     BLUR_THRESHOLD: float = 100.0
     IMAGE_MAX_DIMENSION: int = 1024
     WEBP_QUALITY: int = 82
-    AI_TIMEOUT_SECONDS: float = 2.0
+    AI_TIMEOUT_SECONDS: float = 8.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

@@ -172,7 +172,7 @@ class DualModelVisionClient:
     async def _call_gemini(self, messages: list) -> ExtractedReceiptFacts:
         import asyncio
         resp = None
-        models_to_try = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+        models_to_try = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.5-flash-lite"]
         for model in models_to_try:
             try:
                 resp = await self.gemini_client.chat.completions.create(
@@ -182,7 +182,6 @@ class DualModelVisionClient:
                     temperature=0.0,
                     max_tokens=2048,
                     timeout=self.timeout_seconds,
-                    extra_body={"thinking_config": {"thinking_budget": 0}},  # strictly NO REASONING tokens!
                 )
                 break
             except Exception as e:
