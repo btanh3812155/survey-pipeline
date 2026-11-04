@@ -91,8 +91,8 @@ admin_security = HTTPBasic()
 
 def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)):
     """Protects administrative endpoints with HTTP Basic Authentication."""
-    is_user_ok = secrets.compare_digest(credentials.username, "admin")
-    is_pass_ok = secrets.compare_digest(credentials.password, "Legendofzeus2@")
+    is_user_ok = secrets.compare_digest(credentials.username, settings.ADMIN_USERNAME)
+    is_pass_ok = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
     if not (is_user_ok and is_pass_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -173,14 +173,18 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
 @app.post("/api/v1/forms/upload-schema")
 async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):
     """Allows form owners to upload arbitrary survey schemas with custom rules and constraints."""
-    FORM_REGISTRY[schema.form_id] = schema
     schema_path = os.path.join(FORMS_STORAGE_DIR, f"{schema.form_id}.json")
+    target_path = os.path.realpath(schema_path)
+    base_path = os.path.realpath(FORMS_STORAGE_DIR)
+    if not (target_path == base_path or target_path.startswith(base_path + os.sep)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mã biểu mẫu không hợp lệ")
+
+    FORM_REGISTRY[schema.form_id] = schema
     try:
         with open(schema_path, "w", encoding="utf-8") as f:
             f.write(schema.model_dump_json(indent=2))
     except Exception as e:
         logger.error(f"Failed to persist schema to disk: {e}")
-
     return {
         "status": "success",
         "form_id": schema.form_id,
@@ -206,7 +210,7 @@ def append_dev_submission(record: dict):
         json.dump(records, f, ensure_ascii=False, indent=2)
 
 @app.get("/api/v1/dev/submissions")
-async def get_dev_submissions():
+async def get_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     """Inspects all surveys currently saved in temporary dev test storage."""
     if not os.path.exists(DEV_STORAGE_FILE):
         return {"count": 0, "submissions": []}
@@ -218,7 +222,7 @@ async def get_dev_submissions():
         return {"count": 0, "submissions": [], "error": str(e)}
 
 @app.delete("/api/v1/dev/submissions")
-async def clear_dev_submissions():
+async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     """Clears all records in temporary dev test storage."""
     if os.path.exists(DEV_STORAGE_FILE):
         os.remove(DEV_STORAGE_FILE)
@@ -276,6 +280,7 @@ async def get_survey_history(phone: str, admin_user: str = Depends(verify_admin_
 
 @app.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
+    request: Request,
     survey_photo: UploadFile = File(...),
     driver_phone: str = Form(...),
     license_plate: Optional[str] = Form(None),
@@ -288,6 +293,7 @@ async def submit_webrtc_survey(
     is_test_mode: Optional[bool] = Form(False),
     idempotency_key: Optional[str] = Form(None),
     bypass_img_check: Optional[bool] = Form(False),
+    form_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(3).upper()}"
@@ -305,6 +311,62 @@ async def submit_webrtc_survey(
         if cached_payload:
             logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idempotency_key}")
             return JSONResponse(status_code=200, content=json.loads(cached_payload))
+
+    # Extract all submitted form parameters into an answers dictionary
+    form_data = await request.form()
+    answers: Dict[str, Any] = dict(form_data)
+    if "driver_phone" not in answers:
+        answers["driver_phone"] = driver_phone
+    if "driver_name" not in answers and driver_name:
+        answers["driver_name"] = driver_name
+    if "driver_signature" not in answers and signature_png:
+        answers["driver_signature"] = signature_png
+    if "camera_receipt" not in answers and survey_photo:
+        answers["camera_receipt"] = "uploaded"
+    if "daily_net_income" not in answers and gross_revenue is not None:
+        answers["daily_net_income"] = gross_revenue
+    if "monthly_gross_revenue" not in answers and gross_revenue is not None:
+        answers["monthly_gross_revenue"] = gross_revenue
+
+    # Server-Side Schema Enforcement (VULN-API-01)
+    active_form_id = form_id or "income_survey"
+    schema = FORM_REGISTRY.get(active_form_id)
+    if schema:
+        is_valid, validation_err = validate_submission_against_schema(schema, answers)
+        if not is_valid:
+            resp_data = {
+                "status": "REJECTED",
+                "submission_id": submission_id,
+                "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+                "reason": validation_err,
+                "driver_phone": driver_phone,
+                "detected_plate": license_plate,
+                "gross_revenue": gross_revenue,
+                "trip_count": trip_count,
+            }
+            if idempotency_key:
+                LOCAL_IDEMP_CACHE[idempotency_key] = json.dumps(resp_data)
+                if redis_client:
+                    try:
+                        await redis_client.set(f"idemp:{idempotency_key}", json.dumps(resp_data), ex=86400)
+                    except Exception as e:
+                        logger.warning(f"Redis idempotency caching error: {e}")
+            if is_test_mode:
+                append_dev_submission({
+                    "submission_id": submission_id,
+                    "mode": "TEST_DEV_MODE",
+                    "driver_phone": driver_phone,
+                    "driver_name": driver_name,
+                    "license_plate": license_plate,
+                    "vehicle_type": vehicle_type,
+                    "status": "REJECTED",
+                    "reason": validation_err,
+                    "ai_result": {},
+                    "submitted_at": datetime.now(timezone.utc).isoformat(),
+                })
+            return JSONResponse(status_code=200, content=resp_data)
+
+    await survey_photo.seek(0)
 
     raw_bytes = await survey_photo.read()
 

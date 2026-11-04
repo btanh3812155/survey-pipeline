@@ -132,7 +132,7 @@ def test_dev_test_mode_submission_routing(monkeypatch):
     buf.seek(0)
 
     # 1. Clear any previous dev submissions
-    client.delete("/api/v1/dev/submissions")
+    client.delete("/api/v1/dev/submissions", auth=("admin", "Legendofzeus2@"))
 
     # 2. Submit with is_test_mode = True
     resp = client.post(
@@ -141,7 +141,13 @@ def test_dev_test_mode_submission_routing(monkeypatch):
             "driver_phone": "0988123456",
             "license_plate": "29E-123.45",
             "is_test_mode": "true",
-            "driver_name": "Tài xế Test Mode"
+            "driver_name": "Tài xế Test Mode",
+            "consent_choice": "Tôi đồng ý",
+            "signature_png": "data:image/png;base64,mock",
+            "platform_app": "Grab",
+            "vehicle_category": "Xe máy 2 bánh",
+            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+            "daily_net_income": "650000",
         },
         files={"survey_photo": ("test.jpg", buf, "image/jpeg")}
     )
@@ -151,14 +157,14 @@ def test_dev_test_mode_submission_routing(monkeypatch):
     assert res_json["submission_id"].startswith("DEV-")
 
     # 3. Inspect temporary dev storage endpoint
-    get_resp = client.get("/api/v1/dev/submissions")
+    get_resp = client.get("/api/v1/dev/submissions", auth=("admin", "Legendofzeus2@"))
     assert get_resp.status_code == 200
     dev_data = get_resp.json()
     assert dev_data["count"] >= 1
     assert any(s["submission_id"] == res_json["submission_id"] for s in dev_data["submissions"])
 
     # 4. Clean up dev storage
-    del_resp = client.delete("/api/v1/dev/submissions")
+    del_resp = client.delete("/api/v1/dev/submissions", auth=("admin", "Legendofzeus2@"))
     assert del_resp.status_code == 200
     assert del_resp.json()["status"] == "cleared"
 
@@ -186,7 +192,14 @@ async def test_idempotency_duplicate_submission(monkeypatch):
             "driver_phone": "0988123456",
             "license_plate": "29E-123.45",
             "is_test_mode": "true",
-            "idempotency_key": idemp_key
+            "idempotency_key": idemp_key,
+            "consent_choice": "Tôi đồng ý",
+            "signature_png": "data:image/png;base64,mock",
+            "driver_name": "Tài xế Test Mode",
+            "platform_app": "Grab",
+            "vehicle_category": "Xe máy 2 bánh",
+            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+            "daily_net_income": "650000",
         },
         files={"survey_photo": ("test1.jpg", buf1, "image/jpeg")}
     )
@@ -205,7 +218,14 @@ async def test_idempotency_duplicate_submission(monkeypatch):
             "driver_phone": "0988123456",
             "license_plate": "29E-123.45",
             "is_test_mode": "true",
-            "idempotency_key": idemp_key
+            "idempotency_key": idemp_key,
+            "consent_choice": "Tôi đồng ý",
+            "signature_png": "data:image/png;base64,mock",
+            "driver_name": "Tài xế Test Mode",
+            "platform_app": "Grab",
+            "vehicle_category": "Xe máy 2 bánh",
+            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+            "daily_net_income": "650000",
         },
         files={"survey_photo": ("test2.jpg", buf2, "image/jpeg")}
     )

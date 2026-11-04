@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    # admin credentials
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "Legendofzeus2@"
 
     # database & redis
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/surveydb"

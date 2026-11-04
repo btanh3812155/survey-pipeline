@@ -50,7 +50,7 @@ class FormSettings(BaseModel):
     is_test_mode: bool = False
 
 class FormSchema(BaseModel):
-    form_id: str
+    form_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     title: str
     description: Optional[str] = None
     settings: FormSettings = Field(default_factory=FormSettings)
