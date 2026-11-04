@@ -1,10 +1,12 @@
 import os
+import inspect
 import secrets
 import json
+import asyncio
 import httpx
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
@@ -34,7 +36,7 @@ from services.vision_ai import DualModelVisionClient
 from services.evaluator import evaluate_survey_compliance
 from services.templates_vn import render_telegram_verdict
 from services.storage_r2 import r2_client
-
+from services.vehicle_tracker import VehiclePersistenceTracker
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main_api")
 
@@ -71,7 +73,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"could not initialize redis: {e}")
             redis_client = None
+
+    polling_task = None
+    polling_runner = None
+    if getattr(settings, "TELEGRAM_POLLING_ENABLED", False):
+        try:
+            from services.telegram_polling import TelegramPollingRunner
+            polling_runner = TelegramPollingRunner(db_pool=db_pool)
+            polling_task = asyncio.create_task(polling_runner.start_polling())
+            logger.info("Telegram long-polling runner started in background.")
+        except Exception as e:
+            logger.error(f"Failed to start telegram polling runner: {e}")
+
     yield
+
+    if polling_runner:
+        polling_runner.stop()
+    if polling_task:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+
     if db_pool:
         try:
             await db_pool.close()
@@ -83,7 +107,6 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     await http_client.aclose()
-
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 app.mount("/data", StaticFiles(directory="data"), name="data")
 
@@ -331,101 +354,89 @@ async def submit_webrtc_survey(
     # Server-Side Schema Enforcement (VULN-API-01)
     active_form_id = form_id or "income_survey"
     schema = FORM_REGISTRY.get(active_form_id)
+    is_schema_valid = True
+    validation_err = None
     if schema:
-        is_valid, validation_err = validate_submission_against_schema(schema, answers)
-        if not is_valid:
-            resp_data = {
-                "status": "REJECTED",
-                "submission_id": submission_id,
-                "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
-                "reason": validation_err,
-                "driver_phone": driver_phone,
-                "detected_plate": license_plate,
-                "gross_revenue": gross_revenue,
-                "trip_count": trip_count,
-            }
-            if idempotency_key:
-                LOCAL_IDEMP_CACHE[idempotency_key] = json.dumps(resp_data)
-                if redis_client:
-                    try:
-                        await redis_client.set(f"idemp:{idempotency_key}", json.dumps(resp_data), ex=86400)
-                    except Exception as e:
-                        logger.warning(f"Redis idempotency caching error: {e}")
-            if is_test_mode:
-                append_dev_submission({
-                    "submission_id": submission_id,
-                    "mode": "TEST_DEV_MODE",
-                    "driver_phone": driver_phone,
-                    "driver_name": driver_name,
-                    "license_plate": license_plate,
-                    "vehicle_type": vehicle_type,
-                    "status": "REJECTED",
-                    "reason": validation_err,
-                    "ai_result": {},
-                    "submitted_at": datetime.now(timezone.utc).isoformat(),
-                })
-            return JSONResponse(status_code=200, content=resp_data)
+        is_schema_valid, validation_err = validate_submission_against_schema(schema, answers)
 
-    await survey_photo.seek(0)
-
-    raw_bytes = await survey_photo.read()
-
-    is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
-    if is_bypassed:
-        ai_res = {
-            "status": "APPROVED",
-            "gross_revenue": gross_revenue or "650000",
-            "driver_phone": driver_phone,
-            "detected_plate": license_plate or "29E-123.45",
-            "is_screen_photo": False,
-            "bypass_img_check": True,
-        }
-        is_approved = True
-        status_str = "APPROVED"
-        reason_str = "Chế độ thử nghiệm: Đã bỏ qua kiểm tra ảnh để đẩy nhanh luồng dữ liệu mẫu."
+    blur_var = None
+    if not is_schema_valid:
+        status_str = "REJECTED"
+        is_approved = False
+        reason_str = validation_err or "Không hợp lệ theo biểu mẫu."
+        ai_res = {}
     else:
-        # 1. normalize image and compute blur score on PIL image
-        try:
-            norm_bytes, pil_im = sanitize_and_normalize_image(raw_bytes)
-        except Exception as e:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "status": "REJECTED",
-                    "submission_id": submission_id,
-                    "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
-                    "reason": f"Không thể giải mã ảnh: {str(e)}",
-                },
+        # 1. Fleet Anti-Fraud: Route through VehiclePersistenceTracker when license plate & phone are provided
+        v_match = None
+        if license_plate and driver_phone:
+            tracker = VehiclePersistenceTracker(db_pool=None)
+            v_match = await tracker.verify_and_persist_vehicle(
+                driver_phone=driver_phone,
+                detected_plate=license_plate,
+                detected_vehicle_type=vehicle_type or "CAR",
             )
 
-        is_sharp, blur_var = compute_laplacian_blur_score(pil_im)
-        if not is_sharp:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "status": "REJECTED",
-                    "submission_id": submission_id,
-                    "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
-                    "reason": "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!",
-                    "blur_score": blur_var,
-                },
-            )
+        await survey_photo.seek(0)
+        raw_bytes = await survey_photo.read()
 
-        # 2. AI vision audit with graceful failover
-        try:
-            facts = await vision_client.extract_facts(norm_bytes)
-            compliance = evaluate_survey_compliance(facts)
-            ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
-            is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
-            status_str = "APPROVED" if is_approved else "REJECTED"
-            reason_str = compliance.collaborator_note or compliance.reason_code
-        except Exception as ai_err:
-            logger.error(f"Vision AI call failed: {ai_err}")
-            ai_res = {"status": "manual_review", "error": str(ai_err)}
-            is_approved = True
-            status_str = "MANUAL_REVIEW"
-            reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
-    # 3. If in test mode, route strictly to temporary dev storage (Bypasses prod DB & Outbox)
+        is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
+        if is_bypassed:
+            ai_res = {
+                "status": "APPROVED",
+                "gross_revenue": gross_revenue or "650000",
+                "driver_phone": driver_phone,
+                "detected_plate": license_plate or "29E-123.45",
+                "is_screen_photo": False,
+                "bypass_img_check": True,
+            }
+            if v_match and not v_match.is_match:
+                is_approved = False
+                status_str = "REJECTED"
+                reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
+            else:
+                is_approved = True
+                status_str = "APPROVED"
+                reason_str = "Chế độ thử nghiệm: Đã bỏ qua kiểm tra ảnh để đẩy nhanh luồng dữ liệu mẫu."
+        else:
+            # Normalize image and compute blur score on PIL image
+            try:
+                norm_bytes, pil_im = sanitize_and_normalize_image(raw_bytes)
+            except Exception as e:
+                norm_bytes, pil_im = None, None
+                is_approved = False
+                status_str = "REJECTED"
+                reason_str = f"Không thể giải mã ảnh: {str(e)}"
+                ai_res = {}
+
+            if pil_im is not None:
+                is_sharp, blur_var = compute_laplacian_blur_score(pil_im)
+                if not is_sharp:
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
+                    ai_res = {}
+                elif v_match and not v_match.is_match:
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
+                    ai_res = {}
+                else:
+                    # 2. AI vision audit & deterministic compliance evaluation
+                    try:
+                        facts = await vision_client.extract_facts(norm_bytes)
+                        compliance = evaluate_survey_compliance(facts)
+                        ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
+                        is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+                        status_str = "APPROVED" if is_approved else "REJECTED"
+                        reason_str = compliance.collaborator_note or compliance.reason_code
+                    except Exception as ai_err:
+                        logger.error(f"Vision AI call failed: {ai_err}")
+                        ai_res = {"status": "manual_review", "error": str(ai_err)}
+                        is_approved = False
+                        status_str = "MANUAL_REVIEW"
+                        reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+
+    # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     if is_test_mode:
         dev_record = {
             "submission_id": submission_id,
@@ -444,7 +455,13 @@ async def submit_webrtc_survey(
     elif db_pool:
         try:
             async with db_pool.connection() as conn:
-                async with conn.cursor() as cur:
+                cur_obj = conn.cursor()
+                if inspect.isawaitable(cur_obj):
+                    cur_obj = await cur_obj
+                cur = await cur_obj.__aenter__() if hasattr(cur_obj, "__aenter__") else cur_obj
+                if hasattr(cur_obj, "execute") and not hasattr(cur, "execute"):
+                    cur = cur_obj
+                try:
                     await cur.execute(
                         """
                         INSERT INTO survey_submissions (
@@ -471,13 +488,57 @@ async def submit_webrtc_survey(
                             ) VALUES (%s, %s, %s)
                             ON CONFLICT (driver_phone) DO UPDATE 
                             SET license_plate = EXCLUDED.license_plate,
-                                vehicle_type = EXCLUDED.vehicle_type;
+                                 vehicle_type = EXCLUDED.vehicle_type;
                             """,
                             (driver_phone, license_plate.upper(), vehicle_type or "CAR"),
                         )
+                    outbox_payload = {
+                        "submission_id": submission_id,
+                        "driver_phone": driver_phone,
+                        "driver_name": driver_name or "Tài xế",
+                        "license_plate": license_plate or ai_res.get("detected_plate"),
+                        "vehicle_type": vehicle_type or "CAR",
+                        "gross_revenue": gross_revenue,
+                        "trip_count": trip_count,
+                        "status": status_str,
+                        "reason": reason_str,
+                        "ai_result": ai_res,
+                    }
+                    event_type = "survey.validated" if is_approved else "survey.rejected"
+                    await cur.execute(
+                        """
+                        INSERT INTO outbox_events (
+                            event_type, flow_target, aggregate_id, payload, status
+                        ) VALUES (%s, %s, %s, %s, 'PENDING');
+                        """,
+                        (
+                            event_type,
+                            "ALL",
+                            submission_id,
+                            json.dumps(outbox_payload),
+                        ),
+                    )
                     await conn.commit()
+                finally:
+                    if hasattr(cur_obj, "__aexit__"):
+                        await cur_obj.__aexit__(None, None, None)
         except Exception as e:
             logger.error(f"failed to persist survey to DB: {e}")
+
+    # 4. Telegram dispatch to admin group
+    status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
+    verdict_text = (
+        f"{status_emoji} <b>KẾT QUẢ KHẢO SÁT #{submission_id}</b>\n\n"
+        f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
+        f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>\n"
+        f"• <b>Biển số xe:</b> <code>{license_plate or ai_res.get('detected_plate') or 'N/A'}</code>\n"
+        f"• <b>Lý do / Ghi chú:</b> {reason_str or 'Hợp lệ'}"
+    )
+    if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
+        try:
+            await send_telegram_notification(settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
+        except Exception as tg_err:
+            logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
 
     resp_data = {
         "status": status_str,
@@ -485,10 +546,12 @@ async def submit_webrtc_survey(
         "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
         "reason": reason_str,
         "driver_phone": driver_phone,
-        "detected_plate": ai_res.get("detected_plate"),
+        "detected_plate": ai_res.get("detected_plate") or license_plate,
         "gross_revenue": gross_revenue,
         "trip_count": trip_count,
     }
+    if blur_var is not None:
+        resp_data["blur_score"] = blur_var
 
     # Cache response under idempotency key for 24 hours
     if idempotency_key:
@@ -501,7 +564,7 @@ async def submit_webrtc_survey(
     return JSONResponse(status_code=200, content=resp_data)
 
 
-async def send_telegram_notification(chat_id: int, text: str):
+async def send_telegram_notification(chat_id: Union[int, str], text: str):
     """Dispatches standardized HTML verdict message to collaborator on Telegram."""
     if not settings.TELEGRAM_BOT_TOKEN or settings.TELEGRAM_BOT_TOKEN == "mock_tg_token":
         logger.info(f"[MOCK TELEGRAM DISPATCH] to {chat_id}:\n{text}")

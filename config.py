@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     # telegram bot
     TELEGRAM_BOT_TOKEN: str = "mock_tg_token"
     TELEGRAM_WEBHOOK_SECRET: str = "mock_webhook_secret"
-
+    TELEGRAM_ADMIN_GROUP_ID: str = "-1001234567890"
+    TELEGRAM_POLLING_ENABLED: bool = False
     # ai models
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"

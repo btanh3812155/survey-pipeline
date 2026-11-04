@@ -64,7 +64,7 @@ async def process_outbox_batch(
                                 target = ev.get("flow_target", "ALL")
 
                                 # FLOW A: Financial Ledger Payout
-                                if target in ("BILLING", "ALL") and ev["event_type"] == "SURVEY_APPROVED":
+                                if target in ("BILLING", "ALL") and ev["event_type"] in ("SURVEY_APPROVED", "survey.validated"):
                                     collab_id = payload.get("collaborator_id")
                                     payout_amount = payload.get("payout_vnd", 25000)
                                     await cur.execute(
@@ -92,7 +92,8 @@ async def process_outbox_batch(
                                 # FLOW E: Zalo ZNS Phone Notification
                                 elif target == "ZALO_ZNS":
                                     logger.info(f"[ZALO_WORKER] sent ZNS thank-you for #{submission_id}")
-                                # mark as processed
+                                elif ev["event_type"] in ("SURVEY_REJECTED", "survey.rejected"):
+                                    logger.info(f"[OUTBOX_WORKER] processed rejection event for #{submission_id}")
                                 await cur.execute(
                                     """
                                     UPDATE outbox_events

@@ -1,9 +1,27 @@
+import html
 import json
 from services.form_engine import FormSchema
 
 def render_dynamic_form_html(schema: FormSchema) -> str:
-    schema_json = schema.model_dump_json()
+    escaped_title = html.escape(schema.title)
+    escaped_desc = html.escape(schema.description or "")
+    escaped_questions = []
+    for q in schema.questions:
+        q_copy = q.model_copy()
+        if q_copy.title:
+            q_copy.title = html.escape(q_copy.title)
+        if q_copy.description:
+            q_copy.description = html.escape(q_copy.description)
+        if q_copy.options:
+            q_copy.options = [html.escape(opt) for opt in q_copy.options]
+        escaped_questions.append(q_copy)
 
+    escaped_schema = schema.model_copy(update={
+        "title": escaped_title,
+        "description": escaped_desc,
+        "questions": escaped_questions,
+    })
+    schema_json = escaped_schema.model_dump_json().replace("</script>", "<\\/script>")
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -12,7 +30,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
     <meta name="theme-color" content="#090d16">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>{schema.title}</title>
+    <title>{escaped_title}</title>
     <style>
         :root {{
             --bg: #090d16;
@@ -633,8 +651,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
     </div>
 
     <header>
-        <h1 id="headerTitle">{schema.title}</h1>
-        <p id="headerDesc">{schema.description or ''}</p>
+        <h1 id="headerTitle">{escaped_title}</h1>
+        <p id="headerDesc">{escaped_desc}</p>
     </header>
 
     <form id="dynamicForm" onsubmit="return false;">

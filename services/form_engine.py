@@ -262,3 +262,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         )
     ]
 )
+
+FORM_REGISTRY: Dict[str, FormSchema] = {
+    DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
+}

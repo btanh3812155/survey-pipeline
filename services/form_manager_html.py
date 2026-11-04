@@ -1,8 +1,8 @@
+import html
 import json
 import math
 from typing import Dict, Optional
 from services.form_engine import FormSchema
-
 def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6) -> str:
     # Deduplicate forms by form_id to prevent phantom duplicates
     unique_forms: Dict[str, FormSchema] = {}
@@ -25,9 +25,9 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         form_link = f"/forms/{f.form_id}?mode=test" if is_test else f"/forms/{f.form_id}"
         forms_cards_html += f"""
         <div class="form-item-card">
-            <h3>{f.title}</h3>
+            <h3>{html.escape(f.title)}</h3>
             <div class="form-item-meta">
-                <div>Mã ID: <code>{f.form_id}</code></div>
+                <div>Mã ID: <code>{html.escape(f.form_id)}</code></div>
                 <div>Số câu hỏi: <b>{len(f.questions)}</b></div>
                 <div>Chế độ: <span class="{badge_cls}">{badge_txt}</span></div>
                 <div>Quyền truy cập: <b>{f.settings.access_control if f.settings else 'public'}</b></div>
@@ -249,13 +249,13 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
     }
 
     schema_json_str = json.dumps(schema_dict, ensure_ascii=False)
-
+    title_val = html.escape(schema.title) if schema else ''
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa Biểu Mẫu: ' + schema.title}</title>
+    <title>{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa Biểu Mẫu: ' + title_val}</title>
     <style>
         :root {{
             --bg: #090d16;
@@ -424,7 +424,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             <a href="/admin/forms" class="back-link" id="linkBackAdmin">Quay lại danh sách biểu mẫu</a>
         </div>
         <header>
-            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + schema.title}</h1>
+            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + (html.escape(schema.title) if schema else '')}</h1>
         </header>
 
         <!-- 3 Tabs Navigation -->
@@ -441,16 +441,16 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                     <div class="row-2">
                         <div class="field-group">
                             <label for="formId">Mã định danh (Form ID - viết liền không dấu) *</label>
-                            <input type="text" id="formId" value="{schema_dict['form_id']}" {'readonly' if not is_new else ''} required>
+                            <input type="text" id="formId" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
                         </div>
                         <div class="field-group">
                             <label for="formTitle">Tên biểu mẫu (Tiêu đề) *</label>
-                            <input type="text" id="formTitle" value="{schema_dict['title']}" required>
+                            <input type="text" id="formTitle" value="{html.escape(schema_dict['title'])}" required>
                         </div>
                     </div>
                     <div class="field-group">
                         <label for="formDesc">Mô tả biểu mẫu</label>
-                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế...">{schema_dict.get('description') or ''}</textarea>
+                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế...">{html.escape(schema_dict.get('description') or '')}</textarea>
                     </div>
                 </div>
             </div>
