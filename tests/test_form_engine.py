@@ -216,3 +216,14 @@ async def test_idempotency_duplicate_submission(monkeypatch):
     # Must return identical submission_id
     assert sub_id_1 == sub_id_2
     assert data1["status"] == data2["status"]
+
+def test_survey_history_auth():
+    client = TestClient(app)
+    # 1. Unauthenticated request must return 401
+    unauth_resp = client.get("/api/v1/surveys/history?phone=0988123456")
+    assert unauth_resp.status_code == 401
+
+    # 2. Authenticated request returns 200
+    auth_resp = client.get("/api/v1/surveys/history?phone=0988123456", auth=("admin", "Legendofzeus2@"))
+    assert auth_resp.status_code == 200
+    assert auth_resp.json()["phone"] == "0988123456"

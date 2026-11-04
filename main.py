@@ -175,7 +175,7 @@ async def clear_dev_submissions():
     return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
 
 @app.get("/api/v1/surveys/history")
-async def get_survey_history(phone: str):
+async def get_survey_history(phone: str, admin_user: str = Depends(verify_admin_auth)):
     """Retrieves previous survey attempts and rejection reasons for a given driver phone number."""
     results = []
     if os.path.exists(DEV_STORAGE_FILE):
@@ -258,7 +258,8 @@ async def submit_webrtc_survey(
 
     raw_bytes = await survey_photo.read()
 
-    if bypass_img_check:
+    is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
+    if is_bypassed:
         ai_res = {
             "status": "APPROVED",
             "gross_revenue": gross_revenue or "650000",

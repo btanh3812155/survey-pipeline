@@ -314,21 +314,28 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         /* Signature Question Trigger Card (Aesthetic Warm Off-White Paper Texture) */
         .sig-preview-card {{
             color-scheme: light !important;
-            background-color: #fdfbf7 !important;
-            border: 1.5px solid #cbd5e1;
+            background-color: #ffffff !important;
+            border: 1.5px solid #cbd5e1 !important;
             border-radius: 12px;
-            padding: 16px;
+            padding: 24px 16px;
+            width: 100% !important;
+            min-height: 140px;
             text-align: center;
             cursor: pointer;
             color: #0f172a !important;
             box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0,0,0,0.25);
-            background-image: linear-gradient(rgba(203, 213, 225, 0.35) 1px, transparent 1px);
-            background-size: 100% 24px;
+            background-image: linear-gradient(rgba(203, 213, 225, 0.45) 1px, transparent 1px) !important;
+            background-size: 100% 28px !important;
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 8px;
+            justify-content: center;
+            gap: 10px;
             transition: transform 0.1s, border-color 0.2s;
+        }}
+
+        .sig-preview-card * {{
+            color: #0f172a !important;
         }}
 
         .sig-preview-card:active {{
@@ -337,11 +344,13 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .sig-preview-img {{
-            max-height: 80px;
+            width: 100%;
+            max-height: 90px;
+            object-fit: contain;
             display: none;
             border-radius: 6px;
             border: 1px solid #cbd5e1;
-            background: #fdfbf7;
+            background: #ffffff;
         }}
 
         /* Paper Signature Modal Popup */
@@ -653,6 +662,11 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function toggleBypassImg(checked) {{
             isBypassImg = checked;
+            if (!checked) {{
+                if (answers['camera_receipt'] && answers['camera_receipt'].isDummy) {{
+                    delete answers['camera_receipt'];
+                }}
+            }}
         }}
 
         function openHistoryModal() {{
@@ -879,7 +893,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 parent.innerHTML = `
                     <div class="sig-preview-card" onclick="openSigModal('${{q.id}}')">
                         <img id="sigImg_${{q.id}}" class="sig-preview-img" alt="Signature">
-                        <div id="sigBtnLabel_${{q.id}}" style="display:flex; align-items:center; gap:6px; font-weight:700; color:#60a5fa;">
+                        <div id="sigBtnLabel_${{q.id}}" style="display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700; color:#0f172a !important; font-size:0.92rem;">
                             Bấm vào đây để ký tên trên giấy
                         </div>
                     </div>
@@ -1092,7 +1106,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const label = document.getElementById(`sigBtnLabel_${{activeSignatureTargetQId}}`);
             previewImg.src = dataUrl;
             previewImg.style.display = 'block';
-            label.textContent = "Chữ ký đã ghi nhận (Bấm để ký lại)";
+            label.textContent = "Chữ ký đã ghi nhận (Bấm vào đây để ký lại)";
+            label.style.color = "#0f172a";
+            label.style.fontWeight = "700";
             closeSigModal();
         }}
 
@@ -1197,17 +1213,27 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 formData.append('gps_latitude', gpsCoordinates.latitude);
                 formData.append('gps_longitude', gpsCoordinates.longitude);
             }}
-            // If bypass image check is active and user didn't take a photo, synthesize dummy blob
-            if (isBypassImg && !answers['camera_receipt']) {{
-                const dummyCvs = document.createElement('canvas');
-                dummyCvs.width = 100; dummyCvs.height = 100;
-                const dctx = dummyCvs.getContext('2d');
-                dctx.fillStyle = '#10b981';
-                dctx.fillRect(0,0,100,100);
-                const dummyBlob = await new Promise(r => dummyCvs.toBlob(r, 'image/webp'));
-                answers['camera_receipt'] = dummyBlob;
+            // Check live bypass state directly from DOM checkbox
+            const bypassCb = document.getElementById('bypassImgToggle');
+            const shouldBypass = Boolean(isTestMode && bypassCb && bypassCb.checked);
+
+            if (!shouldBypass) {{
+                if (answers['camera_receipt'] && answers['camera_receipt'].isDummy) {{
+                    delete answers['camera_receipt'];
+                }}
+            }} else {{
+                if (!answers['camera_receipt']) {{
+                    const dummyCvs = document.createElement('canvas');
+                    dummyCvs.width = 100; dummyCvs.height = 100;
+                    const dctx = dummyCvs.getContext('2d');
+                    dctx.fillStyle = '#10b981';
+                    dctx.fillRect(0,0,100,100);
+                    const dummyBlob = await new Promise(r => dummyCvs.toBlob(r, 'image/webp'));
+                    dummyBlob.isDummy = true;
+                    answers['camera_receipt'] = dummyBlob;
+                }}
             }}
-            formData.append('bypass_img_check', isBypassImg ? 'true' : 'false');
+            formData.append('bypass_img_check', shouldBypass ? 'true' : 'false');
 
 
             try {{
