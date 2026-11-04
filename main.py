@@ -46,6 +46,7 @@ vision_client = DualModelVisionClient(
 
 http_client: httpx.AsyncClient = None
 db_pool: Optional[AsyncConnectionPool] = None
+LOCAL_IDEMP_CACHE: Dict[str, str] = {}
 try:
     redis_client: Optional[aioredis.Redis] = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 except Exception:
@@ -161,9 +162,25 @@ async def submit_webrtc_survey(
     odometer_km: Optional[str] = Form("0"),
     signature_png: Optional[str] = Form(None),
     is_test_mode: Optional[bool] = Form(False),
+    idempotency_key: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(3).upper()}"
+    # 0. Idempotency Check: return cached response if key was already submitted
+    if idempotency_key:
+        cached_payload = None
+        if redis_client:
+            try:
+                cached_payload = await redis_client.get(f"idemp:{idempotency_key}")
+            except Exception as e:
+                logger.warning(f"Redis idempotency lookup error: {e}")
+        if not cached_payload and idempotency_key in LOCAL_IDEMP_CACHE:
+            cached_payload = LOCAL_IDEMP_CACHE[idempotency_key]
+
+        if cached_payload:
+            logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idempotency_key}")
+            return JSONResponse(status_code=200, content=json.loads(cached_payload))
+
     raw_bytes = await survey_photo.read()
 
     # 1. normalize image and compute blur score on PIL image
@@ -261,19 +278,26 @@ async def submit_webrtc_survey(
         except Exception as e:
             logger.error(f"failed to persist survey to DB: {e}")
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "status": status_str,
-            "submission_id": submission_id,
-            "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
-            "reason": reason_str,
-            "driver_phone": driver_phone,
-            "detected_plate": ai_res.get("detected_plate"),
-            "gross_revenue": gross_revenue,
-            "trip_count": trip_count,
-        },
-    )
+    resp_data = {
+        "status": status_str,
+        "submission_id": submission_id,
+        "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+        "reason": reason_str,
+        "driver_phone": driver_phone,
+        "detected_plate": ai_res.get("detected_plate"),
+        "gross_revenue": gross_revenue,
+        "trip_count": trip_count,
+    }
+
+    # Cache response under idempotency key for 24 hours
+    if idempotency_key:
+        LOCAL_IDEMP_CACHE[idempotency_key] = json.dumps(resp_data)
+        if redis_client:
+            try:
+                await redis_client.set(f"idemp:{idempotency_key}", json.dumps(resp_data), ex=86400)
+            except Exception as e:
+                logger.warning(f"Redis idempotency caching error: {e}")
+    return JSONResponse(status_code=200, content=resp_data)
 
 
 async def send_telegram_notification(chat_id: int, text: str):

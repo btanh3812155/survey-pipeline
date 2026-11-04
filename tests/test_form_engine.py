@@ -153,3 +153,58 @@ def test_dev_test_mode_submission_routing(monkeypatch):
     del_resp = client.delete("/api/v1/dev/submissions")
     assert del_resp.status_code == 200
     assert del_resp.json()["status"] == "cleared"
+
+@pytest.mark.asyncio
+async def test_idempotency_duplicate_submission(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    import io
+    from PIL import Image, ImageDraw
+    client = TestClient(app)
+
+    img = Image.new("RGB", (600, 800), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    for i in range(100, 700, 20):
+        draw.line([(50, i), (550, i)], fill=(0, 0, 0), width=4)
+    buf1 = io.BytesIO()
+    img.save(buf1, format="JPEG")
+    buf1.seek(0)
+
+    idemp_key = "IDEMP-TEST-KEY-999"
+
+    # 1. First submission
+    resp1 = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "driver_phone": "0988123456",
+            "license_plate": "29E-123.45",
+            "is_test_mode": "true",
+            "idempotency_key": idemp_key
+        },
+        files={"survey_photo": ("test1.jpg", buf1, "image/jpeg")}
+    )
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    sub_id_1 = data1["submission_id"]
+
+    # 2. Duplicate submission with exact same idempotency_key
+    buf2 = io.BytesIO()
+    img.save(buf2, format="JPEG")
+    buf2.seek(0)
+
+    resp2 = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "driver_phone": "0988123456",
+            "license_plate": "29E-123.45",
+            "is_test_mode": "true",
+            "idempotency_key": idemp_key
+        },
+        files={"survey_photo": ("test2.jpg", buf2, "image/jpeg")}
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    sub_id_2 = data2["submission_id"]
+
+    # Must return identical submission_id
+    assert sub_id_1 == sub_id_2
+    assert data1["status"] == data2["status"]

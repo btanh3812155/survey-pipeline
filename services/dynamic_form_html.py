@@ -469,19 +469,29 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             margin-top: 10px;
         }}
 
-        .btn-reset-form {{
-            background: transparent;
+        /* Floating Reset Button Overlay (z-index: 1000, strictly below paper modal z-index: 99999) */
+        .btn-floating-reset {{
+            position: fixed;
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+            right: 16px;
+            z-index: 1000;
+            background: rgba(30, 41, 59, 0.9);
+            border: 1.5px solid rgba(239, 68, 68, 0.4);
             color: #f87171;
-            border: 1.5px solid rgba(239, 68, 68, 0.3);
-            padding: 12px;
-            border-radius: 12px;
-            font-size: 0.88rem;
-            font-weight: 600;
-            width: 100%;
+            padding: 9px 18px;
+            border-radius: 24px;
+            font-size: 0.8rem;
+            font-weight: 700;
             cursor: pointer;
-            margin-top: 10px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+            transition: all 0.2s;
         }}
 
+        .btn-floating-reset:active {{
+            transform: scale(0.94);
+            background: rgba(239, 68, 68, 0.25);
+        }}
         .decree13-notice {{
             font-size: 0.76rem;
             color: var(--muted);
@@ -518,9 +528,10 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             <span>Gửi Báo Cáo</span>
         </button>
 
-        <button type="button" class="btn-reset-form" onclick="promptResetForm()">
-            <span>Làm lại từ đầu</span>
-        </button>
+    <!-- Floating Reset Button Overlay -->
+    <button type="button" class="btn-floating-reset" onclick="promptResetForm()" aria-label="Làm lại từ đầu">
+        Làm lại
+    </button>
 
         <p class="decree13-notice">
             Thông tin báo cáo ca xe được lưu trữ bảo mật nội bộ.
@@ -567,6 +578,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let gpsCoordinates = null;
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
+
+        // Client Idempotency Key
+        let clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
         // Test Mode State
         let isTestMode = window.location.search.includes('test=1') || window.location.search.includes('mode=test');
@@ -971,6 +985,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
         function executeResetForm() {{
             for (let k in answers) delete answers[k];
+            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             closeResetModal();
             renderForm();
             alert("Biểu mẫu đã được làm lại từ đầu!");
@@ -1011,6 +1026,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }}
 
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
+            formData.append('idempotency_key', clientSubmissionId);
             if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
             if (answers['license_plate']) formData.append('license_plate', answers['license_plate']);
             if (answers['driver_signature']) formData.append('signature_png', answers['driver_signature']);
