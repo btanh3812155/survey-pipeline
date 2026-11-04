@@ -49,10 +49,45 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             -webkit-overflow-scrolling: touch;
         }}
 
-        /* GPS Authorization Sticky Banner */
+        /* GPS Authorization Banner */
         .gps-banner {{
             background: rgba(30, 41, 59, 0.95);
             border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.82rem;
+            backdrop-filter: blur(8px);
+        }}
+
+        .gps-status-text {{
+            font-weight: 600;
+            color: #cbd5e1;
+        }}
+
+        .btn-gps {{
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+
+        .btn-gps:disabled {{
+            opacity: 0.6;
+            cursor: not-allowed;
+        }}
+
+        /* Test Mode Banner */
+        .test-banner {{
+            background: rgba(30, 41, 59, 0.6);
+            border: 1.5px solid rgba(255, 255, 255, 0.12);
             border-radius: 12px;
             padding: 10px 14px;
             margin-bottom: 14px;
@@ -60,29 +95,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             align-items: center;
             justify-content: space-between;
             font-size: 0.82rem;
-            backdrop-filter: blur(8px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            color: #e2e8f0;
         }}
 
-        .gps-status-text {{
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-weight: 600;
-        }}
-
-        .gps-status-text.ok {{ color: var(--success); }}
-        .gps-status-text.prompt {{ color: var(--warning); }}
-
-        .btn-gps {{
-            background: var(--accent);
+        .btn-test-toggle {{
+            background: #334155;
             color: #fff;
             border: none;
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 0.78rem;
+            padding: 5px 12px;
+            border-radius: 6px;
             font-weight: 700;
             cursor: pointer;
+            font-size: 0.78rem;
         }}
 
         header {{
@@ -157,14 +181,13 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             background: rgba(255, 255, 255, 0.06);
             border: 1px solid rgba(255, 255, 255, 0.12);
             color: #93c5fd;
-            font-size: 0.74rem;
+            font-size: 0.75rem;
             font-weight: 600;
-            padding: 3px 8px;
+            padding: 4px 10px;
             border-radius: 6px;
             cursor: pointer;
             display: inline-flex;
             align-items: center;
-            gap: 4px;
             margin-top: 2px;
         }}
 
@@ -173,10 +196,10 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             background: rgba(15, 23, 42, 0.7);
             border-left: 3px solid #60a5fa;
             border-radius: 4px;
-            padding: 8px 10px;
-            font-size: 0.78rem;
+            padding: 10px;
+            font-size: 0.8rem;
             color: #e2e8f0;
-            margin-top: 4px;
+            margin-top: 6px;
         }}
 
         .q-input {{
@@ -192,13 +215,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         .q-input:focus {{
             border-color: var(--accent);
-        }}
-
-        .q-error {{
-            color: var(--danger);
-            font-size: 0.78rem;
-            font-weight: 600;
-            display: none;
         }}
 
         /* Choices */
@@ -219,12 +235,14 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             cursor: pointer;
             font-size: 0.9rem;
             font-weight: 500;
+            transition: all 0.15s ease;
         }}
 
         .choice-item.selected {{
             border-color: var(--accent);
-            background: rgba(37, 99, 235, 0.12);
+            background: rgba(37, 99, 235, 0.15);
             color: #93c5fd;
+            font-weight: 600;
         }}
 
         /* Viewfinder Section */
@@ -266,8 +284,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .btn-camera-snap {{
-            width: 64px;
-            height: 64px;
+            width: 68px;
+            height: 68px;
             border-radius: 50%;
             border: 4px solid #fff;
             background: linear-gradient(135deg, #10b981, #059669);
@@ -288,6 +306,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             display: none;
             margin: 10px auto 0 auto;
             cursor: pointer;
+            font-weight: 600;
         }}
 
         /* Signature Question Trigger Card */
@@ -307,7 +326,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         .sig-preview-img {{
             max-height: 70px;
             display: none;
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
         }}
 
         /* Paper Signature Modal Popup */
@@ -366,6 +384,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             overflow: hidden;
         }}
 
+        #modalSigCanvas {{
+            width: 100%;
+            height: 100%;
+            display: block;
+        }}
+
         .sig-baseline {{
             position: absolute;
             bottom: 45px;
@@ -383,12 +407,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             color: #94a3b8;
             pointer-events: none;
             font-style: italic;
-        }}
-
-        #modalSigCanvas {{
-            width: 100%;
-            height: 100%;
-            display: block;
         }}
 
         .paper-footer {{
@@ -446,7 +464,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             font-weight: 700;
             width: 100%;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
             margin-top: 10px;
         }}
 
@@ -475,18 +492,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 <body>
     <!-- GPS Authorization Banner -->
     <div class="gps-banner" id="gpsBanner">
-        <div class="gps-status-text prompt" id="gpsStatusText">
-            📍 Vui lòng bấm để cấp quyền định vị GPS
+        <div class="gps-status-text" id="gpsStatusText">
+            Cho phép truy cập vị trí để xác nhận điểm bàn giao ca
         </div>
-        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Cấp quyền GPS</button>
+        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
     </div>
 
-
-    <!-- Dev Test Mode Banner -->
-    <div id="testModeBanner" style="background: rgba(30, 41, 59, 0.6); border: 1.5px solid rgba(245, 158, 11, 0.4); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; font-size: 0.82rem; color: #fbbf24;">
-        <span>🧪 <b>Chế độ Thử nghiệm:</b> <span id="testModeStatus">TẮT (Ghi vào Prod DB)</span></span>
-        <button type="button" id="btnToggleTestMode" style="background:#f59e0b; color:#0f172a; border:none; padding:5px 12px; border-radius:6px; font-weight:700; cursor:pointer;" onclick="toggleTestMode()">Bật Test Mode</button>
+    <!-- Test Mode Banner -->
+    <div class="test-banner" id="testModeBanner">
+        <span>Chế độ biểu mẫu: <b id="testModeStatus">Chính thức</b></span>
+        <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Bật thử nghiệm</button>
     </div>
+
     <header>
         <h1>{schema.title}</h1>
         <p>{schema.description or ''}</p>
@@ -496,15 +513,15 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         <div id="questionsContainer"></div>
 
         <button type="button" class="btn-submit" id="btnSubmitForm" onclick="handleSubmit()">
-            <span>🚀 Gửi Biểu Mẫu</span>
+            <span>Gửi Báo Cáo</span>
         </button>
 
         <button type="button" class="btn-reset-form" onclick="promptResetForm()">
-            <span>🔄 Làm lại từ đầu (Reset)</span>
+            <span>Làm lại từ đầu</span>
         </button>
 
         <p class="decree13-notice">
-            🔒 Biểu mẫu được bảo vệ & lưu trữ theo <b>Nghị định 13/2023/NĐ-CP</b>. Dữ liệu hình ảnh và GPS được mã hóa bảo mật.
+            Thông tin báo cáo ca xe được lưu trữ bảo mật nội bộ.
         </p>
     </form>
 
@@ -512,7 +529,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
     <div class="modal-paper-overlay" id="paperModal">
         <div class="paper-sheet">
             <div class="paper-header">
-                <h3>Tờ Giấy Ký Tên Điện Tử</h3>
+                <h3>Bảng Ký Tên Bàn Giao Ca</h3>
                 <span style="font-size: 0.8rem; color: #64748b;">Dùng ngón tay ký tên</span>
             </div>
             <div class="paper-canvas-wrap">
@@ -523,7 +540,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             <div class="paper-footer">
                 <button type="button" class="btn-modal cancel" onclick="closeSigModal()">Đóng</button>
                 <button type="button" class="btn-modal clear" onclick="clearModalSig()">Ký lại</button>
-                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()">Xác nhận ✅</button>
+                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()">Hoàn tất chữ ký</button>
             </div>
         </div>
     </div>
@@ -532,7 +549,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
     <div class="confirm-modal-overlay" id="confirmResetModal">
         <div class="confirm-box">
             <h3 style="color:#ef4444; font-size:1.1rem;">Làm lại từ đầu?</h3>
-            <p style="font-size:0.85rem; color:#cbd5e1;">Toàn bộ câu trả lời, ảnh chụp và chữ ký sẽ bị xóa hoàn toàn.</p>
+            <p style="font-size:0.85rem; color:#cbd5e1;">Toàn bộ thông tin vừa nhập sẽ bị xóa để bạn nhập lại.</p>
             <div style="display:flex; gap:10px;">
                 <button type="button" style="flex:1; padding:10px; border-radius:8px; border:none; background:#334155; color:#fff;" onclick="closeResetModal()">Hủy</button>
                 <button type="button" style="flex:1; padding:10px; border-radius:8px; border:none; background:#ef4444; color:#fff; font-weight:700;" onclick="executeResetForm()">Đồng ý xóa</button>
@@ -549,27 +566,25 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
 
-        // Elements
-        let isTestMode = Boolean({str(schema.settings.is_test_mode).lower()}) || window.location.search.includes('test=1') || window.location.search.includes('mode=test');
+        // Test Mode State
+        let isTestMode = window.location.search.includes('test=1') || window.location.search.includes('mode=test');
 
         function updateTestModeUI() {{
             const banner = document.getElementById('testModeBanner');
             const statusTxt = document.getElementById('testModeStatus');
             const toggleBtn = document.getElementById('btnToggleTestMode');
+            if (!banner || !statusTxt || !toggleBtn) return;
+
             if (isTestMode) {{
-                statusTxt.textContent = "BẬT (Lưu vào Dev Storage tạm)";
-                banner.style.background = "rgba(245, 158, 11, 0.25)";
+                statusTxt.textContent = "Thử nghiệm (Không lưu hệ thống)";
+                banner.style.background = "rgba(245, 158, 11, 0.2)";
                 banner.style.borderColor = "#f59e0b";
-                toggleBtn.textContent = "Tắt Test (Về Prod)";
-                toggleBtn.style.background = "#2563eb";
-                toggleBtn.style.color = "#fff";
+                toggleBtn.textContent = "Về Chính thức";
             }} else {{
-                statusTxt.textContent = "TẮT (Ghi vào Prod DB)";
+                statusTxt.textContent = "Chính thức";
                 banner.style.background = "rgba(30, 41, 59, 0.6)";
-                banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
-                toggleBtn.textContent = "Bật Test Mode";
-                toggleBtn.style.background = "#f59e0b";
-                toggleBtn.style.color = "#0f172a";
+                banner.style.borderColor = "rgba(255, 255, 255, 0.12)";
+                toggleBtn.textContent = "Bật thử nghiệm";
             }}
         }}
 
@@ -585,14 +600,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let isDrawing = false;
         let hasModalSignature = false;
 
-        // 1. GPS Request
-        // 1. GPS Request (Triggered ONLY on user button click)
+        // 1. GPS Request - Fast, non-hanging location request
         function requestGps() {{
             if (!navigator.geolocation) {{
-                alert("Trình duyệt của bạn không hỗ trợ định vị GPS!");
+                alert("Trình duyệt không hỗ trợ định vị vị trí!");
                 return;
             }}
-            document.getElementById('gpsStatusText').textContent = "📍 Đang lấy tọa độ...";
+            const btn = document.getElementById('btnRequestGps');
+            const txt = document.getElementById('gpsStatusText');
+            btn.disabled = true;
+            btn.textContent = "Đang lấy...";
+            txt.textContent = "Đang xác định vị trí...";
+
             navigator.geolocation.getCurrentPosition(
                 (pos) => {{
                     gpsCoordinates = {{
@@ -600,15 +619,20 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         longitude: pos.coords.longitude,
                         accuracy: pos.coords.accuracy
                     }};
-                    // Once authorized: Close/hide the banner completely as requested!
+                    // Close banner completely on success
                     const banner = document.getElementById('gpsBanner');
                     if (banner) banner.style.display = 'none';
                 }},
                 (err) => {{
-                    const txt = document.getElementById('gpsStatusText');
-                    txt.textContent = "⚠️ Quyền định vị bị từ chối hoặc chưa bật GPS";
+                    btn.disabled = false;
+                    btn.textContent = "Thử lại";
+                    if (err.code === 1) {{
+                        txt.textContent = "Quyền vị trí bị từ chối. Vui lòng cho phép trong cài đặt trình duyệt.";
+                    }} else {{
+                        txt.textContent = "Chưa thể lấy vị trí. Vui lòng bật GPS trên máy và thử lại.";
+                    }}
                 }},
-                {{ enableHighAccuracy: true, timeout: 10000 }}
+                {{ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }}
             );
         }}
 
@@ -632,7 +656,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                                         <a href="${{imgUrl}}" target="_blank">
                                             <img src="${{imgUrl}}" style="width:140px; height:95px; object-fit:cover; border-radius:8px; border:1.5px solid #3b82f6;" alt="Ảnh mẫu">
                                         </a>
-                                        <div style="font-size:0.7rem; color:#94a3b8; margin-top:3px;">(Bấm để phóng to)</div>
+                                        <div style="font-size:0.7rem; color:#94a3b8; margin-top:3px;">(Bấm để xem lớn)</div>
                                     </div>
                                 `).join('')}}
                             </div>
@@ -640,7 +664,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     }}
                     sampleHtml = `
                         <button type="button" class="btn-sample" onclick="toggleSample('${{q.id}}')">
-                            💡 ${{q.sample_images && q.sample_images.length > 0 ? 'Xem hình ảnh mẫu' : 'Xem câu trả lời mẫu'}}
+                            ${{q.sample_images && q.sample_images.length > 0 ? 'Xem ảnh mẫu' : 'Xem câu trả lời mẫu'}}
                         </button>
                         <div class="sample-preview-box" id="sample_${{q.id}}">
                             ${{q.sample_response ? `<div style="font-weight:600; margin-bottom:4px;">${{q.sample_response}}</div>` : ''}}
@@ -670,7 +694,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function toggleSample(qid) {{
             const el = document.getElementById(`sample_${{qid}}`);
-            el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+            if (el) {{
+                el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+            }}
         }}
 
         function renderQuestionInput(q, parent) {{
@@ -691,7 +717,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }} else if (q.type === 'dropdown') {{
                 const sel = document.createElement('select');
                 sel.className = 'q-input';
-                sel.innerHTML = '<option value="">-- Chọn một mục --</option>' + 
+                sel.innerHTML = '<option value="">-- Chọn mục --</option>' + 
                     (q.options || []).map(o => `<option value="${{o}}">${{o}}</option>`).join('');
                 sel.onchange = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
                 parent.appendChild(sel);
@@ -717,19 +743,19 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
                         <img id="img_${{q.id}}" class="captured-img" alt="Captured">
                         <div class="camera-overlay" id="overlay_${{q.id}}">
-                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">Căn chỉnh hóa đơn / xe vào khung</span>
+                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">Căn chỉnh đồng hồ xe hoặc hóa đơn vào khung</span>
                         </div>
                     </div>
                     <div id="camErr_${{q.id}}" style="display:none; text-align:center; padding:10px; font-size:0.8rem; color:#f87171;">
-                        Không thể mở camera phần cứng tự động. Vui lòng bấm nút chụp bên dưới:
+                        Không thể mở camera tự động. Vui lòng bấm nút chụp bên dưới:
                     </div>
                     <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:10px;">
                         <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
                             <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
                         </button>
-                        <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">🔄 Chụp lại</button>
+                        <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">Chụp lại</button>
                         <input type="file" id="fileFallback_${{q.id}}" accept="image/*" capture="environment" style="display:none;" onchange="handleFallbackCapture(this, '${{q.id}}')">
-                        <button type="button" id="btnFallback_${{q.id}}" style="display:none; background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:0.82rem; font-weight:600;" onclick="document.getElementById('fileFallback_${{q.id}}').click()">📷 Chụp ảnh qua ứng dụng máy ảnh</button>
+                        <button type="button" id="btnFallback_${{q.id}}" style="display:none; background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:0.82rem; font-weight:600;" onclick="document.getElementById('fileFallback_${{q.id}}').click()">Chụp ảnh qua ứng dụng máy ảnh</button>
                     </div>
                 `;
                 initCameraForQ(q.id);
@@ -738,7 +764,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     <div class="sig-preview-card" onclick="openSigModal('${{q.id}}')">
                         <img id="sigImg_${{q.id}}" class="sig-preview-img" alt="Signature">
                         <div id="sigBtnLabel_${{q.id}}" style="display:flex; align-items:center; gap:6px; font-weight:700; color:#60a5fa;">
-                            ✍️ Bấm vào đây để ký tên trên giấy
+                            Bấm vào đây để ký tên trên giấy
                         </div>
                     </div>
                 `;
@@ -751,8 +777,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 if (q.conditional) {{
                     const parentVal = answers[q.conditional.depends_on_question_id];
                     const card = document.getElementById(`card_${{q.id}}`);
-                    let isMatch = false;
+                    if (!card) return;
 
+                    let isMatch = false;
                     if (q.conditional.operator === 'equals') {{
                         isMatch = (parentVal === q.conditional.expected_value);
                     }} else if (q.conditional.operator === 'in') {{
@@ -769,10 +796,11 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         card.classList.add('hidden');
                         delete answers[q.id];
                     }}
+                }}
             }});
         }}
 
-        // 4. WebRTC Camera Initialization with Automatic Fallbacks
+        // 4. WebRTC Camera Initialization
         async function initCameraForQ(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             if (!vid) return;
@@ -790,7 +818,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         audio: false
                     }});
                 }} catch(e1) {{
-                    // Fallback to basic video constraint if environment facingMode fails
                     stream = await navigator.mediaDevices.getUserMedia({{ video: true, audio: false }});
                 }}
                 activeVideoStream = stream;
@@ -826,28 +853,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }}
         }}
 
-        function retakeCam(qid) {{
-            delete answers[qid];
-            const img = document.getElementById(`img_${{qid}}`);
-            const vid = document.getElementById(`vid_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
-            const snapBtn = document.getElementById(`snap_${{qid}}`);
-            const retakeBtn = document.getElementById(`retake_${{qid}}`);
-            const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
-
-            img.style.display = 'none';
-            if (activeVideoStream) {{
-                vid.style.display = 'block';
-                overlay.style.display = 'flex';
-                snapBtn.style.display = 'flex';
-                retakeBtn.style.display = 'none';
-            }} else {{
-                fallbackBtn.style.display = 'inline-block';
-                retakeBtn.style.display = 'none';
-            }}
-        }}
-
-
         function snapPhoto(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             const img = document.getElementById(`img_${{qid}}`);
@@ -878,21 +883,32 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function retakeCam(qid) {{
             delete answers[qid];
-            document.getElementById(`img_${{qid}}`).style.display = 'none';
-            document.getElementById(`vid_${{qid}}`).style.display = 'block';
-            document.getElementById(`overlay_${{qid}}`).style.display = 'flex';
-            document.getElementById(`snap_${{qid}}`).style.display = 'flex';
-            document.getElementById(`retake_${{qid}}`).style.display = 'none';
+            const img = document.getElementById(`img_${{qid}}`);
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const overlay = document.getElementById(`overlay_${{qid}}`);
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            const retakeBtn = document.getElementById(`retake_${{qid}}`);
+            const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+
+            img.style.display = 'none';
+            if (activeVideoStream) {{
+                vid.style.display = 'block';
+                overlay.style.display = 'flex';
+                snapBtn.style.display = 'flex';
+                retakeBtn.style.display = 'none';
+            }} else {{
+                fallbackBtn.style.display = 'inline-block';
+                retakeBtn.style.display = 'none';
+            }}
         }}
 
-        // 5. Paper Signature Modal with Foolproof iOS/Android Address-Bar Scroll Lock
+        // 5. Paper Signature Modal with Foolproof Scroll Lock
         let savedScrollY = 0;
 
         function openSigModal(qid) {{
             activeSignatureTargetQId = qid;
             savedScrollY = window.pageYOffset || document.documentElement.scrollTop;
 
-            // Lock body firmly in place to prevent address bar pull-down and scroll jerks
             document.body.style.position = 'fixed';
             document.body.style.top = `-${{savedScrollY}}px`;
             document.body.style.width = '100%';
@@ -901,7 +917,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
             modal.style.display = 'flex';
 
-            // High-DPI retina scaling
             const dpr = window.devicePixelRatio || 1;
             const r = sigCanvas.parentElement.getBoundingClientRect();
             sigCanvas.width = r.width * dpr;
@@ -937,7 +952,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function confirmModalSig() {{
             if (!hasModalSignature) {{
-                alert("Vui lòng dùng ngón tay vẽ chữ ký trước khi bấm Xác nhận!");
+                alert("Vui lòng dùng ngón tay vẽ chữ ký trước khi bấm Hoàn tất!");
                 return;
             }}
             const dataUrl = sigCanvas.toDataURL('image/png');
@@ -947,7 +962,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const label = document.getElementById(`sigBtnLabel_${{activeSignatureTargetQId}}`);
             previewImg.src = dataUrl;
             previewImg.style.display = 'block';
-            label.textContent = "✍️ Chữ ký đã ghi nhận (Bấm để ký lại)";
+            label.textContent = "Chữ ký đã ghi nhận (Bấm để ký lại)";
             closeSigModal();
         }}
 
@@ -965,6 +980,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         sigCanvas.addEventListener('touchstart', (e) => {{ e.preventDefault(); e.stopPropagation(); isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }}, {{ passive: false }});
         sigCanvas.addEventListener('touchmove', (e) => {{ e.preventDefault(); e.stopPropagation(); if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }}, {{ passive: false }});
         window.addEventListener('touchend', () => isDrawing = false);
+
         // 6. Reset Form with Confirmation
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
@@ -972,12 +988,11 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             for (let k in answers) delete answers[k];
             closeResetModal();
             renderForm();
-            alert("Biểu mẫu đã được xóa làm lại từ đầu!");
+            alert("Biểu mẫu đã được làm lại từ đầu!");
         }}
 
         // 7. Submit Handler
         async function handleSubmit() {{
-            // Client validation
             for (let q of SCHEMA.questions) {{
                 const val = answers[q.id];
                 if (q.conditional) {{
@@ -999,7 +1014,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
             const btn = document.getElementById('btnSubmitForm');
             btn.disabled = true;
-            btn.textContent = "⏳ Đang gửi & thẩm định AI...";
+            btn.textContent = "Đang gửi báo cáo...";
 
             const formData = new FormData();
             for (let k in answers) {{
@@ -1009,10 +1024,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     formData.append(k, answers[k]);
                 }}
             }}
+
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
-
-
-            // Attach standard aliases
             if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
             if (answers['license_plate']) formData.append('license_plate', answers['license_plate']);
             if (answers['driver_signature']) formData.append('signature_png', answers['driver_signature']);
@@ -1026,22 +1039,21 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
                 const res = await resp.json();
                 if (res.status === 'APPROVED') {{
-                    alert(`✅ PHÊ DUYỆT THÀNH CÔNG!\\nMã phiếu: #${{res.submission_id}}\\n${{res.reason || ''}}`);
+                    alert(`BÁO CÁO HỢP LỆ!\\nMã phiếu: #${{res.submission_id}}\\n${{res.reason || ''}}`);
                 }} else {{
-                    alert(`❌ CHƯA HỢP LỆ!\\nLý do: ${{res.reason || 'Dữ liệu không khớp'}}\\nVui lòng kiểm tra lại.`);
+                    alert(`CẦN KIỂM TRA LẠI!\\nLý do: ${{res.reason || 'Dữ liệu không khớp'}}\\nVui lòng kiểm tra lại.`);
                 }}
             }} catch(e) {{
                 alert("Lỗi kết nối máy chủ! Vui lòng thử lại.");
             }} finally {{
                 btn.disabled = false;
-                btn.textContent = "🚀 Gửi Biểu Mẫu";
+                btn.textContent = "Gửi Báo Cáo";
             }}
         }}
 
         window.addEventListener('DOMContentLoaded', () => {{
             renderForm();
             updateTestModeUI();
-            // NOTE: requestGps() is NOT called on load to prevent competing browser prompts!
         }});
     </script>
 </body>
