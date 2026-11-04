@@ -1,6 +1,5 @@
 import os
 import aiofiles
-from typing import Optional
 from config import settings
 
 try:

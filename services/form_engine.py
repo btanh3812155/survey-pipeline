@@ -1,7 +1,6 @@
 import re
-import json
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 class QuestionType(str, Enum):
@@ -60,10 +59,13 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
     """
     Validates a submitted answer dictionary against the dynamic form schema rules and constraints.
     """
+    # 0. Check mandatory Decree 13 consent dissent
+    if answers.get("consent_choice") == "Tôi không đồng ý":
+        return False, "Biểu mẫu yêu cầu tài xế đồng ý điều khoản xử lý dữ liệu Nghị định 13 để tiếp tục!"
+
     # 1. Check response limit
     if schema.settings.response_limit and schema.settings.current_responses >= schema.settings.response_limit:
         return False, "Biểu mẫu đã đạt giới hạn số lượng phản hồi tối đa của chủ sở hữu!"
-
     for q in schema.questions:
         # Check conditional visibility
         if q.conditional:
@@ -86,9 +88,13 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
         if q.validation:
             val_str = str(val)
             if q.validation.regex_pattern:
-                if not re.match(q.validation.regex_pattern, val_str):
-                    err_msg = q.validation.regex_error_message or f"Dữ liệu câu hỏi '{q.title}' không đúng định dạng yêu cầu!"
-                    return False, err_msg
+                target_str = val_str[:200]
+                try:
+                    if not re.match(q.validation.regex_pattern, target_str):
+                        err_msg = q.validation.regex_error_message or f"Dữ liệu câu hỏi '{q.title}' không đúng định dạng yêu cầu!"
+                        return False, err_msg
+                except (re.error, Exception):
+                    return False, f"Lỗi định dạng mẫu quy chuẩn của câu hỏi '{q.title}'!"
 
             if q.validation.min_length and len(val_str) < q.validation.min_length:
                 return False, f"Câu hỏi '{q.title}' yêu cầu tối thiểu {q.validation.min_length} ký tự!"

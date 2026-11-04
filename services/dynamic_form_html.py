@@ -1,5 +1,4 @@
 import html
-import json
 from services.form_engine import FormSchema
 
 def render_dynamic_form_html(schema: FormSchema) -> str:

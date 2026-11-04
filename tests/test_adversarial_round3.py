@@ -317,12 +317,8 @@ class TestWebRTCVehicleProfileHijacking:
         assert upsert_call is not None, "Expected vehicle upsert query to be executed"
 
         sql_query, sql_params = upsert_call[0], upsert_call[1]
-        assert "ON CONFLICT (driver_phone) DO UPDATE" in sql_query
-
-        # Verify attacker's plate was injected against the victim's phone
+        assert "ON CONFLICT (driver_phone) DO NOTHING" in sql_query
         assert sql_params[0] == victim_phone, "Victim phone targeted in DB upsert"
-        assert sql_params[1] == attacker_bogus_plate.upper(), "Victim's plate overwritten with attacker plate"
-        assert sql_params[2] == attacker_vehicle_type, "Victim's vehicle type overwritten"
 
     @pytest.mark.asyncio
     async def test_vehicle_hijack_causes_victim_compliance_rejection(self):
@@ -643,9 +639,10 @@ class TestFormEngineReDoSAttacks:
             ]
         )
 
-        # Validating input against this schema raises unhandled re.error
-        with pytest.raises(re.error):
-            validate_submission_against_schema(schema, {"q_crash": "test_input"})
+        # Validating input against this schema is handled gracefully without unhandled crash
+        is_valid, err = validate_submission_against_schema(schema, {"q_crash": "test_input"})
+        assert is_valid is False
+        assert "Lỗi định dạng mẫu" in err
 
     def test_upload_schema_accepts_redos_pattern_without_linting(self, test_client):
         """

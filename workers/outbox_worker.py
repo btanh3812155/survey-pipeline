@@ -1,7 +1,5 @@
 import asyncio
-import json
 import logging
-import inspect
 from typing import Optional
 import psycopg
 from psycopg.rows import dict_row
@@ -115,11 +113,6 @@ async def process_outbox_batch(
                                 (ev["id"],),
                             )
 
-            commit_fn = getattr(conn, "commit", None)
-            if callable(commit_fn):
-                res = commit_fn()
-                if inspect.isawaitable(res):
-                    await res
     except Exception as e:
         logger.error(f"error processing outbox batch: {e}")
 
@@ -137,7 +130,6 @@ async def run_outbox_daemon(conn_str: str, poll_interval_sec: float = 1.0):
 
 
 if __name__ == "__main__":
-    import sys
     from config import settings
 
     asyncio.run(run_outbox_daemon(settings.DATABASE_URL))

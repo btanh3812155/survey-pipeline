@@ -5,7 +5,15 @@ import io
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageFilter
+
+def mask_phone_number(phone: str) -> str:
+    if not phone:
+        return ""
+    p = str(phone)
+    if len(p) >= 7:
+        return p[:3] + "****" + p[-3:]
+    return "****"
 
 logger = logging.getLogger("audit_and_privacy")
 
@@ -33,8 +41,10 @@ async def record_hop_audit(
     Records an immutable audit entry in system_audit_log for a specific pipeline hop.
     """
     ts_iso = datetime.now(timezone.utc).isoformat()
-    audit_hash = compute_audit_hash(prev_hash, ts_iso, action, details)
-
+    sanitized_details = dict(details)
+    if "driver_phone" in sanitized_details and sanitized_details["driver_phone"]:
+        sanitized_details["driver_phone"] = mask_phone_number(sanitized_details["driver_phone"])
+    audit_hash = compute_audit_hash(prev_hash, ts_iso, action, sanitized_details)
     if not db_pool:
         logger.info(f"[MOCK AUDIT HOP {hop_number}: {hop_name}] action={action} entity={entity_type}:{entity_id} hash={audit_hash[:16]}")
         return audit_hash
@@ -60,7 +70,7 @@ async def record_hop_audit(
                     entity_id,
                     actor_type,
                     actor_id,
-                    json.dumps(details),
+                    json.dumps(sanitized_details),
                     audit_hash
                 )
             )
@@ -212,6 +222,7 @@ async def scrub_driver_pii(db_pool, driver_phone: str) -> Dict[str, Any]:
                 """
                 UPDATE driver_identity_vault 
                 SET driver_name = '[SCRUBBED_DECREE13]',
+                    driver_phone = '[SCRUBBED_DECREE13]',
                     is_scrubbed = TRUE,
                     scrubbed_at = NOW()
                 WHERE driver_phone = %s;
@@ -230,7 +241,14 @@ async def scrub_driver_pii(db_pool, driver_phone: str) -> Dict[str, Any]:
                 (driver_phone, driver_id)
             )
 
-            # 4. Scrub vehicle registry phone references if requested
+            # 4. Scrub vehicle registry and vehicle change history
+            await cur.execute(
+                """
+                DELETE FROM driver_registered_vehicles
+                WHERE driver_phone = %s;
+                """,
+                (driver_phone,)
+            )
             await cur.execute(
                 """
                 UPDATE vehicle_change_history

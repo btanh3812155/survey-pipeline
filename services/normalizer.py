@@ -2,7 +2,7 @@ import io
 import warnings
 import cv2
 import numpy as np
-from PIL import Image, ImageOps, ImageFile, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageFile
 from typing import Tuple, Optional
 
 # prevent decompression bombs while allowing normal high-res phone captures

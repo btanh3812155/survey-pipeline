@@ -67,8 +67,8 @@ def test_conditional_no_consent_skips_subsequent_questions():
         "consent_choice": "Tôi không đồng ý"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, no_consent_answers)
-    assert is_valid is True
-    assert err is None
+    assert is_valid is False
+    assert "Nghị định 13" in err
 
 def test_api_upload_and_render_arbitrary_form():
     client = TestClient(app)

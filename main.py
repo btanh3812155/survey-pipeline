@@ -1,20 +1,20 @@
 import os
-import inspect
 import secrets
 import json
 import asyncio
+import time
+import threading
+from collections import OrderedDict
 import httpx
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from services.camera_form_html import CAMERA_FORM_HTML
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
@@ -51,7 +51,84 @@ vision_client = DualModelVisionClient(
 
 http_client: httpx.AsyncClient = None
 db_pool: Optional[AsyncConnectionPool] = None
-LOCAL_IDEMP_CACHE: Dict[str, str] = {}
+class BoundedTTLCache:
+    """Thread-safe bounded in-memory cache with OrderedDict LRU eviction and TTL expiration."""
+    def __init__(self, max_size: int = 2048, ttl_seconds: float = 86400.0):
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self._cache: OrderedDict = OrderedDict()
+        self._lock = threading.Lock()
+
+    @property
+    def maxsize(self) -> int:
+        return self.max_size
+
+    @property
+    def ttl(self) -> float:
+        return self.ttl_seconds
+
+    def _purge_expired(self, now: float):
+        while self._cache:
+            k, (_, exp) = next(iter(self._cache.items()))
+            if exp <= now:
+                del self._cache[k]
+            else:
+                break
+
+    def get(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            now = time.time()
+            if key not in self._cache:
+                return default
+            val, exp = self._cache[key]
+            if exp <= now:
+                del self._cache[key]
+                return default
+            self._cache.move_to_end(key)
+            return val
+
+    def __getitem__(self, key: str) -> Any:
+        val = self.get(key)
+        if val is None:
+            raise KeyError(key)
+        return val
+
+    def __setitem__(self, key: str, value: Any):
+        with self._lock:
+            now = time.time()
+            self._purge_expired(now)
+            if key in self._cache:
+                del self._cache[key]
+            elif len(self._cache) >= self.max_size:
+                self._cache.popitem(last=False)
+            self._cache[key] = (value, now + self.ttl_seconds)
+
+    def __contains__(self, key: str) -> bool:
+        with self._lock:
+            now = time.time()
+            if key not in self._cache:
+                return False
+            val, exp = self._cache[key]
+            if exp <= now:
+                del self._cache[key]
+                return False
+            return True
+
+    def __delitem__(self, key: str):
+        with self._lock:
+            del self._cache[key]
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            now = time.time()
+            self._purge_expired(now)
+            return len(self._cache)
+
+LOCAL_IDEMP_CACHE = BoundedTTLCache(max_size=2048, ttl_seconds=86400.0)
 try:
     redis_client: Optional[aioredis.Redis] = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 except Exception:
@@ -108,7 +185,6 @@ async def lifespan(app: FastAPI):
             pass
     await http_client.aclose()
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
-app.mount("/data", StaticFiles(directory="data"), name="data")
 
 admin_security = HTTPBasic()
 
@@ -319,20 +395,21 @@ async def submit_webrtc_survey(
     form_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
-    submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(3).upper()}"
+    submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(8).upper()}"
     # 0. Idempotency Check: return cached response if key was already submitted
     if idempotency_key:
+        idemp_cache_key = f"idemp:{driver_phone}:{idempotency_key}"
         cached_payload = None
         if redis_client:
             try:
-                cached_payload = await redis_client.get(f"idemp:{idempotency_key}")
+                cached_payload = await redis_client.get(idemp_cache_key)
             except Exception as e:
                 logger.warning(f"Redis idempotency lookup error: {e}")
-        if not cached_payload and idempotency_key in LOCAL_IDEMP_CACHE:
-            cached_payload = LOCAL_IDEMP_CACHE[idempotency_key]
+        if not cached_payload and idemp_cache_key in LOCAL_IDEMP_CACHE:
+            cached_payload = LOCAL_IDEMP_CACHE[idemp_cache_key]
 
         if cached_payload:
-            logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idempotency_key}")
+            logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idemp_cache_key}")
             return JSONResponse(status_code=200, content=json.loads(cached_payload))
 
     # Extract all submitted form parameters into an answers dictionary
@@ -455,12 +532,10 @@ async def submit_webrtc_survey(
     elif db_pool:
         try:
             async with db_pool.connection() as conn:
-                cur_obj = conn.cursor()
-                if inspect.isawaitable(cur_obj):
-                    cur_obj = await cur_obj
-                cur = await cur_obj.__aenter__() if hasattr(cur_obj, "__aenter__") else cur_obj
-                if hasattr(cur_obj, "execute") and not hasattr(cur, "execute"):
-                    cur = cur_obj
+                cur_res = conn.cursor()
+                if hasattr(cur_res, "__await__"):
+                    cur_res = await cur_res
+                cur = await cur_res.__aenter__() if hasattr(cur_res, "__aenter__") else cur_res
                 try:
                     await cur.execute(
                         """
@@ -486,9 +561,7 @@ async def submit_webrtc_survey(
                             INSERT INTO driver_registered_vehicles (
                                 driver_phone, license_plate, vehicle_type
                             ) VALUES (%s, %s, %s)
-                            ON CONFLICT (driver_phone) DO UPDATE 
-                            SET license_plate = EXCLUDED.license_plate,
-                                 vehicle_type = EXCLUDED.vehicle_type;
+                            ON CONFLICT (driver_phone) DO NOTHING;
                             """,
                             (driver_phone, license_plate.upper(), vehicle_type or "CAR"),
                         )
@@ -520,8 +593,8 @@ async def submit_webrtc_survey(
                     )
                     await conn.commit()
                 finally:
-                    if hasattr(cur_obj, "__aexit__"):
-                        await cur_obj.__aexit__(None, None, None)
+                    if hasattr(cur_res, "__aexit__"):
+                        await cur_res.__aexit__(None, None, None)
         except Exception as e:
             logger.error(f"failed to persist survey to DB: {e}")
 
@@ -555,10 +628,11 @@ async def submit_webrtc_survey(
 
     # Cache response under idempotency key for 24 hours
     if idempotency_key:
-        LOCAL_IDEMP_CACHE[idempotency_key] = json.dumps(resp_data)
+        idemp_cache_key = f"idemp:{driver_phone}:{idempotency_key}"
+        LOCAL_IDEMP_CACHE[idemp_cache_key] = json.dumps(resp_data)
         if redis_client:
             try:
-                await redis_client.set(f"idemp:{idempotency_key}", json.dumps(resp_data), ex=86400)
+                await redis_client.set(idemp_cache_key, json.dumps(resp_data), ex=86400)
             except Exception as e:
                 logger.warning(f"Redis idempotency caching error: {e}")
     return JSONResponse(status_code=200, content=resp_data)
@@ -714,6 +788,8 @@ async def telegram_webhook_ingress(
         data = cq.get("data", "")
         cq_chat_id = cq.get("message", {}).get("chat", {}).get("id")
         if data.startswith("admin_query:"):
+            if str(cq_chat_id) != str(settings.TELEGRAM_ADMIN_GROUP_ID):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
             sub_id = data.split(":", 1)[1]
             dossier = await query_submission_dossier(sub_id)
             report_text = render_dossier_message(dossier)
@@ -722,6 +798,8 @@ async def telegram_webhook_ingress(
 
     # 2. Handle /query or /check slash command in Admin Group
     if text.startswith("/query ") or text.startswith("/check "):
+        if str(chat_id) != str(settings.TELEGRAM_ADMIN_GROUP_ID):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
         parts = text.split(" ", 1)
         sub_id = parts[1].strip().lstrip("#")
         dossier = await query_submission_dossier(sub_id)

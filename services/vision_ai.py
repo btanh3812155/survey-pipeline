@@ -1,7 +1,6 @@
 import base64
 import time
 import os
-import json
 import re
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -170,7 +169,6 @@ class DualModelVisionClient:
         raise RuntimeError("both primary and fallback vision providers failed")
 
     async def _call_gemini(self, messages: list) -> ExtractedReceiptFacts:
-        import asyncio
         resp = None
         models_to_try = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.5-flash-lite"]
         for model in models_to_try:

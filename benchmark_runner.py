@@ -2,7 +2,6 @@ import os
 import glob
 import time
 import json
-from PIL import Image
 from services.normalizer import (
     sanitize_and_normalize_image,
     compute_laplacian_blur_score,
