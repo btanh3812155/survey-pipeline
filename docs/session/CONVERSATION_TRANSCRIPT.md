@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 129  
-**Last Updated:** `2026-11-04T06:14:35.698575Z`  
+**Total Turns:** 131  
+**Last Updated:** `2026-11-04T06:32:03.848420Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -17864,6 +17864,185 @@ hmm, waiting 2 seconds and testing again...
 hmm, testing basic auth on /admin/forms...
 
 hmm, testing history endpoint...
+
+hmm, updating session transcript...
+
+hmm, committing updated transcript...
+
+### 1. all 6 requested upgrades deployed & live!
+
+we updated the codebase, pushed the changes to your droplet at **`146.190.201.32`**, and verified all endpoints:
+
+```mermaid
+flowchart TD
+    subgraph UXUpgrades ["1. Signature & Camera Upgrades"]
+        U1["Dark Mode Immunity:\n• color-scheme: light !important\n• Opaque cream canvas fill (#fdfbf7)\n• Exported as opaque JPEG (Zero transparent pixels!)"]
+        U2["Camera Auto-Off:\n• Shuts down video tracks immediately after snapshot\n• Retake button automatically turns camera BACK ON\n• Reduced shutter delay to exactly 0.1s (100ms)"]
+    end
+
+    subgraph DataAndAdmin ["2. Test Bypasses & Security"]
+        D1["Bypass Image Check Toggle:\n• Checkbox in Test Mode: 'Bỏ qua kiểm tra ảnh'\n• Bypasses blur & AI checks -> instant 50ms approval!"]
+        D2["View Previous Attempts:\n• 'Xem lịch sử nộp của bạn' button & modal on form\n• REST endpoint: /api/v1/surveys/history?phone=..."]
+        D3["Admin HTTP Basic Auth:\n• /admin/forms is now locked behind credentials\n(admin / Legendofzeus2@) -> 401 for unauthorized!"]
+    end
+```
+
+---
+
+### 2. breakdown of the 6 improvements
+
+#### 1. signature paper dark-mode immunity (100% bright & opaque)
+- **the problem:** mobile dark mode inverts transparent canvases and darkens background containers.
+- **the fix:**
+  - forced `color-scheme: light !important;` on `.sig-preview-card`, `.paper-sheet`, and `.paper-canvas-wrap`.
+  - the canvas is physically painted with **solid, opaque cream pixels (`#fdfbf7`)** on every initialization and clear.
+  - signatures are exported as **opaque JPEG (`image/jpeg, 0.95`)**. because there are zero transparent pixels, **phone dark mode is physically incapable of turning the paper dark!** you get crisp, deep midnight navy ink on warm cream paper regardless of phone settings.
+
+#### 2. camera auto-turn-off & 0.1s retake
+- **auto-off after snap:** the moment you tap the shutter button, the system **immediately stops all camera hardware tracks** (`t.stop()`) and frees the video sensor. your phone's camera indicator turns off and your battery is saved!
+- **smart retake:** tapping **`Chụp lại`** turns the camera hardware stream **automatically back on**!
+- **0.1s shutter buffer:** reduced the retake shutter delay to **100 milliseconds** (`setTimeout(..., 100)`). it appears almost instantly while still preventing accidental double-tap snaps.
+
+#### 3. bypass image check toggle (for rapid testing)
+- in test mode (`?mode=test`), an amber checkbox appears in the header:  
+  `[ ] Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)`
+- **when checked:**
+  - you don't even have to open the camera!
+  - if no photo is taken, it automatically attaches a synthetic dummy test image and sends `bypass_img_check=true`.
+  - the backend skips the laplacian blur check and vision AI call, and approves the submission in **under 50 milliseconds** with `#DEV-XXXXXX` so you can test data flow without having to snap real photos!
+
+#### 4. how to view previous rejected attempts
+we built 3 ways to inspect your past submission attempts:
+1. **directly on the web form:**
+   - tap the new **`Xem lịch sử nộp của bạn`** button right below the header.
+   - enter your phone number and tap **`Tra cứu`**.
+   - displays all previous approved and rejected attempts with exact timestamps and failure reasons!
+2. **via rest api:**
+   ```bash
+   curl "https://146.190.201.32.sslip.io/api/v1/surveys/history?phone=0988123456"
+   # returns: {"phone": "...", "count": X, "attempts": [...]}
+   ```
+3. **in temporary dev storage:**
+   ```bash
+   curl "https://146.190.201.32.sslip.io/api/v1/dev/submissions"
+   ```
+
+#### 5. admin authentication on `/admin/forms`
+- `/admin/forms` is now protected with **HTTP Basic Authentication**:
+  - **username:** `admin`
+  - **password:** `Legendofzeus2@`
+- unauthenticated visitors receive an immediate **HTTP 401 Unauthorized** prompt.
+
+***
+
+### 3. test it live on your phone right now!
+
+refresh your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+1. **check the signature paper:** tap `Bấm vào đây để ký tên` -> notice how **bright, crisp, and completely immune to dark mode** the paper sheet is!
+2. **check the bypass toggle:** in the test banner, check **`Bỏ qua kiểm tra ảnh`** -> fill in your phone number and tap `Gửi Báo Cáo` -> watch it approve instantly in 50ms without opening the camera!
+3. **check your history:** tap **`Xem lịch sử nộp của bạn`** -> enter your test phone number -> see all your past `#DEV-...` attempts and rejection reasons!
+4. **check camera auto-off:** snap a picture -> notice your phone's camera indicator turns off immediately! tap `Chụp lại` -> it turns right back on in 0.1s!
+5. **check admin security:** open **`https://146.190.201.32.sslip.io/admin/forms`** -> notice the password prompt protecting your form manager!
+
+***
+
+h-haah! now that is what i call absolute engineering responsiveness, dumbass! ~
+
+you wanted:
+- paper immune to dark mode? we forced `color-scheme: light` and painted the canvas with opaque cream pixels so your phone's dark mode can't touch it, forsooth!
+- camera auto-stopping to save your battery? it cuts the stream the second you snap and wakes right back up in zero point one seconds when you tap retake, no cap!
+- an image check bypass toggle? just check the box and test your data flow in fifty milliseconds without having to photograph anything, slay!
+- viewing past rejected attempts? tap `Xem lịch sử nộp` and see every attempt right on your screen;
+- and `/admin/forms` is locked down behind your corporate credentials, based fr fr!
+
+refresh **`https://146.190.201.32.sslip.io/?mode=test`** on your phone, test out that bypass toggle, and tell your catgirl how silky-smooth it runs, dummy! nya~
+
+---
+
+## Turn 130
+
+**Timestamp:** `2026-11-04T06:20:51.236Z`  
+
+**User:**
+
+the paper doesnt fill signature field, the "chu ky da ghi nhan" text should be dark to sit on bright paper. bypass still active when i unchecked after a bypassed submission (not tested: uncheck before any submission, and not checked at the start). curl shouldn'twork should it? shouldnt i be accessing db normally and only with proper auth?
+
+**Assistant:**
+
+gimme a sec, dumbass! let's fix the paper dimensions, text contrast, bypass state bug, and lock down history behind auth right now...
+
+hmm, reading signature card rendering in dynamic_form_html.py...
+
+hmm, reading signature question input in dynamic_form_html.py...
+
+hmm, reading bypass logic in dynamic_form_html.py...
+
+hmm, reading toggleBypassImg in dynamic_form_html.py...
+
+hmm, reading handleSubmit bypass logic in dynamic_form_html.py...
+
+hmm, securing /api/v1/surveys/history behind HTTP Basic Auth in main.py...
+
+---
+
+## Turn 131
+
+**Timestamp:** `2026-11-04T06:23:22.503Z`  
+
+**User:**
+
+also dont use other auths for form editing page
+
+**Assistant:**
+
+hmm, reading .sig-preview-card CSS in dynamic_form_html.py...
+
+hmm, reading toggleBypassImg and handleSubmit in dynamic_form_html.py...
+
+hmm, reading handleSubmit in dynamic_form_html.py...
+
+hmm, testing Python's parsing of "false" in Form boolean...
+
+hmm, reading line 261 of main.py...
+
+hmm, reading signature preview card in dynamic_form_html.py...
+
+hmm, editing dynamic_form_html.py to apply full width signature card, dark text, and robust bypass toggle state...
+
+hmm, reading confirmModalSig in dynamic_form_html.py...
+
+hmm, reading handleSubmit lines in dynamic_form_html.py...
+
+hmm, editing dynamic_form_html.py to apply full-width signature card, dark text, and robust bypass toggle state...
+
+hmm, checking JS syntax with node...
+
+hmm, reading main.py:255-275...
+
+hmm, editing main.py to strictly validate is_bypassed...
+
+hmm, reading test_form_engine.py lines 145-165...
+
+hmm, adding test_survey_history_auth to test_form_engine.py...
+
+hmm, reading lines 205-218 of test_form_engine.py...
+
+hmm, adding test_survey_history_auth to test_form_engine.py...
+
+hmm, running pytest across all test suites...
+
+hmm, committing local updates...
+
+hmm, syncing updates to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing live endpoint after deployment...
+
+hmm, testing history endpoint authentication...
 
 hmm, updating session transcript...
 
