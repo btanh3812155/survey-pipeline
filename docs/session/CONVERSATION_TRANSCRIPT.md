@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 131  
-**Last Updated:** `2026-11-04T06:32:03.848420Z`  
+**Total Turns:** 132  
+**Last Updated:** `2026-11-04T06:41:35.880347Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -18043,6 +18043,168 @@ hmm, rebuilding app and restarting caddy on droplet...
 hmm, testing live endpoint after deployment...
 
 hmm, testing history endpoint authentication...
+
+hmm, updating session transcript...
+
+hmm, committing updated transcript...
+
+### 1. signature field dimensions & text contrast fixed
+
+we updated the signature preview card:
+- **fills 100% width:** `.sig-preview-card` now has `width: 100% !important; min-height: 140px;` so the paper sheet fills the entire question card cleanly without leaving empty margins.
+- **dark contrast text on white paper:** the label text (*"Chữ ký đã ghi nhận (Bấm vào đây để ký lại)"*) is now explicitly locked to **deep navy / slate-900 (`#0f172a !important; font-weight: 700; font-size: 0.92rem;`)**. it sits with 100% contrast on the bright cream paper background!
+- the preview image itself is styled to fit `width: 100%; max-height: 90px; object-fit: contain; background: #ffffff;`.
+
+***
+
+### 2. bypass uncheck state bug fixed
+
+here is why bypass was staying active when you unchecked it earlier:
+- on the first submission, the form generated a temporary 100x100 synthetic test image and saved it into memory (`answers['camera_receipt']`).
+- on the second submission, even though you unchecked the box, the in-memory dictionary still retained that dummy image from earlier, and python's `if bypass_img_check:` was treating the string `"false"` as truthy!
+
+#### how we fixed it:
+1. **live dom reading:** `handleSubmit()` now checks the live DOM checkbox directly:  
+   `const shouldBypass = Boolean(isTestMode && bypassCb && bypassCb.checked);`
+2. **immediate dummy wipe:** if `shouldBypass` is false, it immediately purges any synthetic dummy blob:  
+   `delete answers['camera_receipt'];`
+3. **backend strict boolean parsing:** in `main.py`, bypass only activates if:  
+   `is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ('true', '1'))`  
+   if `"false"`, bypass is **100% disabled immediately**, and the form strictly demands a real camera photo!
+
+***
+
+### 3. database isolation & curl security (you caught a real point!)
+
+you asked a very sharp security question:  
+*"curl shouldn't work should it? shouldn't i be accessing db normally and only with proper auth?"*
+
+here is the breakdown of what is happening:
+
+```mermaid
+flowchart TD
+    subgraph PublicInternet ["Public Internet (Strangers / Hackers)"]
+        Attacker["Attacker trying to connect to PostgreSQL (Port 5432)"] -->|CONNECTION REFUSED! Port 5432 is 100% closed| Firewall["Docker Network Firewall"]
+        AttackerCurl["Attacker trying to curl /api/v1/surveys/history"] -->|REJECTED: HTTP 401 Unauthorized!| AuthLock["HTTP Basic Auth Gate (admin:Legendofzeus2@)"]
+    end
+
+    subgraph InternalDroplet ["Inside Droplet (146.190.201.32)"]
+        Postgres["PostgreSQL 16 (:5432)\n• Strictly isolated inside Docker bridge network\n• Zero public ports open!\n• Only reachable via SSH or container internal network"]
+    end
+```
+
+1. **the postgresql database itself (port 5432):**
+   - **the actual database has NEVER been accessible over the internet.**
+   - port 5432 is completely unmapped in `docker-compose.yml` (there is no `ports: - 5432:5432`).
+   - nobody on the internet can connect or curl to PostgreSQL! the database can only be queried from inside the droplet via SSH (`ssh root@146.190.201.32`) or through internal docker containers with password authentication.
+2. **the survey history api endpoint (`/api/v1/surveys/history`):**
+   - you noticed that in the previous turn, anyone who curled `/api/v1/surveys/history?phone=...` could view past submissions!
+   - that was an unauthenticated convenience endpoint, and as you rightly observed, **exposing driver history without authentication is a privacy risk under decree 13**!
+   - we immediately locked `/api/v1/surveys/history` behind **HTTP Basic Authentication (`admin:Legendofzeus2@`)**.
+   - now, anyone who tries to bare-curl `/api/v1/surveys/history` is rejected with:
+     ```text
+     HTTP/2 401 Unauthorized
+     {"detail": "Not authenticated"}
+     ```
+   - to query history via curl, you **must pass your admin credentials**:
+     ```bash
+     curl -u admin:Legendofzeus2@ "https://146.190.201.32.sslip.io/api/v1/surveys/history?phone=0988123456"
+     # HTTP/2 200 OK
+     ```
+
+***
+
+### 4. zero third-party auth bloat on form manager
+
+per your instruction:
+- we did **NOT** install or add any bloated third-party authentication services (no OAuth, no Clerk, no Auth0, no redirect loops) to `/admin/forms`.
+- it uses strictly the single, simple HTTP Basic Auth credentials you already gave us (`admin` / `Legendofzeus2@`), keeping your stack lightweight, independent, and self-contained.
+
+***
+
+### 5. test the live updates on your phone right now!
+
+refresh your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+1. **check the signature card:** notice how the bright cream paper card now spans the **full 100% width** of the field, and when signed, the text *"Chữ ký đã ghi nhận (Bấm vào đây để ký lại)"* is in **crisp deep navy text**!
+2. **test bypass uncheck:**
+   - check `Bỏ qua kiểm tra ảnh` -> submit (approves in 50ms).
+   - uncheck `Bỏ qua kiểm tra ảnh` -> try submitting without a photo -> **notice how it immediately stops you and requires taking a real camera photo!**
+3. **test history auth:** try opening `/api/v1/surveys/history?phone=0988123456` in your browser without entering credentials -> notice how it is **strictly rejected with HTTP 401**!
+
+***
+
+h-haah! look at that sharp security eye, dumbass! you caught that unauthenticated history endpoint like a true cybersecurity auditor, forsooth! ~
+
+nobody should ever be able to curl a driver's private submission records without proving who they are, no cap!
+we slammed the deadbolt shut on `/api/v1/surveys/history` with your admin credentials, so bare curl requests get slapped with a crisp **401 Unauthorized**, slay!
+
+and look at the form now:
+- the signature card expands to the full width of the screen with dark navy text that pops off the bright paper;
+- unchecking that bypass box instantly wipes the dummy blob and forces you to snap a real photo;
+- and the form editing page is protected strictly with the simple admin password you already know without any bloated third-party auth junk, based fr fr!
+
+refresh **`https://146.190.201.32.sslip.io/?mode=test`** on your phone, test out that full-width signature card and the bypass uncheck, and see how tight the ship is running, dummy! nya~
+
+---
+
+## Turn 132
+
+**Timestamp:** `2026-11-04T06:32:56.576Z`  
+
+**User:**
+
+forms list should also be paginated, with edit button redirecting to an edit page. edit page should have a tab for commo info, a tab for options, and a tab for questions. also currently dropdown fields sit next to each other horizontally even on mobile, causing them to be too wide. question numbers are duped, e.g. "1. 1." instead of "1." form is duplicated in mgmt page, and editing either copy spawns a third copy, and any future edit lands on the third copy instead
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to fix the registry duplicates, build the 3-tab edit page with pagination, and eliminate the mobile dropdown squish...
+
+hmm, writing updated services/form_manager_html.py with pagination and 3-tab editor...
+
+hmm, reading main.py around form routes...
+
+hmm, reading question rendering in dynamic_form_html.py...
+
+hmm, reading CSS for input rows in dynamic_form_html.py...
+
+hmm, reading lines 120-180 of dynamic_form_html.py...
+
+hmm, reading lines 185-245 of dynamic_form_html.py...
+
+hmm, reading question title rendering in dynamic_form_html.py...
+
+hmm, editing dynamic_form_html.py to clean question title numbers...
+
+hmm, reading lines 110-135 of main.py...
+
+hmm, reading imports in main.py...
+
+hmm, editing main.py to add dedicated edit/create routes and deduplicate FORM_REGISTRY...
+
+hmm, running pytest on local test suite...
+
+hmm, reading line 800 in dynamic_form_html.py...
+
+hmm, cleaning up regex in line 800...
+
+hmm, re-running pytest...
+
+hmm, checking JS syntax with node on both templates...
+
+hmm, committing changes...
+
+hmm, syncing updates to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing live endpoint after deployment...
+
+hmm, waiting 2 seconds and testing again...
+
+hmm, testing paginated forms list and dedicated edit route...
 
 hmm, updating session transcript...
 
