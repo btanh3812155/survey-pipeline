@@ -107,10 +107,38 @@ def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
 
-FORM_REGISTRY: Dict[str, FormSchema] = {
-    DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
-}
+FORMS_STORAGE_DIR = os.path.join(os.getcwd(), "data", "forms")
+os.makedirs(FORMS_STORAGE_DIR, exist_ok=True)
 
+def load_persisted_forms() -> Dict[str, FormSchema]:
+    registry: Dict[str, FormSchema] = {
+        DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
+    }
+    default_path = os.path.join(FORMS_STORAGE_DIR, f"{DEFAULT_TRUST_BRIDGE_SCHEMA.form_id}.json")
+    if not os.path.exists(default_path):
+        try:
+            with open(default_path, "w", encoding="utf-8") as f:
+                f.write(DEFAULT_TRUST_BRIDGE_SCHEMA.model_dump_json(indent=2))
+        except Exception as e:
+            logger.warning(f"Failed to persist default schema: {e}")
+
+    try:
+        for fname in os.listdir(FORMS_STORAGE_DIR):
+            if fname.endswith(".json"):
+                fpath = os.path.join(FORMS_STORAGE_DIR, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    schema = FormSchema.model_validate(data)
+                    registry[schema.form_id] = schema
+                except Exception as err:
+                    logger.warning(f"Error loading schema from {fname}: {err}")
+    except Exception as e:
+        logger.warning(f"Error scanning forms directory: {e}")
+
+    return registry
+
+FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 @app.get("/", response_class=HTMLResponse)
 @app.get("/camera-form", response_class=HTMLResponse)
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
@@ -146,6 +174,13 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
 async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):
     """Allows form owners to upload arbitrary survey schemas with custom rules and constraints."""
     FORM_REGISTRY[schema.form_id] = schema
+    schema_path = os.path.join(FORMS_STORAGE_DIR, f"{schema.form_id}.json")
+    try:
+        with open(schema_path, "w", encoding="utf-8") as f:
+            f.write(schema.model_dump_json(indent=2))
+    except Exception as e:
+        logger.error(f"Failed to persist schema to disk: {e}")
+
     return {
         "status": "success",
         "form_id": schema.form_id,
