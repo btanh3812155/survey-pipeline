@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from services.camera_form_html import CAMERA_FORM_HTML
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
 from services.dynamic_form_html import render_dynamic_form_html
-from services.form_manager_html import render_form_manager_html
+from services.form_manager_html import render_forms_list_html, render_form_editor_html
 
 from config import settings
 from services.normalizer import (
@@ -108,8 +108,7 @@ async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
 
 FORM_REGISTRY: Dict[str, FormSchema] = {
-    "default": DEFAULT_TRUST_BRIDGE_SCHEMA,
-    "gsm_fleet_survey": DEFAULT_TRUST_BRIDGE_SCHEMA,
+    DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
 }
 
 @app.get("/", response_class=HTMLResponse)
@@ -117,13 +116,29 @@ FORM_REGISTRY: Dict[str, FormSchema] = {
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
 async def get_dynamic_form(form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
-    schema = FORM_REGISTRY.get(form_id, DEFAULT_TRUST_BRIDGE_SCHEMA)
+    if form_id in ("default", "camera-form") or form_id not in FORM_REGISTRY:
+        schema = FORM_REGISTRY.get("income_survey") or next(iter(FORM_REGISTRY.values()))
+    else:
+        schema = FORM_REGISTRY[form_id]
     return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
 
 @app.get("/admin/forms", response_class=HTMLResponse)
-async def get_forms_manager(admin_user: str = Depends(verify_admin_auth)):
-    """Admin Web UI to create, edit, inspect, and manage arbitrary survey forms."""
-    return HTMLResponse(content=render_form_manager_html(FORM_REGISTRY), status_code=200)
+async def get_forms_list(page: int = 1, admin_user: str = Depends(verify_admin_auth)):
+    """Admin Web UI with pagination to view and manage forms."""
+    return HTMLResponse(content=render_forms_list_html(FORM_REGISTRY, page=page), status_code=200)
+
+@app.get("/admin/forms/create", response_class=HTMLResponse)
+async def create_new_form_page(admin_user: str = Depends(verify_admin_auth)):
+    """Dedicated 3-tab creation page."""
+    return HTMLResponse(content=render_form_editor_html(None, is_new=True), status_code=200)
+
+@app.get("/admin/forms/edit/{form_id}", response_class=HTMLResponse)
+async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_auth)):
+    """Dedicated 3-tab edit page for a specific form."""
+    schema = FORM_REGISTRY.get(form_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
+    return HTMLResponse(content=render_form_editor_html(schema, is_new=False), status_code=200)
 
 
 

@@ -797,10 +797,11 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     `;
                 }}
 
+                const cleanTitle = q.title.replace(/^[0-9]+[.:\\s-]+/, '');
                 card.innerHTML = `
                     <div class="q-header">
                         <div class="q-title-row">
-                            <span class="q-title">${{idx + 1}}. ${{q.title}} ${{q.required ? '<span class="q-required">*</span>' : ''}}</span>
+                            <span class="q-title">${{idx + 1}}. ${{cleanTitle}} ${{q.required ? '<span class="q-required">*</span>' : ''}}</span>
                         </div>
                         ${{q.description ? `<p class="q-desc">${{q.description}}</p>` : ''}}
                         ${{sampleHtml}}
