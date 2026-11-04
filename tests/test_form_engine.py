@@ -101,7 +101,11 @@ def test_api_upload_and_render_arbitrary_form():
     }
 
     # 1. Upload schema via API
-    resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema)
+    # Admin endpoint requires Basic Auth
+    unauth_resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema)
+    assert unauth_resp.status_code == 401
+
+    resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema, auth=("admin", "Legendofzeus2@"))
     assert resp.status_code == 200
     assert resp.json()["status"] == "success"
     assert resp.json()["form_id"] == "customer_feedback_v1"

@@ -313,13 +313,14 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         /* Signature Question Trigger Card (Aesthetic Warm Off-White Paper Texture) */
         .sig-preview-card {{
-            background: #fbfbf9;
+            color-scheme: light !important;
+            background-color: #fdfbf7 !important;
             border: 1.5px solid #cbd5e1;
             border-radius: 12px;
             padding: 16px;
             text-align: center;
             cursor: pointer;
-            color: #0f172a;
+            color: #0f172a !important;
             box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0,0,0,0.25);
             background-image: linear-gradient(rgba(203, 213, 225, 0.35) 1px, transparent 1px);
             background-size: 100% 24px;
@@ -336,9 +337,11 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .sig-preview-img {{
-            max-height: 75px;
+            max-height: 80px;
             display: none;
-            filter: contrast(1.15);
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            background: #fdfbf7;
         }}
 
         /* Paper Signature Modal Popup */
@@ -362,8 +365,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .paper-sheet {{
-            background: #fbfbf9;
-            color: #0f172a;
+            color-scheme: light !important;
+            background-color: #fdfbf7 !important;
+            color: #0f172a !important;
             width: 100%;
             max-width: 480px;
             border-radius: 16px;
@@ -389,14 +393,15 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .paper-canvas-wrap {{
+            color-scheme: light !important;
             position: relative;
-            background: #fefefe;
+            background-color: #fdfbf7 !important;
             border: 1.5px solid #cbd5e1;
             border-radius: 10px;
             height: 220px;
             touch-action: none;
             overflow: hidden;
-            background-image: linear-gradient(rgba(203, 213, 225, 0.35) 1px, transparent 1px);
+            background-image: linear-gradient(rgba(203, 213, 225, 0.4) 1px, transparent 1px);
             background-size: 100% 28px;
         }}
         #modalSigCanvas {{
@@ -523,15 +528,22 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
     </div>
 
-    <!-- Test Mode Banner -->
+    <!-- Test Mode Banner with Bypass Toggle -->
     <div class="test-banner" id="testModeBanner">
-        <span>Chế độ biểu mẫu: <b id="testModeStatus">Chính thức</b></span>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span>Chế độ biểu mẫu: <b id="testModeStatus">Chính thức</b></span>
+            <label id="bypassCheckLabel" style="display:none; align-items:center; gap:6px; font-size:0.75rem; color:#fde68a; cursor:pointer;">
+                <input type="checkbox" id="bypassImgToggle" onchange="toggleBypassImg(this.checked)">
+                Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)
+            </label>
+        </div>
         <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Bật thử nghiệm</button>
     </div>
 
     <header>
         <h1>{schema.title}</h1>
         <p>{schema.description or ''}</p>
+        <button type="button" class="btn-sample" style="margin-top:8px;" onclick="openHistoryModal()">Xem lịch sử nộp của bạn</button>
     </header>
 
     <form id="dynamicForm" onsubmit="return false;">
@@ -583,6 +595,23 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         </div>
     </div>
 
+    <!-- History Modal -->
+    <div class="modal-paper-overlay" id="historyModal" style="z-index:99998;">
+        <div class="paper-sheet" style="background:#0f172a !important; color:#f8fafc !important; border:1px solid #334155; border-top:6px solid #2563eb;">
+            <div class="paper-header">
+                <h3 style="color:#f8fafc !important;">Lịch Sử Các Lần Nộp</h3>
+                <button type="button" class="btn-modal cancel" style="flex:0 0 auto; padding:6px 12px; font-size:0.8rem;" onclick="closeHistoryModal()">Đóng</button>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <input type="tel" id="historyPhoneInput" class="q-input" placeholder="Nhập số điện thoại để tra cứu...">
+                <button type="button" class="btn" style="flex-shrink:0; padding:10px 14px;" onclick="fetchHistoryAttempts()">Tra cứu</button>
+            </div>
+            <div id="historyResultsList" style="max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; font-size:0.8rem; margin-top:8px;">
+                <div style="color:#94a3b8; text-align:center; padding:12px;">Nhập số điện thoại và bấm Tra cứu để xem các lần nộp trước.</div>
+            </div>
+        </div>
+    </div>
+
     <canvas id="hiddenCameraCanvas" style="display:none;"></canvas>
 
     <script>
@@ -602,6 +631,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const banner = document.getElementById('testModeBanner');
             const statusTxt = document.getElementById('testModeStatus');
             const toggleBtn = document.getElementById('btnToggleTestMode');
+            const bypassLabel = document.getElementById('bypassCheckLabel');
             if (!banner || !statusTxt || !toggleBtn) return;
 
             if (isTestMode) {{
@@ -609,11 +639,62 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 banner.style.background = "rgba(245, 158, 11, 0.2)";
                 banner.style.borderColor = "#f59e0b";
                 toggleBtn.textContent = "Về Chính thức";
+                if (bypassLabel) bypassLabel.style.display = 'flex';
             }} else {{
                 statusTxt.textContent = "Chính thức";
                 banner.style.background = "rgba(30, 41, 59, 0.6)";
                 banner.style.borderColor = "rgba(255, 255, 255, 0.12)";
                 toggleBtn.textContent = "Bật thử nghiệm";
+                if (bypassLabel) bypassLabel.style.display = 'none';
+            }}
+        }}
+
+        let isBypassImg = false;
+
+        function toggleBypassImg(checked) {{
+            isBypassImg = checked;
+        }}
+
+        function openHistoryModal() {{
+            const phone = answers['driver_phone'] || document.getElementById('driverPhone')?.value || '';
+            if (phone) {{
+                document.getElementById('historyPhoneInput').value = phone;
+                fetchHistoryAttempts();
+            }}
+            document.getElementById('historyModal').style.display = 'flex';
+        }}
+
+        function closeHistoryModal() {{
+            document.getElementById('historyModal').style.display = 'none';
+        }}
+
+        async function fetchHistoryAttempts() {{
+            const phone = document.getElementById('historyPhoneInput').value.trim();
+            const list = document.getElementById('historyResultsList');
+            if (!phone) {{
+                list.innerHTML = '<div style="color:#f87171; text-align:center;">Vui lòng nhập số điện thoại!</div>';
+                return;
+            }}
+            list.innerHTML = '<div style="color:#94a3b8; text-align:center;">Đang tải dữ liệu...</div>';
+            try {{
+                const resp = await fetch(`/api/v1/surveys/history?phone=${{encodeURIComponent(phone)}}`);
+                const data = await resp.json();
+                if (!data.attempts || data.attempts.length === 0) {{
+                    list.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:12px;">Chưa có lần nộp nào được ghi nhận cho số điện thoại này.</div>';
+                    return;
+                }}
+                list.innerHTML = data.attempts.map(a => `
+                    <div style="background:#1e293b; border-left:3px solid ${{a.status==='APPROVED'?'#10b981':'#ef4444'}}; padding:8px 10px; border-radius:6px;">
+                        <div style="display:flex; justify-content:space-between; font-weight:700;">
+                            <span>#${{a.submission_id}} (${{a.mode}})</span>
+                            <span style="color:${{a.status==='APPROVED'?'#34d399':'#f87171'}};">${{a.status==='APPROVED'?'HỢP LỆ':'TỪ CHỐI'}}</span>
+                        </div>
+                        <div style="color:#cbd5e1; margin-top:2px;">${{a.reason || 'Không có lý do'}}</div>
+                        <div style="font-size:0.7rem; color:#64748b; margin-top:2px;">${{a.submitted_at || ''}}</div>
+                    </div>
+                `).join('');
+            }} catch(e) {{
+                list.innerHTML = '<div style="color:#f87171; text-align:center;">Lỗi tra cứu lịch sử! Vui lòng thử lại.</div>';
             }}
         }}
 
@@ -912,35 +993,37 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 vid.style.display = 'none';
                 overlay.style.display = 'none';
                 snapBtn.style.display = 'none';
-                retakeBtn.style.display = 'block';
+                const deactivateBtn = document.getElementById(`deactivate_${{qid}}`);
+                if (deactivateBtn) deactivateBtn.style.display = 'none';
+                retakeBtn.style.display = 'inline-block';
+
+                // Auto turn off camera stream to save battery
+                if (activeVideoStream) {{
+                    activeVideoStream.getTracks().forEach(t => t.stop());
+                    activeVideoStream = null;
+                }}
+                vid.srcObject = null;
             }}, 'image/webp', 0.82);
         }}
 
-        function retakeCam(qid) {{
+        async function retakeCam(qid) {{
             delete answers[qid];
             const img = document.getElementById(`img_${{qid}}`);
-            const vid = document.getElementById(`vid_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
-            const snapBtn = document.getElementById(`snap_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
-            const deactivateBtn = document.getElementById(`deactivate_${{qid}}`);
 
             img.style.display = 'none';
-            if (activeVideoStream) {{
-                vid.style.display = 'block';
-                overlay.style.display = 'flex';
-                retakeBtn.style.display = 'none';
-                if (deactivateBtn) deactivateBtn.style.display = 'inline-block';
-                snapBtn.style.display = 'none'; // Hide immediately
+            retakeBtn.style.display = 'none';
 
-                // 0.3s (300ms) delay before showing shutter button to prevent accidental double-tap!
+            // Auto turn camera back on
+            await activateCamera(qid);
+
+            // 0.1s (100ms) delay before showing shutter button
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            if (snapBtn) {{
+                snapBtn.style.display = 'none';
                 setTimeout(() => {{
                     snapBtn.style.display = 'flex';
-                }}, 300);
-            }} else {{
-                const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
-                if (fallbackBtn) fallbackBtn.style.display = 'inline-block';
-                retakeBtn.style.display = 'none';
+                }}, 100);
             }}
         }}
 
@@ -992,7 +1075,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}, {{ passive: false }});
 
         function clearModalSig() {{
-            sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+            sigCtx.fillStyle = "#fdfbf7";
+            sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
             hasModalSignature = false;
         }}
 
@@ -1001,7 +1085,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 alert("Vui lòng dùng ngón tay vẽ chữ ký trước khi bấm Hoàn tất!");
                 return;
             }}
-            const dataUrl = sigCanvas.toDataURL('image/png');
+            const dataUrl = sigCanvas.toDataURL('image/jpeg', 0.95);
             answers[activeSignatureTargetQId] = dataUrl;
 
             const previewImg = document.getElementById(`sigImg_${{activeSignatureTargetQId}}`);
@@ -1113,6 +1197,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 formData.append('gps_latitude', gpsCoordinates.latitude);
                 formData.append('gps_longitude', gpsCoordinates.longitude);
             }}
+            // If bypass image check is active and user didn't take a photo, synthesize dummy blob
+            if (isBypassImg && !answers['camera_receipt']) {{
+                const dummyCvs = document.createElement('canvas');
+                dummyCvs.width = 100; dummyCvs.height = 100;
+                const dctx = dummyCvs.getContext('2d');
+                dctx.fillStyle = '#10b981';
+                dctx.fillRect(0,0,100,100);
+                const dummyBlob = await new Promise(r => dummyCvs.toBlob(r, 'image/webp'));
+                answers['camera_receipt'] = dummyBlob;
+            }}
+            formData.append('bypass_img_check', isBypassImg ? 'true' : 'false');
+
 
             try {{
                 const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
