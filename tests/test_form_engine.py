@@ -17,10 +17,11 @@ def test_default_schema_valid_submission():
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Nguyễn Văn An",
-        "vehicle_type": "Ô tô điện VinFast (GSM)",
-        "car_model": "VF 5 Plus",
-        "license_plate": "29E-123.45",
-        "gross_revenue": "1500000",
+        "platform_app": "Grab",
+        "vehicle_category": "Xe máy 2 bánh",
+        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+        "daily_net_income": "650000",
+        "monthly_gross_revenue": "18500000",
         "camera_receipt": "mock_blob"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, valid_answers)
@@ -33,8 +34,10 @@ def test_regex_constraint_invalid_phone():
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "12345", # Fails ^0[0-9]{9,10}$
         "driver_name": "Nguyễn Văn An",
-        "vehicle_type": "Xe máy điện (GSM Bike)",
-        "license_plate": "29E-123.45",
+        "platform_app": "Grab",
+        "vehicle_category": "Xe máy 2 bánh",
+        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+        "daily_net_income": "650000",
         "camera_receipt": "mock_blob"
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_answers)
@@ -42,17 +45,18 @@ def test_regex_constraint_invalid_phone():
     assert "Số điện thoại" in err
 
 def test_conditional_question_branching():
-    # When vehicle_type is "Xe máy điện", car_model is conditional and should be skipped
-    bike_answers = {
+    answers_with_consent = {
         "driver_signature": "data:image/png;base64,mock",
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Trần Văn Bình",
-        "vehicle_type": "Xe máy điện (GSM Bike)",
-        "license_plate": "59A-999.88",
+        "platform_app": "Be",
+        "vehicle_category": "Ô tô 4 - 7 chỗ",
+        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+        "daily_net_income": "1200000",
         "camera_receipt": "mock_blob"
     }
-    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, bike_answers)
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_with_consent)
     assert is_valid is True
     assert err is None
 

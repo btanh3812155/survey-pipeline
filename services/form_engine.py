@@ -110,9 +110,9 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
 
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
-    form_id="gsm_fleet_survey",
-    title="Báo Cáo Bàn Giao Ca Xe",
-    description="Biểu mẫu ghi nhận thông tin phương tiện, số km và doanh thu ca làm việc",
+    form_id="income_survey",
+    title="Khảo Sát Thu Nhập & Hoạt Động Vận Tải",
+    description="Biểu mẫu khảo sát doanh thu, thu nhập thực tế và ca làm việc của tài xế và shipper",
     settings=FormSettings(
         response_limit=20000,
         access_control="public",
@@ -125,29 +125,29 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         # Question 1: Signature
         FormQuestion(
             id="driver_signature",
-            title="1. Chữ ký tài xế",
+            title="1. Chữ ký xác nhận",
             type=QuestionType.SIGNATURE,
             required=True,
-            description="Ký tên bằng ngón tay để xác nhận bàn giao ca xe",
+            description="Ký tên bằng ngón tay để xác nhận đồng ý tham gia khảo sát thu nhập",
             sample_response="Bấm nút 'Ký tên' và vẽ chữ ký trên bảng"
         ),
         # Question 2: Consent Choice
         FormQuestion(
             id="consent_choice",
-            title="2. Xác nhận thông tin ca làm việc",
+            title="2. Cam kết thông tin thu nhập",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
             options=["Tôi đồng ý", "Tôi không đồng ý"],
-            description="Tôi xác nhận các thông tin ca xe và hình ảnh khai báo dưới đây là chính xác",
+            description="Tôi xác nhận các số liệu thu nhập và hình ảnh ứng dụng cung cấp là trung thực",
             sample_response="Tôi đồng ý"
         ),
         # Subsequent Questions - ALL CONDITIONAL on consent_choice == 'Tôi đồng ý'
         FormQuestion(
             id="driver_phone",
-            title="3. Số điện thoại tài xế",
+            title="3. Số điện thoại nhận thù lao khảo sát",
             type=QuestionType.TEXT,
             required=True,
-            description="Số điện thoại liên hệ của bạn",
+            description="Số điện thoại nhận tiền phụ cấp khảo sát (qua ví điện tử hoặc chuyển khoản)",
             sample_response="0988123456",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
@@ -161,10 +161,10 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="driver_name",
-            title="4. Họ và tên tài xế",
+            title="4. Họ và tên người tham gia",
             type=QuestionType.TEXT,
             required=True,
-            description="Họ và tên đầy đủ của tài xế",
+            description="Họ và tên đầy đủ của tài xế hoặc shipper",
             sample_response="Nguyễn Văn An",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
@@ -173,72 +173,82 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             )
         ),
         FormQuestion(
-            id="vehicle_type",
-            title="5. Loại phương tiện",
+            id="platform_app",
+            title="5. Ứng dụng / Nền tảng hoạt động chính",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
-            options=["Ô tô điện VinFast (GSM)", "Xe máy điện", "Xe khác"],
-            description="Chọn loại xe bạn đang chạy trong ca này",
-            sample_response="Ô tô điện VinFast (GSM)",
+            options=["Grab", "Be", "Xanh SM", "ShopeeFood", "Ahamove / Gojek", "Taxi truyền thống", "Khác"],
+            description="Chọn ứng dụng mang lại phần lớn thu nhập của bạn",
+            sample_response="Grab",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
                 expected_value="Tôi đồng ý"
             )
         ),
-        # Nested Conditional
         FormQuestion(
-            id="car_model",
-            title="6. Dòng xe VinFast",
+            id="vehicle_category",
+            title="6. Loại phương tiện làm việc",
+            type=QuestionType.SINGLE_CHOICE,
+            required=True,
+            options=["Xe máy 2 bánh", "Ô tô 4 - 7 chỗ", "Xe tải nhỏ giao hàng"],
+            description="Phương tiện bạn sử dụng để chạy chở khách hoặc giao hàng",
+            sample_response="Xe máy 2 bánh",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý"
+            )
+        ),
+        FormQuestion(
+            id="working_hours_day",
+            title="7. Thời gian chạy xe trung bình mỗi ngày",
             type=QuestionType.DROPDOWN,
             required=True,
-            options=["VF 5 Plus", "VF e34", "VF 6", "VF 7", "VF 8", "VF 9"],
-            description="Chọn đúng dòng xe đang chạy",
-            sample_response="VF 5 Plus",
+            options=["Dưới 4 tiếng (Bán thời gian)", "4 - 8 tiếng (Tiêu chuẩn)", "8 - 12 tiếng (Toàn thời gian)", "Trên 12 tiếng (Tăng ca)"],
+            description="Tổng số giờ mở ứng dụng nhận cuốc / đơn hàng mỗi ngày",
+            sample_response="8 - 12 tiếng (Toàn thời gian)",
             conditional=ConditionalRule(
-                depends_on_question_id="vehicle_type",
+                depends_on_question_id="consent_choice",
                 operator="equals",
-                expected_value="Ô tô điện VinFast (GSM)"
+                expected_value="Tôi đồng ý"
             )
         ),
         FormQuestion(
-            id="license_plate",
-            title="7. Biển số xe",
-            type=QuestionType.TEXT,
+            id="daily_net_income",
+            title="8. Thu nhập thực nhận trung bình mỗi ngày (VNĐ)",
+            type=QuestionType.NUMBER,
             required=True,
-            description="Biển số xe đang chạy ca này",
-            sample_response="29E-123.45",
+            description="Số tiền thực tế cầm về sau khi trừ chiết khấu ứng dụng và tiền xăng/điện",
+            sample_response="650000",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
                 expected_value="Tôi đồng ý"
             ),
-            validation=ValidationRule(
-                regex_pattern=r"^[0-9]{2}[A-Z]{1,2}-[0-9]{3}\.[0-9]{2}$|^[0-9]{2}[A-Z]{1,2}[0-9]{4,5}$",
-                regex_error_message="Biển số xe không đúng định dạng (VD: 29E-123.45 hoặc 51H12345)"
-            )
+            validation=ValidationRule(min_value=0, max_value=10000000)
         ),
         FormQuestion(
-            id="gross_revenue",
-            title="8. Doanh thu ca xe (VNĐ)",
+            id="monthly_gross_revenue",
+            title="9. Tổng doanh thu tháng gần nhất trên ứng dụng (VNĐ)",
             type=QuestionType.NUMBER,
             required=False,
-            description="Tổng doanh thu hiển thị trên ứng dụng tài xế khi hết ca",
-            sample_response="1250000",
+            description="Tổng số tiền hiển thị trên mục Báo cáo tháng của ứng dụng tài xế",
+            sample_response="18500000",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
                 expected_value="Tôi đồng ý"
             ),
-            validation=ValidationRule(min_value=0, max_value=50000000)
+            validation=ValidationRule(min_value=0, max_value=100000000)
         ),
         FormQuestion(
             id="camera_receipt",
-            title="9. Ảnh chụp đồng hồ km hoặc ứng dụng",
+            title="10. Chụp ảnh màn hình mục Thu nhập hoặc Ví tài xế",
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
-            description="Chụp ảnh rõ nét màn hình đồng hồ xe hoặc ứng dụng tài xế",
-            sample_response="Đặt hóa đơn hoặc đồng hồ xe rõ nét trong khung căn chỉnh",
+            description="Chụp trực tiếp màn hình mục Báo cáo Thu nhập / Ví tiền trên ứng dụng tài xế của bạn",
+            sample_response="Đặt rõ nét màn hình báo cáo thu nhập hoặc sao kê ví vào khung",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
