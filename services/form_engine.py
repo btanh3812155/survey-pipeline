@@ -119,7 +119,8 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         allow_anonymous=False,
         allow_edit_after_submit=False,
         notify_telegram_chat_id=-1001234567890,
-        decree13_required=True
+        decree13_required=True,
+        is_test_mode=True
     ),
     questions=[
         # Question 1: Signature

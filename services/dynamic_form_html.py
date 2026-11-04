@@ -634,7 +634,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
         // Test Mode State
-        let isTestMode = window.location.search.includes('test=1') || window.location.search.includes('mode=test');
+        let isTestMode = Boolean(SCHEMA.settings && SCHEMA.settings.is_test_mode) || window.location.search.includes('test=1') || window.location.search.includes('mode=test');
 
         function updateTestModeUI() {{
             const banner = document.getElementById('testModeBanner');
@@ -662,6 +662,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function toggleBypassImg(checked) {{
             isBypassImg = checked;
+            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             if (!checked) {{
                 if (answers['camera_receipt'] && answers['camera_receipt'].isDummy) {{
                     delete answers['camera_receipt'];
@@ -1045,8 +1046,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         async function activateCamera(qid) {{
             const standby = document.getElementById(`standby_${{qid}}`);
             const live = document.getElementById(`liveWrap_${{qid}}`);
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const img = document.getElementById(`img_${{qid}}`);
+            const overlay = document.getElementById(`overlay_${{qid}}`);
+            const deactivateBtn = document.getElementById(`deactivate_${{qid}}`);
+
             if (standby) standby.style.display = 'none';
             if (live) live.style.display = 'block';
+            if (img) img.style.display = 'none';
+            if (vid) vid.style.display = 'block';
+            if (overlay) overlay.style.display = 'flex';
+            if (deactivateBtn) deactivateBtn.style.display = 'inline-block';
+
             await initCameraForQ(qid);
         }}
 
@@ -1063,9 +1074,19 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             if (standby) standby.style.display = 'flex';
         }}
 
-        // 5. Paper Signature Modal
+        // 5. Paper Signature Modal with Viewport Position Fixed Lock
+        let savedScrollY = 0;
+
         function openSigModal(qid) {{
             activeSignatureTargetQId = qid;
+            savedScrollY = window.pageYOffset || document.documentElement.scrollTop;
+
+            document.documentElement.style.overflow = 'hidden';
+            document.documentElement.style.position = 'fixed';
+            document.documentElement.style.top = `-${{savedScrollY}}px`;
+            document.documentElement.style.width = '100%';
+            document.body.style.overflow = 'hidden';
+
             modal.style.display = 'flex';
 
             const dpr = window.devicePixelRatio || 1;
@@ -1081,6 +1102,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function closeSigModal() {{
             modal.style.display = 'none';
+            document.documentElement.style.overflow = '';
+            document.documentElement.style.position = '';
+            document.documentElement.style.top = '';
+            document.documentElement.style.width = '';
+            document.body.style.overflow = '';
+            window.scrollTo(0, savedScrollY);
         }}
         modal.addEventListener('touchmove', (e) => {{
             if (e.target !== sigCanvas) {{
@@ -1120,14 +1147,40 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             return {{ x: cx - r.left, y: cy - r.top }};
         }}
 
-        sigCanvas.addEventListener('mousedown', (e) => {{ isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }});
-        sigCanvas.addEventListener('mousemove', (e) => {{ if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }});
-        window.addEventListener('mouseup', () => isDrawing = false);
+        // Pointer Events with PointerCapture (100% isolates pen/finger from address bar)
+        sigCanvas.addEventListener('pointerdown', (e) => {{
+            e.preventDefault();
+            e.stopPropagation();
+            try {{ e.target.setPointerCapture(e.pointerId); }} catch(err) {{}}
+            isDrawing = true;
+            hasModalSignature = true;
+            const p = getSigPos(e);
+            sigCtx.beginPath();
+            sigCtx.moveTo(p.x, p.y);
+        }});
+
+        sigCanvas.addEventListener('pointermove', (e) => {{
+            e.preventDefault();
+            e.stopPropagation();
+            if (!isDrawing) return;
+            const p = getSigPos(e);
+            sigCtx.lineTo(p.x, p.y);
+            sigCtx.stroke();
+        }});
+
+        sigCanvas.addEventListener('pointerup', (e) => {{
+            isDrawing = false;
+            try {{ e.target.releasePointerCapture(e.pointerId); }} catch(err) {{}}
+        }});
+
+        sigCanvas.addEventListener('pointercancel', (e) => {{
+            isDrawing = false;
+            try {{ e.target.releasePointerCapture(e.pointerId); }} catch(err) {{}}
+        }});
 
         sigCanvas.addEventListener('touchstart', (e) => {{ e.preventDefault(); e.stopPropagation(); isDrawing = true; hasModalSignature = true; const p = getSigPos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }}, {{ passive: false }});
         sigCanvas.addEventListener('touchmove', (e) => {{ e.preventDefault(); e.stopPropagation(); if (!isDrawing) return; const p = getSigPos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); }}, {{ passive: false }});
         window.addEventListener('touchend', () => isDrawing = false);
-
         // 6. Reset Form with Confirmation
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
@@ -1205,6 +1258,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }}
 
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
+            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             formData.append('idempotency_key', clientSubmissionId);
             if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
             if (answers['license_plate']) formData.append('license_plate', answers['license_plate']);
