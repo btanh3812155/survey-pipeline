@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 127  
-**Last Updated:** `2026-11-04T04:49:12.140692Z`  
+**Total Turns:** 128  
+**Last Updated:** `2026-11-04T05:30:49.874588Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -17515,6 +17515,163 @@ hmm, rebuilding app and restarting caddy on droplet...
 hmm, testing live endpoint after deployment...
 
 hmm, waiting 2 seconds and testing again...
+
+hmm, updating session transcript...
+
+hmm, committing updated transcript...
+
+### 1. generalized driver & courier income survey: deployed & live!
+
+we redesigned the default survey into a **multi-platform Driver & Courier Income Survey**, stripping all VinFast/GSM-specific brand exclusivity and broadening it across the entire transportation and delivery workforce in vietnam (Grab, Be, Xanh SM, ShopeeFood, Ahamove, Taxi truyền thống):
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+```mermaid
+flowchart TD
+    subgraph IncomeSurveyFlow ["Multi-Platform Income Survey Architecture"]
+        Q1["1. Chữ ký xác nhận\n(Finger signature in paper modal sheet)"]
+        Q2["2. Cam kết thông tin thu nhập\n[ Tôi đồng ý ] vs [ Tôi không đồng ý ]"]
+        Q1 --> Q2
+        
+        Q2 -- "Tôi không đồng ý" --> Stop["⛔ Form stops here"]
+        Q2 -- "Tôi đồng ý" --> Unlock["✅ Unlocks Questions 3 - 10:"]
+        
+        Unlock --> Q3["3. Số điện thoại nhận thù lao khảo sát (MoMo / ZaloPay)"]
+        Unlock --> Q4["4. Họ và tên người tham gia"]
+        Unlock --> Q5["5. Nền tảng chính (Grab, Be, Xanh SM, ShopeeFood, Ahamove, Taxi)"]
+        Unlock --> Q6["6. Loại xe (Xe máy 2 bánh, Ô tô 4-7 chỗ, Xe tải nhỏ)"]
+        Unlock --> Q7["7. Số giờ chạy xe mỗi ngày (Dưới 4h, 4-8h, 8-12h, Trên 12h)"]
+        Unlock --> Q8["8. Thu nhập thực nhận trung bình mỗi ngày (VNĐ)"]
+        Unlock --> Q9["9. Tổng doanh thu tháng gần nhất trên ứng dụng (VNĐ)"]
+        Unlock --> Q10["10. Chụp ảnh màn hình mục Thu nhập hoặc Ví tài xế (WebRTC)"]
+    end
+```
+
+---
+
+### 2. complete question breakdown (100% clean & driver-facing)
+
+| # | question title | question type | driver description & options |
+|---|---|:---:|---|
+| **1** | **Chữ ký xác nhận** | `signature` | ký tên bằng ngón tay để xác nhận đồng ý tham gia khảo sát thu nhập. |
+| **2** | **Cam kết thông tin thu nhập** | `single_choice` | tôi xác nhận các số liệu thu nhập và hình ảnh ứng dụng cung cấp là trung thực. *(options: `Tôi đồng ý` / `Tôi không đồng ý`)*. |
+| **3** | **Số điện thoại nhận thù lao khảo sát** | `text` *(regex)* | số điện thoại nhận tiền phụ cấp khảo sát (qua ví điện tử hoặc chuyển khoản). |
+| **4** | **Họ và tên người tham gia** | `text` | họ và tên đầy đủ của tài xế hoặc shipper. |
+| **5** | **Ứng dụng / Nền tảng hoạt động chính** | `single_choice` | chọn ứng dụng mang lại phần lớn thu nhập của bạn: `Grab`, `Be`, `Xanh SM`, `ShopeeFood`, `Ahamove / Gojek`, `Taxi truyền thống`, `Khác`. |
+| **6** | **Loại phương tiện làm việc** | `single_choice` | phương tiện bạn sử dụng để chở khách hoặc giao hàng: `Xe máy 2 bánh`, `Ô tô 4 - 7 chỗ`, `Xe tải nhỏ giao hàng`. |
+| **7** | **Thời gian chạy xe trung bình mỗi ngày** | `dropdown` | tổng số giờ mở ứng dụng nhận cuốc / đơn hàng mỗi ngày: `Dưới 4 tiếng (Bán thời gian)`, `4 - 8 tiếng (Tiêu chuẩn)`, `8 - 12 tiếng (Toàn thời gian)`, `Trên 12 tiếng (Tăng ca)`. |
+| **8** | **Thu nhập thực nhận trung bình mỗi ngày (VNĐ)** | `number` | số tiền thực tế cầm về sau khi trừ chiết khấu ứng dụng và tiền xăng/điện (ví dụ: `650.000` VNĐ). |
+| **9** | **Tổng doanh thu tháng gần nhất trên ứng dụng (VNĐ)** | `number` | tổng số tiền hiển thị trên mục Báo cáo tháng của ứng dụng tài xế (ví dụ: `18.500.000` VNĐ). |
+| **10** | **Chụp ảnh màn hình mục Thu nhập hoặc Ví tài xế** | `camera_webrtc` | chụp trực tiếp màn hình mục Báo cáo Thu nhập / Ví tiền trên ứng dụng tài xế của bạn để đối soát *(kèm ảnh mẫu minh họa rõ nét)*. |
+
+***
+
+### 3. test it live on your phone right now!
+
+refresh the page on your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+1. notice the new clean corporate header: **`Khảo Sát Thu Nhập & Hoạt Động Vận Tải`**.
+2. sign in the paper sheet modal (notice how smoothly it draws without address bar jerking!).
+3. choose **`Tôi đồng ý`** -> watch the full 10-question income survey unlock with platform choices (`Grab`, `Be`, `Xanh SM`, `ShopeeFood`...) and daily/monthly income figures.
+4. notice the floating **`Làm lại`** button in the bottom-right corner.
+5. take a picture of your screen or a receipt and hit **`Gửi Báo Cáo`** - it processes in real time and stores cleanly in test mode!
+
+***
+
+h-haah! now that is a true nationwide industry survey, dumbass! ~
+
+no more being locked into just one car brand or electric fleet; now any bike shipper from shopeefood, grab driver, be driver, or taxi veteran can take this survey, forsooth!
+
+it asks the real questions drivers actually care about:
+- which platform puts bread on their table;
+- how many hours they grind on the road;
+- their actual take-home daily net earnings;
+- and a live camera snap of their wallet screen to verify the numbers, no cap!
+
+and the whole experience glides like silk:
+- paper modal signature first;
+- consent gate second;
+- clean platform and vehicle choices;
+- floating reset button floating in the corner;
+- and zero emojis or developer clutter in sight, slay!
+
+refresh **`https://146.190.201.32.sslip.io/?mode=test`** on your phone and take your brand new income survey for a spin, dummy! 
+
+...how's that for tailoring the entire platform to your client's exact vision, homie? nya~
+
+---
+
+## Turn 128
+
+**Timestamp:** `2026-11-04T05:20:43.350Z`  
+
+**User:**
+
+pressing reset doesn't reset actually filled in questions. generate me a test image for the test form. make a web ui to create/edit/manage forms. give camera a toggle to activate, currently it's active waiting for picture all the time after you give access. make it so that theres a 0.3s delay before the taking picture button shows up again after you press ratake. currently signature is black text on dark bg, make bg brighter (maybe off white with paper texture for aesthetics?)
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to fix the reset wipe, build the camera toggle, beautify the signature paper, and create the form manager ui...
+
+hmm, writing services/form_manager_html.py with the form builder and management dashboard...
+
+hmm, reading signature and camera CSS in dynamic_form_html.py...
+
+hmm, reading camera HTML rendering in dynamic_form_html.py...
+
+hmm, reading main.py around form routes...
+
+hmm, editing main.py to mount static data files and /admin/forms manager...
+
+hmm, reading lines 8-20 of main.py...
+
+hmm, editing main.py to add StaticFiles and form_manager_html...
+
+hmm, reading signature and modal CSS in dynamic_form_html.py...
+
+hmm, reading paper canvas styles in dynamic_form_html.py...
+
+hmm, reading camera HTML in dynamic_form_html.py...
+
+hmm, reading snapPhoto and retakeCam in dynamic_form_html.py...
+
+hmm, reading executeResetForm in dynamic_form_html.py...
+
+hmm, reading sig-preview-card in dynamic_form_html.py...
+
+hmm, reading camera HTML in dynamic_form_html.py...
+
+hmm, reading lines 860-915 of dynamic_form_html.py...
+
+hmm, reading executeResetForm lines in dynamic_form_html.py...
+
+hmm, editing dynamic_form_html.py to apply camera toggle, 0.3s retake delay, paper aesthetic, and thorough reset wipe...
+
+hmm, checking JS syntax with node...
+
+hmm, checking JS syntax in form_manager_html.py with node...
+
+hmm, adding import json to form_manager_html.py...
+
+hmm, testing node syntax check on form_manager_html.py...
+
+hmm, running pytest across all test suites...
+
+hmm, committing all updates locally...
+
+hmm, syncing updates to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing live endpoint after deployment...
+
+hmm, waiting 2 seconds and testing again...
+
+hmm, testing /admin/forms endpoint on droplet...
+
+hmm, testing sample image retrieval...
 
 hmm, updating session transcript...
 
