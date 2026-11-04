@@ -34,19 +34,21 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             -webkit-tap-highlight-color: transparent;
         }}
 
-        html, body {{
+        html {{
+            overflow-y: scroll;
+            -webkit-overflow-scrolling: touch;
+        }}
+
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
-            min-height: 100dvh;
+            min-height: 100%;
             display: flex;
             flex-direction: column;
             padding: env(safe-area-inset-top, 12px) 14px env(safe-area-inset-bottom, 24px) 14px;
             overflow-x: hidden;
-            touch-action: manipulation;
-            overscroll-behavior: none;
-            overscroll-behavior-y: none;
-            -webkit-overflow-scrolling: touch;
+            overflow-y: visible;
         }}
 
         /* GPS Authorization Banner */
@@ -902,19 +904,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             }}
         }}
 
-        // 5. Paper Signature Modal with Foolproof Scroll Lock
-        let savedScrollY = 0;
-
+        // 5. Paper Signature Modal
         function openSigModal(qid) {{
             activeSignatureTargetQId = qid;
-            savedScrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-            document.body.style.position = 'fixed';
-            document.body.style.top = `-${{savedScrollY}}px`;
-            document.body.style.width = '100%';
-            document.body.style.overflow = 'hidden';
-            document.body.style.touchAction = 'none';
-
             modal.style.display = 'flex';
 
             const dpr = window.devicePixelRatio || 1;
@@ -930,14 +922,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         function closeSigModal() {{
             modal.style.display = 'none';
-            document.body.style.position = '';
-            document.body.style.top = '';
-            document.body.style.width = '';
-            document.body.style.overflow = '';
-            document.body.style.touchAction = '';
-            window.scrollTo(0, savedScrollY);
         }}
-
         modal.addEventListener('touchmove', (e) => {{
             if (e.target !== sigCanvas) {{
                 e.preventDefault();
