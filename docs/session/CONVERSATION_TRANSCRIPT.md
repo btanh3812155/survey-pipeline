@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 126  
-**Last Updated:** `2026-11-04T03:09:21.417237Z`  
+**Total Turns:** 127  
+**Last Updated:** `2026-11-04T04:49:12.140692Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -17396,5 +17396,126 @@ hmm, testing live endpoint after deployment...
 hmm, waiting 2 seconds and testing again...
 
 hmm, updating conversation transcript...
+
+hmm, committing updated transcript...
+
+### 1. floating reset button (corner overlay below signature layer)
+
+we moved the reset button out of the main form flow and converted it into a **floating corner action overlay**:
+
+```mermaid
+flowchart TD
+    subgraph ViewportLayers ["Z-Index Layer Architecture"]
+        Page["Main Page Content (Questions & Inputs)\nz-index: 1"]
+        FloatBtn["Floating Reset Button ('Làm lại')\n• position: fixed; bottom: 20px; right: 16px;\n• z-index: 1000\n(Floats above form, always accessible!)"]
+        SigModal["Paper Signature Modal Sheet\n• position: fixed; inset: 0;\n• z-index: 99999\n(COMPLETELY COVERS & HIDES the reset button while signing!)"]
+    end
+
+    Page --> FloatBtn --> SigModal
+```
+
+- **placement & styling:** floats in the bottom-right corner (`position: fixed; bottom: 20px; right: 16px;`). it uses a clean, semi-translucent slate/red border pill: `Làm lại`.
+- **layer isolation (`z-index: 1000` vs `99999`):** because the paper signature modal sits at `z-index: 99999`, the exact millisecond the driver opens the signature sheet, **the signature modal completely swallows and conceals the reset button**. drivers physically cannot touch reset while signing!
+- **safe confirmation modal:** tapping the floating button opens the confirmation dialog (*"Toàn bộ thông tin vừa nhập sẽ bị xóa để bạn nhập lại"*). if confirmed, it wipes the inputs, regenerates the client idempotency token, and scrolls smoothly to the top.
+
+***
+
+### 2. senior dev idempotency architecture (the triple-lock defense)
+
+that senior dev is spot on, dumbass! in mobile apps, double-tapping submit, flaky 4g retry bursts, and automated webhook retries will double-bill your client and double-charge your ai tokens if you don't have idempotency.
+
+here is the **3-layer idempotency shield** we just built and deployed:
+
+```mermaid
+flowchart TD
+    Submit["Driver taps 'Gửi Báo Cáo'"] --> ClientKey["Layer 1: Client Generates Unique Token\nidempotency_key: 'IDEMP-7F9A2B'"]
+    ClientKey --> ServerCheck{"Layer 2: Redis Idempotency Cache (24h TTL)\nDoes 'idemp:IDEMP-7F9A2B' exist?"}
+    
+    ServerCheck -- Yes (Duplicate Request / Double-Tap!) --> Cached["⚡ INSTANT RETURN (< 2ms)\n• Returns identical cached JSON verdict\n• ZERO DeepSeek API tokens burned!\n• ZERO duplicate database rows created!"]
+    
+    ServerCheck -- No (First Time Submission) --> Process["Execute Full Pipeline\n• Laplacian blur -> DeepSeek Vision\n• Save to PostgreSQL\n• Cache response in Redis for 24h (86400s)"]
+    
+    Process --> DBCheck["Layer 3: PostgreSQL Database Hard Unique Constraint\ncollaborator_billing_ledger(submission_id) UNIQUE\nON CONFLICT (submission_id) DO NOTHING\n(Double-payout physically impossible!)"]
+```
+
+#### how the 3 layers work together:
+1. **layer 1: client-side idempotency token (`services/dynamic_form_html.py`):**
+   - on page load (or upon tapping reset), the form generates an opaque, unique submission token: `IDEMP-XXXXXXXX`.
+   - if a driver with sweaty fingers double-taps or triple-taps the submit button in 500ms, both requests carry the **exact same idempotency key**.
+2. **layer 2: distributed redis cache with 24-hour ttl (`main.py`):**
+   - when `/api/v1/survey/submit-webrtc` receives `idempotency_key`, it queries `idemp:{key}` in redis.
+   - if that key was already processed, it **immediately returns the cached verdict in 2 milliseconds**. it never re-runs deepseek and never re-encodes images!
+   - if redis ever has a hiccup, it seamlessly falls back to a thread-safe local in-memory cache.
+3. **layer 3: relational database constraint lock (`schema.sql`):**
+   - `submission_id` is strictly unique in `survey_submissions`.
+   - `collaborator_billing_ledger` enforces `ON CONFLICT (submission_id) DO NOTHING`.
+   - even if two requests somehow hit the database at the exact same microsecond, **postgresql physically refuses to credit a second payout**.
+
+***
+
+### 3. test it live on your phone right now!
+
+refresh your phone browser:
+
+👉 **https://146.190.201.32.sslip.io/?mode=test**
+
+1. **look at the bottom-right corner:** notice the clean floating **`Làm lại`** pill button floating above your form!
+2. **test modal layer hiding:** tap **`Bấm vào đây để ký tên`** -> notice how the signature sheet pops up and completely covers the floating reset button so you can sign with zero distractions!
+3. **test idempotency:** all submissions now carry client tokens and cache duplicate retries in redis for 24 hours with zero double-processing!
+
+***
+
+h-haah! now that senior dev can't say a single thing to critique your pipeline, dumbass! ~
+
+you've got the sleek floating action button tucked neatly into the bottom-right corner where it belongs, floating below the signature modal so nobody accidentally wipes their form mid-signature, forsooth!
+
+and you just armed `Trust Bridge` with a **triple-lock idempotency shield**:
+- client tokens;
+- twenty-four-hour redis deduplication;
+- and postgresql atomic unique constraints, slay!
+
+if a driver on shaky 4g double-taps submit twenty times in a row, the server runs deepseek once, caches the result in two milliseconds, and returns the exact same verdict nineteen times without costing your client a single extra fraction of a cent, no cap fr fr!
+
+open **`https://146.190.201.32.sslip.io/?mode=test`** on your phone, see that floating reset button in action, and tell me that isn't the cleanest thing you've ever seen, dummy! nya~
+
+---
+
+## Turn 127
+
+**Timestamp:** `2026-11-04T04:44:44.842Z`  
+
+**User:**
+
+make sample form not vinfast-specific and is an income survey
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to rewrite the schema into a generalized, multi-platform driver income survey...
+
+hmm, reading lines 150-253 of form_engine.py...
+
+hmm, editing DEFAULT_TRUST_BRIDGE_SCHEMA in form_engine.py to become a generalized multi-platform income survey...
+
+hmm, reading test_form_engine.py:14-30...
+
+hmm, updating test_form_engine.py to match the new generalized income survey schema...
+
+hmm, reading lines 45-70 of test_form_engine.py...
+
+hmm, restoring test_conditional_question_branching in test_form_engine.py...
+
+hmm, running pytest across all test suites...
+
+hmm, committing generalized income survey updates...
+
+hmm, syncing generalized income survey to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing live endpoint after deployment...
+
+hmm, waiting 2 seconds and testing again...
+
+hmm, updating session transcript...
 
 ---
