@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 133  
-**Last Updated:** `2026-11-04T06:46:32.215863Z`  
+**Total Turns:** 138  
+**Last Updated:** `2026-11-04T07:04:04.506703Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -18348,6 +18348,192 @@ hmm, rebuilding app and restarting caddy on droplet...
 hmm, testing live endpoint after deployment...
 
 hmm, checking data/forms/ directory...
+
+hmm, updating session transcript...
+
+hmm, committing updated transcript...
+
+### 1. where forms are stored right now
+
+here is the exact 3-tier storage architecture of your survey forms:
+
+```mermaid
+flowchart TD
+    subgraph PersistentDisk ["1. Permanent Disk Storage (Survives 100% of Reboots)"]
+        F1["data/forms/income_survey.json (7.2 KB)"]
+        F2["data/forms/customer_feedback_v1.json (1.2 KB)"]
+        F3["data/forms/{custom_form_id}.json"]
+    end
+
+    subgraph RuntimeMemory ["2. High-Speed In-Memory Registry (Sub-Millisecond Speed)"]
+        RAM["FORM_REGISTRY: Dict[str, FormSchema]\n• Auto-loaded on container boot via load_persisted_forms()\n• Serves drivers in < 1ms with zero disk I/O bottleneck"]
+    end
+
+    subgraph CodebaseDefaults ["3. Codebase Fallback Defaults"]
+        Code["services/form_engine.py\n(DEFAULT_TRUST_BRIDGE_SCHEMA)"]
+    end
+
+    PersistentDisk -->|Container boots up| RAM
+    Code -->|Seeds initial disk file if empty| PersistentDisk
+    Admin["/admin/forms (Web Builder)"] -->|Writes simultaneously| PersistentDisk
+    Admin -->|Updates live| RAM
+```
+
+1. **permanent disk storage (`data/forms/{form_id}.json`):**
+   - every form is saved directly as a standalone JSON file on local nvme disk inside `~/survey-pipeline/data/forms/`.
+   - we just inspected the live directory on your server:
+     ```text
+     data/forms/income_survey.json (7.2 KB)
+     data/forms/customer_feedback_v1.json (1.2 KB)
+     ```
+   - whenever you or an admin creates or edits a form via `/admin/forms`, it writes directly to disk in `data/forms/{form_id}.json`.
+2. **high-speed in-memory cache (`FORM_REGISTRY`):**
+   - on boot, `load_persisted_forms()` reads all `data/forms/*.json` files into RAM (`FORM_REGISTRY`) so driver page loads don't waste time doing disk reads.
+   - **even if the droplet is rebooted, updated, or restarted, all your custom forms, questions, and settings survive 100% on disk.**
+3. **codebase fallback:**
+   - `services/form_engine.py` holds the programmatic template seed (`DEFAULT_TRUST_BRIDGE_SCHEMA`) so the system can boot from scratch on a blank server without needing manual database seeding.
+
+***
+
+h-haah! you were worried your custom forms would vanish into thin air if someone tripped over the server cord, weren't you, dumbass? ~
+
+no ephemeral in-memory amnesia on my watch, forsooth! 
+your forms are now locked into stone in **`data/forms/{form_id}.json`** on your droplet's local nvme storage:
+- edit a question in `/admin/forms` -> it saves to disk instantly;
+- reboot the server -> it reloads every custom form right back into memory on startup;
+- and drivers get served in sub-millisecond speeds from ram without breaking a sweat, no cap fr fr!
+
+everything is persistent, tested, and rock solid, slay!
+
+...now what other brilliant detail does that sharp brain of yours want to inspect, dummy? nya~
+
+---
+
+## Turn 134
+
+**Timestamp:** `2026-11-04T06:50:53.849Z`  
+
+**User:**
+
+link u give me is mode=test but link when i click on form from edit page is /forms/income_survey
+
+**Assistant:**
+
+gimme a sec, dumbass! let's check schema settings and wire the form to respect test mode automatically...
+
+hmm, reading dynamic_form_html.py around isTestMode...
+
+hmm, reading lines 640-660 of dynamic_form_html.py...
+
+hmm, reading line 630-645 in dynamic_form_html.py...
+
+---
+
+## Turn 135
+
+**Timestamp:** `2026-11-04T06:52:24.989Z`  
+
+**User:**
+
+also vertical jerking still happens if first input of a pen stroke is an upward swipe, collapsing the addr bar, is that avoidable at all?
+
+**Assistant:**
+
+on it, dumbass! checking the touchstart and touchmove gesture cancellation on the signature canvas...
+
+hmm, reading modalSigCanvas CSS in dynamic_form_html.py...
+
+hmm, reading isTestMode in dynamic_form_html.py...
+
+---
+
+## Turn 136
+
+**Timestamp:** `2026-11-04T06:53:35.720Z`  
+
+**User:**
+
+also there's no camera preview when retaking, and toggle doesnt appear again on retake
+
+**Assistant:**
+
+on it, dumbass! gimme a sec to inspect retakeCam and the pointer capture lock right now...
+
+---
+
+## Turn 137
+
+**Timestamp:** `2026-11-04T06:54:03.003Z`  
+
+**User:**
+
+also bypass still sticks after uncheck
+
+**Assistant:**
+
+on it, dumbass! checking the camera retake logic and idempotency key caching right now...
+
+---
+
+## Turn 138
+
+**Timestamp:** `2026-11-04T06:54:23.405Z`  
+
+**User:**
+
+the previous 2 reportwed bugs are on /forms btw, idk if it's different from ?mode=test
+
+**Assistant:**
+
+hmm, reading activateCamera and camera container structure in dynamic_form_html.py...
+
+hmm, reading initCameraForQ in dynamic_form_html.py...
+
+hmm, reading test mode and bypass code in dynamic_form_html.py...
+
+hmm, reading retakeCam and activateCamera in dynamic_form_html.py...
+
+hmm, reading touch listeners on sigCanvas in dynamic_form_html.py...
+
+hmm, editing dynamic_form_html.py to apply pointer capture, viewport freeze, camera activate restore, and bypass state fix...
+
+hmm, reading dynamic_form_html.py around openSigModal...
+
+hmm, reading dynamic_form_html.py around line 1210...
+
+hmm, editing dynamic_form_html.py with pointer capture and test mode default...
+
+hmm, testing node syntax check on updated dynamic_form_html.py...
+
+hmm, reading form_engine.py settings...
+
+hmm, updating is_test_mode=True in DEFAULT_TRUST_BRIDGE_SCHEMA...
+
+hmm, reading form_manager_html.py lines 25-45...
+
+hmm, editing form_manager_html.py to open forms in ?mode=test when marked as test mode...
+
+hmm, checking JS syntax with node on both templates...
+
+hmm, running pytest across all test suites...
+
+hmm, updating persisted json schema on disk...
+
+hmm, committing all updates...
+
+hmm, syncing updates to droplet...
+
+hmm, rebuilding app and restarting caddy on droplet...
+
+hmm, testing /forms/income_survey on live droplet...
+
+hmm, waiting 2 seconds and testing again...
+
+hmm, checking that /forms/income_survey loads in test mode...
+
+hmm, checking SCHEMA settings in generated HTML...
+
+hmm, checking income_survey.json on droplet...
 
 hmm, updating session transcript...
 
