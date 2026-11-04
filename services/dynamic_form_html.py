@@ -311,23 +311,34 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             font-weight: 600;
         }}
 
-        /* Signature Question Trigger Card */
+        /* Signature Question Trigger Card (Aesthetic Warm Off-White Paper Texture) */
         .sig-preview-card {{
-            border: 2px dashed var(--border);
+            background: #fbfbf9;
+            border: 1.5px solid #cbd5e1;
             border-radius: 12px;
             padding: 16px;
             text-align: center;
             cursor: pointer;
-            background: rgba(255,255,255,0.02);
+            color: #0f172a;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0,0,0,0.25);
+            background-image: linear-gradient(rgba(203, 213, 225, 0.35) 1px, transparent 1px);
+            background-size: 100% 24px;
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 8px;
+            transition: transform 0.1s, border-color 0.2s;
+        }}
+
+        .sig-preview-card:active {{
+            transform: scale(0.99);
+            border-color: var(--accent);
         }}
 
         .sig-preview-img {{
-            max-height: 70px;
+            max-height: 75px;
             display: none;
+            filter: contrast(1.15);
         }}
 
         /* Paper Signature Modal Popup */
@@ -351,7 +362,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         .paper-sheet {{
-            background: #ffffff;
+            background: #fbfbf9;
             color: #0f172a;
             width: 100%;
             max-width: 480px;
@@ -360,7 +371,8 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             display: flex;
             flex-direction: column;
             gap: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+            border: 1.5px solid #dcdad2;
             border-top: 6px solid #2563eb;
         }}
 
@@ -378,14 +390,15 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
 
         .paper-canvas-wrap {{
             position: relative;
-            background: #f8fafc;
+            background: #fefefe;
             border: 1.5px solid #cbd5e1;
             border-radius: 10px;
             height: 220px;
             touch-action: none;
             overflow: hidden;
+            background-image: linear-gradient(rgba(203, 213, 225, 0.35) 1px, transparent 1px);
+            background-size: 100% 28px;
         }}
-
         #modalSigCanvas {{
             width: 100%;
             height: 100%;
@@ -755,26 +768,32 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 parent.appendChild(list);
             }} else if (q.type === 'camera_webrtc') {{
                 parent.innerHTML = `
-                    <div class="camera-container" id="cam_${{q.id}}">
-                        <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
-                        <img id="img_${{q.id}}" class="captured-img" alt="Captured">
-                        <div class="camera-overlay" id="overlay_${{q.id}}">
-                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">Căn chỉnh đồng hồ xe hoặc hóa đơn vào khung</span>
+                    <div class="camera-standby-card" id="standby_${{q.id}}" style="background:rgba(15,23,42,0.6); border:1.5px dashed var(--border); border-radius:12px; padding:24px 16px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px;">
+                        <div style="font-size:0.85rem; color:#94a3b8;">Camera đang ở chế độ chờ để tiết kiệm pin</div>
+                        <button type="button" class="btn" style="background:var(--accent); color:#fff; border:none; padding:10px 20px; border-radius:10px; font-weight:700; font-size:0.88rem; cursor:pointer;" onclick="activateCamera('${{q.id}}')">Bật Camera Chụp Ảnh</button>
+                    </div>
+                    <div class="camera-live-wrap" id="liveWrap_${{q.id}}" style="display:none;">
+                        <div class="camera-container" id="cam_${{q.id}}">
+                            <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
+                            <img id="img_${{q.id}}" class="captured-img" alt="Captured">
+                            <div class="camera-overlay" id="overlay_${{q.id}}">
+                                <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">Căn chỉnh đồng hồ xe hoặc hóa đơn vào khung</span>
+                            </div>
+                        </div>
+                        <div id="camErr_${{q.id}}" style="display:none; text-align:center; padding:10px; font-size:0.8rem; color:#f87171;">
+                            Không thể mở camera tự động. Vui lòng bấm nút chụp bên dưới:
+                        </div>
+                        <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:10px;">
+                            <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
+                            </button>
+                            <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">Chụp lại</button>
+                            <button type="button" id="deactivate_${{q.id}}" style="background:transparent; color:#94a3b8; border:1px solid var(--border); padding:6px 14px; border-radius:8px; font-size:0.78rem; cursor:pointer;" onclick="deactivateCamera('${{q.id}}')">Tắt Camera</button>
+                            <input type="file" id="fileFallback_${{q.id}}" accept="image/*" capture="environment" style="display:none;" onchange="handleFallbackCapture(this, '${{q.id}}')">
+                            <button type="button" id="btnFallback_${{q.id}}" style="display:none; background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:0.82rem; font-weight:600;" onclick="document.getElementById('fileFallback_${{q.id}}').click()">Chụp ảnh qua ứng dụng máy ảnh</button>
                         </div>
                     </div>
-                    <div id="camErr_${{q.id}}" style="display:none; text-align:center; padding:10px; font-size:0.8rem; color:#f87171;">
-                        Không thể mở camera tự động. Vui lòng bấm nút chụp bên dưới:
-                    </div>
-                    <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:10px;">
-                        <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
-                            <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
-                        </button>
-                        <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">Chụp lại</button>
-                        <input type="file" id="fileFallback_${{q.id}}" accept="image/*" capture="environment" style="display:none;" onchange="handleFallbackCapture(this, '${{q.id}}')">
-                        <button type="button" id="btnFallback_${{q.id}}" style="display:none; background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:0.82rem; font-weight:600;" onclick="document.getElementById('fileFallback_${{q.id}}').click()">Chụp ảnh qua ứng dụng máy ảnh</button>
-                    </div>
                 `;
-                initCameraForQ(q.id);
             }} else if (q.type === 'signature') {{
                 parent.innerHTML = `
                     <div class="sig-preview-card" onclick="openSigModal('${{q.id}}')">
@@ -904,18 +923,46 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const overlay = document.getElementById(`overlay_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
-            const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+            const deactivateBtn = document.getElementById(`deactivate_${{qid}}`);
 
             img.style.display = 'none';
             if (activeVideoStream) {{
                 vid.style.display = 'block';
                 overlay.style.display = 'flex';
-                snapBtn.style.display = 'flex';
                 retakeBtn.style.display = 'none';
+                if (deactivateBtn) deactivateBtn.style.display = 'inline-block';
+                snapBtn.style.display = 'none'; // Hide immediately
+
+                // 0.3s (300ms) delay before showing shutter button to prevent accidental double-tap!
+                setTimeout(() => {{
+                    snapBtn.style.display = 'flex';
+                }}, 300);
             }} else {{
-                fallbackBtn.style.display = 'inline-block';
+                const fallbackBtn = document.getElementById(`btnFallback_${{qid}}`);
+                if (fallbackBtn) fallbackBtn.style.display = 'inline-block';
                 retakeBtn.style.display = 'none';
             }}
+        }}
+
+        async function activateCamera(qid) {{
+            const standby = document.getElementById(`standby_${{qid}}`);
+            const live = document.getElementById(`liveWrap_${{qid}}`);
+            if (standby) standby.style.display = 'none';
+            if (live) live.style.display = 'block';
+            await initCameraForQ(qid);
+        }}
+
+        function deactivateCamera(qid) {{
+            if (activeVideoStream) {{
+                activeVideoStream.getTracks().forEach(t => t.stop());
+                activeVideoStream = null;
+            }}
+            const vid = document.getElementById(`vid_${{qid}}`);
+            if (vid) vid.srcObject = null;
+            const standby = document.getElementById(`standby_${{qid}}`);
+            const live = document.getElementById(`liveWrap_${{qid}}`);
+            if (live) live.style.display = 'none';
+            if (standby) standby.style.display = 'flex';
         }}
 
         // 5. Paper Signature Modal
@@ -984,10 +1031,41 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
         function executeResetForm() {{
+            // 1. Clear in-memory answers
             for (let k in answers) delete answers[k];
+
+            // 2. Deep wipe all DOM inputs, selects, and textareas
+            document.querySelectorAll('#questionsContainer input, #questionsContainer select, #questionsContainer textarea').forEach(el => {{
+                if (el.type === 'checkbox' || el.type === 'radio') el.checked = false;
+                else el.value = '';
+            }});
+
+            // 3. Clear single_choice selections
+            document.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
+
+            // 4. Reset cameras and stop active video tracks
+            if (activeVideoStream) {{
+                activeVideoStream.getTracks().forEach(t => t.stop());
+                activeVideoStream = null;
+            }}
+            document.querySelectorAll('.captured-img').forEach(img => {{ img.src = ''; img.style.display = 'none'; }});
+            document.querySelectorAll('video').forEach(vid => {{ vid.srcObject = null; vid.style.display = 'block'; }});
+            document.querySelectorAll('.camera-live-wrap').forEach(lw => {{ lw.style.display = 'none'; }});
+            document.querySelectorAll('.camera-standby-card').forEach(sb => {{ sb.style.display = 'flex'; }});
+
+            // 5. Clear signature preview
+            document.querySelectorAll('.sig-preview-img').forEach(img => {{ img.src = ''; img.style.display = 'none'; }});
+            document.querySelectorAll('[id^="sigBtnLabel_"]').forEach(lbl => {{ lbl.textContent = "Bấm vào đây để ký tên trên giấy"; }});
+            hasModalSignature = false;
+            if (sigCtx && sigCanvas) sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+
+            // 6. Regenerate idempotency token
             clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+
+            // 7. Close modal, re-evaluate conditionals (locks back to Q1 & Q2), scroll to top
             closeResetModal();
-            renderForm();
+            evaluateConditionals();
+            window.scrollTo({{ top: 0, behavior: 'smooth' }});
             alert("Biểu mẫu đã được làm lại từ đầu!");
         }}
 

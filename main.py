@@ -10,9 +10,11 @@ import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from services.camera_form_html import CAMERA_FORM_HTML
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
 from services.dynamic_form_html import render_dynamic_form_html
+from services.form_manager_html import render_form_manager_html
 
 from config import settings
 from services.normalizer import (
@@ -82,6 +84,8 @@ async def lifespan(app: FastAPI):
     await http_client.aclose()
 
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
 
 
 @app.get("/health")
@@ -100,6 +104,12 @@ async def get_dynamic_form(form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
     schema = FORM_REGISTRY.get(form_id, DEFAULT_TRUST_BRIDGE_SCHEMA)
     return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+
+@app.get("/admin/forms", response_class=HTMLResponse)
+async def get_forms_manager():
+    """Admin Web UI to create, edit, inspect, and manage arbitrary survey forms."""
+    return HTMLResponse(content=render_form_manager_html(FORM_REGISTRY), status_code=200)
+
 
 
 @app.post("/api/v1/forms/upload-schema")
