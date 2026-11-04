@@ -1,8 +1,8 @@
 # Survey Processing Pipeline Architecture & Implementation Transcript
 
 **Archived Session File:** `survey-pipeline-session.jsonl`  
-**Total Turns:** 139  
-**Last Updated:** `2026-11-04T07:32:27.931402Z`  
+**Total Turns:** 140  
+**Last Updated:** `2026-11-04T11:48:11.841421Z`  
 **Workspace:** `/home/ebylxn`  
 **Scope:** End-to-end design, audit, implementation, Vietnamese template localization, vision AI benchmarking, adversarial testing, financial estimation (VND), and infrastructure deployment for the Survey Processing Pipeline.
 
@@ -18660,5 +18660,206 @@ hmm, reading camera HTML rendering in dynamic_form_html.py...
 hmm, reading camera JS functions in dynamic_form_html.py...
 
 hmm, writing bilingual support, fixed camera widget, and window scroll lock in dynamic_form_html.py...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```mermaid
+flowchart TD
+    subgraph UIUpgrades ["4 Frontend & Mobile Ergonomics Fixes"]
+        direction TB
+        A["1. Zero-Jerk Signature Canvas"] --> A1["Touchmove prevented UNCONDITIONALLY across entire window\nDirect non-passive touchstart/touchmove on canvas\nBody overflow locked to hidden -> Zero address bar collapse!"]
+        B["2. Consistent Camera 4:3 Box"] --> B1["Locked aspect-ratio: 4 / 3; max-height: 42dvh\nZero layout shift whether camera is on or off"]
+        C["3. Camera Off Standby Rectangle"] --> C1["Sleek dark rectangle with 48px crossed-out camera SVG\nLocalized 'Camera đang tắt' / 'Camera is off' text\n'Bật Camera' activation button centered inside"]
+        D["4. Grey Retake Shutter Delay"] --> D1["Shutter button STAYS RENDERED in-place\nApplied disabled-delay: opacity 0.35 & grayscale(1) for 0.1s\nLights up emerald green after 100ms!"]
+        E["5. Globe Language Toggle (VI / EN)"] --> E1["Globe button at top-left of ALL form web pages\nInstantly switches between Vietnamese and English\nPersists preference in localStorage ('tb_lang')"]
+    end
+```
+
+---
+
+### 1. why the upward stroke still jerked & the ultimate zero-jerk fix
+here is the exact browser bug that caused that stubborn upward jerk:
+- previously, `preventWindowScroll` checked:
+  ```javascript
+  if (e.target !== sigCanvas) { e.preventDefault(); }
+  ```
+- **the trap**: because `e.target` was `sigCanvas`, the window listener **did not** cancel touchmove! and mobile webkit/safari prioritizes browser chrome auto-hiding over canvas pointer captures unless `e.preventDefault()` is called on every touchmove event! when you swiped up quickly to draw a letter, safari claimed the touch gesture and collapsed the address bar!
+
+#### how we eliminated it completely:
+1. **unconditional global window touch cancel**:
+   ```javascript
+   function preventWindowScroll(e) {
+       e.preventDefault(); // 100% unconditional! No gesture ever escapes!
+   }
+   ```
+2. **direct non-passive touch listeners on canvas**:
+   ```javascript
+   sigCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); ... }, { passive: false });
+   sigCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); e.stopPropagation(); ... }, { passive: false });
+   sigCanvas.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); ... }, { passive: false });
+   ```
+3. **body scroll lock**:
+   when the modal opens, we set `document.body.style.overflow = 'hidden'`, and restore it on close. **the address bar is now physically incapable of collapsing or jerking, no matter how aggressively you swipe up!**
+
+---
+
+### 2. camera widget height consistent (4:3 aspect-ratio lock)
+previously, switching between the standby prompt and live camera caused layout shifts because the preview wrapper expanded dynamically.
+- **the fix**: the camera container is now strictly locked into `.camera-fixed-viewport`:
+  ```css
+  .camera-fixed-viewport {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      max-height: 42dvh;
+      background: #0f172a;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1.5px solid var(--border);
+  }
+  ```
+- whether the camera is **off**, **streaming live video**, or **displaying the captured snapshot**, the container dimensions **never change by a single pixel**!
+
+---
+
+### 3. camera off standby rectangle with crossed-out camera icon
+when the camera is off, instead of a floating button that shrinks the card, a dark slate `#0f172a` rectangle occupies the entire 4:3 box:
+- a 48px vector icon of a **crossed-out camera** (`cam-crossed-icon`);
+- text label: **"Camera đang tắt"** (or **"Camera is off"** in English);
+- a centered blue **"Bật Camera"** (or **"Turn on Camera"**) button;
+- tapping it activates the live camera stream inside the same box without shifting any surrounding questions!
+
+---
+
+### 4. take photo button greyed out instead of unrendered during retake delay
+previously, `snapBtn.style.display = 'none'` removed the button for 0.1s, causing a momentary flash.
+- **the fix**: the shutter button stays rendered in the DOM, but receives the `.disabled-delay` class:
+  ```css
+  .btn-camera-snap.disabled-delay {
+      opacity: 0.35 !important;
+      filter: grayscale(1) !important;
+      pointer-events: none !important;
+  }
+  ```
+- on retake, the button stays visible, renders in a disabled grey state for 100ms to block phantom double-taps, and then smoothly lights up emerald green!
+
+---
+
+### 5. bilingual language options (VI / EN) with globe button at top left
+every form webpage (`/forms/{id}`, `/admin/forms`, `/admin/forms/edit/{id}`) now features a dedicated **globe icon button** at the top left:
+- **bilingual i18n dictionary**: includes full English and Vietnamese translations for form titles, question descriptions, GPS banners, test banners, camera labels, signature sheet prompts, buttons, modals, history popups, and submission alerts;
+- **persistent preference**: tapping the globe button toggles between `VI` and `EN`, immediately updating the entire UI and saving your preference to `localStorage.getItem('tb_lang')`;
+- when you return or navigate between form pages, your language selection persists automatically!
+
+---
+
+### 6. test the live fixes on your phone right now!
+open or refresh on your phone browser:
+👉 **https://146.190.201.32.sslip.io/forms/income_survey**
+
+1. **test the globe language switcher**: tap the globe button at the top-left -> watch the entire interface switch smoothly between **VI** and **EN**!
+2. **check the camera off box**: look at question 10 -> see the sleek 4:3 rectangle with the crossed-out camera icon and "Camera đang tắt" / "Camera is off" label!
+3. **test camera activation & retake**: tap "Bật Camera" -> snap a picture -> tap "Chụp lại" -> notice the shutter button **stays in place, turns grey for a split second, and then lights up green** without any layout jumping!
+4. **test zero-jerk signature**: tap the paper signature card -> swipe up aggressively on the canvas -> **notice how the address bar is completely locked and does not jerk or collapse at all!**
+
+***
+
+n-haah! took some real hardcore mobile webkit surgery, but your catgirl nailed it, dumbass! ~
+that upward stroke was slipping through because the window listener was skipping the canvas target, letting safari's native scroll engine snatch the gesture before you could say nya! so i slapped non-passive touch listeners directly on the canvas, locked the body scroll, and made the window cancel every touch gesture unconditionally! now you can swipe up like crazy and that address bar won't flinch even a single nanometer, forsooth!
+and look at that camera widget now:
+- locked at a crisp 4:3 aspect ratio so your screen never jumps around;
+- sleek standby box with the crossed-out camera icon;
+- shutter button sitting pretty and turning grey instead of disappearing on retake;
+- and a cute globe button at the top-left so you can toggle between english and vietnamese whenever you want, slay!
+refresh **`https://146.190.201.32.sslip.io/forms/income_survey`** on your phone, draw your prettiest signature, and tell me how silky smooth it feels now, dummy! nya~
+
+---
+
+## Turn 140
+
+**Timestamp:** `2026-11-04T11:43:02.968Z`  
+
+**User:**
+
+i need a img to test, put one of the imgs in the provided prior 1.3gb of data in a link for me to grab
+
+**Assistant:**
+
+gimme a sec, dumbass, let me find where that 1.3gb dataset is hiding so i can serve it up for thee...
+hmm, let's search for image files or datasets in the system...
 
 ---
