@@ -216,7 +216,7 @@ def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security
 
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
 
