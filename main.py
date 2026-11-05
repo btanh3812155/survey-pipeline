@@ -14,7 +14,7 @@ import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
@@ -205,6 +205,19 @@ def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
+
+SAMPLE_IMAGES_DIR = os.path.join(os.getcwd(), "data", "test_samples")
+
+@app.get("/samples/{filename}")
+async def get_sample_image(filename: str):
+    """Serves public sample testing images with path traversal protection."""
+    safe_path = os.path.realpath(os.path.join(SAMPLE_IMAGES_DIR, filename))
+    base_dir = os.path.realpath(SAMPLE_IMAGES_DIR)
+    if not (safe_path == base_dir or safe_path.startswith(base_dir + os.sep)) or not os.path.exists(safe_path) or not os.path.isfile(safe_path):
+        raise HTTPException(status_code=404, detail="Sample image not found")
+    ext = os.path.splitext(filename)[1].lower()
+    media_type = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "image/webp")
+    return FileResponse(safe_path, media_type=media_type)
 
 FORMS_STORAGE_DIR = os.path.join(os.getcwd(), "data", "forms")
 os.makedirs(FORMS_STORAGE_DIR, exist_ok=True)
