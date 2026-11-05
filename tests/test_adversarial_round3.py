@@ -19,7 +19,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
-
+from config import settings
 import main
 from main import app, DEV_STORAGE_FILE, FORMS_STORAGE_DIR, FORM_REGISTRY, append_dev_submission
 from services.form_engine import (
@@ -99,7 +99,7 @@ class TestDevSubmissionsVulnerabilities:
     via verify_admin_auth (HTTP Basic Auth). Unauthenticated calls are rejected with 401.
     """
 
-    ADMIN_AUTH = ("admin", "Legendofzeus2@")
+    ADMIN_AUTH = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
 
     def test_unauthenticated_get_dev_submissions_rejected_with_401(self, test_client):
         """
@@ -159,7 +159,7 @@ class TestFormSchemaPathTraversal:
     an attacker can supply '../evil_form' to traverse outside the designated forms directory.
     """
 
-    ADMIN_AUTH = ("admin", "Legendofzeus2@")
+    ADMIN_AUTH = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
 
     def test_upload_schema_path_traversal_parent_escape(self, test_client):
         """
@@ -649,7 +649,7 @@ class TestFormEngineReDoSAttacks:
         Validates that /api/v1/forms/upload-schema lacks any pattern complexity linter
         or safe-regex verification before persisting custom schemas.
         """
-        admin_auth = ("admin", "Legendofzeus2@")
+        admin_auth = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
         redos_schema_payload = {
             "form_id": "survey_with_evil_pattern",
             "title": "Unvetted Regex Survey",

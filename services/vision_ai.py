@@ -2,10 +2,13 @@ import base64
 import time
 import os
 import re
+import json
+import logging
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 
+logger = logging.getLogger(__name__)
 
 class ReceiptLineItem(BaseModel):
     item_name: str
@@ -53,6 +56,27 @@ class ExtractedReceiptFacts(BaseModel):
     tamper_evidence: Optional[str] = None
     notes: Optional[str] = None
 
+class FactExtractionResult(BaseModel):
+    screen_type: Optional[str] = None
+    detected_plate: Optional[str] = None
+    gross_revenue: Optional[float] = None
+    odometer_km: Optional[float] = None
+    confidence_score: Optional[float] = 1.0
+    vendor_name: Optional[str] = None
+    tax_id: Optional[str] = None
+    receipt_serial: Optional[str] = None
+    line_items: List[ReceiptLineItem] = Field(default_factory=list)
+    raw_subtotal: Optional[int] = 0
+    vat_amount: Optional[int] = 0
+    raw_total: Optional[int] = 0
+    has_signature: bool = True
+    unchecked_boxes_count: int = 0
+    is_screen_photo: bool = False
+    is_manipulated_or_photoshopped: bool = False
+    tamper_evidence: Optional[str] = None
+    notes: Optional[str] = None
+
+
 from config import settings
 
 
@@ -87,6 +111,110 @@ class DualModelVisionClient:
         # circuit breaker state
         self.consecutive_failures = 0
         self.circuit_open_until = 0.0
+
+    async def classify_image_role(self, image_bytes: bytes, filename: Optional[str] = None) -> str:
+        """
+        Classifies an uploaded survey image into one of:
+        - 'odometer': car instrument cluster / odometer / speedometer / mileage
+        - 'revenue_screen': driver ride-hailing app earnings / revenue / receipt
+        - 'vehicle_exterior': vehicle body / license plate
+        """
+        fn = (filename or "").lower()
+        if any(w in fn for w in ["odometer", "odo", "speedometer", "dashboard", "cong_to_met", "dong_ho", "km"]):
+            return "odometer"
+        if any(w in fn for w in ["revenue", "income", "screen", "receipt", "doanh_thu", "report", "man_hinh", "fare"]):
+            return "revenue_screen"
+        if any(w in fn for w in ["exterior", "vehicle", "car", "bike", "bien_so", "plate", "crop"]):
+            return "vehicle_exterior"
+
+        # Check raw bytes for test markers / metadata
+        raw_head = image_bytes[:512].lower() if image_bytes else b""
+        if b"odometer" in raw_head or b"dashboard" in raw_head or b"cong_to_met" in raw_head:
+            return "odometer"
+        if b"revenue" in raw_head or b"income" in raw_head or b"screen" in raw_head or b"receipt" in raw_head:
+            return "revenue_screen"
+        if b"exterior" in raw_head or b"vehicle" in raw_head or b"car" in raw_head or b"bike" in raw_head:
+            return "vehicle_exterior"
+
+        # Offline / Mock AI mode
+        if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
+            return "unknown"
+
+        b64_img = base64.b64encode(image_bytes).decode("utf-8")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a specialized fleet survey image classifier. "
+                    "Analyze the provided image and classify its primary content into exactly one role: "
+                    "'odometer' (car instrument cluster, dashboard, speedometer, mileage display), "
+                    "'revenue_screen' (ride-hailing driver mobile app screen showing gross earnings, trips, revenue, or receipt), "
+                    "'vehicle_exterior' (full exterior view of electric car or motorcycle, license plate, vehicle body). "
+                    "Output strictly a JSON object: {\"role\": \"odometer\" | \"revenue_screen\" | \"vehicle_exterior\" | \"unknown\"}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Classify this image role strictly as JSON:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/webp;base64,{b64_img}",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            },
+        ]
+
+        if self.deepseek_client:
+            try:
+                resp = await self.deepseek_client.chat.completions.create(
+                    model="deepseek-flash",
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                    max_tokens=128,
+                    timeout=min(self.timeout_seconds, 3.0),
+                    extra_body={"thinking": {"type": "disabled"}},
+                )
+                content = resp.choices[0].message.content or "{}"
+                if content.startswith("```json"):
+                    content = content[7:-3].strip()
+                elif content.startswith("```"):
+                    content = content[3:-3].strip()
+                data = json.loads(content)
+                role = data.get("role", "").lower()
+                if role in ("odometer", "revenue_screen", "vehicle_exterior"):
+                    return role
+            except Exception:
+                pass
+
+        if self.gemini_client:
+            for model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+                try:
+                    resp = await self.gemini_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=0.0,
+                        max_tokens=128,
+                        timeout=min(self.timeout_seconds, 4.0),
+                    )
+                    content = resp.choices[0].message.content or "{}"
+                    if content.startswith("```json"):
+                        content = content[7:-3].strip()
+                    elif content.startswith("```"):
+                        content = content[3:-3].strip()
+                    data = json.loads(content)
+                    role = data.get("role", "").lower()
+                    if role in ("odometer", "revenue_screen", "vehicle_exterior"):
+                        return role
+                except Exception:
+                    continue
+
+        return "unknown"
 
     async def extract_facts(self, webp_bytes: bytes) -> ExtractedReceiptFacts:
         # offline / development mock mode

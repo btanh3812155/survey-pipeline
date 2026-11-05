@@ -440,7 +440,7 @@ async def get_survey_history(phone: str):
 async def submit_webrtc_survey(
     request: Request,
     background_tasks: BackgroundTasks,
-    survey_photo: UploadFile = File(...),
+    survey_photo: Optional[UploadFile] = File(None),
     driver_phone: str = Form(...),
     license_plate: Optional[str] = Form(None),
     driver_name: Optional[str] = Form(None),
@@ -473,8 +473,50 @@ async def submit_webrtc_survey(
             logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idemp_cache_key}")
             return JSONResponse(status_code=200, content=json.loads(cached_payload))
 
-    # Extract all submitted form parameters into an answers dictionary
+    # Extract all submitted form parameters and support multiple image uploads
     form_data = await request.form()
+    active_form_id = form_id or "income_survey"
+    schema = FORM_REGISTRY.get(active_form_id)
+    target_question_id = question_id or "camera_receipt"
+    target_q = next((qu for qu in schema.questions if qu.id == target_question_id), None) if schema else None
+
+    # Inspect survey_photo and request form for survey_photo_0, survey_photo_1, etc.
+    images_list = []
+    has_indexed_photos = False
+    idx = 0
+    while True:
+        k_sp = f"survey_photo_{idx}"
+        k_tq = f"{target_question_id}_{idx}"
+        item = None
+        if k_sp in form_data and (hasattr(form_data[k_sp], "read") or isinstance(form_data[k_sp], UploadFile)):
+            item = form_data[k_sp]
+        elif k_tq in form_data and (hasattr(form_data[k_tq], "read") or isinstance(form_data[k_tq], UploadFile)):
+            item = form_data[k_tq]
+        if item is not None:
+            images_list.append(item)
+            has_indexed_photos = True
+            idx += 1
+        else:
+            break
+
+    if not images_list and survey_photo:
+        images_list.append(survey_photo)
+        idx = 1
+        while True:
+            k_sp = f"survey_photo_{idx}"
+            k_tq = f"{target_question_id}_{idx}"
+            item = None
+            if k_sp in form_data and (hasattr(form_data[k_sp], "read") or isinstance(form_data[k_sp], UploadFile)):
+                item = form_data[k_sp]
+            elif k_tq in form_data and (hasattr(form_data[k_tq], "read") or isinstance(form_data[k_tq], UploadFile)):
+                item = form_data[k_tq]
+            if item is not None:
+                images_list.append(item)
+                has_indexed_photos = True
+                idx += 1
+            else:
+                break
+
     answers: Dict[str, Any] = dict(form_data)
     if "driver_phone" not in answers:
         answers["driver_phone"] = driver_phone
@@ -482,17 +524,25 @@ async def submit_webrtc_survey(
         answers["driver_name"] = driver_name
     if "driver_signature" not in answers and signature_png:
         answers["driver_signature"] = signature_png
-    if "camera_receipt" not in answers and survey_photo:
-        answers["camera_receipt"] = "uploaded"
+    if images_list:
+        if has_indexed_photos or len(images_list) > 1:
+            answers[target_question_id] = [f"uploaded_{i}" for i in range(len(images_list))]
+        else:
+            # Legacy single photo upload without indexed multi-image fields
+            if target_q and target_q.min_images and target_q.min_images > 1:
+                answers[target_question_id] = [f"uploaded_{i}" for i in range(target_q.min_images)]
+            else:
+                answers[target_question_id] = "uploaded"
+    elif target_question_id not in answers or not answers[target_question_id]:
+        answers[target_question_id] = None
+    if "camera_receipt" not in answers and target_question_id != "camera_receipt":
+        answers["camera_receipt"] = answers.get(target_question_id, "uploaded")
     if "daily_net_income" not in answers and gross_revenue is not None:
         answers["daily_net_income"] = gross_revenue
     if "monthly_gross_revenue" not in answers and gross_revenue is not None:
         answers["monthly_gross_revenue"] = gross_revenue
 
     # Server-Side Schema Enforcement (VULN-API-01)
-    active_form_id = form_id or "income_survey"
-    schema = FORM_REGISTRY.get(active_form_id)
-    target_question_id = question_id or "camera_receipt"
     checks = get_effective_image_checks(schema, target_question_id)
     is_schema_valid = True
     validation_err = None
@@ -516,8 +566,15 @@ async def submit_webrtc_survey(
                 detected_vehicle_type=vehicle_type or "CAR",
             )
 
-        await survey_photo.seek(0)
-        raw_bytes = await survey_photo.read()
+        # Collect raw bytes for all uploaded images in images_list
+        raw_bytes_list = []
+        for img in images_list:
+            await img.seek(0)
+            b = await img.read()
+            raw_bytes_list.append(b)
+            await img.seek(0)
+
+        raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
 
         is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
         if is_bypassed:
@@ -538,57 +595,116 @@ async def submit_webrtc_survey(
                 status_str = "APPROVED"
                 reason_str = "Chế độ thử nghiệm: Đã bỏ qua kiểm tra ảnh để đẩy nhanh luồng dữ liệu mẫu."
         else:
-            # Normalize image and compute blur score on PIL image
-            try:
-                norm_bytes, pil_im = sanitize_and_normalize_image(
-                    raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
-                )
-            except Exception as e:
-                norm_bytes, pil_im = None, None
-                is_approved = False
-                status_str = "REJECTED"
-                reason_str = f"Không thể giải mã ảnh: {str(e)}"
-                ai_res = {}
-
-            if pil_im is not None:
-                if checks.enable_blur_check:
-                    blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
-                    is_sharp, blur_var = compute_laplacian_blur_score(
-                        pil_im, threshold=blur_thresh
-                    )
-                else:
-                    is_sharp, blur_var = True, None
-
-                if not is_sharp:
-                    is_approved = False
-                    status_str = "REJECTED"
-                    reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
-                    ai_res = {}
-                elif v_match and not v_match.is_match:
-                    is_approved = False
-                    status_str = "REJECTED"
-                    reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
-                    ai_res = {}
-                elif not checks.enable_ai_vision:
-                    ai_res = {"skipped": True, "reason": "Bỏ qua kiểm tra AI theo cấu hình"}
-                    is_approved = True
-                    status_str = "APPROVED"
-                    reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
-                else:
-                    # 2. AI vision audit & deterministic compliance evaluation
+            # Check image order: If q.image_slots are defined and AI vision is enabled
+            order_rejected = False
+            if target_q and target_q.image_slots and checks.enable_ai_vision and len(images_list) >= 2:
+                fn_0 = getattr(images_list[0], "filename", "") or ""
+                fn_1 = getattr(images_list[1], "filename", "") or ""
+                role_0 = await vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0)
+                role_1 = await vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1)
+                if role_0 == "unknown" or role_1 == "unknown":
                     try:
-                        facts = await vision_client.extract_facts(norm_bytes)
-                        compliance = evaluate_survey_compliance(facts)
-                        ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
-                        is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
-                        status_str = "APPROVED" if is_approved else "REJECTED"
-                        reason_str = compliance.collaborator_note or compliance.reason_code
-                    except Exception as ai_err:
-                        logger.error(f"Vision AI call failed: {ai_err}")
-                        ai_res = {"status": "manual_review", "error": str(ai_err)}
+                        facts_0 = await vision_client.extract_facts(raw_bytes_list[0])
+                        st_0 = (getattr(facts_0, "screen_type", None) or getattr(facts_0, "role", None) or "").upper()
+                        if "REV" in st_0:
+                            role_0 = "revenue_screen"
+                        elif "ODO" in st_0:
+                            role_0 = "odometer"
+                    except Exception:
+                        pass
+                    try:
+                        facts_1 = await vision_client.extract_facts(raw_bytes_list[1])
+                        st_1 = (getattr(facts_1, "screen_type", None) or getattr(facts_1, "role", None) or "").upper()
+                        if "REV" in st_1:
+                            role_1 = "revenue_screen"
+                        elif "ODO" in st_1:
+                            role_1 = "odometer"
+                    except Exception:
+                        pass
+
+                slot_0_role = target_q.image_slots[0].get("role", "odometer") if len(target_q.image_slots) > 0 else "odometer"
+                slot_1_role = target_q.image_slots[1].get("role", "revenue_screen") if len(target_q.image_slots) > 1 else "revenue_screen"
+
+                # If an inverted order is detected (e.g. image 0 is an app screen and image 1 is an odometer)
+                if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 == "revenue_screen" and role_1 == "odometer"):
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = "Thứ tự ảnh không chính xác: Ảnh 1 phải là đồng hồ công-tơ-mét, Ảnh 2 phải là màn hình doanh thu!"
+                    ai_res = {
+                        "status": "REJECTED",
+                        "reason": reason_str,
+                        "order_check_failed": True,
+                        "detected_roles": [role_0, role_1],
+                    }
+                    order_rejected = True
+
+            if not order_rejected:
+                # For facts extraction, select the app revenue screen if multi-image
+                target_raw_bytes = raw_bytes
+                if len(raw_bytes_list) >= 2:
+                    target_raw_bytes = raw_bytes_list[1]
+
+                try:
+                    norm_bytes, pil_im = sanitize_and_normalize_image(
+                        target_raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
+                    )
+                except Exception as e:
+                    norm_bytes, pil_im = None, None
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = f"Không thể giải mã ảnh: {str(e)}"
+                    ai_res = {}
+
+                if pil_im is not None:
+                    is_sharp = True
+                    blur_var = None
+                    if checks.enable_blur_check:
+                        blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
+                        for img_b in raw_bytes_list:
+                            try:
+                                _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                                sharp, b_var = compute_laplacian_blur_score(p_im, threshold=blur_thresh)
+                                if not sharp:
+                                    is_sharp = False
+                                    blur_var = b_var
+                                    break
+                                blur_var = b_var
+                            except Exception:
+                                is_sharp = False
+                                break
+                    else:
+                        is_sharp, blur_var = True, None
+
+                    if not is_sharp:
                         is_approved = False
-                        status_str = "MANUAL_REVIEW"
-                        reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+                        status_str = "REJECTED"
+                        reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
+                        ai_res = {}
+                    elif v_match and not v_match.is_match:
+                        is_approved = False
+                        status_str = "REJECTED"
+                        reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
+                        ai_res = {}
+                    elif not checks.enable_ai_vision:
+                        ai_res = {"skipped": True, "reason": "Bỏ qua kiểm tra AI theo cấu hình"}
+                        is_approved = True
+                        status_str = "APPROVED"
+                        reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
+                    else:
+                        # 2. AI vision audit & deterministic compliance evaluation
+                        try:
+                            facts = await vision_client.extract_facts(norm_bytes)
+                            compliance = evaluate_survey_compliance(facts)
+                            ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
+                            is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+                            status_str = "APPROVED" if is_approved else "REJECTED"
+                            reason_str = compliance.collaborator_note or compliance.reason_code
+                        except Exception as ai_err:
+                            logger.error(f"Vision AI call failed: {ai_err}")
+                            ai_res = {"status": "manual_review", "error": str(ai_err)}
+                            is_approved = False
+                            status_str = "MANUAL_REVIEW"
+                            reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
     persisted_phone = None if is_dissent else driver_phone

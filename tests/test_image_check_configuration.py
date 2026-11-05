@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 from fastapi.testclient import TestClient
 
+from config import settings
 from main import app, FORM_REGISTRY
 from services.form_engine import (
     FormSchema,
@@ -16,7 +17,7 @@ from services.form_engine import (
 
 client = TestClient(app)
 
-ADMIN_AUTH = ("admin", "Legendofzeus2@")
+ADMIN_AUTH = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
 
 
 def make_blurry_image_bytes() -> bytes:

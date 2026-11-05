@@ -41,7 +41,12 @@
         "min_length": null
       },
       "conditional": null,
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "comment",
@@ -54,7 +59,12 @@
       "options": null,
       "validation": null,
       "conditional": null,
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     }
   ]
 }

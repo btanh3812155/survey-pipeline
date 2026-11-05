@@ -46,6 +46,11 @@ class FormQuestion(BaseModel):
     validation: Optional[ValidationRule] = None
     conditional: Optional[ConditionalRule] = None # Logic branching
     image_checks: Optional[ImageCheckConfig] = None
+    allow_multiple_images: bool = False
+    min_images: Optional[int] = None
+    max_images: Optional[int] = None
+    exact_image_count: Optional[int] = None
+    image_slots: Optional[List[Dict[str, Any]]] = None  # e.g. [{"slot": 0, "title": "Đồng hồ km", "role": "odometer", "required": True}, ...]
 
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
@@ -118,6 +123,9 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
                 elif q.conditional.operator == "in" and parent_val not in q.conditional.expected_value:
                     continue
         val = answers.get(q.id)
+        matching_keys = [k for k in answers.keys() if k.startswith(f"{q.id}_")]
+        if val is None and matching_keys:
+            val = [answers[k] for k in sorted(matching_keys)]
 
         # Required check
         if q.required and (val is None or val == "" or val == []):
@@ -126,6 +134,25 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
         if val is None or val == "":
             continue
 
+        # Multi-image validation for CAMERA_WEBRTC
+        if q.type == QuestionType.CAMERA_WEBRTC:
+            if isinstance(val, (list, tuple)):
+                count = len(val)
+            elif isinstance(val, dict):
+                count = len(val)
+            elif matching_keys:
+                count = len(matching_keys)
+            elif val is not None and val != "":
+                count = 1
+            else:
+                count = 0
+
+            if q.exact_image_count is not None and count != q.exact_image_count:
+                return False, f"Câu hỏi '{q.title}' yêu cầu chính xác {q.exact_image_count} ảnh (hiện có {count} ảnh)!"
+            if q.min_images is not None and count < q.min_images:
+                return False, f"Câu hỏi '{q.title}' yêu cầu tối thiểu {q.min_images} ảnh (hiện có {count} ảnh)!"
+            if q.max_images is not None and count > q.max_images:
+                return False, f"Câu hỏi '{q.title}' không được vượt quá {q.max_images} ảnh!"
         # Regex / Constraint checks
         if q.validation:
             val_str = str(val)
@@ -317,6 +344,14 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             sample_images=[
                 "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
                 "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80",
+            ],
+            allow_multiple_images=True,
+            min_images=2,
+            max_images=3,
+            image_slots=[
+                {"slot": 0, "title": "Ảnh 1: Đồng hồ công-tơ-mét (Odometer)", "role": "odometer", "required": True},
+                {"slot": 1, "title": "Ảnh 2: Màn hình doanh thu ứng dụng", "role": "revenue_screen", "required": True},
+                {"slot": 2, "title": "Ảnh 3: Toàn cảnh xe & Biển số", "role": "vehicle_exterior", "required": False},
             ],
         ),
     ],

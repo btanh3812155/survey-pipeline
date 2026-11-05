@@ -34,7 +34,12 @@
       "options": null,
       "validation": null,
       "conditional": null,
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "consent_choice",
@@ -50,7 +55,12 @@
       ],
       "validation": null,
       "conditional": null,
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "driver_phone",
@@ -74,7 +84,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "driver_name",
@@ -91,7 +106,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "license_plate",
@@ -108,7 +128,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "vehicle_type",
@@ -129,7 +154,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "car_model",
@@ -153,7 +183,12 @@
         "operator": "equals",
         "expected_value": "Ô tô điện VinFast (GSM)"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "gross_revenue",
@@ -177,7 +212,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "odometer_km",
@@ -201,7 +241,12 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
     },
     {
       "id": "camera_receipt",
@@ -221,7 +266,31 @@
         "operator": "equals",
         "expected_value": "Tôi đồng ý"
       },
-      "image_checks": null
+      "image_checks": null,
+      "allow_multiple_images": true,
+      "min_images": 2,
+      "max_images": 3,
+      "exact_image_count": null,
+      "image_slots": [
+        {
+          "slot": 0,
+          "title": "Ảnh 1: Đồng hồ công-tơ-mét (Odometer)",
+          "role": "odometer",
+          "required": true
+        },
+        {
+          "slot": 1,
+          "title": "Ảnh 2: Màn hình doanh thu ứng dụng",
+          "role": "revenue_screen",
+          "required": true
+        },
+        {
+          "slot": 2,
+          "title": "Ảnh 3: Toàn cảnh xe & Biển số",
+          "role": "vehicle_exterior",
+          "required": false
+        }
+      ]
     }
   ]
 }

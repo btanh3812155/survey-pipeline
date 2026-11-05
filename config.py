@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     # admin credentials
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "Legendofzeus2@"
+    ADMIN_PASSWORD: str = "12345678"
 
     # database & redis
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/surveydb"

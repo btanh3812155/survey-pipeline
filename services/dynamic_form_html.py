@@ -410,6 +410,81 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             margin: 8px auto 0 auto;
         }}
 
+        /* Multi-Slot Camera Navigation Chips & Viewport Guides */
+        .cam-slots-container {{
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 4px 2px 10px 2px;
+            margin-bottom: 8px;
+            -webkit-overflow-scrolling: touch;
+        }}
+        .cam-slot-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            color: var(--muted);
+            padding: 7px 13px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+            user-select: none;
+        }}
+        .cam-slot-pill.active {{
+            background: rgba(37, 99, 235, 0.2);
+            border-color: var(--accent);
+            color: #93c5fd;
+            box-shadow: 0 0 0 1px var(--accent);
+        }}
+        .cam-slot-pill.captured {{
+            border-color: var(--success);
+            color: #a7f3d0;
+        }}
+        .cam-slot-pill.captured.active {{
+            background: rgba(16, 185, 129, 0.2);
+            border-color: var(--success);
+            box-shadow: 0 0 0 1px var(--success);
+        }}
+        .cam-slot-icon {{
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .cam-slot-icon svg {{
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }}
+        .camera-overlay-slot-badge {{
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(4px);
+            color: #f8fafc;
+            font-size: 0.76rem;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 16px;
+            max-width: 90%;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            pointer-events: none;
+            z-index: 4;
+        }}
+
         /* Signature Question Trigger Card (Full Width, Aesthetic Warm Cream Paper) */
         .sig-preview-card {{
             color-scheme: light !important;
@@ -749,6 +824,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         let gpsCoordinates = null;
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
+        const activeSlotByQId = {{}};
 
         // Bilingual Translations
         const I18N = {{
@@ -1101,8 +1177,44 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 }});
                 parent.appendChild(list);
             }} else if (q.type === 'camera_webrtc') {{
+                const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+                let activeSlotIdx = 0;
+                if (activeSlotByQId[q.id] === undefined) {{
+                    activeSlotByQId[q.id] = 0;
+                }} else {{
+                    activeSlotIdx = activeSlotByQId[q.id];
+                }}
+
+                let slotsHtml = '';
+                if (hasSlots) {{
+                    slotsHtml = `<div class="cam-slots-container" id="slotsBar_${{q.id}}">`;
+                    q.image_slots.forEach((s, sIdx) => {{
+                        const slotKey = `${{q.id}}_${{sIdx}}`;
+                        const isCap = Boolean(answers[slotKey]);
+                        const isActive = (sIdx === activeSlotIdx);
+                        const reqStar = s.required ? ' *' : '';
+                        const labelText = (s.title || `Ảnh ${{sIdx + 1}}`) + reqStar;
+                        slotsHtml += `
+                            <button type="button" class="cam-slot-pill ${{isActive ? 'active' : ''}} ${{isCap ? 'captured' : ''}}" id="slotPill_${{q.id}}_${{sIdx}}" onclick="selectCameraSlot('${{q.id}}', ${{sIdx}})">
+                                <span class="cam-slot-icon" id="slotIcon_${{q.id}}_${{sIdx}}">
+                                    ${{isCap ? '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h3l2-2h6l2 2h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m8 3a5 5 0 0 0-5 5 5 5 0 0 0 5 5 5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3z"/></svg>'}}
+                                </span>
+                                <span class="cam-slot-text">${{labelText}}</span>
+                            </button>
+                        `;
+                    }});
+                    slotsHtml += `</div>`;
+                }}
+
+                const activeSlotObj = (hasSlots && q.image_slots[activeSlotIdx]) ? q.image_slots[activeSlotIdx] : null;
+                const slotGuideText = activeSlotObj ? `Căn chỉnh: ${{activeSlotObj.title || ('Ảnh ' + (activeSlotIdx + 1))}}` : t.cam_hint;
+
                 parent.innerHTML = `
+                    ${{slotsHtml}}
                     <div class="camera-fixed-viewport" id="camBox_${{q.id}}">
+                        <div class="camera-overlay-slot-badge" id="slotBadge_${{q.id}}" style="display:${{hasSlots ? 'block' : 'none'}};">
+                            ${{slotGuideText}}
+                        </div>
                         <!-- Camera Standby Off-Screen (Always maintains 4:3 box!) -->
                         <div class="cam-standby-placeholder" id="camOffScreen_${{q.id}}">
                             <svg viewBox="0 0 24 24" class="cam-crossed-icon"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg>
@@ -1112,7 +1224,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
                         <img id="img_${{q.id}}" class="captured-img" alt="Captured">
                         <div class="camera-overlay" id="overlay_${{q.id}}">
-                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;">${{t.cam_hint}}</span>
+                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;" id="txtCamHint_${{q.id}}">${{slotGuideText}}</span>
                         </div>
                     </div>
                     <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:8px;">
@@ -1123,6 +1235,20 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                         <button type="button" class="btn-cam-deactivate" id="btnCamOff_${{q.id}}" onclick="deactivateCamera('${{q.id}}')">${{t.btn_cam_off}}</button>
                     </div>
                 `;
+
+                // If active slot already has a blob captured, show preview
+                const currentKey = hasSlots ? `${{q.id}}_${{activeSlotIdx}}` : q.id;
+                if (answers[currentKey]) {{
+                    const img = parent.querySelector(`#img_${{q.id}}`);
+                    const screenOff = parent.querySelector(`#camOffScreen_${{q.id}}`);
+                    const retakeBtn = parent.querySelector(`#retake_${{q.id}}`);
+                    if (img && answers[currentKey] instanceof Blob) {{
+                        img.src = URL.createObjectURL(answers[currentKey]);
+                        img.style.display = 'block';
+                        if (screenOff) screenOff.style.display = 'none';
+                        if (retakeBtn) retakeBtn.style.display = 'inline-block';
+                    }}
+                }}
             }} else if (q.type === 'signature') {{
                 parent.innerHTML = `
                     <div class="sig-preview-card" onclick="openSigModal('${{q.id}}')">
@@ -1231,6 +1357,105 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             if (screenOff) screenOff.style.display = 'flex';
         }}
 
+        function selectCameraSlot(qid, slotIdx) {{
+            activeSlotByQId[qid] = slotIdx;
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            if (!q) return;
+
+            // Update slot pills active state
+            const bar = document.getElementById(`slotsBar_${{qid}}`);
+            if (bar) {{
+                bar.querySelectorAll('.cam-slot-pill').forEach((pill, idx) => {{
+                    if (idx === slotIdx) pill.classList.add('active');
+                    else pill.classList.remove('active');
+                }});
+            }}
+
+            // Update slot guidance title on overlay & badge
+            const slotObj = (q.image_slots && q.image_slots[slotIdx]) ? q.image_slots[slotIdx] : null;
+            const guideText = slotObj ? `Căn chỉnh: ${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}` : I18N[currentLang].cam_hint;
+            const badge = document.getElementById(`slotBadge_${{qid}}`);
+            if (badge) badge.textContent = guideText;
+            const hint = document.getElementById(`txtCamHint_${{qid}}`);
+            if (hint) hint.textContent = guideText;
+
+            // Check if current slot has a captured photo
+            const slotKey = `${{qid}}_${{slotIdx}}`;
+            const img = document.getElementById(`img_${{qid}}`);
+            const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const overlay = document.getElementById(`overlay_${{qid}}`);
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            const retakeBtn = document.getElementById(`retake_${{qid}}`);
+            const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
+
+            if (answers[slotKey] && answers[slotKey] instanceof Blob) {{
+                // Show captured image preview for this slot
+                if (vid) vid.style.display = 'none';
+                if (overlay) overlay.style.display = 'none';
+                if (snapBtn) snapBtn.style.display = 'none';
+                if (btnCamOff) btnCamOff.style.display = 'none';
+                if (screenOff) screenOff.style.display = 'none';
+                if (img) {{
+                    img.src = URL.createObjectURL(answers[slotKey]);
+                    img.style.display = 'block';
+                }}
+                if (retakeBtn) retakeBtn.style.display = 'inline-block';
+            }} else {{
+                // Slot not captured yet: hide preview image, show retake/camera state
+                if (img) {{
+                    img.src = '';
+                    img.style.display = 'none';
+                }}
+                if (retakeBtn) retakeBtn.style.display = 'none';
+                if (activeVideoStream) {{
+                    // Camera already running, show video & shutter
+                    if (screenOff) screenOff.style.display = 'none';
+                    if (vid) vid.style.display = 'block';
+                    if (overlay) overlay.style.display = 'flex';
+                    if (snapBtn) snapBtn.style.display = 'flex';
+                    if (btnCamOff) btnCamOff.style.display = 'inline-block';
+                }} else {{
+                    // Camera not active, show standby placeholder
+                    if (vid) vid.style.display = 'none';
+                    if (overlay) overlay.style.display = 'none';
+                    if (snapBtn) snapBtn.style.display = 'none';
+                    if (btnCamOff) btnCamOff.style.display = 'none';
+                    if (screenOff) screenOff.style.display = 'flex';
+                }}
+            }}
+        }}
+
+        function updateSlotPillCapturedState(qid, slotIdx, isCaptured) {{
+            const pill = document.getElementById(`slotPill_${{qid}}_${{slotIdx}}`);
+            const icon = document.getElementById(`slotIcon_${{qid}}_${{slotIdx}}`);
+            if (pill) {{
+                if (isCaptured) pill.classList.add('captured');
+                else pill.classList.remove('captured');
+            }}
+            if (icon) {{
+                if (isCaptured) {{
+                    icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                }} else {{
+                    icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 4h3l2-2h6l2 2h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m8 3a5 5 0 0 0-5 5 5 5 0 0 0 5 5 5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3z"/></svg>';
+                }}
+            }}
+        }}
+
+        function syncAnswersImageList(qid) {{
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            if (!q) return;
+            const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+            if (hasSlots) {{
+                const list = [];
+                q.image_slots.forEach((s, idx) => {{
+                    const b = answers[`${{qid}}_${{idx}}`];
+                    if (b) list.push(b);
+                }});
+                answers[qid] = list;
+            }}
+        }}
+
         function snapPhoto(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             const img = document.getElementById(`img_${{qid}}`);
@@ -1262,8 +1487,19 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const ctx = cvs.getContext('2d');
             ctx.drawImage(vid, cropX, cropY, cropW, cropH, 0, 0, cvs.width, cvs.height);
 
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
+            const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
+
             cvs.toBlob(blob => {{
-                answers[qid] = blob;
+                if (hasSlots) {{
+                    answers[`${{qid}}_${{currentSlotIdx}}`] = blob;
+                    syncAnswersImageList(qid);
+                    updateSlotPillCapturedState(qid, currentSlotIdx, true);
+                }} else {{
+                    answers[qid] = blob;
+                }}
+
                 img.src = URL.createObjectURL(blob);
                 img.style.display = 'block';
                 vid.style.display = 'none';
@@ -1282,7 +1518,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         }}
 
         async function retakeCam(qid) {{
-            delete answers[qid];
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
+            const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
+
+            if (hasSlots) {{
+                delete answers[`${{qid}}_${{currentSlotIdx}}`];
+                syncAnswersImageList(qid);
+                updateSlotPillCapturedState(qid, currentSlotIdx, false);
+            }} else {{
+                delete answers[qid];
+            }}
+
             const img = document.getElementById(`img_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
@@ -1434,12 +1681,21 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
         function executeResetForm(silent = false) {{
             for (let k in answers) delete answers[k];
+            for (let k in activeSlotByQId) delete activeSlotByQId[k];
             document.querySelectorAll('#questionsContainer input, #questionsContainer select, #questionsContainer textarea').forEach(el => {{
                 if (el.type === 'checkbox' || el.type === 'radio') el.checked = false;
                 else el.value = '';
             }});
             document.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
-            deactivateCamera('camera_receipt');
+            SCHEMA.questions.forEach(q => {{
+                if (q.type === 'camera_webrtc') deactivateCamera(q.id);
+            }});
+            document.querySelectorAll('.cam-slot-pill').forEach(p => p.classList.remove('captured'));
+            document.querySelectorAll('.cam-slot-icon').forEach(icon => {{
+                icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 4h3l2-2h6l2 2h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m8 3a5 5 0 0 0-5 5 5 5 0 0 0 5 5 5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3z"/></svg>';
+            }});
+            document.querySelectorAll('.captured-img').forEach(img => {{ img.src = ''; img.style.display = 'none'; }});
+            document.querySelectorAll('.btn-camera-retake').forEach(btn => {{ btn.style.display = 'none'; }});
 
             document.querySelectorAll('.sig-preview-img').forEach(img => {{ img.src = ''; img.style.display = 'none'; }});
             document.querySelectorAll('[id^="sigBtnLabel_"]').forEach(lbl => {{ lbl.textContent = I18N[currentLang].sig_prompt; }});
@@ -1553,25 +1809,69 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                     delete answers['camera_receipt'];
                 }}
             }} else {{
-                if (!answers['camera_receipt']) {{
-                    const dummyCvs = document.createElement('canvas');
-                    dummyCvs.width = 100; dummyCvs.height = 100;
-                    const dctx = dummyCvs.getContext('2d');
-                    dctx.fillStyle = '#10b981';
-                    dctx.fillRect(0,0,100,100);
-                    const dummyBlob = await new Promise(r => dummyCvs.toBlob(r, 'image/webp'));
-                    dummyBlob.isDummy = true;
-                    answers['camera_receipt'] = dummyBlob;
-                }}
+                SCHEMA.questions.forEach(q => {{
+                    if (q.type === 'camera_webrtc') {{
+                        const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+                        if (hasSlots) {{
+                            q.image_slots.forEach(async (s, sIdx) => {{
+                                const slotKey = `${{q.id}}_${{sIdx}}`;
+                                if (!answers[slotKey] && s.required) {{
+                                    const dummyCvs = document.createElement('canvas');
+                                    dummyCvs.width = 100; dummyCvs.height = 100;
+                                    const dctx = dummyCvs.getContext('2d');
+                                    dctx.fillStyle = '#10b981';
+                                    dctx.fillRect(0,0,100,100);
+                                    dummyCvs.toBlob(b => {{
+                                        b.isDummy = true;
+                                        answers[slotKey] = b;
+                                        syncAnswersImageList(q.id);
+                                    }}, 'image/webp');
+                                }}
+                            }});
+                        }} else if (!answers[q.id]) {{
+                            const dummyCvs = document.createElement('canvas');
+                            dummyCvs.width = 100; dummyCvs.height = 100;
+                            const dctx = dummyCvs.getContext('2d');
+                            dctx.fillStyle = '#10b981';
+                            dctx.fillRect(0,0,100,100);
+                            dummyCvs.toBlob(b => {{
+                                b.isDummy = true;
+                                answers[q.id] = b;
+                            }}, 'image/webp');
+                        }}
+                    }}
+                }});
             }}
 
             for (let q of SCHEMA.questions) {{
-                const val = answers[q.id];
                 if (q.conditional) {{
                     const pVal = answers[q.conditional.depends_on_question_id];
                     if (q.conditional.operator === 'equals' && pVal !== q.conditional.expected_value) continue;
                 }}
-                if (q.required && (!val || val === "")) {{
+
+                // Check multi-slot camera requirements
+                if (q.type === 'camera_webrtc') {{
+                    if (Array.isArray(q.image_slots) && q.image_slots.length > 0) {{
+                        for (let sIdx = 0; sIdx < q.image_slots.length; sIdx++) {{
+                            const slot = q.image_slots[sIdx];
+                            const slotBlob = answers[`${{q.id}}_${{sIdx}}`];
+                            if (slot.required && (!slotBlob || slotBlob.size === 0)) {{
+                                alert(`Vui lòng chụp đủ ảnh cho: ${{slot.title || ('Ảnh ' + (sIdx + 1))}}!`);
+                                return;
+                            }}
+                        }}
+                    }}
+                    if (q.min_images && q.min_images > 1) {{
+                        const imgList = Array.isArray(answers[q.id]) ? answers[q.id] : (answers[q.id] ? [answers[q.id]] : []);
+                        if (imgList.length < q.min_images) {{
+                            alert(`Vui lòng chụp đủ tối thiểu ${{q.min_images}} ảnh cho: ${{q.title}}!`);
+                            return;
+                        }}
+                    }}
+                }}
+
+                const val = answers[q.id];
+                if (q.required && (!val || val === "" || (Array.isArray(val) && val.length === 0))) {{
                     alert(t.missing_required + `'${{q.title}}'`);
                     return;
                 }}
@@ -1584,11 +1884,36 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const formData = new FormData();
             for (let k in answers) {{
                 if (answers[k] instanceof Blob) {{
-                    formData.append('survey_photo', answers[k], 'survey_camera.webp');
-                }} else {{
+                    // Skip individual slot blobs if handled separately or let them append
+                    if (!k.includes('_')) {{
+                        formData.append('survey_photo', answers[k], 'survey_camera.webp');
+                    }}
+                }} else if (!Array.isArray(answers[k])) {{
                     formData.append(k, answers[k]);
                 }}
             }}
+
+            // Append camera slots
+            SCHEMA.questions.forEach(q => {{
+                if (q.type === 'camera_webrtc') {{
+                    const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+                    if (hasSlots) {{
+                        let firstBlob = null;
+                        q.image_slots.forEach((s, idx) => {{
+                            const b = answers[`${{q.id}}_${{idx}}`];
+                            if (b instanceof Blob) {{
+                                if (!firstBlob) firstBlob = b;
+                                formData.append(`survey_photo_${{idx}}`, b, `survey_slot_${{idx}}.webp`);
+                            }}
+                        }});
+                        if (firstBlob && !formData.has('survey_photo')) {{
+                            formData.append('survey_photo', firstBlob, 'survey_camera.webp');
+                        }}
+                    }} else if (answers[q.id] instanceof Blob && !formData.has('survey_photo')) {{
+                        formData.append('survey_photo', answers[q.id], 'survey_camera.webp');
+                    }}
+                }}
+            }});
 
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
             clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -1603,7 +1928,6 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 formData.append('gps_latitude', gpsCoordinates.latitude);
                 formData.append('gps_longitude', gpsCoordinates.longitude);
             }}
-
             try {{
                 const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
                 if (!resp.ok) {{
