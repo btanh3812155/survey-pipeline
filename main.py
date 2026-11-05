@@ -130,6 +130,7 @@ class BoundedTTLCache:
             return len(self._cache)
 
 LOCAL_IDEMP_CACHE = BoundedTTLCache(max_size=2048, ttl_seconds=86400.0)
+HISTORY_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 try:
     redis_client: Optional[aioredis.Redis] = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 except Exception:
@@ -347,8 +348,42 @@ async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
 
 @app.get("/api/v1/surveys/history")
-async def get_survey_history(phone: str, admin_user: str = Depends(verify_admin_auth)):
+async def get_survey_history(phone: str):
     """Retrieves previous survey attempts and rejection reasons for a given driver phone number."""
+    if not phone:
+        raise HTTPException(status_code=400, detail="Vui lòng cung cấp số điện thoại hợp lệ.")
+
+    clean_phone = re.sub(r"[\s\-\.\(\)]", "", phone.strip())
+    if not clean_phone or not re.match(r"^\+?[0-9]{8,15}$", clean_phone):
+        raise HTTPException(status_code=400, detail="Số điện thoại không hợp lệ.")
+
+    rate_limited = False
+    if redis_client:
+        try:
+            rkey = f"rate_limit:history:{clean_phone}"
+            count = await redis_client.incr(rkey)
+            if count == 1:
+                await redis_client.expire(rkey, 60)
+            if count > 30:
+                rate_limited = True
+        except Exception as e:
+            logger.warning(f"Redis rate limiting error: {e}")
+            req_count = HISTORY_RATE_LIMITER.get(clean_phone, 0)
+            if req_count >= 30:
+                rate_limited = True
+            else:
+                HISTORY_RATE_LIMITER[clean_phone] = req_count + 1
+    else:
+        req_count = HISTORY_RATE_LIMITER.get(clean_phone, 0)
+        if req_count >= 30:
+            rate_limited = True
+        else:
+            HISTORY_RATE_LIMITER[clean_phone] = req_count + 1
+
+    if rate_limited:
+        raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu lịch sử. Vui lòng thử lại sau!")
+
+    phone = clean_phone
     results = []
     if os.path.exists(DEV_STORAGE_FILE):
         try:

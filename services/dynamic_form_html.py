@@ -288,12 +288,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             font-weight: 600;
         }}
 
-        /* Fixed-Height 4:3 Aspect-Ratio Camera Viewport (Never Changes Layout Height!) */
+        /* Fixed-Height 2:3 Aspect-Ratio Camera Viewport (Never Changes Layout Height!) */
         .camera-fixed-viewport {{
             position: relative;
             width: 100%;
-            aspect-ratio: 4 / 3;
-            max-height: 42dvh;
+            aspect-ratio: 2 / 3;
+            max-height: 52dvh;
             background: #0f172a;
             border-radius: 12px;
             overflow: hidden;
@@ -719,6 +719,27 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             </div>
         </div>
     </div>
+    <!-- Submission Result Modal with Telegram Bot Link -->
+    <div class="confirm-modal-overlay" id="submissionResultModal" style="z-index:99999;">
+        <div class="confirm-box" style="max-width:440px; text-align:left; border-top:6px solid var(--accent);" id="submissionResultBox">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span id="subResultBadge" style="padding:4px 12px; border-radius:999px; font-size:0.8rem; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">APPROVED</span>
+                <span id="subResultId" style="font-family:monospace; font-size:0.9rem; font-weight:700; color:#94a3b8;">#DEV-XXXX</span>
+            </div>
+            <h3 id="subResultTitle" style="font-size:1.15rem; font-weight:800; margin:0; color:#f8fafc;">Báo cáo đã được ghi nhận</h3>
+            <div id="subResultReason" style="font-size:0.88rem; color:#cbd5e1; line-height:1.5; background:rgba(15,23,42,0.6); padding:12px; border-radius:10px; border:1px solid #334155; word-break:break-word;">
+                Chi tiết kết quả duyệt...
+            </div>
+            <a id="btnSubResultTelegram" href="https://t.me/TenBot" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; text-decoration:none; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3);">
+                <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+                <span id="txtSubResultTelegram">Mở Telegram Bot</span>
+            </a>
+            <div style="display:flex; gap:10px; margin-top:4px;">
+                <button type="button" class="btn-modal cancel" style="flex:1; padding:10px;" onclick="closeSubmissionResultModal()" id="btnSubResultClose">Đóng</button>
+                <button type="button" class="btn-modal" style="flex:1; padding:10px; background:#334155; color:#f8fafc;" onclick="resetFormFromModal()" id="btnSubResultReset">Làm phiếu mới</button>
+            </div>
+        </div>
+    </div>
 
     <canvas id="hiddenCameraCanvas" style="display:none;"></canvas>
 
@@ -777,7 +798,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 missing_required: "Vui lòng trả lời câu hỏi bắt buộc: ",
                 verdict_approved: "BÁO CÁO HỢP LỆ! Bàn giao ca thành công.",
                 verdict_rejected: "CẦN KIỂM TRA LẠI!",
-                server_err: "Lỗi kết nối máy chủ. Vui lòng thử lại sau."
+                server_err: "Lỗi kết nối máy chủ. Vui lòng thử lại sau.",
+                status_approved: "Đã duyệt",
+                status_manual_review: "Chờ kiểm tra",
+                status_rejected: "Cần kiểm tra lại",
+                modal_approved_title: "Báo Cáo Hợp Lệ!",
+                modal_approved_desc: "Bàn giao ca thành công. Thông tin của bạn đã được ghi nhận.",
+                modal_review_title: "Chờ Người Thật Kiểm Tra",
+                modal_review_desc: "Hệ thống đã chuyển phiếu đến điều phối viên để kiểm tra thủ công.",
+                modal_rejected_title: "Chưa Đạt Yêu Cầu!",
+                modal_rejected_desc: "Vui lòng chụp lại ảnh rõ nét hoặc kiểm tra lại thông tin.",
+                btn_open_telegram: "Mở Telegram Bot",
+                btn_new_submission: "Làm phiếu mới",
             }},
             en: {{
                 code: "EN",
@@ -825,7 +857,18 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 missing_required: "Please answer required question: ",
                 verdict_approved: "REPORT APPROVED! Shift handover succeeded.",
                 verdict_rejected: "VERIFICATION FAILED!",
-                server_err: "Server connection error. Please try again later."
+                server_err: "Server connection error. Please try again later.",
+                status_approved: "Approved",
+                status_manual_review: "Manual Review",
+                status_rejected: "Rejected",
+                modal_approved_title: "Report Approved!",
+                modal_approved_desc: "Shift handover succeeded. Your submission has been recorded.",
+                modal_review_title: "Pending Manual Review",
+                modal_review_desc: "Your report has been forwarded to a coordinator for manual verification.",
+                modal_rejected_title: "Verification Failed!",
+                modal_rejected_desc: "Please retake a clear photo or verify your information.",
+                btn_open_telegram: "Open Telegram Bot",
+                btn_new_submission: "New Submission",
             }}
         }};
 
@@ -860,6 +903,9 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             document.getElementById('btnHistoryQuery').textContent = t.history_query;
             document.getElementById('btnHistoryClose').textContent = t.btn_close;
 
+            if (document.getElementById('txtSubResultTelegram')) document.getElementById('txtSubResultTelegram').textContent = t.btn_open_telegram;
+            if (document.getElementById('btnSubResultClose')) document.getElementById('btnSubResultClose').textContent = t.btn_close;
+            if (document.getElementById('btnSubResultReset')) document.getElementById('btnSubResultReset').textContent = t.btn_new_submission;
             updateTestModeUI();
         }}
 
@@ -1191,11 +1237,24 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             if (!vid || !vid.videoWidth) return;
             if (navigator.vibrate) navigator.vibrate(50);
 
-            const scale = Math.min(1.0, 1280 / Math.max(vid.videoWidth, vid.videoHeight));
-            cvs.width = Math.round(vid.videoWidth * scale);
-            cvs.height = Math.round(vid.videoHeight * scale);
+            const targetAspect = 2 / 3;
+            const videoAspect = vid.videoWidth / vid.videoHeight;
+            let cropW, cropH, cropX, cropY;
+            if (videoAspect > targetAspect) {{
+                cropH = vid.videoHeight;
+                cropW = Math.round(vid.videoHeight * targetAspect);
+                cropX = Math.round((vid.videoWidth - cropW) / 2);
+                cropY = 0;
+            }} else {{
+                cropW = vid.videoWidth;
+                cropH = Math.round(vid.videoWidth / targetAspect);
+                cropX = 0;
+                cropY = Math.round((vid.videoHeight - cropH) / 2);
+            }}
+            cvs.width = Math.min(cropW, 1080);
+            cvs.height = Math.round(cvs.width / targetAspect);
             const ctx = cvs.getContext('2d');
-            ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+            ctx.drawImage(vid, cropX, cropY, cropW, cropH, 0, 0, cvs.width, cvs.height);
 
             cvs.toBlob(blob => {{
                 answers[qid] = blob;
@@ -1366,7 +1425,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
         // 6. Reset Form
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
-        function executeResetForm() {{
+        function executeResetForm(silent = false) {{
             for (let k in answers) delete answers[k];
             document.querySelectorAll('#questionsContainer input, #questionsContainer select, #questionsContainer textarea').forEach(el => {{
                 if (el.type === 'checkbox' || el.type === 'radio') el.checked = false;
@@ -1384,7 +1443,59 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             closeResetModal();
             evaluateConditionals();
             window.scrollTo({{ top: 0, behavior: 'smooth' }});
-            alert(I18N[currentLang].reset_done);
+            if (!silent) alert(I18N[currentLang].reset_done);
+        }}
+
+        function showSubmissionResultModal(res) {{
+            const modal = document.getElementById('submissionResultModal');
+            const box = document.getElementById('submissionResultBox');
+            const badge = document.getElementById('subResultBadge');
+            const idEl = document.getElementById('subResultId');
+            const titleEl = document.getElementById('subResultTitle');
+            const reasonEl = document.getElementById('subResultReason');
+            const t = I18N[currentLang];
+
+            const status = ((res && res.status) || 'REJECTED').toUpperCase();
+            const subId = (res && res.submission_id) ? '#' + res.submission_id : '';
+            idEl.textContent = subId;
+
+            if (status === 'APPROVED') {{
+                badge.textContent = t.status_approved;
+                badge.style.background = 'rgba(16, 185, 129, 0.2)';
+                badge.style.color = '#34d399';
+                badge.style.border = '1px solid #10b981';
+                box.style.borderTopColor = '#10b981';
+                titleEl.textContent = t.modal_approved_title;
+                reasonEl.textContent = (res && res.reason) || t.modal_approved_desc;
+            }} else if (status === 'MANUAL_REVIEW' || status === 'NEEDS_REVIEW' || status === 'APPEAL_PENDING') {{
+                badge.textContent = t.status_manual_review;
+                badge.style.background = 'rgba(245, 158, 11, 0.2)';
+                badge.style.color = '#fbbf24';
+                badge.style.border = '1px solid #f59e0b';
+                box.style.borderTopColor = '#f59e0b';
+                titleEl.textContent = t.modal_review_title;
+                reasonEl.textContent = (res && res.reason) || t.modal_review_desc;
+            }} else {{
+                badge.textContent = t.status_rejected;
+                badge.style.background = 'rgba(239, 68, 68, 0.2)';
+                badge.style.color = '#f87171';
+                badge.style.border = '1px solid #ef4444';
+                box.style.borderTopColor = '#ef4444';
+                titleEl.textContent = t.modal_rejected_title;
+                reasonEl.textContent = (res && res.reason) || t.modal_rejected_desc;
+            }}
+
+            modal.style.display = 'flex';
+        }}
+
+        function closeSubmissionResultModal() {{
+            const modal = document.getElementById('submissionResultModal');
+            if (modal) modal.style.display = 'none';
+        }}
+
+        function resetFormFromModal() {{
+            closeSubmissionResultModal();
+            executeResetForm(true);
         }}
 
         // 7. History Modal
@@ -1490,17 +1601,26 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 const resp = await fetch('/api/v1/survey/submit-webrtc', {{ method: 'POST', body: formData }});
                 if (!resp.ok) {{
                     const errBody = await resp.text();
-                    alert(`Error (${{resp.status}}): ${{errBody || 'Failed'}}`);
+                    let errDetail = errBody || 'Failed';
+                    try {{
+                        const j = JSON.parse(errBody);
+                        if (j.detail) errDetail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+                    }} catch(e) {{}}
+                    showSubmissionResultModal({{
+                        status: 'REJECTED',
+                        submission_id: clientSubmissionId || 'ERROR',
+                        reason: `HTTP ${{resp.status}}: ${{errDetail}}`
+                    }});
                     return;
                 }}
                 const res = await resp.json();
-                if (res.status === 'APPROVED') {{
-                    alert(`${{t.verdict_approved}}\\nID: #${{res.submission_id}}\\n${{res.reason || ''}}`);
-                }} else {{
-                    alert(`${{t.verdict_rejected}}\\nReason: ${{res.reason || 'Verification failed'}}`);
-                }}
+                showSubmissionResultModal(res);
             }} catch(e) {{
-                alert(t.server_err);
+                showSubmissionResultModal({{
+                    status: 'REJECTED',
+                    submission_id: 'NET-ERR',
+                    reason: t.server_err
+                }});
             }} finally {{
                 btn.disabled = false;
                 btn.textContent = t.btn_submit;

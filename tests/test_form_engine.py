@@ -237,13 +237,27 @@ async def test_idempotency_duplicate_submission(monkeypatch):
     assert sub_id_1 == sub_id_2
     assert data1["status"] == data2["status"]
 
-def test_survey_history_auth():
+def test_survey_history_public_access():
     client = TestClient(app)
-    # 1. Unauthenticated request must return 401
+    # 1. Unauthenticated public request succeeds without Basic Auth
     unauth_resp = client.get("/api/v1/surveys/history?phone=0988123456")
-    assert unauth_resp.status_code == 401
+    assert unauth_resp.status_code == 200
+    assert unauth_resp.json()["phone"] == "0988123456"
 
-    # 2. Authenticated request returns 200
-    auth_resp = client.get("/api/v1/surveys/history?phone=0988123456", auth=("admin", "Legendofzeus2@"))
-    assert auth_resp.status_code == 200
-    assert auth_resp.json()["phone"] == "0988123456"
+    # 2. Sanitizes input with spaces/dashes
+    sanitized_resp = client.get("/api/v1/surveys/history?phone=%200988-123-456%20")
+    assert sanitized_resp.status_code == 200
+    assert sanitized_resp.json()["phone"] == "0988123456"
+
+    # 3. Rejects invalid phone numbers
+    bad_resp = client.get("/api/v1/surveys/history?phone=invalid_phone")
+    assert bad_resp.status_code == 400
+
+    # 4. Rate-limiting triggers on excessive queries
+    rate_limited = False
+    for _ in range(35):
+        r = client.get("/api/v1/surveys/history?phone=0999888777")
+        if r.status_code == 429:
+            rate_limited = True
+            break
+    assert rate_limited is True
