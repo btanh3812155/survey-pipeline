@@ -389,9 +389,9 @@ class TestWebRTCClientSideValidationBypass:
                 "consent_choice": "Tôi đồng ý",
                 "signature_png": "data:image/png;base64,mock",
                 "driver_name": "Tài xế Test",
-                "platform_app": "Grab",
-                "vehicle_category": "Xe máy 2 bánh",
-                "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+                "license_plate": "29E-123.45",
+                "vehicle_type": "Ô tô điện VinFast (GSM)",
+                "car_model": "VF 5 Plus",
             },
             files={"survey_photo": ("test.jpg", io.BytesIO(sharp_image_bytes), "image/jpeg")},
         )
@@ -411,15 +411,15 @@ class TestWebRTCClientSideValidationBypass:
                 "consent_choice": "Tôi đồng ý",
                 "signature_png": "data:image/png;base64,mock",
                 "driver_name": "Tài xế Test",
-                "platform_app": "Grab",
-                "vehicle_category": "Xe máy 2 bánh",
-                "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
+                "license_plate": "29E-123.45",
+                "vehicle_type": "Ô tô điện VinFast (GSM)",
+                "car_model": "VF 5 Plus",
             },
             files={"survey_photo": ("test.jpg", io.BytesIO(sharp_image_bytes), "image/jpeg")},
         )
         assert resp_astron.status_code == 200
         assert resp_astron.json()["status"] == "REJECTED"
-        assert "không được lớn hơn 10000000" in resp_astron.json()["reason"]
+        assert "không được lớn hơn 50000000" in resp_astron.json()["reason"]
 
     def test_webrtc_rejects_driver_phone_regex_violations(self, test_client, sharp_image_bytes):
         """
@@ -482,11 +482,11 @@ class TestWebRTCClientSideValidationBypass:
             "consent_choice": "Tôi đồng ý",
             "driver_phone": "0988123456",
             "driver_name": "Nguyễn Văn A",
-            "platform_app": "Grab",
-            "vehicle_category": "Xe máy 2 bánh",
-            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-            "daily_net_income": 650000,
-            "monthly_gross_revenue": 18500000,
+            "license_plate": "29E-123.45",
+            "vehicle_type": "Ô tô điện VinFast (GSM)",
+            "car_model": "VF 5 Plus",
+            "gross_revenue": 1250000,
+            "odometer_km": 15200,
             "camera_receipt": "data:image/jpeg;base64,mock",
         }
 
@@ -508,8 +508,8 @@ class TestWebRTCClientSideValidationBypass:
         assert valid_phone is False
         assert "Số điện thoại" in err_phone
 
-        # 3. Negative net income is caught
-        neg_income = dict(base_valid_answers, daily_net_income=-99999999)
+        # 3. Negative revenue is caught
+        neg_income = dict(base_valid_answers, gross_revenue=-99999999)
         valid_income, err_income = validate_submission_against_schema(
             DEFAULT_TRUST_BRIDGE_SCHEMA,
             neg_income,
@@ -518,13 +518,13 @@ class TestWebRTCClientSideValidationBypass:
         assert "nhỏ hơn 0" in err_income
 
         # 4. Out of bounds revenue is caught
-        astron_rev = dict(base_valid_answers, monthly_gross_revenue=999999999999999)
+        astron_rev = dict(base_valid_answers, gross_revenue=999999999999999)
         valid_rev, err_rev = validate_submission_against_schema(
             DEFAULT_TRUST_BRIDGE_SCHEMA,
             astron_rev,
         )
         assert valid_rev is False
-        assert "lớn hơn 100000000" in err_rev
+        assert "lớn hơn 50000000" in err_rev
 # ==============================================================================
 
 class TestFormEngineReDoSAttacks:

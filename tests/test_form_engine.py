@@ -17,12 +17,12 @@ def test_default_schema_valid_submission():
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Nguyễn Văn An",
-        "platform_app": "Grab",
-        "vehicle_category": "Xe máy 2 bánh",
-        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-        "daily_net_income": "650000",
-        "monthly_gross_revenue": "18500000",
-        "camera_receipt": "mock_blob"
+        "license_plate": "29E-123.45",
+        "vehicle_type": "Ô tô điện VinFast (GSM)",
+        "car_model": "VF 5 Plus",
+        "gross_revenue": "1250000",
+        "odometer_km": "15200",
+        "camera_receipt": "mock_blob",
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, valid_answers)
     assert is_valid is True
@@ -34,32 +34,48 @@ def test_regex_constraint_invalid_phone():
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "12345", # Fails ^0[0-9]{9,10}$
         "driver_name": "Nguyễn Văn An",
-        "platform_app": "Grab",
-        "vehicle_category": "Xe máy 2 bánh",
-        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-        "daily_net_income": "650000",
-        "camera_receipt": "mock_blob"
+        "license_plate": "29E-123.45",
+        "vehicle_type": "Ô tô điện VinFast (GSM)",
+        "car_model": "VF 5 Plus",
+        "gross_revenue": "1250000",
+        "odometer_km": "15200",
+        "camera_receipt": "mock_blob",
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_answers)
     assert is_valid is False
     assert "Số điện thoại" in err
 
 def test_conditional_question_branching():
-    answers_with_consent = {
+    answers_car = {
         "driver_signature": "data:image/png;base64,mock",
         "consent_choice": "Tôi đồng ý",
         "driver_phone": "0988123456",
         "driver_name": "Trần Văn Bình",
-        "platform_app": "Be",
-        "vehicle_category": "Ô tô 4 - 7 chỗ",
-        "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-        "daily_net_income": "1200000",
-        "camera_receipt": "mock_blob"
+        "license_plate": "29E-123.45",
+        "vehicle_type": "Ô tô điện VinFast (GSM)",
+        "car_model": "VF 8",
+        "gross_revenue": "1200000",
+        "odometer_km": "5000",
+        "camera_receipt": "mock_blob",
     }
-    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_with_consent)
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_car)
     assert is_valid is True
     assert err is None
 
+    answers_bike = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi đồng ý",
+        "driver_phone": "0988123456",
+        "driver_name": "Trần Văn Bình",
+        "license_plate": "29E-123.45",
+        "vehicle_type": "Xe máy điện (GSM Bike)",
+        "gross_revenue": "300000",
+        "odometer_km": "2000",
+        "camera_receipt": "mock_blob",
+    }
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_bike)
+    assert is_valid is True
+    assert err is None
 def test_conditional_no_consent_skips_subsequent_questions():
     # When user chooses "Tôi không đồng ý", questions 3-9 are skipped
     no_consent_answers = {
@@ -95,7 +111,7 @@ def test_conditional_requires_both_signature_and_consent():
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, missing_q3_answers)
     assert is_valid is False
-    assert "Số điện thoại liên hệ của tài xế" in err
+    assert "Số điện thoại tài xế" in err
 
 def test_api_upload_and_render_arbitrary_form():
     client = TestClient(app)
@@ -171,10 +187,10 @@ def test_dev_test_mode_submission_routing(monkeypatch):
             "driver_name": "Tài xế Test Mode",
             "consent_choice": "Tôi đồng ý",
             "signature_png": "data:image/png;base64,mock",
-            "platform_app": "Grab",
-            "vehicle_category": "Xe máy 2 bánh",
-            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-            "daily_net_income": "650000",
+            "vehicle_type": "Ô tô điện VinFast (GSM)",
+            "car_model": "VF 5 Plus",
+            "gross_revenue": "650000",
+            "odometer_km": "50",
         },
         files={"survey_photo": ("test.jpg", buf, "image/jpeg")}
     )
@@ -223,10 +239,10 @@ async def test_idempotency_duplicate_submission(monkeypatch):
             "consent_choice": "Tôi đồng ý",
             "signature_png": "data:image/png;base64,mock",
             "driver_name": "Tài xế Test Mode",
-            "platform_app": "Grab",
-            "vehicle_category": "Xe máy 2 bánh",
-            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-            "daily_net_income": "650000",
+            "vehicle_type": "Ô tô điện VinFast (GSM)",
+            "car_model": "VF 5 Plus",
+            "gross_revenue": "650000",
+            "odometer_km": "50",
         },
         files={"survey_photo": ("test1.jpg", buf1, "image/jpeg")}
     )
@@ -249,10 +265,10 @@ async def test_idempotency_duplicate_submission(monkeypatch):
             "consent_choice": "Tôi đồng ý",
             "signature_png": "data:image/png;base64,mock",
             "driver_name": "Tài xế Test Mode",
-            "platform_app": "Grab",
-            "vehicle_category": "Xe máy 2 bánh",
-            "working_hours_day": "8 - 12 tiếng (Toàn thời gian)",
-            "daily_net_income": "650000",
+            "vehicle_type": "Ô tô điện VinFast (GSM)",
+            "car_model": "VF 5 Plus",
+            "gross_revenue": "650000",
+            "odometer_km": "50",
         },
         files={"survey_photo": ("test2.jpg", buf2, "image/jpeg")}
     )
