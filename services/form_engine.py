@@ -25,6 +25,15 @@ class ValidationRule(BaseModel):
     max_length: Optional[int] = None
     min_length: Optional[int] = None
 
+class ImageCheckConfig(BaseModel):
+    enable_blur_check: bool = True
+    blur_threshold: Optional[float] = None  # None falls back to settings.BLUR_THRESHOLD (40.0)
+    enable_ai_vision: bool = True           # DeepSeek / Gemini visual fact extraction
+    enable_vehicle_match: bool = True       # Vehicle plate & type persistence matching
+    enable_anti_fraud: bool = True          # Duplicate reuse / stock photo check
+    enable_ai_generated_check: bool = True  # 2D FFT synthetic diffusion check
+    enable_screen_photo_check: bool = True  # Moiré / screen recapture detection
+
 class FormQuestion(BaseModel):
     id: str
     title: str
@@ -36,6 +45,7 @@ class FormQuestion(BaseModel):
     options: Optional[List[str]] = None # For single_choice, multiple_choice, dropdown
     validation: Optional[ValidationRule] = None
     conditional: Optional[ConditionalRule] = None # Logic branching
+    image_checks: Optional[ImageCheckConfig] = None
 
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
@@ -47,6 +57,7 @@ class FormSettings(BaseModel):
     notify_email: Optional[str] = None
     decree13_required: bool = True
     is_test_mode: bool = False
+    image_checks: ImageCheckConfig = Field(default_factory=ImageCheckConfig)
 
 MAX_QUESTIONS_PER_FORM: int = 100
 
@@ -145,6 +156,17 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
                 except ValueError:
                     return False, f"Câu hỏi '{q.title}' phải là số hợp lệ!"
     return True, None
+
+def get_effective_image_checks(schema: Optional[FormSchema], question_id: Optional[str] = None) -> ImageCheckConfig:
+    if not schema:
+        return ImageCheckConfig()
+    base = schema.settings.image_checks.model_copy() if schema.settings and schema.settings.image_checks else ImageCheckConfig()
+    if question_id:
+        for q in schema.questions:
+            if q.id == question_id and q.image_checks is not None:
+                overrides = q.image_checks.model_dump(exclude_unset=True)
+                return base.model_copy(update=overrides)
+    return base
 
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(

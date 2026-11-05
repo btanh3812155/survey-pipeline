@@ -11,7 +11,16 @@
     "notify_telegram_chat_id": null,
     "notify_email": null,
     "decree13_required": true,
-    "is_test_mode": false
+    "is_test_mode": false,
+    "image_checks": {
+      "enable_blur_check": true,
+      "blur_threshold": null,
+      "enable_ai_vision": true,
+      "enable_vehicle_match": true,
+      "enable_anti_fraud": true,
+      "enable_ai_generated_check": true,
+      "enable_screen_photo_check": true
+    }
   },
   "questions": [
     {
@@ -31,7 +40,8 @@
         "max_length": null,
         "min_length": null
       },
-      "conditional": null
+      "conditional": null,
+      "image_checks": null
     },
     {
       "id": "comment",
@@ -43,7 +53,8 @@
       "sample_images": null,
       "options": null,
       "validation": null,
-      "conditional": null
+      "conditional": null,
+      "image_checks": null
     }
   ]
 }

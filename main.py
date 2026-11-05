@@ -16,7 +16,12 @@ from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
-from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA, validate_submission_against_schema
+from services.form_engine import (
+    FormSchema,
+    DEFAULT_TRUST_BRIDGE_SCHEMA,
+    validate_submission_against_schema,
+    get_effective_image_checks,
+)
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
 
@@ -448,6 +453,7 @@ async def submit_webrtc_survey(
     idempotency_key: Optional[str] = Form(None),
     bypass_img_check: Optional[bool] = Form(False),
     form_id: Optional[str] = Form(None),
+    question_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(8).upper()}"
@@ -486,6 +492,8 @@ async def submit_webrtc_survey(
     # Server-Side Schema Enforcement (VULN-API-01)
     active_form_id = form_id or "income_survey"
     schema = FORM_REGISTRY.get(active_form_id)
+    target_question_id = question_id or "camera_receipt"
+    checks = get_effective_image_checks(schema, target_question_id)
     is_schema_valid = True
     validation_err = None
     if schema:
@@ -500,7 +508,7 @@ async def submit_webrtc_survey(
     else:
         # 1. Fleet Anti-Fraud: Route through VehiclePersistenceTracker when license plate & phone are provided
         v_match = None
-        if license_plate and driver_phone:
+        if checks.enable_vehicle_match and license_plate and driver_phone:
             tracker = VehiclePersistenceTracker(db_pool=None)
             v_match = await tracker.verify_and_persist_vehicle(
                 driver_phone=driver_phone,
@@ -543,9 +551,14 @@ async def submit_webrtc_survey(
                 ai_res = {}
 
             if pil_im is not None:
-                is_sharp, blur_var = compute_laplacian_blur_score(
-                    pil_im, threshold=settings.BLUR_THRESHOLD
-                )
+                if checks.enable_blur_check:
+                    blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
+                    is_sharp, blur_var = compute_laplacian_blur_score(
+                        pil_im, threshold=blur_thresh
+                    )
+                else:
+                    is_sharp, blur_var = True, None
+
                 if not is_sharp:
                     is_approved = False
                     status_str = "REJECTED"
@@ -556,6 +569,11 @@ async def submit_webrtc_survey(
                     status_str = "REJECTED"
                     reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
                     ai_res = {}
+                elif not checks.enable_ai_vision:
+                    ai_res = {"skipped": True, "reason": "Bỏ qua kiểm tra AI theo cấu hình"}
+                    is_approved = True
+                    status_str = "APPROVED"
+                    reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
                 else:
                     # 2. AI vision audit & deterministic compliance evaluation
                     try:
@@ -571,7 +589,6 @@ async def submit_webrtc_survey(
                         is_approved = False
                         status_str = "MANUAL_REVIEW"
                         reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
-
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
     persisted_phone = None if is_dissent else driver_phone

@@ -243,7 +243,16 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             "allow_edit_after_submit": False,
             "is_test_mode": False,
             "notify_email": "",
-            "notify_telegram_chat_id": None
+            "notify_telegram_chat_id": None,
+            "image_checks": {
+                "enable_blur_check": True,
+                "blur_threshold": 40.0,
+                "enable_ai_vision": True,
+                "enable_vehicle_match": True,
+                "enable_anti_fraud": True,
+                "enable_ai_generated_check": True,
+                "enable_screen_photo_check": True
+            }
         },
         "questions": []
     }
@@ -485,6 +494,39 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             <input type="number" id="notifyChatId" value="{schema_dict['settings'].get('notify_telegram_chat_id') or ''}" placeholder="Ví dụ: -1001234567890">
                         </div>
                     </div>
+
+                    <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
+                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableBlurCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_blur_check', True) else ''}>
+                                Kiểm tra độ mờ / rung tay
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableAiVision" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_vision', True) else ''}>
+                                Kiểm tra AI Vision trích xuất hóa đơn
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableVehicleMatch" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_vehicle_match', True) else ''}>
+                                Kiểm tra đối chiếu biển số phương tiện
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableAntiFraud" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_anti_fraud', True) else ''}>
+                                Kiểm tra chống gian lận & ảnh trùng lặp
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableAiGeneratedCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_generated_check', True) else ''}>
+                                Kiểm tra ảnh AI tổng hợp
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', True) else ''}>
+                                Kiểm tra ảnh chụp màn hình
+                            </label>
+                        </div>
+                        <div class="field-group" style="max-width: 320px;">
+                            <label for="globalBlurThreshold">Ngưỡng độ mờ tùy chỉnh (mặc định 40)</label>
+                            <input type="number" step="0.1" id="globalBlurThreshold" value="{(schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') if (schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') is not None else 40}" placeholder="40">
+                        </div>
                 </div>
             </div>
 
@@ -539,6 +581,29 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             renderQuestions();
         }}
 
+        function toggleQuestionImageChecks(idx, enabled) {{
+            if (enabled) {{
+                questions[idx].image_checks = {{
+                    enable_blur_check: true,
+                    blur_threshold: null,
+                    enable_ai_vision: true,
+                    enable_vehicle_match: true,
+                    enable_anti_fraud: true,
+                    enable_ai_generated_check: true,
+                    enable_screen_photo_check: true
+                }};
+            }} else {{
+                delete questions[idx].image_checks;
+            }}
+            renderQuestions();
+        }}
+
+        function setQCheck(idx, key, val) {{
+            if (!questions[idx].image_checks) {{
+                questions[idx].image_checks = {{}};
+            }}
+            questions[idx].image_checks[key] = val;
+        }}
         function renderQuestions() {{
             const wrap = document.getElementById('questionsBuilderList');
             wrap.innerHTML = '';
@@ -577,6 +642,51 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             <input type="text" value="${{(q.options || []).join(', ')}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
                         </div>
                     ` : ''}}
+                    ${{q.type === 'camera_webrtc' ? `
+                        <details style="background:rgba(15, 23, 42, 0.7); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:4px;" ${{q.image_checks ? 'open' : ''}}>
+                            <summary style="font-size:0.84rem; font-weight:700; color:#60a5fa; cursor:pointer; user-select:none;">
+                                ⚙ Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
+                            </summary>
+                            <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+                                <label style="display:flex; align-items:center; gap:8px; font-size:0.8rem; cursor:pointer;">
+                                    <input type="checkbox" ${{q.image_checks ? 'checked' : ''}} onchange="toggleQuestionImageChecks(${{idx}}, this.checked)">
+                                    <span>Kích hoạt cấu hình kiểm tra riêng (ghi đè cấu hình toàn cục)</span>
+                                </label>
+                                ${{q.image_checks ? `
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px; margin-top:6px; padding-left:12px; border-left:2px solid var(--accent);">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_blur_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_blur_check', this.checked)">
+                                            Kiểm tra độ mờ / rung tay
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_ai_vision !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_vision', this.checked)">
+                                            Kiểm tra AI Vision
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_vehicle_match !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_vehicle_match', this.checked)">
+                                            Đối chiếu biển số
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_anti_fraud !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_anti_fraud', this.checked)">
+                                            Chống gian lận & trùng lặp
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_ai_generated_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_generated_check', this.checked)">
+                                            Kiểm tra ảnh AI tổng hợp
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                            <input type="checkbox" ${{q.image_checks.enable_screen_photo_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_screen_photo_check', this.checked)">
+                                            Kiểm tra chụp màn hình
+                                        </label>
+                                    </div>
+                                    <div class="field-group" style="max-width:240px; margin-top:6px; padding-left:12px;">
+                                        <label style="font-size:0.75rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
+                                        <input type="number" step="0.1" value="${{q.image_checks.blur_threshold !== undefined && q.image_checks.blur_threshold !== null ? q.image_checks.blur_threshold : 40}}" oninput="setQCheck(${{idx}}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
+                                    </div>
+                                ` : ''}}
+                            </div>
+                        </details>
+                    ` : ''}}
                 `;
                 wrap.appendChild(item);
             }});
@@ -600,7 +710,16 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                     access_control: document.getElementById('accessControl').value,
                     is_test_mode: document.getElementById('isTestMode').value === 'true',
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
-                    decree13_required: true
+                    decree13_required: true,
+                    image_checks: {{
+                        enable_blur_check: document.getElementById('globalEnableBlurCheck') ? document.getElementById('globalEnableBlurCheck').checked : true,
+                        blur_threshold: (document.getElementById('globalBlurThreshold') && document.getElementById('globalBlurThreshold').value !== '') ? parseFloat(document.getElementById('globalBlurThreshold').value) : 40.0,
+                        enable_ai_vision: document.getElementById('globalEnableAiVision') ? document.getElementById('globalEnableAiVision').checked : true,
+                        enable_vehicle_match: document.getElementById('globalEnableVehicleMatch') ? document.getElementById('globalEnableVehicleMatch').checked : true,
+                        enable_anti_fraud: document.getElementById('globalEnableAntiFraud') ? document.getElementById('globalEnableAntiFraud').checked : true,
+                        enable_ai_generated_check: document.getElementById('globalEnableAiGeneratedCheck') ? document.getElementById('globalEnableAiGeneratedCheck').checked : true,
+                        enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : true
+                    }}
                 }},
                 questions: questions
             }};
