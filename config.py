@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # admin credentials
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "12345678"
+    # security pepper / secret
+    APP_SECRET: str = "survey_secret_salt_pepper_survey_pipeline_2026"
 
     # database & redis
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/surveydb"

@@ -46,6 +46,19 @@ services:
     depends_on:
       - postgres
 
+  telegram-bot:
+    build: .
+    restart: always
+    command: python -m services.telegram_polling
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_GROUP_ID=${TELEGRAM_ADMIN_GROUP_ID}
+      - PYTHONPATH=/app
+    depends_on:
+      - postgres
+
   postgres:
     image: pgvector/pgvector:pg16
     restart: always

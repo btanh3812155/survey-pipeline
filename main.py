@@ -43,6 +43,13 @@ from services.evaluator import evaluate_survey_compliance
 from services.templates_vn import render_telegram_verdict
 from services.storage_r2 import r2_client
 from services.vehicle_tracker import VehiclePersistenceTracker
+from services.privacy_crypto import (
+    hash_phone,
+    hash_plate,
+    generate_driver_tag,
+    mask_phone,
+    mask_license_plate,
+)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main_api")
 
@@ -353,7 +360,10 @@ async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
 
 @app.get("/api/v1/surveys/history")
-async def get_survey_history(phone: str):
+async def get_survey_history(
+    phone: str,
+    admin_user: str = Depends(verify_admin_auth),
+):
     """Retrieves previous survey attempts and rejection reasons for a given driver phone number."""
     if not phone:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp số điện thoại hợp lệ.")
@@ -456,6 +466,11 @@ async def submit_webrtc_survey(
     question_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
+    # Privacy hashing & PII pseudonymization
+    driver_phone_hash = hash_phone(driver_phone)
+    license_plate_hash = hash_plate(license_plate) if license_plate else None
+    driver_tag = generate_driver_tag(driver_phone)
+
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(8).upper()}"
     # 0. Idempotency Check: return cached response if key was already submitted
     if idempotency_key:
@@ -564,6 +579,7 @@ async def submit_webrtc_survey(
                 driver_phone=driver_phone,
                 detected_plate=license_plate,
                 detected_vehicle_type=vehicle_type or "CAR",
+                driver_phone_hash=driver_phone_hash,
             )
 
         # Collect raw bytes for all uploaded images in images_list
@@ -730,6 +746,9 @@ async def submit_webrtc_survey(
         dev_record = {
             "submission_id": submission_id,
             "mode": "TEST_DEV_MODE",
+            "driver_tag": driver_tag,
+            "driver_phone_hash": driver_phone_hash,
+            "license_plate_hash": license_plate_hash,
             "driver_phone": persisted_phone,
             "driver_name": persisted_name,
             "license_plate": license_plate,
@@ -749,12 +768,23 @@ async def submit_webrtc_survey(
                     cur_res = await cur_res
                 cur = await cur_res.__aenter__() if hasattr(cur_res, "__aenter__") else cur_res
                 try:
+                    if not is_dissent and persisted_phone:
+                        await cur.execute(
+                            """
+                            INSERT INTO driver_identity_vault (
+                                driver_id, driver_phone, driver_name
+                            ) VALUES (%s, %s, %s)
+                            ON CONFLICT (driver_phone) DO UPDATE
+                            SET driver_id = EXCLUDED.driver_id, driver_name = EXCLUDED.driver_name;
+                            """,
+                            (driver_tag, persisted_phone, persisted_name),
+                        )
                     await cur.execute(
                         """
                         INSERT INTO survey_submissions (
                             submission_id, driver_phone, driver_name, receipt_serial_no,
-                            status, rejection_reason, raw_extracted_facts
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            status, rejection_reason, raw_extracted_facts, driver_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (submission_id) DO NOTHING;
                         """,
                         (
@@ -765,6 +795,7 @@ async def submit_webrtc_survey(
                             status_str,
                             reason_str if not is_approved else None,
                             json.dumps(ai_res),
+                            driver_tag if not is_dissent else None,
                         ),
                     )
                     if license_plate and not is_dissent:
@@ -779,9 +810,11 @@ async def submit_webrtc_survey(
                         )
                     outbox_payload = {
                         "submission_id": submission_id,
-                        "driver_phone": persisted_phone,
+                        "driver_tag": driver_tag,
+                        "driver_phone_hash": driver_phone_hash,
                         "driver_name": persisted_name,
                         "license_plate": license_plate or ai_res.get("detected_plate"),
+                        "license_plate_hash": license_plate_hash or (hash_plate(ai_res.get("detected_plate")) if ai_res.get("detected_plate") else None),
                         "vehicle_type": vehicle_type or "CAR",
                         "gross_revenue": gross_revenue,
                         "trip_count": trip_count,
@@ -829,6 +862,7 @@ async def submit_webrtc_survey(
         "submission_id": submission_id,
         "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
         "reason": reason_str,
+        "driver_tag": driver_tag,
         "driver_phone": driver_phone,
         "detected_plate": ai_res.get("detected_plate") or license_plate,
         "gross_revenue": gross_revenue,

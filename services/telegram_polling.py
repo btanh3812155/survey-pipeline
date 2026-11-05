@@ -173,13 +173,14 @@ class TelegramPollingRunner:
             )
             await self.send_message(chat_id, welcome_msg)
 
-        elif cmd in ("/check", "/query"):
+        elif cmd in ("/check", "/query", "/audit"):
             parts = clean_text.split(" ", 1)
             if len(parts) < 2 or not parts[1].strip():
+                action_name = "kiểm toán" if cmd == "/audit" else "tra cứu"
                 await self.send_message(
                     chat_id,
-                    "⚠️ <b>Vui lòng cung cấp mã phiếu cần tra cứu.</b>\n"
-                    "Ví dụ: <code>/check VN-123456</code> hoặc <code>/query DEV-ABCD</code>",
+                    f"⚠️ <b>Vui lòng cung cấp mã phiếu cần {action_name}.</b>\n"
+                    f"Ví dụ: <code>{cmd} VN-123456</code> hoặc <code>{cmd} DEV-ABCD</code>",
                 )
                 return
 
@@ -193,8 +194,19 @@ class TelegramPollingRunner:
                 return
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
             report_text = render_dossier_message(dossier)
-            await self.send_message(chat_id, report_text)
-
+            audit_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": "🔍 Xem hồ sơ", "callback_data": f"admin_query:{sub_id}"},
+                        {"text": "🛡️ Kiểm toán", "callback_data": f"admin_audit:{sub_id}"},
+                    ],
+                    [
+                        {"text": "✅ Duyệt", "callback_data": f"admin_approve:{sub_id}"},
+                        {"text": "❌ Từ chối", "callback_data": f"admin_reject:{sub_id}"},
+                    ],
+                ]
+            }
+            await self.send_message(chat_id, report_text, reply_markup=audit_buttons)
         elif cmd == "/stats":
             stats_msg = await self.get_stats_message()
             await self.send_message(chat_id, stats_msg)
@@ -221,6 +233,7 @@ class TelegramPollingRunner:
                 "Các lệnh hỗ trợ:\n"
                 "• <code>/start</code> - Thông tin bắt đầu & link nộp form\n"
                 "• <code>/check &lt;id&gt;</code> hoặc <code>/query &lt;id&gt;</code> - Tra cứu hồ sơ phiếu\n"
+                "• <code>/audit &lt;id&gt;</code> - Kiểm toán niêm phong SHA-256 & chi tiết phiếu\n"
                 "• <code>/stats</code> - Xem thống kê tổng số, đã duyệt, từ chối\n"
                 "• <code>/forms</code> - Xem danh sách các biểu mẫu đang mở"
             )
@@ -277,6 +290,12 @@ class TelegramPollingRunner:
                 f"🔄 <b>Đã chấp thuận yêu cầu đổi xe cho tài xế {phone} (phiếu #{sub_id}).</b>",
             )
             await self.answer_callback_query(cq_id, "Đã cho phép đổi xe")
+        elif data.startswith("admin_audit:"):
+            sub_id = data.split(":", 1)[1]
+            dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
+            report_text = render_dossier_message(dossier)
+            await self.send_message(cq_chat_id, report_text)
+            await self.answer_callback_query(cq_id, f"Đã kiểm toán #{sub_id}")
         else:
             await self.answer_callback_query(cq_id)
 
@@ -295,8 +314,14 @@ class TelegramPollingRunner:
             await self.handle_callback_query(update["callback_query"])
     async def poll_once(self) -> int:
         """Executes a single long-polling request against getUpdates."""
-        if not self.bot_token or self.bot_token == "mock_tg_token":
-            await asyncio.sleep(1.0)
+        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            logger.warning(
+                "TELEGRAM_BOT_TOKEN is not configured or mock ('%s'). Bot running in idle sleep mode with backoff. Sleeping %.1fs...",
+                self.bot_token,
+                self.backoff_delay,
+            )
+            await asyncio.sleep(self.backoff_delay)
+            self.backoff_delay = min(self.backoff_delay * 1.5, self.max_backoff)
             return 0
 
         client = await self.get_client()
@@ -361,7 +386,19 @@ class TelegramPollingRunner:
 
 
 async def run_polling_loop(runner: Optional[TelegramPollingRunner] = None) -> None:
-    active_runner = runner or TelegramPollingRunner()
+    pool = None
+    if runner is None:
+        try:
+            from psycopg_pool import AsyncConnectionPool
+            pool = AsyncConnectionPool(conninfo=settings.DATABASE_URL, min_size=1, max_size=5, open=False)
+            await pool.open()
+        except Exception as e:
+            logger.info("Database pool not available in standalone bot: %s", e)
+            pool = None
+        active_runner = TelegramPollingRunner(db_pool=pool)
+    else:
+        active_runner = runner
+
     try:
         await active_runner.start_polling()
     except asyncio.CancelledError:
@@ -369,7 +406,11 @@ async def run_polling_loop(runner: Optional[TelegramPollingRunner] = None) -> No
     finally:
         active_runner.stop()
         await active_runner.aclose()
-
+        if pool:
+            try:
+                await pool.close()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     asyncio.run(run_polling_loop())

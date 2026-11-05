@@ -17,6 +17,8 @@ def normalize_license_plate(plate: Optional[str]) -> str:
     """Normalizes Vietnamese license plate: '29E-123.45' -> '29E12345'"""
     if not plate:
         return ""
+    if not isinstance(plate, (str, bytes)):
+        return ""
     return re.sub(r"[^A-Z0-9]", "", plate.upper().strip())
 
 
@@ -30,6 +32,7 @@ class VehiclePersistenceTracker:
         detected_plate: Optional[str],
         detected_vehicle_type: str,  # 'BIKE' or 'CAR'
         detected_color: Optional[str] = None,
+        driver_phone_hash: Optional[str] = None,
     ) -> VehicleMatchResult:
         """
         Ensures vehicle consistency per driver.
@@ -58,18 +61,34 @@ class VehiclePersistenceTracker:
                 detected_plate=norm_detected,
             )
 
-        async with self.db_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                # 1. lookup existing registered vehicle for this driver
+        conn_ctx = self.db_pool.connection()
+        conn = await conn_ctx.__aenter__() if hasattr(conn_ctx, "__aenter__") else (await conn_ctx if hasattr(conn_ctx, "__await__") else conn_ctx)
+        try:
+            cur_ctx = conn.cursor()
+            if hasattr(cur_ctx, "__await__"):
+                cur_ctx = await cur_ctx
+            cur = await cur_ctx.__aenter__() if hasattr(cur_ctx, "__aenter__") else cur_ctx
+            try:
+                # 1. lookup existing registered vehicle for this driver by raw phone or phone hash
+                phone_hash = driver_phone_hash
+                if not phone_hash and driver_phone:
+                    try:
+                        from services.privacy_crypto import hash_phone
+                        phone_hash = hash_phone(driver_phone)
+                    except Exception:
+                        phone_hash = driver_phone
+
                 await cur.execute(
                     """
                     SELECT license_plate, vehicle_type, vehicle_color
                     FROM driver_registered_vehicles
-                    WHERE driver_phone = %s;
+                    WHERE driver_phone = %s OR driver_phone = %s;
                 """,
-                    (driver_phone,),
+                    (driver_phone, phone_hash or driver_phone),
                 )
                 existing = await cur.fetchone()
+                if existing is not None and not isinstance(existing, (tuple, list)):
+                    existing = None
 
                 # 2. first survey -> register this vehicle
                 if not existing:
@@ -140,6 +159,12 @@ class VehiclePersistenceTracker:
                     registered_plate=reg_plate,
                     detected_plate=detected_plate,
                 )
+            finally:
+                if hasattr(cur_ctx, "__aexit__"):
+                    await cur_ctx.__aexit__(None, None, None)
+        finally:
+            if hasattr(conn_ctx, "__aexit__"):
+                await conn_ctx.__aexit__(None, None, None)
 
     async def approve_vehicle_change(
         self,
@@ -148,6 +173,7 @@ class VehiclePersistenceTracker:
         new_vehicle_type: str,
         admin_id: int,
         reason: str = "Tài xế đổi xe công ty",
+        driver_phone_hash: Optional[str] = None,
     ) -> Tuple[bool, int, str]:
         """
         Pathway for admins to allow legitimate vehicle changes while monitoring frequency & recency.
@@ -159,14 +185,30 @@ class VehiclePersistenceTracker:
         if not self.db_pool:
             return True, 1, "Mock: Đã cập nhật xe mới thành công."
 
-        async with self.db_pool.connection() as conn:
-            async with conn.cursor() as cur:
+        conn_ctx = self.db_pool.connection()
+        conn = await conn_ctx.__aenter__() if hasattr(conn_ctx, "__aenter__") else (await conn_ctx if hasattr(conn_ctx, "__await__") else conn_ctx)
+        try:
+            cur_ctx = conn.cursor()
+            if hasattr(cur_ctx, "__await__"):
+                cur_ctx = await cur_ctx
+            cur = await cur_ctx.__aenter__() if hasattr(cur_ctx, "__aenter__") else cur_ctx
+            try:
+                phone_hash = driver_phone_hash
+                if not phone_hash and driver_phone:
+                    try:
+                        from services.privacy_crypto import hash_phone
+                        phone_hash = hash_phone(driver_phone)
+                    except Exception:
+                        phone_hash = driver_phone
+
                 # 1. get current vehicle
                 await cur.execute(
-                    "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone = %s;",
-                    (driver_phone,),
+                    "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone = %s OR driver_phone = %s;",
+                    (driver_phone, phone_hash or driver_phone),
                 )
                 curr = await cur.fetchone()
+                if curr is not None and not isinstance(curr, (tuple, list)):
+                    curr = None
                 old_plate = curr[0] if curr else "UNKNOWN"
                 old_type = curr[1] if curr else vtype
 
@@ -174,12 +216,11 @@ class VehiclePersistenceTracker:
                 await cur.execute(
                     """
                     SELECT COUNT(*) FROM vehicle_change_history 
-                    WHERE driver_phone = %s AND created_at > NOW() - INTERVAL '30 DAYS';
+                    WHERE (driver_phone = %s OR driver_phone = %s) AND created_at > NOW() - INTERVAL '30 DAYS';
                 """,
-                    (driver_phone,),
+                    (driver_phone, phone_hash or driver_phone),
                 )
                 recent_changes = (await cur.fetchone())[0] + 1
-
                 # 3. log to audit ledger
                 await cur.execute(
                     """
@@ -212,3 +253,9 @@ class VehiclePersistenceTracker:
                     warning = f" ⚠️ Cảnh báo: Tài xế này đã đổi xe {recent_changes} lần trong 30 ngày qua!"
 
                 return True, recent_changes, f"Đã duyệt đổi sang xe {norm_new} ({vtype}).{warning}"
+            finally:
+                if hasattr(cur_ctx, "__aexit__"):
+                    await cur_ctx.__aexit__(None, None, None)
+        finally:
+            if hasattr(conn_ctx, "__aexit__"):
+                await conn_ctx.__aexit__(None, None, None)

@@ -130,6 +130,26 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             cursor: pointer;
         }}
 
+        /* Inline GPS Status Indicator */
+        .gps-status-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid var(--border);
+            color: #cbd5e1;
+            transition: all 0.25s ease;
+        }}
+        .gps-status-pill.success {{
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #34d399;
+        }}
+
         /* Test Mode Banner */
         .test-banner {{
             background: rgba(30, 41, 59, 0.6);
@@ -425,14 +445,16 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         .cam-slot-pill {{
             display: inline-flex;
             align-items: center;
-            gap: 6px;
+            justify-content: center;
+            gap: 5px;
+            min-width: 42px;
+            padding: 6px 12px;
+            border-radius: 20px;
             background: var(--surface);
             border: 1.5px solid var(--border);
             color: var(--muted);
-            padding: 7px 13px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
+            font-size: 0.85rem;
+            font-weight: 700;
             cursor: pointer;
             white-space: nowrap;
             transition: all 0.2s ease;
@@ -704,15 +726,16 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             <svg viewBox="0 0 24 24" class="globe-icon"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
             <span id="currentLangCode">VI</span>
         </button>
-        <button type="button" class="btn-sample" onclick="openHistoryModal()" id="btnHistoryNav">Xem lịch sử nộp</button>
+        <button type="button" class="btn-sample" onclick="openHistoryModal()" id="btnHistoryNav" style="display:none;">Xem lịch sử nộp</button>
     </div>
 
     <!-- GPS Authorization Banner -->
-    <div class="gps-banner" id="gpsBanner">
+    <div class="gps-banner" id="gpsBanner" style="display:none;">
         <div class="gps-status-text" id="gpsStatusText">
             Cho phép truy cập vị trí để xác nhận điểm bàn giao ca
         </div>
         <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
+        <div class="gps-status-pill" id="gpsStatusPill" style="display:none;"></div>
     </div>
 
     <!-- Test Mode Banner with Bypass Toggle -->
@@ -782,7 +805,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
     </div>
 
     <!-- History Modal -->
-    <div class="modal-paper-overlay" id="historyModal" style="z-index:99998;">
+    <div class="modal-paper-overlay" id="historyModal" style="display:none; z-index:99998;">
         <div class="paper-sheet" style="background:#0f172a !important; color:#f8fafc !important; border:1px solid #334155; border-top:6px solid #2563eb;">
             <div class="paper-header">
                 <h3 style="color:#f8fafc !important;" id="txtHistoryModalTitle">Lịch Sử Các Lần Nộp</h3>
@@ -808,7 +831,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             <div id="subResultReason" style="font-size:0.88rem; color:#cbd5e1; line-height:1.5; background:rgba(15,23,42,0.6); padding:12px; border-radius:10px; border:1px solid #334155; word-break:break-word;">
                 Chi tiết kết quả duyệt...
             </div>
-            <button type="button" id="btnSubResultHistory" onclick="closeSubmissionResultModal(); openHistoryModal();" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3); border:none; cursor:pointer;">
+            <button type="button" id="btnSubResultHistory" onclick="closeSubmissionResultModal(); openHistoryModal();" style="display:none; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3); border:none; cursor:pointer;">
                 <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
                 <span id="txtSubResultHistory">Tra cứu lịch sử nộp trên web</span>
             </button>
@@ -840,6 +863,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 gps_prompt: "Cho phép truy cập vị trí để xác nhận điểm bàn giao ca",
                 gps_btn: "Bật vị trí",
                 gps_getting: "Đang xác định vị trí...",
+                gps_acquiring: "Đang lấy vị trí...",
+                gps_acquired: "📍 Đã xác nhận vị trí",
                 gps_denied: "Quyền vị trí bị từ chối. Vui lòng cho phép trong cài đặt.",
                 gps_err: "Chưa thể lấy vị trí. Vui lòng thử lại.",
                 mode_label: "Chế độ biểu mẫu:",
@@ -900,6 +925,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 gps_prompt: "Allow location access to verify vehicle shift handover location",
                 gps_btn: "Enable Location",
                 gps_getting: "Detecting location...",
+                gps_acquiring: "Getting location...",
+                gps_acquired: "📍 Location acquired",
                 gps_denied: "Location permission denied. Please allow in settings.",
                 gps_err: "Cannot obtain location. Please try again.",
                 mode_label: "Form Mode:",
@@ -1055,6 +1082,139 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         let hasModalSignature = false;
 
         // 1. GPS Request
+        function applyGpsSuccess(pos) {{
+            gpsCoordinates = {{
+                latitude: pos.coords.latitude,
+                longitude: pos.coords.longitude,
+                accuracy: pos.coords.accuracy
+            }};
+            try {{
+                localStorage.setItem('tb_gps_granted', 'true');
+            }} catch(e) {{}}
+            const btn = document.getElementById('btnRequestGps');
+            if (btn) btn.style.display = 'none';
+            const pill = document.getElementById('gpsStatusPill');
+            if (pill) {{
+                pill.className = 'gps-status-pill success';
+                pill.textContent = I18N[currentLang].gps_acquired;
+                pill.style.display = 'inline-flex';
+            }}
+            const banner = document.getElementById('gpsBanner');
+            if (banner) {{
+                const txt = document.getElementById('gpsStatusText');
+                if (txt) txt.style.display = 'none';
+                banner.style.display = 'flex';
+                banner.style.background = 'transparent';
+                banner.style.border = 'none';
+                banner.style.padding = '0';
+                banner.style.marginBottom = '8px';
+                banner.style.justifyContent = 'flex-start';
+            }}
+        }}
+
+        function applyGpsFailure(err) {{
+            const btn = document.getElementById('btnRequestGps');
+            const txt = document.getElementById('gpsStatusText');
+            const pill = document.getElementById('gpsStatusPill');
+            const banner = document.getElementById('gpsBanner');
+            if (pill) pill.style.display = 'none';
+            if (btn) {{
+                btn.disabled = false;
+                btn.style.display = 'inline-block';
+                btn.textContent = I18N[currentLang].gps_btn;
+            }}
+            if (txt) {{
+                txt.style.display = 'block';
+                txt.textContent = (err && err.code === 1) ? I18N[currentLang].gps_denied : I18N[currentLang].gps_err;
+            }}
+            if (banner) {{
+                banner.style.display = 'flex';
+                banner.style.background = 'rgba(30, 41, 59, 0.95)';
+                banner.style.border = '1px solid var(--border)';
+                banner.style.padding = '10px 14px';
+                banner.style.marginBottom = '12px';
+                banner.style.justifyContent = 'space-between';
+            }}
+        }}
+
+        function initGpsBannerBehavior() {{
+            if (!navigator.geolocation) return;
+            const wasGranted = localStorage.getItem('tb_gps_granted') === 'true';
+            if (navigator.permissions && navigator.permissions.query) {{
+                navigator.permissions.query({{ name: 'geolocation' }}).then((perm) => {{
+                    if (perm.state === 'granted' || wasGranted) {{
+                        fetchGpsSilently();
+                    }} else if (perm.state === 'prompt') {{
+                        showInitialGpsPrompt();
+                    }} else {{
+                        applyGpsFailure({{ code: 1 }});
+                    }}
+                    perm.onchange = () => {{
+                        if (perm.state === 'granted') fetchGpsSilently();
+                    }};
+                }}).catch(() => {{
+                    if (wasGranted) fetchGpsSilently();
+                    else showInitialGpsPrompt();
+                }});
+            }} else {{
+                if (wasGranted) fetchGpsSilently();
+                else showInitialGpsPrompt();
+            }}
+        }}
+
+        function showInitialGpsPrompt() {{
+            const banner = document.getElementById('gpsBanner');
+            const btn = document.getElementById('btnRequestGps');
+            const txt = document.getElementById('gpsStatusText');
+            const pill = document.getElementById('gpsStatusPill');
+            if (pill) pill.style.display = 'none';
+            if (banner) {{
+                banner.style.display = 'flex';
+                banner.style.background = 'rgba(30, 41, 59, 0.95)';
+                banner.style.border = '1px solid var(--border)';
+                banner.style.padding = '10px 14px';
+                banner.style.marginBottom = '12px';
+                banner.style.justifyContent = 'space-between';
+            }}
+            if (txt) {{
+                txt.style.display = 'block';
+                txt.textContent = I18N[currentLang].gps_prompt;
+            }}
+            if (btn) {{
+                btn.style.display = 'inline-block';
+                btn.disabled = false;
+                btn.textContent = I18N[currentLang].gps_btn;
+            }}
+        }}
+
+        function fetchGpsSilently() {{
+            const banner = document.getElementById('gpsBanner');
+            const btn = document.getElementById('btnRequestGps');
+            const txt = document.getElementById('gpsStatusText');
+            const pill = document.getElementById('gpsStatusPill');
+            if (btn) btn.style.display = 'none';
+            if (txt) txt.style.display = 'none';
+            if (pill) {{
+                pill.className = 'gps-status-pill';
+                pill.textContent = I18N[currentLang].gps_acquiring;
+                pill.style.display = 'inline-flex';
+            }}
+            if (banner) {{
+                banner.style.display = 'flex';
+                banner.style.background = 'transparent';
+                banner.style.border = 'none';
+                banner.style.padding = '0';
+                banner.style.marginBottom = '8px';
+                banner.style.justifyContent = 'flex-start';
+            }}
+            navigator.geolocation.getCurrentPosition(
+                (pos) => applyGpsSuccess(pos),
+                (err) => applyGpsFailure(err),
+                {{ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }}
+            );
+        }}
+
+        // 1. GPS Request
         function requestGps() {{
             if (!navigator.geolocation) {{
                 alert("Geolocation not supported!");
@@ -1067,20 +1227,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             txt.textContent = I18N[currentLang].gps_getting;
 
             navigator.geolocation.getCurrentPosition(
-                (pos) => {{
-                    gpsCoordinates = {{
-                        latitude: pos.coords.latitude,
-                        longitude: pos.coords.longitude,
-                        accuracy: pos.coords.accuracy
-                    }};
-                    const banner = document.getElementById('gpsBanner');
-                    if (banner) banner.style.display = 'none';
-                }},
-                (err) => {{
-                    btn.disabled = false;
-                    btn.textContent = I18N[currentLang].gps_btn;
-                    txt.textContent = (err.code === 1) ? I18N[currentLang].gps_denied : I18N[currentLang].gps_err;
-                }},
+                (pos) => applyGpsSuccess(pos),
+                (err) => applyGpsFailure(err),
                 {{ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }}
             );
         }}
@@ -1216,13 +1364,13 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         const isCap = Boolean(answers[slotKey]);
                         const isActive = (sIdx === activeSlotIdx);
                         const reqStar = s.required ? ' *' : '';
-                        const labelText = (s.title || `Ảnh ${{sIdx + 1}}`) + reqStar;
+                        const slotNumberLabel = `${{sIdx + 1}}${{reqStar}}`;
                         slotsHtml += `
-                            <button type="button" class="cam-slot-pill ${{isActive ? 'active' : ''}} ${{isCap ? 'captured' : ''}}" id="slotPill_${{q.id}}_${{sIdx}}" onclick="selectCameraSlot('${{q.id}}', ${{sIdx}})">
+                            <button type="button" class="cam-slot-pill ${{isActive ? 'active' : ''}} ${{isCap ? 'captured' : ''}}" id="slotPill_${{q.id}}_${{sIdx}}" onclick="selectCameraSlot('${{q.id}}', ${{sIdx}})" title="${{s.title || ('Ảnh ' + (sIdx + 1))}}">
                                 <span class="cam-slot-icon" id="slotIcon_${{q.id}}_${{sIdx}}">
                                     ${{isCap ? '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h3l2-2h6l2 2h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m8 3a5 5 0 0 0-5 5 5 5 0 0 0 5 5 5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3z"/></svg>'}}
                                 </span>
-                                <span class="cam-slot-text">${{labelText}}</span>
+                                <span class="cam-slot-text">${{slotNumberLabel}}</span>
                             </button>
                         `;
                     }});
@@ -2032,6 +2180,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
         window.addEventListener('DOMContentLoaded', () => {{
             applyI18n();
+            initGpsBannerBehavior();
             renderForm();
         }});
     </script>
