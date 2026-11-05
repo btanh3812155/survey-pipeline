@@ -595,103 +595,119 @@ async def submit_webrtc_survey(
                 status_str = "APPROVED"
                 reason_str = "Chế độ thử nghiệm: Đã bỏ qua kiểm tra ảnh để đẩy nhanh luồng dữ liệu mẫu."
         else:
-            # Check image order: If q.image_slots are defined and AI vision is enabled
-            order_rejected = False
-            if target_q and target_q.image_slots and checks.enable_ai_vision and len(images_list) >= 2:
-                fn_0 = getattr(images_list[0], "filename", "") or ""
-                fn_1 = getattr(images_list[1], "filename", "") or ""
-                role_0 = await vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0)
-                role_1 = await vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1)
-                if role_0 == "unknown" or role_1 == "unknown":
-                    try:
-                        facts_0 = await vision_client.extract_facts(raw_bytes_list[0])
-                        st_0 = (getattr(facts_0, "screen_type", None) or getattr(facts_0, "role", None) or "").upper()
-                        if "REV" in st_0:
-                            role_0 = "revenue_screen"
-                        elif "ODO" in st_0:
-                            role_0 = "odometer"
-                    except Exception:
-                        pass
-                    try:
-                        facts_1 = await vision_client.extract_facts(raw_bytes_list[1])
-                        st_1 = (getattr(facts_1, "screen_type", None) or getattr(facts_1, "role", None) or "").upper()
-                        if "REV" in st_1:
-                            role_1 = "revenue_screen"
-                        elif "ODO" in st_1:
-                            role_1 = "odometer"
-                    except Exception:
-                        pass
+            # For facts extraction, select the app revenue screen if multi-image
+            target_raw_bytes = raw_bytes
+            if len(raw_bytes_list) >= 2:
+                target_raw_bytes = raw_bytes_list[1]
 
-                slot_0_role = target_q.image_slots[0].get("role", "odometer") if len(target_q.image_slots) > 0 else "odometer"
-                slot_1_role = target_q.image_slots[1].get("role", "revenue_screen") if len(target_q.image_slots) > 1 else "revenue_screen"
+            try:
+                norm_bytes, pil_im = sanitize_and_normalize_image(
+                    target_raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
+                )
+            except Exception as e:
+                norm_bytes, pil_im = None, None
+                is_approved = False
+                status_str = "REJECTED"
+                reason_str = f"Không thể giải mã ảnh: {str(e)}"
+                ai_res = {}
 
-                # If an inverted order is detected (e.g. image 0 is an app screen and image 1 is an odometer)
-                if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 == "revenue_screen" and role_1 == "odometer"):
-                    is_approved = False
-                    status_str = "REJECTED"
-                    reason_str = "Thứ tự ảnh không chính xác: Ảnh 1 phải là đồng hồ công-tơ-mét, Ảnh 2 phải là màn hình doanh thu!"
-                    ai_res = {
-                        "status": "REJECTED",
-                        "reason": reason_str,
-                        "order_check_failed": True,
-                        "detected_roles": [role_0, role_1],
-                    }
-                    order_rejected = True
-
-            if not order_rejected:
-                # For facts extraction, select the app revenue screen if multi-image
-                target_raw_bytes = raw_bytes
-                if len(raw_bytes_list) >= 2:
-                    target_raw_bytes = raw_bytes_list[1]
-
-                try:
-                    norm_bytes, pil_im = sanitize_and_normalize_image(
-                        target_raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
-                    )
-                except Exception as e:
-                    norm_bytes, pil_im = None, None
-                    is_approved = False
-                    status_str = "REJECTED"
-                    reason_str = f"Không thể giải mã ảnh: {str(e)}"
-                    ai_res = {}
-
-                if pil_im is not None:
-                    is_sharp = True
-                    blur_var = None
-                    if checks.enable_blur_check:
-                        blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
-                        for img_b in raw_bytes_list:
-                            try:
-                                _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                                sharp, b_var = compute_laplacian_blur_score(p_im, threshold=blur_thresh)
-                                if not sharp:
-                                    is_sharp = False
-                                    blur_var = b_var
-                                    break
-                                blur_var = b_var
-                            except Exception:
+            if pil_im is not None:
+                is_sharp = True
+                blur_var = None
+                if checks.enable_blur_check:
+                    blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
+                    for img_b in raw_bytes_list:
+                        try:
+                            _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                            sharp, b_var = compute_laplacian_blur_score(p_im, threshold=blur_thresh)
+                            if not sharp:
                                 is_sharp = False
+                                blur_var = b_var
                                 break
-                    else:
-                        is_sharp, blur_var = True, None
+                            blur_var = b_var
+                        except Exception:
+                            is_sharp = False
+                            break
+                else:
+                    is_sharp, blur_var = True, None
 
-                    if not is_sharp:
-                        is_approved = False
-                        status_str = "REJECTED"
-                        reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
-                        ai_res = {}
-                    elif v_match and not v_match.is_match:
-                        is_approved = False
-                        status_str = "REJECTED"
-                        reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
-                        ai_res = {}
-                    elif not checks.enable_ai_vision:
-                        ai_res = {"skipped": True, "reason": "Bỏ qua kiểm tra AI theo cấu hình"}
-                        is_approved = True
-                        status_str = "APPROVED"
-                        reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
+                if not is_sharp:
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
+                    ai_res = {}
+                elif v_match and not v_match.is_match:
+                    is_approved = False
+                    status_str = "REJECTED"
+                    reason_str = v_match.flag_reason or f"Lỗi phương tiện: {v_match.status_code}"
+                    ai_res = {}
+                elif not checks.enable_ai_vision:
+                    ai_res = {"skipped": True, "reason": "Bỏ qua kiểm tra AI theo cấu hình"}
+                    is_approved = True
+                    status_str = "APPROVED"
+                    reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
+                else:
+                    # AI vision audit with parallel execution via asyncio.gather
+                    if target_q and target_q.image_slots and len(images_list) >= 2:
+                        fn_0 = getattr(images_list[0], "filename", "") or ""
+                        fn_1 = getattr(images_list[1], "filename", "") or ""
+                        task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0)
+                        task_role_1 = vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1)
+                        task_facts = vision_client.extract_facts(norm_bytes)
+
+                        results = await asyncio.gather(task_role_0, task_role_1, task_facts, return_exceptions=True)
+                        role_0_res, role_1_res, facts_res = results
+
+                        role_0 = "unknown" if isinstance(role_0_res, Exception) else role_0_res
+                        role_1 = "unknown" if isinstance(role_1_res, Exception) else role_1_res
+
+                        if (role_0 == "unknown" or role_1 == "unknown") and not isinstance(facts_res, Exception):
+                            st_1 = (getattr(facts_res, "screen_type", None) or getattr(facts_res, "role", None) or "").upper()
+                            if "REV" in st_1:
+                                role_1 = "revenue_screen"
+                            elif "ODO" in st_1:
+                                role_1 = "odometer"
+
+                        if role_0 == "unknown":
+                            try:
+                                facts_0 = await vision_client.extract_facts(raw_bytes_list[0])
+                                st_0 = (getattr(facts_0, "screen_type", None) or getattr(facts_0, "role", None) or "").upper()
+                                if "REV" in st_0:
+                                    role_0 = "revenue_screen"
+                                elif "ODO" in st_0:
+                                    role_0 = "odometer"
+                            except Exception:
+                                pass
+
+                        slot_0_role = target_q.image_slots[0].get("role", "odometer") if len(target_q.image_slots) > 0 else "odometer"
+                        slot_1_role = target_q.image_slots[1].get("role", "revenue_screen") if len(target_q.image_slots) > 1 else "revenue_screen"
+
+                        # If an inverted order is detected (e.g. image 0 is an app screen and image 1 is an odometer)
+                        if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 == "revenue_screen" and role_1 == "odometer"):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = "Thứ tự ảnh không chính xác: Ảnh 1 phải là đồng hồ công-tơ-mét, Ảnh 2 phải là màn hình doanh thu!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "reason": reason_str,
+                                "order_check_failed": True,
+                                "detected_roles": [role_0, role_1],
+                            }
+                        else:
+                            if isinstance(facts_res, Exception):
+                                logger.error(f"Vision AI call failed: {facts_res}")
+                                ai_res = {"status": "manual_review", "error": str(facts_res)}
+                                is_approved = False
+                                status_str = "MANUAL_REVIEW"
+                                reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+                            else:
+                                facts = facts_res
+                                compliance = evaluate_survey_compliance(facts)
+                                ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
+                                is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+                                status_str = "APPROVED" if is_approved else "REJECTED"
+                                reason_str = compliance.collaborator_note or compliance.reason_code
                     else:
-                        # 2. AI vision audit & deterministic compliance evaluation
                         try:
                             facts = await vision_client.extract_facts(norm_bytes)
                             compliance = evaluate_survey_compliance(facts)

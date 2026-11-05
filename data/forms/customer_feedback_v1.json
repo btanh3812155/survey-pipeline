@@ -19,7 +19,7 @@
       "enable_vehicle_match": true,
       "enable_anti_fraud": true,
       "enable_ai_generated_check": true,
-      "enable_screen_photo_check": true
+      "enable_screen_photo_check": false
     }
   },
   "questions": [
@@ -38,7 +38,8 @@
         "regex_pattern": null,
         "regex_error_message": null,
         "max_length": null,
-        "min_length": null
+        "min_length": null,
+        "numbers_only": false
       },
       "conditional": null,
       "image_checks": null,

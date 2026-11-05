@@ -1,7 +1,10 @@
 import html
+from typing import Optional
+from config import settings
 from services.form_engine import FormSchema
 
-def render_dynamic_form_html(schema: FormSchema) -> str:
+def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional[str] = None) -> str:
+    tg_bot = telegram_bot_username if telegram_bot_username is not None else settings.TELEGRAM_BOT_USERNAME
     escaped_title = html.escape(schema.title)
     escaped_desc = html.escape(schema.description or "")
     escaped_questions = []
@@ -805,8 +808,12 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             <div id="subResultReason" style="font-size:0.88rem; color:#cbd5e1; line-height:1.5; background:rgba(15,23,42,0.6); padding:12px; border-radius:10px; border:1px solid #334155; word-break:break-word;">
                 Chi tiết kết quả duyệt...
             </div>
-            <a id="btnSubResultTelegram" href="https://t.me/TrustBridgeSurveyBot" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; text-decoration:none; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3);">
-                <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+            <button type="button" id="btnSubResultHistory" onclick="closeSubmissionResultModal(); openHistoryModal();" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3); border:none; cursor:pointer;">
+                <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                <span id="txtSubResultHistory">Tra cứu lịch sử nộp trên web</span>
+            </button>
+            <a id="btnSubResultTelegram" href="https://t.me/{tg_bot}" target="_blank" rel="noopener noreferrer" style="display:{'flex' if tg_bot else 'none'}; align-items:center; justify-content:center; gap:8px; padding:10px 14px; border-radius:10px; background:rgba(30,41,59,0.8); border:1px solid #38bdf8; color:#38bdf8; text-decoration:none; font-weight:700; font-size:0.9rem;">
+                <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
                 <span id="txtSubResultTelegram">Mở Telegram Bot</span>
             </a>
             <div style="display:flex; gap:10px; margin-top:4px;">
@@ -885,6 +892,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 modal_rejected_title: "Chưa Đạt Yêu Cầu!",
                 modal_rejected_desc: "Vui lòng chụp lại ảnh rõ nét hoặc kiểm tra lại thông tin.",
                 btn_open_telegram: "Mở Telegram Bot",
+                btn_view_history_web: "Tra cứu lịch sử nộp trên web",
                 btn_new_submission: "Làm phiếu mới",
             }},
             en: {{
@@ -944,6 +952,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 modal_rejected_title: "Verification Failed!",
                 modal_rejected_desc: "Please retake a clear photo or verify your information.",
                 btn_open_telegram: "Open Telegram Bot",
+                btn_view_history_web: "View submission history on web",
                 btn_new_submission: "New Submission",
             }}
         }};
@@ -979,6 +988,7 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             document.getElementById('btnHistoryQuery').textContent = t.history_query;
             document.getElementById('btnHistoryClose').textContent = t.btn_close;
 
+            if (document.getElementById('txtSubResultHistory')) document.getElementById('txtSubResultHistory').textContent = t.btn_view_history_web;
             if (document.getElementById('txtSubResultTelegram')) document.getElementById('txtSubResultTelegram').textContent = t.btn_open_telegram;
             if (document.getElementById('btnSubResultClose')) document.getElementById('btnSubResultClose').textContent = t.btn_close;
             if (document.getElementById('btnSubResultReset')) document.getElementById('btnSubResultReset').textContent = t.btn_new_submission;
@@ -1700,9 +1710,58 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
                 else el.value = '';
             }});
             document.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
+
+            // Thoroughly reset all camera WebRTC questions and all image slots
             SCHEMA.questions.forEach(q => {{
-                if (q.type === 'camera_webrtc') deactivateCamera(q.id);
+                if (q.type === 'camera_webrtc') {{
+                    deactivateCamera(q.id);
+                    delete answers[q.id];
+                    if (q.image_slots && q.image_slots.length > 0) {{
+                        for (let sIdx = 0; sIdx < q.image_slots.length; sIdx++) {{
+                            delete answers[`${{q.id}}_${{sIdx}}`];
+                        }}
+                    }} else {{
+                        for (let sIdx = 0; sIdx < 10; sIdx++) {{
+                            delete answers[`${{q.id}}_${{sIdx}}`];
+                        }}
+                    }}
+                    activeSlotByQId[q.id] = 0;
+                    selectCameraSlot(q.id, 0);
+
+                    const img = document.getElementById(`img_${{q.id}}`);
+                    if (img) {{ img.src = ''; img.style.display = 'none'; }}
+                    const retakeBtn = document.getElementById(`retake_${{q.id}}`);
+                    if (retakeBtn) retakeBtn.style.display = 'none';
+                    const screenOff = document.getElementById(`camOffScreen_${{q.id}}`);
+                    if (screenOff) screenOff.style.display = 'flex';
+                    const vid = document.getElementById(`vid_${{q.id}}`);
+                    if (vid) vid.style.display = 'none';
+                    const overlay = document.getElementById(`overlay_${{q.id}}`);
+                    if (overlay) overlay.style.display = 'none';
+                    const snapBtn = document.getElementById(`snap_${{q.id}}`);
+                    if (snapBtn) snapBtn.style.display = 'none';
+                    const btnCamOff = document.getElementById(`btnCamOff_${{q.id}}`);
+                    if (btnCamOff) btnCamOff.style.display = 'none';
+
+                    const bar = document.getElementById(`slotsBar_${{q.id}}`);
+                    if (bar) {{
+                        bar.querySelectorAll('.cam-slot-pill').forEach((pill, idx) => {{
+                            pill.classList.remove('captured');
+                            if (idx === 0) pill.classList.add('active');
+                            else pill.classList.remove('active');
+                        }});
+                    }}
+
+                    const slot0 = (q.image_slots && q.image_slots[0]) ? q.image_slots[0] : null;
+                    const guideText = slot0 ? `Căn chỉnh: ${{slot0.title || 'Ảnh 1'}}` : I18N[currentLang].cam_hint;
+                    const badge = document.getElementById(`slotBadge_${{q.id}}`);
+                    if (badge) badge.textContent = guideText;
+                    const hint = document.getElementById(`txtCamHint_${{q.id}}`);
+                    if (hint) hint.textContent = guideText;
+                }}
             }});
+
+            // Global cleanup for pills, icons, images, and buttons
             document.querySelectorAll('.cam-slot-pill').forEach(p => p.classList.remove('captured'));
             document.querySelectorAll('.cam-slot-icon').forEach(icon => {{
                 icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 4h3l2-2h6l2 2h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m8 3a5 5 0 0 0-5 5 5 5 0 0 0 5 5 5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3z"/></svg>';

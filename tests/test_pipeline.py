@@ -132,11 +132,11 @@ def test_deterministic_evaluation_engine():
     assert res_math.passed is False
     assert res_math.reason_code == "ARITHMETIC_MISMATCH"
 
-    # screen photo spoof
+    # screen photo of other device (driver app / odometer) is permitted for collaborators
     screen_facts = valid_facts.model_copy(update={"is_screen_photo": True})
     res_screen = evaluate_survey_compliance(screen_facts)
-    assert res_screen.passed is False
-    assert res_screen.reason_code == "SCREEN_PHOTO"
+    assert res_screen.passed is True
+    assert res_screen.reason_code == "APPROVED"
 
     # digital tampering / photoshop
     tampered_facts = valid_facts.model_copy(update={"is_manipulated_or_photoshopped": True, "tamper_evidence": "font mismatch on total"})

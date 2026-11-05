@@ -19,17 +19,9 @@ def evaluate_survey_compliance(facts: ExtractedReceiptFacts) -> EvaluationResult
     Strictly isolated from LLM prompt injection attacks.
     """
     missing: List[str] = []
-    # 1. Hard Rejection: Anti-Spoofing screen recapture check (Clear-cut fraud)
-    if facts.is_screen_photo:
-        return EvaluationResult(
-            passed=False,
-            status_tier="REJECTED",
-            reason_code="SCREEN_PHOTO",
-            missing_fields=["ảnh chụp thực tế"],
-            collaborator_note="Hệ thống phát hiện ảnh chụp từ màn hình thiết bị khác. Quy định bắt buộc chụp trực tiếp từ phiếu giấy thực tế.",
-            can_appeal=True,
-        )
-
+    # 1. Screen recapture of driver phone screen / odometer is permitted for collaborators
+    # Collaborators take pictures of the driver's phone screen showing the revenue app or odometer.
+    # This is explicitly permitted and NOT rejected as fraud.
     # 2. Hard Rejection: Forensic digital manipulation / Photoshop
     if facts.is_manipulated_or_photoshopped:
         evidence = facts.tamper_evidence or "chắp vá hoặc tẩy xóa kỹ thuật số"

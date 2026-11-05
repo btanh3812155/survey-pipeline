@@ -32,7 +32,7 @@ class ImageCheckConfig(BaseModel):
     enable_vehicle_match: bool = True       # Vehicle plate & type persistence matching
     enable_anti_fraud: bool = True          # Duplicate reuse / stock photo check
     enable_ai_generated_check: bool = True  # 2D FFT synthetic diffusion check
-    enable_screen_photo_check: bool = True  # Moiré / screen recapture detection
+    enable_screen_photo_check: bool = False  # Moiré / screen recapture detection (default False)
 
 class FormQuestion(BaseModel):
     id: str
@@ -211,6 +211,14 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         notify_telegram_chat_id=-1001234567890,
         decree13_required=True,
         is_test_mode=True,
+        image_checks=ImageCheckConfig(
+            enable_blur_check=True,
+            enable_ai_vision=True,
+            enable_vehicle_match=True,
+            enable_anti_fraud=True,
+            enable_ai_generated_check=True,
+            enable_screen_photo_check=False,
+        ),
     ),
     questions=[
         # Question 1: Signature
@@ -233,6 +241,33 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             sample_response="Tôi đồng ý",
         ),
         # Subsequent Questions - ALL CONDITIONAL on consent_choice == 'Tôi đồng ý'
+        FormQuestion(
+            id="ctv_code",
+            title="Mã CTV",
+            type=QuestionType.DROPDOWN,
+            required=False,
+            options=["CTV001_Dũng_HN", "CTV002_Tuấn_HN", "CTV003_Ngân_SG", "CTV004_Vỹ_SG", "CTV005_Hương_DN", "Khác"],
+            description="Mã định danh cộng tác viên thực hiện khảo sát",
+            sample_response="CTV001_Dũng_HN",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
+            ),
+        ),
+        FormQuestion(
+            id="survey_location",
+            title="📍 Khu vực thực hiện khảo sát hiện tại của CTV",
+            type=QuestionType.TEXT,
+            required=False,
+            description="Địa điểm hoặc khu vực thực hiện khảo sát (VD: Bến xe Mỹ Đình, Hà Nội)",
+            sample_response="Bến xe Mỹ Đình, Hà Nội",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
+            ),
+        ),
         FormQuestion(
             id="driver_phone",
             title="3. Số điện thoại tài xế",
@@ -279,12 +314,12 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="vehicle_type",
-            title="6. Loại phương tiện đang vận hành",
+            title="Câu 1: Hiện tại anh đang chạy dòng xe nào cho hệ thống GSM ạ?",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
-            options=["Ô tô điện VinFast (GSM)", "Xe máy điện (GSM Bike)", "Xe cá nhân khác"],
-            description="Chọn đúng loại phương tiện của ca làm việc hiện tại",
-            sample_response="Ô tô điện VinFast (GSM)",
+            options=["Xe máy", "Ô tô", "Khác", "Ô tô điện VinFast (GSM)", "Xe máy điện (GSM Bike)", "Xe cá nhân khác"],
+            description="Chọn dòng phương tiện đang vận hành cho hệ thống GSM",
+            sample_response="Ô tô",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
@@ -293,16 +328,97 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="car_model",
-            title="7. Dòng xe VinFast đang chạy",
+            title="Dòng xe VinFast đang chạy",
             type=QuestionType.DROPDOWN,
-            required=True,
+            required=False,
             options=["VF 5 Plus", "VF e34", "VF 6", "VF 7", "VF 8", "VF 9"],
-            description="Dòng xe ô tô điện cụ thể trong ca",
+            description="Dòng xe ô tô điện cụ thể trong ca (nếu chạy ô tô điện)",
             sample_response="VF 5 Plus",
             conditional=ConditionalRule(
                 depends_on_question_id="vehicle_type",
+                operator="in",
+                expected_value=["Ô tô", "Ô tô điện VinFast (GSM)"],
+            ),
+        ),
+        FormQuestion(
+            id="gsm_duration",
+            title="Câu 2: Anh đã chạy xe cho GSM được bao lâu rồi ạ?",
+            type=QuestionType.SINGLE_CHOICE,
+            required=False,
+            options=["Dưới 3 tháng", "Từ 3 – 6 tháng", "Từ 6 – 12 tháng", "Từ 1 – 2 năm", "Trên 2 năm"],
+            description="Thời gian đã cộng tác chạy xe cùng hệ thống GSM",
+            sample_response="Từ 6 – 12 tháng",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
                 operator="equals",
-                expected_value="Ô tô điện VinFast (GSM)",
+                expected_value="Tôi đồng ý",
+            ),
+        ),
+        FormQuestion(
+            id="gsm_contract_type",
+            title="Câu 3: Anh đang chạy theo hình thức nào cho GSM ạ?",
+            type=QuestionType.SINGLE_CHOICE,
+            required=False,
+            options=[
+                "Xe Partner (Hợp tác kinh doanh)",
+                "Xe tự mua & chạy",
+                "Xe Taxi xanh GSM",
+                "Xe RTO (Xe thuê mua)",
+                "Xe thuê tháng của GSM",
+                "Khác",
+            ],
+            description="Hình thức hợp tác hoặc sở hữu xe với GSM",
+            sample_response="Xe Taxi xanh GSM",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
+            ),
+        ),
+        FormQuestion(
+            id="daily_trips",
+            title="Câu 5: Trung bình 1 ngày anh hoàn thành khoảng bao nhiêu chuyến xe? (Số chuyến trung bình / ngày)",
+            type=QuestionType.TEXT,
+            required=False,
+            description="Số chuyến xe hoàn thành trung bình mỗi ngày",
+            sample_response="18",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
+            ),
+            validation=ValidationRule(
+                numbers_only=True,
+                min_value=1,
+                max_value=200,
+            ),
+        ),
+        FormQuestion(
+            id="monthly_income_range",
+            title="Câu 6: Sau khi trừ chi phí (hoặc theo mức thực nhận chuyển về tài khoản), thu nhập bình quân 1 tháng từ công việc này của anh dao động ở mức nào?",
+            type=QuestionType.SINGLE_CHOICE,
+            required=False,
+            options=["Dưới 3 triệu VNĐ", "3 – 6 triệu VNĐ", "7 – 12 triệu VNĐ", "12 – 20 triệu VNĐ", "Trên 20 triệu VNĐ"],
+            description="Thu nhập thực nhận bình quân hàng tháng sau khi trừ chi phí",
+            sample_response="12 – 20 triệu VNĐ",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
+            ),
+        ),
+        FormQuestion(
+            id="gsm_incentive_policy",
+            title="Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
+            type=QuestionType.SINGLE_CHOICE,
+            required=False,
+            options=["Có áp dụng chỉ tiêu", "Có khung giờ vàng", "Có chương trình thưởng", "Không có", "Khác"],
+            description="Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
+            sample_response="Có áp dụng chỉ tiêu",
+            conditional=ConditionalRule(
+                depends_on_question_id="consent_choice",
+                operator="equals",
+                expected_value="Tôi đồng ý",
             ),
         ),
         FormQuestion(
@@ -335,7 +451,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="camera_receipt",
-            title="10. Chụp ảnh màn hình doanh thu hoặc đồng hồ xe",
+            title='Tải lên ảnh chụp màn hình (CTV dùng điện thoại chụp màn hình app tài xế khảo sát - mục  "Thống kê thu nhập" - Thu nhập tuần & tổng của tháng trước & tháng hiện tại)',
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
             description="Chụp trực tiếp từ camera phần cứng, khung hình chuẩn 2:3",

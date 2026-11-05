@@ -50,7 +50,7 @@ def test_default_image_check_config_instantiation():
     assert cfg.enable_vehicle_match is True
     assert cfg.enable_anti_fraud is True
     assert cfg.enable_ai_generated_check is True
-    assert cfg.enable_screen_photo_check is True
+    assert cfg.enable_screen_photo_check is False
 
     custom_cfg = ImageCheckConfig(
         enable_blur_check=False,

@@ -519,7 +519,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                                 Kiểm tra ảnh AI tổng hợp
                             </label>
                             <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
-                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', True) else ''}>
+                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', False) else ''}>
                                 Kiểm tra ảnh chụp màn hình
                             </label>
                         </div>
@@ -611,6 +611,15 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             }}
             questions[idx].image_checks[key] = val;
         }}
+        function escapeHtml(str) {{
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }}
         function renderQuestions() {{
             const wrap = document.getElementById('questionsBuilderList');
             wrap.innerHTML = '';
@@ -619,13 +628,13 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                 item.className = 'question-item';
                 item.innerHTML = `
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">#${{idx + 1}}. ${{q.title}}</span>
+                        <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">#${{idx + 1}}. ${{escapeHtml(q.title)}}</span>
                         <button type="button" class="btn-delete" onclick="removeQuestion(${{idx}})">Xóa</button>
                     </div>
                     <div class="row-2">
                         <div class="field-group">
                             <label>Tiêu đề câu hỏi</label>
-                            <input type="text" value="${{q.title}}" oninput="questions[${{idx}}].title = this.value">
+                            <input type="text" value="${{escapeHtml(q.title)}}" oninput="questions[${{idx}}].title = this.value">
                         </div>
                         <div class="field-group">
                             <label>Loại câu hỏi</label>
@@ -646,12 +655,12 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                     ` : ''}}
                     <div class="field-group">
                         <label>Mô tả / Hướng dẫn</label>
-                        <input type="text" value="${{q.description || ''}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">
+                        <input type="text" value="${{escapeHtml(q.description || '')}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">
                     </div>
                     ${{['single_choice', 'dropdown'].includes(q.type) ? `
                         <div class="field-group">
                             <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
-                            <input type="text" value="${{(q.options || []).join(', ')}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
+                            <input type="text" value="${{escapeHtml((q.options || []).join(', '))}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
                         </div>
                     ` : ''}}
                     ${{q.type === 'camera_webrtc' ? `
@@ -730,7 +739,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         enable_vehicle_match: document.getElementById('globalEnableVehicleMatch') ? document.getElementById('globalEnableVehicleMatch').checked : true,
                         enable_anti_fraud: document.getElementById('globalEnableAntiFraud') ? document.getElementById('globalEnableAntiFraud').checked : true,
                         enable_ai_generated_check: document.getElementById('globalEnableAiGeneratedCheck') ? document.getElementById('globalEnableAiGeneratedCheck').checked : true,
-                        enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : true
+                        enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : false
                     }}
                 }},
                 questions: questions
@@ -739,7 +748,6 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             try {{
                 const resp = await fetch('/api/v1/forms/upload-schema', {{
                     method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify(payload)
                 }});
                 const res = await resp.json();
