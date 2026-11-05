@@ -5,6 +5,7 @@ import json
 import asyncio
 import time
 import threading
+import ipaddress
 from collections import OrderedDict
 import httpx
 import logging
@@ -219,6 +220,125 @@ def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
+
+DEFAULT_GEO_FALLBACK = {
+    "status": "success",
+    "latitude": 21.0285,
+    "longitude": 105.8542,
+    "accuracy": 5000.0,
+    "city": "Hanoi",
+    "source": "ip_fallback",
+}
+
+@app.get("/api/v1/geo/ip-fallback")
+async def geo_ip_fallback(request: Request):
+    """Provides IP-based geolocation fallback when browser navigator.geolocation fails."""
+    try:
+        # 1. Parse Cloudflare / Caddy edge headers if present
+        cf_lat = request.headers.get("cf-iplatitude")
+        cf_lon = request.headers.get("cf-iplongitude")
+        if cf_lat and cf_lon:
+            try:
+                return {
+                    "status": "success",
+                    "latitude": float(cf_lat),
+                    "longitude": float(cf_lon),
+                    "accuracy": 5000.0,
+                    "city": request.headers.get("cf-ipcity") or "Hanoi",
+                    "source": "ip_fallback",
+                }
+            except (ValueError, TypeError):
+                pass
+
+        # 2. Extract client IP address
+        client_ip = None
+        xff = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
+        if xff:
+            client_ip = xff.split(",")[0].strip()
+        elif "cf-connecting-ip" in request.headers:
+            client_ip = request.headers["cf-connecting-ip"].strip()
+        elif request.client and request.client.host:
+            client_ip = request.client.host.strip()
+
+        # Strip port or bracketed IPv6 notation if present
+        if client_ip:
+            if client_ip.startswith("[") and "]" in client_ip:
+                client_ip = client_ip[1:client_ip.index("]")]
+            elif ":" in client_ip and client_ip.count(":") == 1:
+                client_ip = client_ip.split(":")[0]
+
+        # 3. Check if IP is private / localhost / loopback / invalid
+        is_private = False
+        if not client_ip:
+            is_private = True
+        else:
+            try:
+                ip_obj = ipaddress.ip_address(client_ip)
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_reserved or ip_obj.is_link_local:
+                    is_private = True
+            except ValueError:
+                is_private = True
+
+        if is_private:
+            return DEFAULT_GEO_FALLBACK
+        # 4. Check Redis cache
+        redis_key = f"geo:ip:{client_ip}"
+        if redis_client:
+            try:
+                cached = await redis_client.get(redis_key)
+                if cached:
+                    cached_data = json.loads(cached)
+                    return {
+                        "status": "success",
+                        "latitude": float(cached_data.get("latitude", DEFAULT_GEO_FALLBACK["latitude"])),
+                        "longitude": float(cached_data.get("longitude", DEFAULT_GEO_FALLBACK["longitude"])),
+                        "accuracy": float(cached_data.get("accuracy", DEFAULT_GEO_FALLBACK["accuracy"])),
+                        "city": str(cached_data.get("city", DEFAULT_GEO_FALLBACK["city"])),
+                        "source": "ip_fallback",
+                    }
+            except Exception as e:
+                logger.warning(f"Redis geo cache lookup failed: {e}")
+
+        # 5. Query ip-api.com with 2.5s timeout
+        url = f"http://ip-api.com/json/{client_ip}?fields=status,country,city,lat,lon"
+        res_data = None
+        try:
+            if http_client is not None and getattr(http_client, "is_closed", None) is not True:
+                resp = await http_client.get(url, timeout=2.5)
+            else:
+                async with httpx.AsyncClient(timeout=2.5) as client:
+                    resp = await client.get(url, timeout=2.5)
+            if resp.status_code == 200:
+                res_data = resp.json()
+        except Exception as e:
+            logger.warning(f"ip-api lookup failed for {client_ip}: {e}")
+
+        if res_data and res_data.get("status") == "success":
+            try:
+                lat = float(res_data["lat"])
+                lon = float(res_data["lon"])
+                city = str(res_data.get("city") or DEFAULT_GEO_FALLBACK["city"])
+                result = {
+                    "status": "success",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "accuracy": 5000.0,
+                    "city": city,
+                    "source": "ip_fallback",
+                }
+                if redis_client:
+                    try:
+                        await redis_client.set(redis_key, json.dumps(result), ex=86400)
+                    except Exception as e:
+                        logger.warning(f"Redis geo cache set failed: {e}")
+                return result
+            except (KeyError, ValueError, TypeError) as e:
+                logger.warning(f"Failed to parse ip-api response: {e}")
+
+        return DEFAULT_GEO_FALLBACK
+    except Exception as e:
+        logger.error(f"Unexpected error in geo ip-fallback: {e}")
+        return DEFAULT_GEO_FALLBACK
 
 SAMPLE_IMAGES_DIR = os.path.join(os.getcwd(), "data", "test_samples")
 

@@ -1103,6 +1103,34 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
 
         function applyGpsFailure(err) {{
+            if (err && err.code !== 1) {{
+                fetch('/api/v1/geo/ip-fallback')
+                    .then(res => {{
+                        if (!res.ok) throw new Error('IP fallback failed');
+                        return res.json();
+                    }})
+                    .then(data => {{
+                        if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {{
+                            applyGpsSuccess({{
+                                coords: {{
+                                    latitude: data.latitude,
+                                    longitude: data.longitude,
+                                    accuracy: data.accuracy || 1000
+                                }}
+                            }});
+                        }} else {{
+                            throw new Error('Invalid IP fallback coords');
+                        }}
+                    }})
+                    .catch(() => {{
+                        renderGpsFailureUI(err);
+                    }});
+                return;
+            }}
+            renderGpsFailureUI(err);
+        }}
+
+        function renderGpsFailureUI(err) {{
             const btn = document.getElementById('btnRequestGps');
             const txt = document.getElementById('gpsStatusText');
             const pill = document.getElementById('gpsStatusPill');
@@ -1200,7 +1228,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             navigator.geolocation.getCurrentPosition(
                 (pos) => applyGpsSuccess(pos),
                 (err) => applyGpsFailure(err),
-                {{ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }}
+                {{ enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }}
             );
         }}
 
@@ -1219,7 +1247,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             navigator.geolocation.getCurrentPosition(
                 (pos) => applyGpsSuccess(pos),
                 (err) => applyGpsFailure(err),
-                {{ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }}
+                {{ enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }}
             );
         }}
 
@@ -1552,26 +1580,21 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }}
                 if (retakeBtn) retakeBtn.style.display = 'inline-block';
             }} else {{
-                // Slot not captured yet: hide preview image, show retake/camera state
+                // Slot not captured yet: hide preview image, hide retake button
                 if (img) {{
                     img.src = '';
                     img.style.display = 'none';
                 }}
                 if (retakeBtn) retakeBtn.style.display = 'none';
                 if (activeVideoStream) {{
-                    // Camera already running, show video & shutter
+                    // Camera already running, show video & shutter, hide standby placeholder
                     if (screenOff) screenOff.style.display = 'none';
                     if (vid) vid.style.display = 'block';
-                    if (overlay) overlay.style.display = 'flex';
                     if (snapBtn) snapBtn.style.display = 'flex';
                     if (btnCamOff) btnCamOff.style.display = 'inline-block';
                 }} else {{
-                    // Camera not active, show standby placeholder
-                    if (vid) vid.style.display = 'none';
-                    if (overlay) overlay.style.display = 'none';
-                    if (snapBtn) snapBtn.style.display = 'none';
-                    if (btnCamOff) btnCamOff.style.display = 'none';
-                    if (screenOff) screenOff.style.display = 'flex';
+                    // Camera not active, automatically activate camera so user gets live feed immediately
+                    activateCamera(qid);
                 }}
             }}
         }}
@@ -1645,10 +1668,32 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     answers[`${{qid}}_${{currentSlotIdx}}`] = blob;
                     syncAnswersImageList(qid);
                     updateSlotPillCapturedState(qid, currentSlotIdx, true);
+
+                    // Check if there are other uncaptured slots
+                    let nextUncapturedIdx = -1;
+                    for (let i = 0; i < q.image_slots.length; i++) {{
+                        const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
+                        if (!answers[`${{qid}}_${{checkIdx}}`]) {{
+                            nextUncapturedIdx = checkIdx;
+                            break;
+                        }}
+                    }}
+
+                    if (nextUncapturedIdx !== -1) {{
+                        // Advance automatically to next uncaptured slot and keep camera alive
+                        selectCameraSlot(qid, nextUncapturedIdx);
+                        if (vid) vid.style.display = 'block';
+                        if (snapBtn) snapBtn.style.display = 'flex';
+                        if (img) img.style.display = 'none';
+                        if (retakeBtn) retakeBtn.style.display = 'none';
+                        if (btnCamOff) btnCamOff.style.display = 'inline-block';
+                        return;
+                    }}
                 }} else {{
                     answers[qid] = blob;
                 }}
 
+                // All slots captured or single camera mode
                 img.src = URL.createObjectURL(blob);
                 img.style.display = 'block';
                 vid.style.display = 'none';
@@ -1656,7 +1701,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 if (btnCamOff) btnCamOff.style.display = 'none';
                 retakeBtn.style.display = 'inline-block';
 
-                // Automatically shut off camera tracks to save battery
+                // Automatically shut off camera tracks to save battery when all captured
                 if (activeVideoStream) {{
                     activeVideoStream.getTracks().forEach(t => t.stop());
                     activeVideoStream = null;
