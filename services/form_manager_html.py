@@ -527,6 +527,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             <label for="globalBlurThreshold">Ngưỡng độ mờ tùy chỉnh (mặc định 40)</label>
                             <input type="number" step="0.1" id="globalBlurThreshold" value="{(schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') if (schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') is not None else 40}" placeholder="40">
                         </div>
+                    </div>
                 </div>
             </div>
 
@@ -597,6 +598,12 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             }}
             renderQuestions();
         }}
+        function toggleQuestionNumbersOnly(idx, checked) {{
+            if (!questions[idx].validation) {{
+                questions[idx].validation = {{}};
+            }}
+            questions[idx].validation.numbers_only = checked;
+        }}
 
         function setQCheck(idx, key, val) {{
             if (!questions[idx].image_checks) {{
@@ -632,6 +639,11 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             </select>
                         </div>
                     </div>
+                    ${{q.type === 'text' ? `
+                        <div>
+                            <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${{idx}}, this.checked)" ${{q.validation && q.validation.numbers_only ? 'checked' : ''}}> Chỉ cho phép chữ số (Bàn phím số numeric keypad)</label>
+                        </div>
+                    ` : ''}}
                     <div class="field-group">
                         <label>Mô tả / Hướng dẫn</label>
                         <input type="text" value="${{q.description || ''}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">

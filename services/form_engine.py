@@ -24,7 +24,7 @@ class ValidationRule(BaseModel):
     regex_error_message: Optional[str] = None
     max_length: Optional[int] = None
     min_length: Optional[int] = None
-
+    numbers_only: bool = False
 class ImageCheckConfig(BaseModel):
     enable_blur_check: bool = True
     blur_threshold: Optional[float] = None  # None falls back to settings.BLUR_THRESHOLD (40.0)
@@ -156,6 +156,10 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
         # Regex / Constraint checks
         if q.validation:
             val_str = str(val)
+            if q.validation.numbers_only:
+                if not re.match(r"^[0-9]+$", val_str):
+                    return False, f"Câu hỏi '{q.title}' chỉ được chứa các chữ số!"
+
             if q.validation.regex_pattern:
                 target_str = val_str[:200]
                 try:
@@ -170,7 +174,6 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
 
             if q.validation.max_length and len(val_str) > q.validation.max_length:
                 return False, f"Câu hỏi '{q.title}' không được vượt quá {q.validation.max_length} ký tự!"
-
             if q.type == QuestionType.NUMBER:
                 try:
                     num_val = float(val)
@@ -243,6 +246,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
                 expected_value="Tôi đồng ý",
             ),
             validation=ValidationRule(
+                numbers_only=True,
                 regex_pattern=r"^0[0-9]{9,10}$",
                 regex_error_message="Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số",
             ),

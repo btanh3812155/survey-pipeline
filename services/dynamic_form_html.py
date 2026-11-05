@@ -1141,10 +1141,23 @@ def render_dynamic_form_html(schema: FormSchema) -> str:
             const t = I18N[currentLang];
             if (q.type === 'text') {{
                 const inp = document.createElement('input');
-                inp.type = 'text';
                 inp.className = 'q-input';
                 inp.placeholder = '...';
-                inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                const isNumbersOnly = (q.id === 'driver_phone') || (q.validation && q.validation.numbers_only);
+                if (isNumbersOnly) {{
+                    inp.type = 'tel';
+                    inp.inputMode = 'numeric';
+                    inp.pattern = '[0-9]*';
+                    inp.autocomplete = (q.id === 'driver_phone' ? 'tel' : 'off');
+                    inp.oninput = (e) => {{
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '');
+                        answers[q.id] = e.target.value;
+                        evaluateConditionals();
+                    }};
+                }} else {{
+                    inp.type = 'text';
+                    inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                }}
                 parent.appendChild(inp);
             }} else if (q.type === 'number') {{
                 const inp = document.createElement('input');

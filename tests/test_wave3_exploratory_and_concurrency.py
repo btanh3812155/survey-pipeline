@@ -262,7 +262,7 @@ class TestTeam2ExploratoryAndConcurrency:
         }
         is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers)
         assert is_valid is False
-        assert "Số điện thoại phải bắt đầu bằng số 0" in (err or "")
+        assert ("Số điện thoại phải bắt đầu bằng số 0" in (err or "")) or ("chỉ được chứa các chữ số" in (err or ""))
 
     def test_payload_boundary_exponential_income_figure(self):
         """
