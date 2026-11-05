@@ -201,8 +201,8 @@ def get_effective_image_checks(schema: Optional[FormSchema], question_id: Option
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
     form_id="income_survey",
-    title="Trust Bridge - Báo Cáo Bàn Giao Ca Xe (Lark Base)",
-    description="Biểu mẫu khảo sát và xác thực bàn giao ca xe GSM / VinFast từ hệ thống Lark Base",
+    title="Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM (Lark Base)",
+    description="Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM từ hệ thống Lark Base",
     settings=FormSettings(
         response_limit=20000,
         access_control="public",
@@ -224,10 +224,10 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         # Question 1: Signature
         FormQuestion(
             id="driver_signature",
-            title="1. Chữ ký xác nhận bàn giao ca",
+            title="1. Chữ ký xác nhận khảo sát",
             type=QuestionType.SIGNATURE,
             required=True,
-            description="Dùng ngón tay ký tên trực tiếp trên giấy điện tử để xác nhận bàn giao ca",
+            description="Dùng ngón tay ký tên trực tiếp trên giấy điện tử để xác nhận thông tin khảo sát",
             sample_response="Bấm nút 'Ký tên' và vẽ chữ ký trên bảng",
         ),
         # Question 2: Consent Choice
@@ -423,7 +423,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="gross_revenue",
-            title="8. Tổng doanh thu ca xe (VNĐ)",
+            title="8. Tổng doanh thu trong ngày/tháng (VNĐ)",
             type=QuestionType.NUMBER,
             required=False,
             description="Tổng doanh thu hiển thị trên ứng dụng tài xế cuối ca",
@@ -440,7 +440,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             title="9. Số km công-tơ-mét (Odometer)",
             type=QuestionType.NUMBER,
             required=False,
-            description="Số km trên đồng hồ xe tại thời điểm bàn giao",
+            description="Số km trên đồng hồ xe tại thời điểm khảo sát",
             sample_response="15200",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",

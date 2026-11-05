@@ -224,7 +224,7 @@ class TelegramPollingRunner:
                     title = getattr(schema, "title", fid)
                     lines.append(f"• <b>{fid}</b>: {title}\n  🔗 https://146.190.201.32.sslip.io/forms/{fid}")
             else:
-                lines.append("• <b>income_survey</b>: Khảo Sát Thu Nhập & Bàn Giao Ca Xe\n  🔗 https://146.190.201.32.sslip.io/forms/income_survey")
+                lines.append("• <b>income_survey</b>: Khảo Sát Thu Nhập Tài Xế GSM (Lark Base)\n  🔗 https://146.190.201.32.sslip.io/forms/income_survey")
             await self.send_message(chat_id, "\n".join(lines))
 
         else:

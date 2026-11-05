@@ -729,7 +729,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
                 } else {
                     card.className = "verdict-card rejected";
                     title.textContent = "❌ KHẢO SÁT CHƯA HỢP LỆ";
-                    desc.textContent = res.reason || "Ảnh không đủ độ nét hoặc lệch thông tin ca xe.";
+                    desc.textContent = res.reason || "Ảnh không đủ độ nét hoặc lệch thông tin khảo sát.";
                 }
 
                 details.innerHTML = `

@@ -732,7 +732,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
     <!-- GPS Authorization Banner -->
     <div class="gps-banner" id="gpsBanner" style="display:none;">
         <div class="gps-status-text" id="gpsStatusText">
-            Cho phép truy cập vị trí để xác nhận điểm bàn giao ca
+            Cho phép truy cập vị trí để ghi nhận địa điểm khảo sát
         </div>
         <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
         <div class="gps-status-pill" id="gpsStatusPill" style="display:none;"></div>
@@ -768,7 +768,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         </button>
 
         <p class="decree13-notice" id="txtDecree13Footer">
-            Thông tin báo cáo ca xe được lưu trữ bảo mật nội bộ.
+            Thông tin khảo sát thu nhập được lưu trữ bảo mật nội bộ theo Nghị định 13.
         </p>
     </form>
 
@@ -776,7 +776,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
     <div class="modal-paper-overlay" id="paperModal">
         <div class="paper-sheet">
             <div class="paper-header">
-                <h3 id="txtSigModalTitle">Bảng Ký Tên Bàn Giao Ca</h3>
+                <h3 id="txtSigModalTitle">Bảng Ký Tên Khảo Sát</h3>
                 <span style="font-size: 0.8rem; color: #64748b;" id="txtSigModalSub">Dùng ngón tay ký tên</span>
             </div>
             <div class="paper-canvas-wrap">
@@ -860,7 +860,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         const I18N = {{
             vi: {{
                 code: "VI",
-                gps_prompt: "Cho phép truy cập vị trí để xác nhận điểm bàn giao ca",
+                gps_prompt: "Cho phép truy cập vị trí để ghi nhận địa điểm khảo sát",
                 gps_btn: "Bật vị trí",
                 gps_getting: "Đang xác định vị trí...",
                 gps_acquiring: "Đang lấy vị trí...",
@@ -876,7 +876,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_history_nav: "Xem lịch sử nộp",
                 sig_prompt: "Bấm vào đây để ký tên trên giấy",
                 sig_done: "Chữ ký đã ghi nhận (Bấm vào đây để ký lại)",
-                sig_title: "Bảng Ký Tên Bàn Giao Ca",
+                sig_title: "Bảng Ký Tên Khảo Sát",
                 sig_sub: "Dùng ngón tay ký tên",
                 sig_hint: "Ký tên phía trên đường kẻ",
                 btn_close: "Đóng",
@@ -897,21 +897,21 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_retake: "Chụp lại",
                 btn_sample_img: "Xem ảnh mẫu",
                 btn_sample_ans: "Xem câu trả lời mẫu",
-                decree_footer: "Thông tin báo cáo ca xe được lưu trữ bảo mật nội bộ.",
+                decree_footer: "Thông tin khảo sát thu nhập được lưu trữ bảo mật nội bộ theo Nghị định 13.",
                 history_title: "Lịch Sử Các Lần Nộp",
                 history_ph: "Nhập số điện thoại để tra cứu...",
                 history_query: "Tra cứu",
                 history_prompt: "Nhập số điện thoại và bấm Tra cứu để xem các lần nộp trước.",
                 history_empty: "Chưa có lần nộp nào được ghi nhận cho số điện thoại này.",
                 missing_required: "Vui lòng trả lời câu hỏi bắt buộc: ",
-                verdict_approved: "BÁO CÁO HỢP LỆ! Bàn giao ca thành công.",
+                verdict_approved: "BÁO CÁO HỢP LỆ! Khảo sát đã được ghi nhận thành công.",
                 verdict_rejected: "CẦN KIỂM TRA LẠI!",
                 server_err: "Lỗi kết nối máy chủ. Vui lòng thử lại sau.",
                 status_approved: "Đã duyệt",
                 status_manual_review: "Chờ kiểm tra",
                 status_rejected: "Cần kiểm tra lại",
                 modal_approved_title: "Báo Cáo Hợp Lệ!",
-                modal_approved_desc: "Bàn giao ca thành công. Thông tin của bạn đã được ghi nhận.",
+                modal_approved_desc: "Khảo sát thu nhập thành công. Thông tin của bạn đã được ghi nhận.",
                 modal_review_title: "Chờ Người Thật Kiểm Tra",
                 modal_review_desc: "Hệ thống đã chuyển phiếu đến điều phối viên để kiểm tra thủ công.",
                 modal_rejected_title: "Chưa Đạt Yêu Cầu!",
@@ -922,7 +922,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             }},
             en: {{
                 code: "EN",
-                gps_prompt: "Allow location access to verify vehicle shift handover location",
+                gps_prompt: "Allow location access to record survey location",
                 gps_btn: "Enable Location",
                 gps_getting: "Detecting location...",
                 gps_acquiring: "Getting location...",
@@ -959,21 +959,21 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_retake: "Retake",
                 btn_sample_img: "View Sample Photo",
                 btn_sample_ans: "View Sample Answer",
-                decree_footer: "Shift report data is encrypted and securely stored.",
+                decree_footer: "Survey data is encrypted and securely stored in compliance with Decree 13.",
                 history_title: "Submission History",
                 history_ph: "Enter phone number to look up...",
                 history_query: "Search",
                 history_prompt: "Enter phone number and click Search to view history.",
                 history_empty: "No submissions found for this phone number.",
                 missing_required: "Please answer required question: ",
-                verdict_approved: "REPORT APPROVED! Shift handover succeeded.",
+                verdict_approved: "REPORT APPROVED! Survey submitted successfully.",
                 verdict_rejected: "VERIFICATION FAILED!",
                 server_err: "Server connection error. Please try again later.",
                 status_approved: "Approved",
                 status_manual_review: "Manual Review",
                 status_rejected: "Rejected",
                 modal_approved_title: "Report Approved!",
-                modal_approved_desc: "Shift handover succeeded. Your submission has been recorded.",
+                modal_approved_desc: "Survey submitted successfully. Your submission has been recorded.",
                 modal_review_title: "Pending Manual Review",
                 modal_review_desc: "Your report has been forwarded to a coordinator for manual verification.",
                 modal_rejected_title: "Verification Failed!",
