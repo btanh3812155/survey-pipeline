@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import random
 import asyncio
 import logging
 from typing import Optional, Union, Dict, Any
@@ -37,7 +39,8 @@ class TelegramPollingRunner:
         self.is_running = False
         self.http_client: Optional[httpx.AsyncClient] = None
         self.db_pool = db_pool
-
+        self.backoff_delay = 1.0
+        self.max_backoff = 60.0
     async def get_client(self) -> httpx.AsyncClient:
         if self.http_client is None or self.http_client.is_closed:
             self.http_client = httpx.AsyncClient(timeout=float(self.polling_timeout + 15))
@@ -181,6 +184,13 @@ class TelegramPollingRunner:
                 return
 
             sub_id = parts[1].strip().lstrip("#")
+            if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
+                await self.send_message(
+                    chat_id,
+                    "⚠️ <b>Mã phiếu không đúng định dạng.</b>\n"
+                    "Chỉ chấp nhận chữ cái, số và dấu gạch ngang (tối đa 64 ký tự).",
+                )
+                return
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
             report_text = render_dossier_message(dossier)
             await self.send_message(chat_id, report_text)
@@ -220,12 +230,13 @@ class TelegramPollingRunner:
         """Processes inline keyboard button interactions for admin audits."""
         cq_id = cq.get("id", "")
         data = cq.get("data", "")
-        cq_chat_id = cq.get("message", {}).get("chat", {}).get("id")
+        cq_msg = cq.get("message") or {}
+        cq_chat = cq_msg.get("chat") or {}
+        cq_chat_id = cq_chat.get("id")
 
         if not cq_chat_id:
             await self.answer_callback_query(cq_id)
             return
-
         if data.startswith("admin_query:"):
             sub_id = data.split(":", 1)[1]
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
@@ -271,17 +282,17 @@ class TelegramPollingRunner:
 
     async def handle_update(self, update: dict) -> None:
         """Dispatches an incoming update payload to message or callback handlers."""
-        if "message" in update:
+        if "message" in update and update["message"]:
             msg = update["message"]
-            chat_id = msg.get("chat", {}).get("id")
-            text = msg.get("text", "")
+            chat = msg.get("chat") or {}
+            chat_id = chat.get("id")
+            text = msg.get("text") or ""
             if chat_id and text:
-                if text.startswith("/"):
+                if len(text) <= 4096 and text.startswith("/"):
                     await self.handle_command(chat_id, text)
 
-        elif "callback_query" in update:
+        elif "callback_query" in update and update["callback_query"]:
             await self.handle_callback_query(update["callback_query"])
-
     async def poll_once(self) -> int:
         """Executes a single long-polling request against getUpdates."""
         if not self.bot_token or self.bot_token == "mock_tg_token":
@@ -298,10 +309,23 @@ class TelegramPollingRunner:
 
         try:
             resp = await client.get(url, params=params)
-            if resp.status_code != 200:
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                sleep_sec = float(retry_after) if retry_after and retry_after.isdigit() else self.backoff_delay
+                logger.warning(f"Telegram 429 Too Many Requests hit! Backing off for {sleep_sec:.1f}s")
+                await asyncio.sleep(sleep_sec)
+                self.backoff_delay = min(self.backoff_delay * 2, self.max_backoff)
+                return 0
+            elif resp.status_code >= 500:
+                logger.warning(f"Telegram server error {resp.status_code}. Backing off for {self.backoff_delay:.1f}s")
+                await asyncio.sleep(self.backoff_delay)
+                self.backoff_delay = min(self.backoff_delay * 2, self.max_backoff)
+                return 0
+            elif resp.status_code != 200:
                 logger.warning(f"Telegram getUpdates returned status {resp.status_code}")
                 return 0
 
+            self.backoff_delay = 1.0
             data = resp.json()
             updates = data.get("result", [])
             for upd in updates:

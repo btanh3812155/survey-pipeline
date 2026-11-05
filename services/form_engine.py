@@ -1,8 +1,8 @@
 import re
+import math
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, model_validator
 class QuestionType(str, Enum):
     TEXT = "text"
     NUMBER = "number"
@@ -48,6 +48,8 @@ class FormSettings(BaseModel):
     decree13_required: bool = True
     is_test_mode: bool = False
 
+MAX_QUESTIONS_PER_FORM: int = 100
+
 class FormSchema(BaseModel):
     form_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     title: str
@@ -55,6 +57,28 @@ class FormSchema(BaseModel):
     settings: FormSettings = Field(default_factory=FormSettings)
     questions: List[FormQuestion]
 
+    @model_validator(mode="after")
+    def validate_schema_structure(self) -> "FormSchema":
+        if len(self.questions) > MAX_QUESTIONS_PER_FORM:
+            raise ValueError(f"Số lượng câu hỏi vượt quá giới hạn tối đa cho phép ({MAX_QUESTIONS_PER_FORM})")
+
+        seen_ids = set()
+        for q in self.questions:
+            if q.id in seen_ids:
+                raise ValueError(f"Mã câu hỏi trùng lặp: '{q.id}'")
+            seen_ids.add(q.id)
+
+        declared_ids = set()
+        for q in self.questions:
+            if q.conditional:
+                parent_id = q.conditional.depends_on_question_id
+                if parent_id == q.id:
+                    raise ValueError(f"Câu hỏi '{q.id}' không thể tự phụ thuộc vào chính nó!")
+                if parent_id not in declared_ids:
+                    raise ValueError(f"Điều kiện câu hỏi '{q.id}' phụ thuộc vào câu hỏi chưa được khai báo trước đó: '{parent_id}'")
+            declared_ids.add(q.id)
+
+        return self
 def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, Any]) -> tuple[bool, Optional[str]]:
     """
     Validates a submitted answer dictionary against the dynamic form schema rules and constraints.
@@ -105,13 +129,14 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
             if q.type == QuestionType.NUMBER:
                 try:
                     num_val = float(val)
+                    if math.isnan(num_val) or math.isinf(num_val):
+                        return False, f"Giá trị câu hỏi '{q.title}' không được là NaN/Inf!"
                     if q.validation.min_value is not None and num_val < q.validation.min_value:
                         return False, f"Giá trị câu hỏi '{q.title}' không được nhỏ hơn {q.validation.min_value}!"
                     if q.validation.max_value is not None and num_val > q.validation.max_value:
                         return False, f"Giá trị câu hỏi '{q.title}' không được lớn hơn {q.validation.max_value}!"
                 except ValueError:
                     return False, f"Câu hỏi '{q.title}' phải là số hợp lệ!"
-
     return True, None
 
 # Default Production Form Schema for Trust Bridge Fleet Survey

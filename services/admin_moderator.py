@@ -1,8 +1,8 @@
+import html
 import logging
 import httpx
 from typing import Optional
 from config import settings
-
 logger = logging.getLogger("admin_moderator")
 
 
@@ -213,9 +213,10 @@ def render_dossier_message(dossier: dict) -> str:
     Formats the queried database dossier into an authoritative, readable Telegram HTML report for admins.
     """
     if "error" in dossier:
-        return f"❌ <b>Lỗi tra cứu:</b> {dossier['error']}"
+        safe_err = html.escape(str(dossier['error']))
+        return f"❌ <b>Lỗi tra cứu:</b> {safe_err}"
 
-    sub_id = dossier["submission_id"]
+    sub_id = html.escape(str(dossier.get("submission_id", "N/A")))
     status = dossier["status"]
     status_badge = (
         "✅ HỢP LỆ (APPROVED)"
@@ -224,8 +225,12 @@ def render_dossier_message(dossier: dict) -> str:
     )
 
     # vehicle match badge
-    reg_p = dossier.get("registered_plate", "N/A")
-    det_p = dossier.get("detected_plate", "N/A")
+    reg_p = html.escape(str(dossier.get("registered_plate", "N/A")))
+    det_p = html.escape(str(dossier.get("detected_plate", "N/A")))
+    veh_type = html.escape(str(dossier.get("vehicle_type", "N/A")))
+    driver_name = html.escape(str(dossier.get("driver_name", "Tài xế")))
+    driver_phone = html.escape(str(dossier.get("driver_phone", "N/A")))
+    rej_reason = html.escape(str(dossier.get("rejection_reason", "Không có")))
     veh_badge = "Khớp chuẩn ✅" if reg_p == det_p else f"Lệch biển! (ĐK: {reg_p} != Ảnh: {det_p}) ❌"
     changes = dossier.get("recent_vehicle_changes", 0)
     change_badge = f"{changes} lần trong 30 ngày qua" + (" ⚠️ (Bất thường)" if changes >= 3 else " (Bình thường ✅)")
@@ -244,11 +249,11 @@ def render_dossier_message(dossier: dict) -> str:
         f"📋 <b>HỒ SƠ TRA CỨU DỮ LIỆU PHIẾU #{sub_id}</b>\n\n"
         f"• Trạng thái: <b>{status_badge}</b>\n"
         f"• Thời gian nộp: <code>{dossier.get('created_at', 'N/A')}</code>\n"
-        f"• Lý do từ chối: <i>{dossier.get('rejection_reason', 'N/A')}</i>\n\n"
+        f"• Lý do từ chối: <i>{rej_reason}</i>\n\n"
         f"👤 <b>Tài Xế & Phương Tiện:</b>\n"
-        f"• Họ tên: <b>{dossier.get('driver_name', 'Tài xế')}</b>\n"
-        f"• Số điện thoại: <code>{dossier.get('driver_phone', 'N/A')}</code>\n"
-        f"• Loại xe: <b>{dossier.get('vehicle_type', 'N/A')}</b> | Biển số: <code>{reg_p}</code>\n"
+        f"• Họ tên: <b>{driver_name}</b>\n"
+        f"• Số điện thoại: <code>{driver_phone}</code>\n"
+        f"• Loại xe: <b>{veh_type}</b> | Biển số: <code>{reg_p}</code>\n"
         f"• Đối soát biển số: {veh_badge}\n"
         f"• Lịch sử đổi xe: {change_badge}\n\n"
         f"📊 <b>Số Liệu Tài Chính:</b>\n"

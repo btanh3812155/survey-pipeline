@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import json
 import asyncio
@@ -211,9 +212,14 @@ SAMPLE_IMAGES_DIR = os.path.join(os.getcwd(), "data", "test_samples")
 @app.get("/samples/{filename}")
 async def get_sample_image(filename: str):
     """Serves public sample testing images with path traversal protection."""
-    safe_path = os.path.realpath(os.path.join(SAMPLE_IMAGES_DIR, filename))
-    base_dir = os.path.realpath(SAMPLE_IMAGES_DIR)
-    if not (safe_path == base_dir or safe_path.startswith(base_dir + os.sep)) or not os.path.exists(safe_path) or not os.path.isfile(safe_path):
+    if not filename or "\x00" in filename or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="Sample image not found")
+    try:
+        base_dir = os.path.realpath(SAMPLE_IMAGES_DIR)
+        safe_path = os.path.realpath(os.path.join(base_dir, filename))
+        if not (safe_path.startswith(base_dir + os.sep) and os.path.isfile(safe_path)):
+            raise HTTPException(status_code=404, detail="Sample image not found")
+    except (ValueError, TypeError, OSError):
         raise HTTPException(status_code=404, detail="Sample image not found")
     ext = os.path.splitext(filename)[1].lower()
     media_type = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "image/webp")
@@ -393,6 +399,7 @@ async def get_survey_history(phone: str, admin_user: str = Depends(verify_admin_
 @app.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
+    background_tasks: BackgroundTasks,
     survey_photo: UploadFile = File(...),
     driver_phone: str = Form(...),
     license_plate: Optional[str] = Form(None),
@@ -527,12 +534,16 @@ async def submit_webrtc_survey(
                         reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
 
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
+    is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
+    persisted_phone = None if is_dissent else driver_phone
+    persisted_name = None if is_dissent else (driver_name or "Tài xế")
+
     if is_test_mode:
         dev_record = {
             "submission_id": submission_id,
             "mode": "TEST_DEV_MODE",
-            "driver_phone": driver_phone,
-            "driver_name": driver_name,
+            "driver_phone": persisted_phone,
+            "driver_name": persisted_name,
             "license_plate": license_plate,
             "vehicle_type": vehicle_type,
             "status": status_str,
@@ -560,15 +571,15 @@ async def submit_webrtc_survey(
                         """,
                         (
                             submission_id,
-                            driver_phone,
-                            driver_name or "Tài xế",
+                            persisted_phone,
+                            persisted_name,
                             f"SN-{license_plate or 'AUTO'}",
                             status_str,
                             reason_str if not is_approved else None,
                             json.dumps(ai_res),
                         ),
                     )
-                    if license_plate:
+                    if license_plate and not is_dissent:
                         await cur.execute(
                             """
                             INSERT INTO driver_registered_vehicles (
@@ -580,8 +591,8 @@ async def submit_webrtc_survey(
                         )
                     outbox_payload = {
                         "submission_id": submission_id,
-                        "driver_phone": driver_phone,
-                        "driver_name": driver_name or "Tài xế",
+                        "driver_phone": persisted_phone,
+                        "driver_name": persisted_name,
                         "license_plate": license_plate or ai_res.get("detected_plate"),
                         "vehicle_type": vehicle_type or "CAR",
                         "gross_revenue": gross_revenue,
@@ -622,10 +633,9 @@ async def submit_webrtc_survey(
     )
     if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
         try:
-            await send_telegram_notification(settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
+            background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
         except Exception as tg_err:
             logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
-
     resp_data = {
         "status": status_str,
         "submission_id": submission_id,
@@ -792,18 +802,26 @@ async def telegram_webhook_ingress(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
     body = await request.json()
-    message = body.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    text = message.get("text", "")
+    message = body.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    text = message.get("text") or ""
+    if len(text) > 4096:
+        raise HTTPException(status_code=400, detail="Tin nhắn vượt quá độ dài cho phép")
+
     # 1. Handle Admin 1-Click Database Query Callback
-    cq = body.get("callback_query")
+    cq = body.get("callback_query") or {}
     if cq:
         data = cq.get("data", "")
-        cq_chat_id = cq.get("message", {}).get("chat", {}).get("id")
+        cq_msg = cq.get("message") or {}
+        cq_chat = cq_msg.get("chat") or {}
+        cq_chat_id = cq_chat.get("id")
         if data.startswith("admin_query:"):
             if str(cq_chat_id) != str(settings.TELEGRAM_ADMIN_GROUP_ID):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
             sub_id = data.split(":", 1)[1]
+            if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
+                return {"status": "invalid_id"}
             dossier = await query_submission_dossier(sub_id)
             report_text = render_dossier_message(dossier)
             await send_telegram_notification(cq_chat_id, report_text)
@@ -815,12 +833,18 @@ async def telegram_webhook_ingress(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
         parts = text.split(" ", 1)
         sub_id = parts[1].strip().lstrip("#")
+        if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
+            await send_telegram_notification(
+                chat_id,
+                "⚠️ <b>Mã phiếu không đúng định dạng.</b> Chỉ chấp nhận a-z, 0-9, gạch ngang (tối đa 64 ký tự).",
+            )
+            return {"status": "invalid_id"}
         dossier = await query_submission_dossier(sub_id)
         report_text = render_dossier_message(dossier)
         await send_telegram_notification(chat_id, report_text)
         return {"status": "query_command_handled"}
 
-    if text == "/start":
+    if text == "/start" and chat_id:
         welcome_msg = (
             "👋 <b>Chào mừng bạn đến với hệ thống kiểm duyệt khảo sát!</b>\n\n"
             "Mọi phiếu khảo sát nộp qua form sẽ được tự động kiểm tra và phản hồi kết quả trực tiếp tại đây trong vòng 3 giây."
