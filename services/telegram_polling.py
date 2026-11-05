@@ -165,7 +165,7 @@ class TelegramPollingRunner:
 
         if cmd == "/start":
             welcome_msg = (
-                "👋 <b>Chào mừng bạn đến với hệ thống kiểm duyệt khảo sát Trust Bridge!</b>\n\n"
+                "👋 <b>Chào mừng bạn đến với hệ thống kiểm duyệt khảo sát Trust Bridge (@TrustBridgeSurveyBot)!</b>\n\n"
                 "Mọi phiếu khảo sát nộp qua form sẽ được tự động kiểm tra tuân thủ và phản hồi kết quả trực tiếp tại đây trong vòng 3 giây.\n\n"
                 "🔗 <b>Link nộp biểu mẫu khảo sát thu nhập:</b>\n"
                 "https://146.190.201.32.sslip.io/forms/income_survey\n\n"

@@ -70,6 +70,33 @@ def test_conditional_no_consent_skips_subsequent_questions():
     assert is_valid is False
     assert "Nghị định 13" in err
 
+def test_conditional_requires_both_signature_and_consent():
+    # Missing signature with consent: questions 3-10 are hidden/skipped, but driver_signature (Q1) is required
+    no_signature_answers = {
+        "consent_choice": "Tôi đồng ý",
+        "driver_phone": "0988123456",
+    }
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, no_signature_answers)
+    assert is_valid is False
+    assert "Chữ ký xác nhận" in err
+
+    # Missing signature with consent and no Q3-Q10: fails on driver_signature
+    consent_only_answers = {
+        "consent_choice": "Tôi đồng ý",
+    }
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, consent_only_answers)
+    assert is_valid is False
+    assert "Chữ ký xác nhận" in err
+
+    # Valid signature + consent, but missing required Q3 (driver_phone)
+    missing_q3_answers = {
+        "driver_signature": "data:image/png;base64,mock",
+        "consent_choice": "Tôi đồng ý",
+    }
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, missing_q3_answers)
+    assert is_valid is False
+    assert "Số điện thoại liên hệ của tài xế" in err
+
 def test_api_upload_and_render_arbitrary_form():
     client = TestClient(app)
 

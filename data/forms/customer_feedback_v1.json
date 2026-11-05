@@ -1,0 +1,49 @@
+{
+  "form_id": "customer_feedback_v1",
+  "title": "Khảo Sát Ý Kiến Khách Hàng",
+  "description": "Đánh giá chất lượng dịch vụ xe điện",
+  "settings": {
+    "response_limit": 500,
+    "current_responses": 0,
+    "access_control": "public",
+    "allow_anonymous": true,
+    "allow_edit_after_submit": false,
+    "notify_telegram_chat_id": null,
+    "notify_email": null,
+    "decree13_required": true,
+    "is_test_mode": false
+  },
+  "questions": [
+    {
+      "id": "rating",
+      "title": "Đánh giá độ hài lòng (1-5 sao)",
+      "type": "number",
+      "required": true,
+      "description": null,
+      "sample_response": null,
+      "sample_images": null,
+      "options": null,
+      "validation": {
+        "min_value": 1.0,
+        "max_value": 5.0,
+        "regex_pattern": null,
+        "regex_error_message": null,
+        "max_length": null,
+        "min_length": null
+      },
+      "conditional": null
+    },
+    {
+      "id": "comment",
+      "title": "Ý kiến đóng góp",
+      "type": "text",
+      "required": false,
+      "description": null,
+      "sample_response": null,
+      "sample_images": null,
+      "options": null,
+      "validation": null,
+      "conditional": null
+    }
+  ]
+}

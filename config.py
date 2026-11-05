@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: str = "mock_webhook_secret"
     TELEGRAM_ADMIN_GROUP_ID: str = "-1001234567890"
     TELEGRAM_POLLING_ENABLED: bool = False
+    TELEGRAM_BOT_USERNAME: str = "TrustBridgeSurveyBot"
     # ai models
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -43,10 +44,10 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL_PREFIX: str = "https://cdn.example.com"
 
     # tuning thresholds
-    BLUR_THRESHOLD: float = 100.0
+    BLUR_THRESHOLD: float = 40.0
     IMAGE_MAX_DIMENSION: int = 1024
     WEBP_QUALITY: int = 82
-    AI_TIMEOUT_SECONDS: float = 8.0
+    AI_TIMEOUT_SECONDS: float = 4.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

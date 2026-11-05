@@ -90,15 +90,22 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
     # 1. Check response limit
     if schema.settings.response_limit and schema.settings.current_responses >= schema.settings.response_limit:
         return False, "Biểu mẫu đã đạt giới hạn số lượng phản hồi tối đa của chủ sở hữu!"
+    has_signed = bool(answers.get("driver_signature"))
+    has_consented = answers.get("consent_choice") == "Tôi đồng ý"
+    is_unlocked = has_signed and has_consented
+
     for q in schema.questions:
         # Check conditional visibility
         if q.conditional:
-            parent_val = answers.get(q.conditional.depends_on_question_id)
-            if q.conditional.operator == "equals" and parent_val != q.conditional.expected_value:
-                continue # Question is hidden, skip validation
-            elif q.conditional.operator == "in" and parent_val not in q.conditional.expected_value:
-                continue
-
+            if q.conditional.depends_on_question_id == "consent_choice":
+                if not is_unlocked:
+                    continue # Question is hidden unless both signature and consent are satisfied
+            else:
+                parent_val = answers.get(q.conditional.depends_on_question_id)
+                if q.conditional.operator == "equals" and parent_val != q.conditional.expected_value:
+                    continue # Question is hidden, skip validation
+                elif q.conditional.operator == "in" and parent_val not in q.conditional.expected_value:
+                    continue
         val = answers.get(q.id)
 
         # Required check
@@ -176,10 +183,10 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         # Subsequent Questions - ALL CONDITIONAL on consent_choice == 'Tôi đồng ý'
         FormQuestion(
             id="driver_phone",
-            title="3. Số điện thoại nhận thù lao khảo sát",
+            title="3. Số điện thoại liên hệ của tài xế",
             type=QuestionType.TEXT,
             required=True,
-            description="Số điện thoại nhận tiền phụ cấp khảo sát (qua ví điện tử hoặc chuyển khoản)",
+            description="Số điện thoại của bạn để tra cứu lịch sử nộp và đối soát thông tin ca làm việc",
             sample_response="0988123456",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",

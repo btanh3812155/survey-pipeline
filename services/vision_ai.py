@@ -53,11 +53,14 @@ class ExtractedReceiptFacts(BaseModel):
     tamper_evidence: Optional[str] = None
     notes: Optional[str] = None
 
+from config import settings
+
+
 class DualModelVisionClient:
     """
     Manages dual-model AI vision extraction with automated failover:
-    - Primary: DeepSeek Flash (2.0s hard cutoff)
-    - Fallback: Gemini 3.5 Flash (thinking_budget=0, sub-1.5s cutoff)
+    - Primary: DeepSeek Flash (3.0s hard cutoff, no reasoning)
+    - Fallback: Gemini (gemini-2.5-flash, gemini-2.0-flash, 4.0s cutoff)
     - Circuit breaker: 5 consecutive failures opens breaker for 60s
     """
 
@@ -67,7 +70,7 @@ class DualModelVisionClient:
         gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/",
         deepseek_api_key: Optional[str] = None,
         deepseek_base_url: str = "https://api.deepseek.com",
-        timeout_seconds: float = 15.0,
+        timeout_seconds: float = settings.AI_TIMEOUT_SECONDS,
     ):
         self.timeout_seconds = timeout_seconds
         self.gemini_client = (
@@ -127,7 +130,7 @@ class DualModelVisionClient:
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:image/webp;base64,{b64_img}",
-                            "detail": "high",
+                            "detail": "auto",
                         },
                     },
                 ],
@@ -139,7 +142,7 @@ class DualModelVisionClient:
         if now < self.circuit_open_until and self.gemini_client:
             return await self._call_gemini(messages)
 
-        # attempt primary: DeepSeek Flash
+        # attempt primary: DeepSeek Flash (timeout min(timeout_seconds, 3.0), no thinking/reasoning)
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
@@ -147,11 +150,12 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
-                    max_tokens=300,
-                    timeout=self.timeout_seconds,
+                    max_tokens=1024,
+                    timeout=min(self.timeout_seconds, 3.0),
+                    extra_body={"thinking": {"type": "disabled"}},
                 )
                 self.consecutive_failures = 0
-                content = resp.choices[0].message.content
+                content = resp.choices[0].message.content or "{}"
                 if content.startswith("```json"):
                     content = content[7:-3].strip()
                 elif content.startswith("```"):
@@ -162,15 +166,15 @@ class DualModelVisionClient:
                 if self.consecutive_failures >= 5:
                     self.circuit_open_until = time.time() + 60.0
 
-        # failover: Gemini 3.5 Flash (thinking_budget=0)
+        # failover: Gemini
         if self.gemini_client:
             return await self._call_gemini(messages)
-
         raise RuntimeError("both primary and fallback vision providers failed")
 
     async def _call_gemini(self, messages: list) -> ExtractedReceiptFacts:
         resp = None
-        models_to_try = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.5-flash-lite"]
+        models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+        gemini_timeout = min(self.timeout_seconds, 4.0)
         for model in models_to_try:
             try:
                 resp = await self.gemini_client.chat.completions.create(
@@ -179,7 +183,7 @@ class DualModelVisionClient:
                     response_format={"type": "json_object"},
                     temperature=0.0,
                     max_tokens=2048,
-                    timeout=self.timeout_seconds,
+                    timeout=gemini_timeout,
                 )
                 break
             except Exception as e:

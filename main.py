@@ -532,7 +532,9 @@ async def submit_webrtc_survey(
         else:
             # Normalize image and compute blur score on PIL image
             try:
-                norm_bytes, pil_im = sanitize_and_normalize_image(raw_bytes)
+                norm_bytes, pil_im = sanitize_and_normalize_image(
+                    raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
+                )
             except Exception as e:
                 norm_bytes, pil_im = None, None
                 is_approved = False
@@ -541,7 +543,9 @@ async def submit_webrtc_survey(
                 ai_res = {}
 
             if pil_im is not None:
-                is_sharp, blur_var = compute_laplacian_blur_score(pil_im)
+                is_sharp, blur_var = compute_laplacian_blur_score(
+                    pil_im, threshold=settings.BLUR_THRESHOLD
+                )
                 if not is_sharp:
                     is_approved = False
                     status_str = "REJECTED"
@@ -785,8 +789,12 @@ async def lark_webhook_ingress(
 
     # 4. media sanitization & blur check
     try:
-        webp_bytes, pil_img = sanitize_and_normalize_image(raw_image_bytes)
-        is_sharp, blur_variance = compute_laplacian_blur_score(pil_img)
+        webp_bytes, pil_img = sanitize_and_normalize_image(
+            raw_image_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
+        )
+        is_sharp, blur_variance = compute_laplacian_blur_score(
+            pil_img, threshold=settings.BLUR_THRESHOLD
+        )
     except Exception as e:
         # handle unreadable images
         msg = render_telegram_verdict(submission_id, "BLURRY", ["ảnh bị hỏng hoặc lỗi định dạng"])

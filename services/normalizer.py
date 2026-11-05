@@ -20,8 +20,8 @@ except ImportError:
 
 def sanitize_and_normalize_image(
     raw_bytes: bytes,
-    max_short_edge: int = 720,
-    max_long_edge: int = 2160,
+    max_short_edge: int = 768,
+    max_long_edge: int = 1024,
     max_aspect_ratio: float = 6.0,
     webp_quality: int = 82,
     max_dimension: Optional[int] = None,
@@ -99,7 +99,9 @@ def sanitize_and_normalize_image(
     return webp_bytes, im
 
 
-def compute_laplacian_blur_score(pil_img: Image.Image) -> Tuple[bool, float]:
+def compute_laplacian_blur_score(
+    pil_img: Image.Image, threshold: float = 40.0
+) -> Tuple[bool, float]:
     """
     Computes blurriness using second-order spatial derivative variance.
     Returns (is_sharp: bool, variance: float).
@@ -111,8 +113,8 @@ def compute_laplacian_blur_score(pil_img: Image.Image) -> Tuple[bool, float]:
         gray = cv_img
 
     variance = cv2.Laplacian(gray, cv2.CV_64F).var()
-    # threshold 100.0 is the standard empirical threshold for readable survey text
-    is_sharp = bool(variance >= 100.0)
+    # default threshold 40.0 tolerates softer/slightly blurry mobile phone shots
+    is_sharp = bool(variance >= threshold)
     return is_sharp, float(variance)
 
 
