@@ -376,16 +376,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             display: none;
         }}
 
-        .camera-overlay {{
-            position: absolute;
-            top: 10%; left: 10%; right: 10%; bottom: 10%;
-            border: 2px dashed rgba(255, 255, 255, 0.7);
-            border-radius: 8px;
-            pointer-events: none;
-            display: none;
-            align-items: center;
-            justify-content: center;
-        }}
 
         .btn-camera-snap {{
             width: 68px;
@@ -1394,9 +1384,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         </div>
                         <video id="vid_${{q.id}}" autoplay playsinline webkit-playsinline muted></video>
                         <img id="img_${{q.id}}" class="captured-img" alt="Captured">
-                        <div class="camera-overlay" id="overlay_${{q.id}}">
-                            <span style="color:#fff; font-size:0.78rem; background:rgba(0,0,0,0.7); padding:5px 12px; border-radius:20px;" id="txtCamHint_${{q.id}}">${{slotGuideText}}</span>
-                        </div>
                     </div>
                     <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:8px;">
                         <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
@@ -1495,14 +1482,12 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
             const vid = document.getElementById(`vid_${{qid}}`);
             const img = document.getElementById(`img_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
 
             if (screenOff) screenOff.style.display = 'none';
             if (img) img.style.display = 'none';
             if (vid) vid.style.display = 'block';
-            if (overlay) overlay.style.display = 'flex';
             if (snapBtn) snapBtn.style.display = 'flex';
             if (btnCamOff) btnCamOff.style.display = 'inline-block';
 
@@ -1517,12 +1502,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const vid = document.getElementById(`vid_${{qid}}`);
             if (vid) vid.srcObject = null;
             const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
 
             if (vid) vid.style.display = 'none';
-            if (overlay) overlay.style.display = 'none';
             if (snapBtn) snapBtn.style.display = 'none';
             if (btnCamOff) btnCamOff.style.display = 'none';
             if (screenOff) screenOff.style.display = 'flex';
@@ -1547,15 +1530,12 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const guideText = slotObj ? `Căn chỉnh: ${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}` : I18N[currentLang].cam_hint;
             const badge = document.getElementById(`slotBadge_${{qid}}`);
             if (badge) badge.textContent = guideText;
-            const hint = document.getElementById(`txtCamHint_${{qid}}`);
-            if (hint) hint.textContent = guideText;
 
             // Check if current slot has a captured photo
             const slotKey = `${{qid}}_${{slotIdx}}`;
             const img = document.getElementById(`img_${{qid}}`);
             const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
             const vid = document.getElementById(`vid_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
             const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
@@ -1563,7 +1543,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             if (answers[slotKey] && answers[slotKey] instanceof Blob) {{
                 // Show captured image preview for this slot
                 if (vid) vid.style.display = 'none';
-                if (overlay) overlay.style.display = 'none';
                 if (snapBtn) snapBtn.style.display = 'none';
                 if (btnCamOff) btnCamOff.style.display = 'none';
                 if (screenOff) screenOff.style.display = 'none';
@@ -1630,7 +1609,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         function snapPhoto(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             const img = document.getElementById(`img_${{qid}}`);
-            const overlay = document.getElementById(`overlay_${{qid}}`);
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
             const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
@@ -1674,7 +1652,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 img.src = URL.createObjectURL(blob);
                 img.style.display = 'block';
                 vid.style.display = 'none';
-                overlay.style.display = 'none';
                 snapBtn.style.display = 'none';
                 if (btnCamOff) btnCamOff.style.display = 'none';
                 retakeBtn.style.display = 'inline-block';
@@ -1884,8 +1861,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     if (screenOff) screenOff.style.display = 'flex';
                     const vid = document.getElementById(`vid_${{q.id}}`);
                     if (vid) vid.style.display = 'none';
-                    const overlay = document.getElementById(`overlay_${{q.id}}`);
-                    if (overlay) overlay.style.display = 'none';
                     const snapBtn = document.getElementById(`snap_${{q.id}}`);
                     if (snapBtn) snapBtn.style.display = 'none';
                     const btnCamOff = document.getElementById(`btnCamOff_${{q.id}}`);
@@ -1904,8 +1879,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     const guideText = slot0 ? `Căn chỉnh: ${{slot0.title || 'Ảnh 1'}}` : I18N[currentLang].cam_hint;
                     const badge = document.getElementById(`slotBadge_${{q.id}}`);
                     if (badge) badge.textContent = guideText;
-                    const hint = document.getElementById(`txtCamHint_${{q.id}}`);
-                    if (hint) hint.textContent = guideText;
                 }}
             }});
 
