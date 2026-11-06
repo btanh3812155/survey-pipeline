@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
+from services.normalizer import sanitize_and_normalize_image
 
 logger = logging.getLogger(__name__)
 

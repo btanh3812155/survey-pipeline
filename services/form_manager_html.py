@@ -429,6 +429,7 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">📊 Dữ Liệu Nộp</a>
+                <a href="/admin/audit" class="btn-samples-nav" id="btnAdminAudit">🛡️ Nhật Ký Kiểm Toán</a>
                 <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">🖼️ Ảnh Mẫu Test</a>
                 <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">+ Tạo Biểu Mẫu Mới</a>
             </div>

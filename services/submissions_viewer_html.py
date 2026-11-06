@@ -450,6 +450,7 @@ def render_submissions_viewer_html(
             </div>
             <div class="header-actions">
                 <a href="/admin/forms" class="nav-btn">📋 Quản Lý Form</a>
+                <a href="/admin/audit" class="nav-btn">🛡️ Nhật Ký Kiểm Toán</a>
                 <a href="/admin/samples" class="nav-btn">🖼️ Ảnh Mẫu Test</a>
                 <button type="button" onclick="location.reload()" class="nav-btn primary">🔄 Làm Mới</button>
             </div>
