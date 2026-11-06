@@ -22,9 +22,10 @@ async def test_driver_bot_start_standard(driver_runner):
         mock_send.assert_awaited_once()
         text = mock_send.await_args[0][1]
         markup = mock_send.await_args[1].get("reply_markup", {})
-        assert "Chào mừng Bác tài" in text
+        assert "Chào mừng bạn" in text
         assert "keyboard" in markup
         assert any(btn.get("request_contact") for row in markup["keyboard"] for btn in row)
+        assert any("Hỗ Trợ" in btn.get("text", "") for row in markup["keyboard"] for btn in row)
 
 
 @pytest.mark.asyncio
@@ -83,7 +84,7 @@ async def test_driver_bot_photo_upload_blurry(driver_runner):
         )
         mock_send.assert_awaited_once()
         text = mock_send.await_args[0][1]
-        assert "Ảnh chụp vẫn còn bị mờ" in text
+        assert "Ảnh gửi chưa đạt chuẩn" in text
         # Pending fix must remain armed
         assert 444 in driver_runner.pending_fixes
 
@@ -120,3 +121,89 @@ async def test_driver_bot_privacy_scrub_prompt(driver_runner):
         assert "Nghị định 13/2023/NĐ-CP" in text
         assert "inline_keyboard" in markup
         assert any(btn.get("callback_data") == "driver_confirm_scrub" for row in markup["inline_keyboard"] for btn in row)
+
+@pytest.mark.asyncio
+async def test_driver_bot_forms_clean_no_promo_bullets(driver_runner):
+    """Forms command provides clean links without promotional feature advertising."""
+    mock_send = AsyncMock()
+    with patch.object(driver_runner, "send_message", mock_send):
+        await driver_runner.handle_driver_command(
+            chat_id=777, user_id=777, text="/forms", from_user={"first_name": "CTV Test"}
+        )
+        mock_send.assert_awaited_once()
+        text = mock_send.await_args[0][1]
+        assert "Biểu Mẫu Khảo Sát Đang Mở" in text
+        assert "https://survey.trustbridgevn.com/forms/" in text
+        # Must NOT contain advertising marketing bullets
+        assert "chống rung" not in text
+        assert "tính cước bằng AI" not in text
+
+
+@pytest.mark.asyncio
+async def test_driver_bot_support_request_direct(driver_runner):
+    """Direct /support message forwards to admin group and confirms to user."""
+    mock_send = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+
+    with patch.object(driver_runner, "send_message", mock_send), \
+         patch.object(driver_runner, "get_client", AsyncMock(return_value=mock_client)), \
+         patch.object(driver_runner, "get_driver_phone", AsyncMock(return_value="0988555666")):
+        await driver_runner.handle_driver_command(
+            chat_id=888,
+            user_id=888,
+            text="/support Tôi cần hỗ trợ kiểm tra tiền thưởng phiếu VN-999",
+            from_user={"first_name": "Lê", "last_name": "Văn C", "username": "levanc"},
+        )
+        mock_send.assert_awaited_once()
+        user_confirm = mock_send.await_args[0][1]
+        assert "Đã gửi yêu cầu hỗ trợ tới Ban Quản Trị" in user_confirm
+        assert "VN-999" in user_confirm
+
+        # Admin group alert must be posted
+        mock_client.post.assert_awaited_once()
+        admin_payload = mock_client.post.await_args[1]["json"]
+        assert "YÊU CẦU TRỢ GIÚP TỪ THÀNH VIÊN" in admin_payload["text"]
+        assert "0988555666" in admin_payload["text"]
+        assert "VN-999" in admin_payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_driver_bot_support_interactive_flow(driver_runner):
+    """Tapping support button arms state, next message is forwarded to admin."""
+    mock_send = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+
+    with patch.object(driver_runner, "send_message", mock_send), \
+         patch.object(driver_runner, "get_client", AsyncMock(return_value=mock_client)):
+        # Step 1: User taps "🆘 Yêu Cầu Hỗ Trợ"
+        await driver_runner.handle_update({
+            "message": {
+                "chat": {"id": 999},
+                "from": {"id": 999, "first_name": "Hoàng"},
+                "text": "🆘 Yêu Cầu Hỗ Trợ",
+            }
+        })
+        assert driver_runner.pending_support.get(999) is True
+        prompt_text = mock_send.await_args[0][1]
+        assert "Bạn cần Ban Quản Trị hỗ trợ vấn đề gì" in prompt_text
+
+        # Step 2: User types their problem
+        mock_send.reset_mock()
+        await driver_runner.handle_update({
+            "message": {
+                "chat": {"id": 999},
+                "from": {"id": 999, "first_name": "Hoàng"},
+                "text": "Tôi không chụp được ảnh đồng hồ xe máy",
+            }
+        })
+        assert 999 not in driver_runner.pending_support
+        confirm_text = mock_send.await_args[0][1]
+        assert "Đã gửi yêu cầu hỗ trợ" in confirm_text
+        assert "Tôi không chụp được ảnh đồng hồ xe máy" in confirm_text
+
+        # Admin alert posted
+        mock_client.post.assert_awaited_once()
+        admin_payload = mock_client.post.await_args[1]["json"]
+        assert "Tôi không chụp được ảnh đồng hồ xe máy" in admin_payload["text"]

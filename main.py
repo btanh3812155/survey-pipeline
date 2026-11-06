@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Union, List
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
@@ -1507,6 +1508,103 @@ async def submit_webrtc_survey(
             except Exception as e:
                 logger.warning(f"Redis idempotency caching error: {e}")
     return JSONResponse(status_code=200, content=resp_data)
+
+LOCAL_APPEAL_TRACKER: Dict[str, List[float]] = {}
+
+class AppealRequest(BaseModel):
+    submission_id: str
+    driver_phone: Optional[str] = "ANONYMOUS"
+    reason: Optional[str] = "Yêu cầu người thật kiểm tra lại trên web form"
+
+@app.post("/api/v1/survey/appeal")
+async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundTasks):
+    """Processes driver manual review requests with atomic 8-hour rate limiting (max 3)."""
+    phone = (req.driver_phone or "ANONYMOUS").strip()
+    sub_id = req.submission_id.strip()
+    rate_key = f"rate_limit:appeal:{phone}"
+    now = time.time()
+    remaining_appeals = 2
+
+    rate_limited = False
+    if redis_client:
+        try:
+            count = await redis_client.incr(rate_key)
+            if count == 1:
+                await redis_client.expire(rate_key, 28800)
+            if count > 3:
+                rate_limited = True
+            remaining_appeals = max(0, 3 - count)
+        except Exception as e:
+            logger.warning(f"Redis appeal rate limit error: {e}")
+            history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < 28800]
+            if len(history) >= 3:
+                rate_limited = True
+            else:
+                history.append(now)
+                LOCAL_APPEAL_TRACKER[phone] = history
+                remaining_appeals = max(0, 3 - len(history))
+    else:
+        history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < 28800]
+        if len(history) >= 3:
+            rate_limited = True
+        else:
+            history.append(now)
+            LOCAL_APPEAL_TRACKER[phone] = history
+            remaining_appeals = max(0, 3 - len(history))
+
+    if rate_limited:
+        return JSONResponse(status_code=200, content={
+            "status": "RATE_LIMITED",
+            "remaining_appeals": 0,
+            "message": "Bạn đã dùng hết 3 lượt yêu cầu người thật kiểm tra trong 8 giờ này. Vui lòng nộp phiếu mới rõ nét hơn!"
+        })
+    # 2. Update status in Database
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s WHERE submission_id = %s;",
+                        (f"Tài xế yêu cầu người thật đối soát lại: {req.reason}", sub_id)
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to update survey_submissions for appeal: {e}")
+
+    # 3. Update status in Dev Test Storage
+    if os.path.exists(DEV_STORAGE_FILE):
+        try:
+            with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+                dev_records = json.load(f)
+            for r in dev_records:
+                if r.get("submission_id") == sub_id:
+                    r["status"] = "APPEAL_PENDING"
+                    r["reason"] = f"Tài xế yêu cầu người thật đối soát lại: {req.reason}"
+            with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(dev_records, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to update dev_storage for appeal: {e}")
+
+    # 4. Dispatch Alert to Telegram Admin Group
+    if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
+        alert_text = (
+            f"🚨 <b>YÊU CẦU NGƯỜI THẬT KIỂM TRA LẠI (KHIẾU NẠI) #{sub_id}</b>\n\n"
+            f"• <b>Số điện thoại:</b> <code>{phone}</code>\n"
+            f"• <b>Lượt khiếu nại còn lại:</b> <b>{remaining_appeals}/3 lượt</b> (trong phiên 8h)\n"
+            f"• <b>Lý do:</b> {req.reason}\n\n"
+            f"👉 <i>Vui lòng vào <a href='https://survey.trustbridgevn.com/admin/submissions'>Quản trị phiếu</a> để đối soát ảnh gốc!</i>"
+        )
+        try:
+            background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, alert_text)
+        except Exception as e:
+            logger.warning(f"Failed to alert admin group: {e}")
+
+    return JSONResponse(status_code=200, content={
+        "status": "APPEAL_SUBMITTED",
+        "submission_id": sub_id,
+        "remaining_appeals": remaining_appeals,
+        "message": f"Đã gửi yêu cầu kiểm tra lại thành công! Bạn còn {remaining_appeals}/3 lượt khiếu nại trong phiên 8h này."
+    })
 
 
 async def send_telegram_notification(chat_id: Union[int, str], text: str):

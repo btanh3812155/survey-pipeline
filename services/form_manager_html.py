@@ -882,6 +882,67 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             }}
             questions[idx].image_checks[key] = val;
         }}
+        function addImageSlot(qidx) {{
+            if (!questions[qidx].image_slots) {{
+                questions[qidx].image_slots = [];
+            }}
+            const sidx = questions[qidx].image_slots.length;
+            questions[qidx].image_slots.push({{
+                slot: sidx,
+                title: `Ảnh ${{sidx + 1}}: `,
+                role: 'custom_object',
+                required: true
+            }});
+            questions[qidx].allow_multiple_images = true;
+            questions[qidx].min_images = questions[qidx].image_slots.length;
+            questions[qidx].max_images = questions[qidx].image_slots.length;
+            questions[qidx].exact_image_count = questions[qidx].image_slots.length;
+            renderQuestions();
+        }}
+        function removeImageSlot(qidx, sidx) {{
+            if (questions[qidx].image_slots) {{
+                questions[qidx].image_slots.splice(sidx, 1);
+                questions[qidx].image_slots.forEach((s, i) => {{ s.slot = i; }});
+                questions[qidx].min_images = questions[qidx].image_slots.length;
+                questions[qidx].max_images = questions[qidx].image_slots.length;
+                questions[qidx].exact_image_count = questions[qidx].image_slots.length;
+                renderQuestions();
+            }}
+        }}
+        function updateImageSlot(qidx, sidx, field, val) {{
+            if (questions[qidx].image_slots && questions[qidx].image_slots[sidx]) {{
+                questions[qidx].image_slots[sidx][field] = val;
+            }}
+        }}
+        function renderSlotsBuilderHtml(q, qidx) {{
+            const slots = q.image_slots || [];
+            if (!slots.length) {{
+                return '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có slot ảnh riêng (sử dụng 1 ảnh đơn mặc định). Bấm \\'+ Thêm Slot Ảnh\\' để chia nhiều góc chụp/đối tượng.</div>';
+            }}
+            return slots.map((s, sidx) => `
+                <div style="background:#090d16; border:1px solid #334155; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:700; font-size:0.8rem; color:#94a3b8;">Slot #${{sidx + 1}} (Chỉ mục: ${{sidx}})</span>
+                        <button type="button" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px; font-size:0.72rem; cursor:pointer;" onclick="removeImageSlot(${{qidx}}, ${{sidx}})">Xóa</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                        <div>
+                            <label style="font-size:0.72rem; color:#94a3b8;">Tiêu đề hiển thị</label>
+                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.title || '')}}" placeholder="VD: Ảnh 1: Mặt trước CCCD" oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'title', this.value)">
+                        </div>
+                        <div>
+                            <label style="font-size:0.72rem; color:#94a3b8;">Loại đối tượng / Role (Mã AI nhận diện)</label>
+                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.role || '')}}" placeholder="VD: app_profile, app_income, id_card_front, restaurant_bill..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'role', this.value)">
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; cursor:pointer;">
+                            <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)"> Bắt buộc chụp
+                        </label>
+                    </div>
+                </div>
+            `).join('');
+        }}
         function escapeHtml(str) {{
             if (str === null || str === undefined) return '';
             return String(str)
@@ -935,6 +996,15 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         </div>
                     ` : ''}}
                     ${{q.type === 'camera_webrtc' ? `
+                        <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">📸 Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
+                                <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${{idx}})">+ Thêm Slot Ảnh</button>
+                            </div>
+                            <div id="slotsWrap_${{idx}}" style="display:flex; flex-direction:column; gap:8px;">
+                                ${{renderSlotsBuilderHtml(q, idx)}}
+                            </div>
+                        </div>
                         <details style="background:rgba(15, 23, 42, 0.7); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:4px;" ${{q.image_checks ? 'open' : ''}}>
                             <summary style="font-size:0.84rem; font-weight:700; color:#60a5fa; cursor:pointer; user-select:none;">
                                 ⚙ Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
