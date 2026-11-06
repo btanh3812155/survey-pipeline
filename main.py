@@ -408,6 +408,7 @@ async def root_redirect(request: Request):
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
 async def get_dynamic_form(request: Request, form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
+    host = (request.headers.get("host") or "").lower()
     if (host.startswith("audit.") or host.startswith("logs.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
     if (host.startswith("submissions.") or host.startswith("view.") or host.startswith("data.")) and form_id in ("default", "camera-form"):
@@ -762,7 +763,7 @@ async def fetch_aggregated_audit_logs(
                 "entity_type": "SURVEY",
                 "entity_id": sub_id,
                 "actor_type": "SYSTEM",
-                "actor_id": "GEMINI_2_5_FLASH",
+                "actor_id": (sub.get("ai_result") or {}).get("model") or "DEEPSEEK_V3_CHAT",
                 "ip_address": "127.0.0.1",
                 "details": sub.get("ai_result") or {"ocr_status": "COMPLETED"},
                 "tamper_evident_hash": h4_hash,

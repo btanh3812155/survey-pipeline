@@ -334,7 +334,12 @@ class TelegramPollingRunner:
 
         try:
             resp = await client.get(url, params=params)
-            if resp.status_code == 429:
+            if resp.status_code == 409:
+                logger.warning(f"Telegram 409 Conflict: another getUpdates instance running. Backing off {self.backoff_delay:.1f}s")
+                await asyncio.sleep(self.backoff_delay)
+                self.backoff_delay = min(self.backoff_delay * 2, self.max_backoff)
+                return 0
+            elif resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
                 sleep_sec = float(retry_after) if retry_after and retry_after.isdigit() else self.backoff_delay
                 logger.warning(f"Telegram 429 Too Many Requests hit! Backing off for {sleep_sec:.1f}s")
@@ -347,7 +352,9 @@ class TelegramPollingRunner:
                 self.backoff_delay = min(self.backoff_delay * 2, self.max_backoff)
                 return 0
             elif resp.status_code != 200:
-                logger.warning(f"Telegram getUpdates returned status {resp.status_code}")
+                logger.warning(f"Telegram getUpdates returned status {resp.status_code}. Backing off {self.backoff_delay:.1f}s")
+                await asyncio.sleep(self.backoff_delay)
+                self.backoff_delay = min(self.backoff_delay * 1.5, self.max_backoff)
                 return 0
 
             self.backoff_delay = 1.0
@@ -373,7 +380,8 @@ class TelegramPollingRunner:
     async def start_polling(self) -> None:
         """Main long-polling loop."""
         self.is_running = True
-        logger.info("Telegram long-polling runner loop started...")
+        masked = f"{self.bot_token[:8]}...{self.bot_token[-4:]}" if self.bot_token and len(self.bot_token) > 12 else "(none)"
+        logger.info(f"Telegram long-polling runner started (token={masked})")
         try:
             while self.is_running:
                 await self.poll_once()
@@ -413,4 +421,8 @@ async def run_polling_loop(runner: Optional[TelegramPollingRunner] = None) -> No
                 pass
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
     asyncio.run(run_polling_loop())

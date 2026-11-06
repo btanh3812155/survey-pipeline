@@ -81,6 +81,43 @@ class FactExtractionResult(BaseModel):
 from config import settings
 
 
+def robust_json_parse(text: str) -> Dict[str, Any]:
+    """Extracts a valid dictionary from JSON strings with potential fences, extra data, or commentary."""
+    if not text:
+        return {}
+    try:
+        d = json.loads(text.strip())
+        if isinstance(d, dict) and any(k != "type" for k in d.keys()):
+            return d
+    except Exception:
+        pass
+
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            d = json.loads(m.group(1))
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+
+    m = re.search(r"(\{.*\})", text, re.DOTALL)
+    if m:
+        candidate = m.group(1).strip()
+        try:
+            d = json.loads(candidate)
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+    return {}
+
 class DualModelVisionClient:
     """
     Manages dual-model AI vision extraction with automated failover:
@@ -178,25 +215,20 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-flash",
+                    model="deepseek-chat",
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
-                    max_tokens=128,
-                    timeout=min(self.timeout_seconds, 3.0),
-                    extra_body={"thinking": {"type": "disabled"}},
+                    max_tokens=1024,
+                    timeout=10.0,
                 )
                 content = resp.choices[0].message.content or "{}"
-                if content.startswith("```json"):
-                    content = content[7:-3].strip()
-                elif content.startswith("```"):
-                    content = content[3:-3].strip()
-                data = json.loads(content)
+                data = robust_json_parse(content)
                 role = data.get("role", "").lower()
                 if role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
                     return role
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"DeepSeek classify error: {e}")
 
         if self.gemini_client:
             for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
@@ -206,15 +238,11 @@ class DualModelVisionClient:
                         messages=messages,
                         response_format={"type": "json_object"},
                         temperature=0.0,
-                        max_tokens=128,
-                        timeout=min(self.timeout_seconds, 4.0),
+                        max_tokens=1024,
+                        timeout=10.0,
                     )
                     content = resp.choices[0].message.content or "{}"
-                    if content.startswith("```json"):
-                        content = content[7:-3].strip()
-                    elif content.startswith("```"):
-                        content = content[3:-3].strip()
-                    data = json.loads(content)
+                    data = robust_json_parse(content)
                     role = data.get("role", "").lower()
                     if role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
                         return role
@@ -260,21 +288,38 @@ class DualModelVisionClient:
 
         messages = [
             {
+                "role": "system",
+                "content": (
+                    "You are an expert OCR transcription engine for Vietnamese ride-hailing driver apps (GSM, Xanh SM, Grab, Be). "
+                    "Analyze the driver income screen and output strictly a single valid JSON object containing the exact numbers and text visible on the screen: "
+                    "gross_revenue (integer, Tong thu nhap / Doanh so, or 0 if unreadable), "
+                    "net_income (integer, Thu nhap rong, or 0 if unreadable), "
+                    "discount_and_tax (integer, Chiet khau + thue, can be negative, or 0 if unreadable), "
+                    "total_trips (integer, Tong so chuyen, or 0 if unreadable), "
+                    "online_hours (string, e.g. 95h 7m, or '' if unreadable), "
+                    "period (string, e.g. 08/2026, or '' if unreadable), "
+                    "confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately), "
+                    "is_legible (boolean, true if numbers are legible, false if too blurry/corrupted), "
+                    "is_manipulated_or_photoshopped (boolean, true if digits or text appear digitally edited/spliced). "
+                    "Do NOT output markdown commentary or extra text."
+                ),
+            },
+            {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": "Extract all income screen metrics strictly as JSON:"},
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/webp;base64,{b64_img}", "detail": "auto"},
                     },
                 ],
-            }
+            },
         ]
 
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-flash",
+                    model="deepseek-chat",
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -282,11 +327,7 @@ class DualModelVisionClient:
                     timeout=10.0,
                 )
                 content = resp.choices[0].message.content or "{}"
-                if content.startswith("```json"):
-                    content = content[7:-3].strip()
-                elif content.startswith("```"):
-                    content = content[3:-3].strip()
-                res_data = json.loads(content)
+                res_data = robust_json_parse(content)
                 logger.info(f"[OCR SUCCESS] Extracted: {res_data}")
                 return res_data
             except Exception as e:
@@ -301,14 +342,11 @@ class DualModelVisionClient:
                         response_format={"type": "json_object"},
                         temperature=0.0,
                         max_tokens=1024,
-                        timeout=min(self.timeout_seconds, 6.0),
+                        timeout=10.0,
                     )
                     content = resp.choices[0].message.content or "{}"
-                    if content.startswith("```json"):
-                        content = content[7:-3].strip()
-                    elif content.startswith("```"):
-                        content = content[3:-3].strip()
-                    return json.loads(content)
+                    res_data = robust_json_parse(content)
+                    return res_data
                 except Exception:
                     continue
 
@@ -372,13 +410,12 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-flash",
+                    model="deepseek-chat",
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
                     max_tokens=1024,
-                    timeout=min(self.timeout_seconds, 3.0),
-                    extra_body={"thinking": {"type": "disabled"}},
+                    timeout=10.0,
                 )
                 self.consecutive_failures = 0
                 content = resp.choices[0].message.content or "{}"
