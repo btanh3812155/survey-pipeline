@@ -150,12 +150,15 @@ class DualModelVisionClient:
         self.consecutive_failures = 0
         self.circuit_open_until = 0.0
 
-    async def classify_image_role(self, image_bytes: bytes, filename: Optional[str] = None) -> str:
+    async def classify_image_role(
+        self,
+        image_bytes: bytes,
+        filename: Optional[str] = None,
+        expected_slots: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
-        Classifies an uploaded survey image into one of:
-        - 'odometer': car instrument cluster / odometer / speedometer / mileage
-        - 'revenue_screen': driver ride-hailing app earnings / revenue / receipt
-        - 'vehicle_exterior': vehicle body / license plate
+        Classifies an uploaded survey image into expected slot roles or 'unknown'.
+        Dynamically adapts to arbitrary slot definitions provided by the form schema.
         """
         fn = (filename or "").lower()
         if any(w in fn for w in ["profile", "account", "menu", "vi_tai_xe", "ho_so", "tien_ich"]):
@@ -182,19 +185,35 @@ class DualModelVisionClient:
         if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
             return "unknown"
 
+        # Build dynamic role options from expected_slots if provided
+        allowed_roles_desc = []
+        allowed_role_names = set()
+        if expected_slots:
+            for idx, s in enumerate(expected_slots):
+                r = (s.get("role") or f"slot_{idx}").strip().lower()
+                t = s.get("title") or r
+                allowed_role_names.add(r)
+                allowed_roles_desc.append(f"- '{r}': {t}")
+        if not allowed_roles_desc:
+            allowed_roles_desc = [
+                "- 'app_profile': driver ride-hailing app account menu, profile, driver wallet, settings",
+                "- 'app_income': driver ride-hailing app earnings, income statistics, trips, revenue screen",
+                "- 'odometer': car instrument cluster, dashboard, speedometer, mileage display",
+                "- 'vehicle_exterior': vehicle body, license plate"
+            ]
+            allowed_role_names = {"app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior"}
+
+        prompt_roles = "\n".join(allowed_roles_desc)
         b64_img = base64.b64encode(image_bytes).decode("utf-8")
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a specialized fleet survey image classifier. "
-                    "Analyze the provided image and classify its primary content into exactly one role: "
-                    "'app_profile' (driver ride-hailing app account menu, profile, driver wallet, settings), "
-                    "'app_income' (driver ride-hailing app earnings, income statistics, trips, revenue screen), "
-                    "'odometer' (car instrument cluster, dashboard, speedometer, mileage display), "
-                    "'revenue_screen' (ride-hailing driver mobile app screen showing gross earnings, trips, revenue, or receipt), "
-                    "'vehicle_exterior' (full exterior view of electric car or motorcycle, license plate, vehicle body). "
-                    "Output strictly a JSON object: {\"role\": \"app_profile\" | \"app_income\" | \"odometer\" | \"revenue_screen\" | \"vehicle_exterior\" | \"unknown\"}."
+                    "You are a specialized mobile survey image classifier.\n"
+                    "Analyze the provided image and classify its primary content into exactly one of the allowed categories:\n"
+                    f"{prompt_roles}\n"
+                    "- 'unknown': desk, table, room, furniture, person, arm, computer, ceiling, or any photo that does not match the required categories.\n"
+                    "Output strictly a JSON object: {\"role\": \"<matched_role>\" | \"unknown\"}."
                 ),
             },
             {
@@ -219,17 +238,16 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
-                    max_tokens=1024,
+                    max_tokens=512,
                     timeout=10.0,
                 )
                 content = resp.choices[0].message.content or "{}"
                 data = robust_json_parse(content)
                 role = data.get("role", "").lower()
-                if role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
+                if role in allowed_role_names or role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
                     return role
             except Exception as e:
                 logger.warning(f"DeepSeek classify error: {e}")
-
         if self.gemini_client:
             for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:

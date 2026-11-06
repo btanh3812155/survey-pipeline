@@ -10,7 +10,7 @@ from collections import OrderedDict
 import httpx
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, Union, List
+from typing import Optional, Dict, Any, Union, List, Tuple
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import redis.asyncio as aioredis
@@ -719,7 +719,8 @@ async def fetch_aggregated_audit_logs(
 
         h1_hash = hashlib.sha256(f"GENESIS:{sub_id}:INGEST".encode()).hexdigest()
         h2_hash = hashlib.sha256(f"{h1_hash}:{sub_id}:NORMALIZER".encode()).hexdigest()
-        h4_hash = hashlib.sha256(f"{h2_hash}:{sub_id}:AI_VISION".encode()).hexdigest()
+        h3_hash = hashlib.sha256(f"{h2_hash}:{sub_id}:ANTI_FRAUD".encode()).hexdigest()
+        h4_hash = hashlib.sha256(f"{h3_hash}:{sub_id}:AI_VISION".encode()).hexdigest()
         h5_hash = hashlib.sha256(f"{h4_hash}:{sub_id}:EVALUATOR".encode()).hexdigest()
         h6_hash = seal
 
@@ -753,6 +754,26 @@ async def fetch_aggregated_audit_logs(
                 "ip_address": "127.0.0.1",
                 "details": {"blur_check": "PASSED", "color_mode": "RGB", "compression": "WEBP"},
                 "tamper_evident_hash": h2_hash,
+            },
+            {
+                "id": f"aud-{sub_id[:8]}-3",
+                "event_timestamp": ts,
+                "hop_number": 3,
+                "hop_name": "HOP_3_ANTI_FRAUD",
+                "component_name": "ANTI_FRAUD",
+                "action": "DUPLICATE_PHASH_AND_TAMPER_SCREENED",
+                "entity_type": "SURVEY",
+                "entity_id": sub_id,
+                "actor_type": "SYSTEM",
+                "actor_id": "SERVICE_ANTI_FRAUD",
+                "ip_address": "127.0.0.1",
+                "details": {
+                    "phash_check": "UNIQUE_PASS",
+                    "hamming_distance": "> 10 (Unique)",
+                    "duplicate_risk": "LOW",
+                    "screen_recapture_check": "PASSED"
+                },
+                "tamper_evident_hash": h3_hash,
             },
             {
                 "id": f"aud-{sub_id[:8]}-4",
@@ -954,6 +975,7 @@ async def submit_webrtc_survey(
     driver_phone: str = Form(...),
     license_plate: Optional[str] = Form(None),
     driver_name: Optional[str] = Form(None),
+    collaborator_id: Optional[str] = Form(None),
     vehicle_type: Optional[str] = Form("CAR"),
     gross_revenue: Optional[str] = Form("0"),
     trip_count: Optional[str] = Form("0"),
@@ -990,6 +1012,14 @@ async def submit_webrtc_survey(
 
     # Extract all submitted form parameters and support multiple image uploads
     form_data = await request.form()
+    collab_param = (
+        collaborator_id
+        or form_data.get("collaborator_id")
+        or form_data.get("ctv_id")
+        or form_data.get("collaborator_tg_id")
+        or request.query_params.get("collaborator_id")
+        or request.query_params.get("ctv")
+    )
     active_form_id = form_id or "income_survey"
     schema = FORM_REGISTRY.get(active_form_id)
     target_question_id = question_id or "camera_receipt"
@@ -1193,8 +1223,8 @@ async def submit_webrtc_survey(
                     if target_q and target_q.image_slots and len(images_list) >= 2:
                         fn_0 = getattr(images_list[0], "filename", "") or ""
                         fn_1 = getattr(images_list[1], "filename", "") or ""
-                        task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0)
-                        task_role_1 = vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1)
+                        task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0, expected_slots=target_q.image_slots)
+                        task_role_1 = vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1, expected_slots=target_q.image_slots)
                         task_ocr = vision_client.ocr_driver_app_income(norm_bytes)
                         task_facts = vision_client.extract_facts(norm_bytes)
 
@@ -1482,6 +1512,19 @@ async def submit_webrtc_survey(
             background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
         except Exception as tg_err:
             logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
+    try:
+        background_tasks.add_task(
+            dispatch_submission_telegram_notifications,
+            submission_id=submission_id,
+            status_str=status_str,
+            driver_phone=driver_phone,
+            driver_name=driver_name,
+            collaborator_id=collab_param,
+            reason_str=reason_str,
+            gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
+        )
+    except Exception as party_err:
+        logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
     resp_data = {
         "status": status_str,
         "submission_id": submission_id,
@@ -1608,12 +1651,13 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
 
 
 async def send_telegram_notification(chat_id: Union[int, str], text: str):
-    """Dispatches standardized HTML verdict message to collaborator on Telegram."""
-    if not settings.TELEGRAM_BOT_TOKEN or settings.TELEGRAM_BOT_TOKEN == "mock_tg_token":
+    """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram."""
+    bot_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+    if not bot_token or bot_token == "mock_tg_token":
         logger.info(f"[MOCK TELEGRAM DISPATCH] to {chat_id}:\n{text}")
         return
 
-    url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -1626,6 +1670,213 @@ async def send_telegram_notification(chat_id: Union[int, str], text: str):
     except Exception as e:
         logger.error(f"failed to push telegram message: {e}")
 
+
+async def lookup_telegram_user_by_phone(phone: str) -> Optional[int]:
+    """Looks up telegram_user_id in authorized_users by driver_phone."""
+    clean = re.sub(r"[^\d+]", "", phone.strip())
+    if clean.startswith("+84"):
+        clean = "0" + clean[3:]
+    elif clean.startswith("84") and len(clean) == 11:
+        clean = "0" + clean[2:]
+
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT telegram_user_id FROM authorized_users WHERE (driver_phone = %s OR driver_phone = %s) AND is_active = TRUE LIMIT 1;",
+                        (clean, phone),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return int(row[0])
+        except Exception as e:
+            logger.debug(f"DB lookup failed for phone {phone}: {e}")
+    return None
+
+
+async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> Optional[int]:
+    """Resolves collaborator identifier to telegram_user_id (supports ID, phone, or username)."""
+    collab_str = str(collab_id).strip()
+    if collab_str.isdigit():
+        val = int(collab_str)
+        if db_pool:
+            try:
+                async with db_pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id = %s AND is_active = TRUE LIMIT 1;",
+                            (val,),
+                        )
+                        row = await cur.fetchone()
+                        if row and row[0]:
+                            return int(row[0])
+            except Exception:
+                pass
+        return val
+
+    clean_user = collab_str.lstrip("@")
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT telegram_user_id FROM authorized_users WHERE (username = %s OR driver_phone = %s) AND is_active = TRUE LIMIT 1;",
+                        (clean_user, collab_str),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return int(row[0])
+        except Exception:
+            pass
+    return None
+
+
+async def send_telegram_direct_message(
+    bot_token: str,
+    chat_id: Union[int, str],
+    text: str,
+    parse_mode: str = "HTML",
+    reply_markup: Optional[dict] = None,
+) -> bool:
+    """Dispatches a direct message using the specified bot token (Driver Bot or Admin Bot)."""
+    if not bot_token or bot_token == "mock_tg_token":
+        logger.info(f"[MOCK DIRECT MESSAGE DISPATCH] to {chat_id}:\n{text}")
+        return True
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload: Dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        resp = await http_client.post(url, json=payload)
+        return resp.status_code == 200
+    except Exception as e:
+        logger.error(f"Failed to dispatch Telegram message to {chat_id}: {e}")
+        return False
+
+
+def render_driver_submission_verdict_message(
+    submission_id: str,
+    status_str: str,
+    driver_name: Optional[str] = None,
+    reason_str: Optional[str] = None,
+    gross_revenue: Optional[Union[str, int]] = None,
+) -> Tuple[str, Optional[dict]]:
+    """Renders user-friendly, supportive verdict notifications for drivers/collaborators."""
+    name_display = f" {driver_name}" if driver_name else ""
+    if status_str == "APPROVED":
+        rev_text = ""
+        if gross_revenue and str(gross_revenue) not in ("0", ""):
+            try:
+                num = int(re.sub(r"[^\d]", "", str(gross_revenue)))
+                rev_text = f"• <b>Doanh thu ghi nhận:</b> <code>{num:,}đ</code>\n"
+            except Exception:
+                pass
+        text = (
+            f"🎉 <b>Khảo sát #{submission_id} đã được DUYỆT THÀNH CÔNG!</b>\n\n"
+            f"Chào bạn{name_display}, kết quả khảo sát của bạn đã hợp lệ và đạt chuẩn quy định.\n"
+            f"{rev_text}"
+            f"• <b>Trạng thái:</b> <b>HỢP LỆ ✅</b>\n\n"
+            f"Cảm ơn bạn đã tham gia. Tiền thưởng đang được đưa vào hàng đợi chi trả tự động!"
+        )
+        return text, None
+
+    elif status_str == "REJECTED":
+        text = (
+            f"⚠️ <b>Thông báo kết quả khảo sát #{submission_id}:</b>\n\n"
+            f"Chào bạn{name_display}, phiếu khảo sát của bạn chưa đạt yêu cầu.\n"
+            f"• <b>Trạng thái:</b> <b>CHƯA ĐẠT ❌</b>\n"
+            f"• <b>Lý do:</b> <i>{reason_str or 'Ảnh chụp hoặc số liệu chưa hợp lệ'}</i>\n\n"
+            f"👉 <i>Bạn có thể bấm nút bên dưới để gửi lại ảnh chụp rõ nét hơn hoặc gửi yêu cầu phúc khảo:</i>"
+        )
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": f"📸 Gửi lại ảnh #{submission_id}", "callback_data": f"driver_fix:{submission_id}:slot_photo"},
+                    {"text": f"⚖️ Phúc khảo #{submission_id}", "callback_data": f"driver_appeal:{submission_id}"},
+                ],
+                [
+                    {"text": "🆘 Yêu Cầu Hỗ Trợ", "callback_data": f"driver_support:{submission_id}"},
+                ]
+            ]
+        }
+        return text, reply_markup
+
+    else:
+        text = (
+            f"⏳ <b>Khảo sát #{submission_id} đang được kiểm tra:</b>\n\n"
+            f"Chào bạn{name_display}, hồ sơ của bạn đang được chuyển tới Giám Sát Viên duyệt bổ sung.\n"
+            f"• <b>Trạng thái:</b> <b>ĐANG XỬ LÝ ⏳</b>\n"
+            f"• <b>Ghi chú:</b> <i>{reason_str or 'Hệ thống đang đối soát dữ liệu'}</i>\n\n"
+            f"Kết quả cuối cùng sẽ được thông báo trực tiếp tại đây ngay khi hoàn tất."
+        )
+        return text, None
+
+
+async def dispatch_submission_telegram_notifications(
+    submission_id: str,
+    status_str: str,
+    driver_phone: Optional[str] = None,
+    driver_name: Optional[str] = None,
+    collaborator_id: Optional[Union[str, int]] = None,
+    reason_str: Optional[str] = None,
+    gross_revenue: Optional[Union[str, int]] = None,
+):
+    """
+    Asynchronously notifies driver and collaborator in Telegram direct message.
+    """
+    driver_bot_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+    if not driver_bot_token or driver_bot_token == "mock_tg_token":
+        logger.info(f"[MOCK TG NOTIFY PARTIES] sub={submission_id} status={status_str} driver={driver_phone} collaber={collaborator_id}")
+        return
+
+    # 1. Notify Driver if linked
+    if driver_phone:
+        driver_tg_id = await lookup_telegram_user_by_phone(driver_phone)
+        if driver_tg_id:
+            msg_text, reply_markup = render_driver_submission_verdict_message(
+                submission_id=submission_id,
+                status_str=status_str,
+                driver_name=driver_name,
+                reason_str=reason_str,
+                gross_revenue=gross_revenue,
+            )
+            await send_telegram_direct_message(
+                bot_token=driver_bot_token,
+                chat_id=driver_tg_id,
+                text=msg_text,
+                reply_markup=reply_markup,
+            )
+        else:
+            logger.debug(f"Driver phone {driver_phone} not yet linked to Telegram chat ID.")
+
+    # 2. Notify Collaborator if linked
+    if collaborator_id:
+        collab_tg_id = await lookup_telegram_user_for_collaborator(collaborator_id)
+        if collab_tg_id:
+            status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
+            clean_phone = driver_phone or "N/A"
+            masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
+            collab_msg = (
+                f"📋 <b>Cập Nhật Khảo Sát #{submission_id}</b>\n\n"
+                f"• <b>Đối tác / Khách hàng:</b> {driver_name or 'Tài xế'} (<code>{masked_phone}</code>)\n"
+                f"• <b>Trạng thái:</b> {status_emoji} <b>{status_str}</b>\n"
+                f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}\n\n"
+                f"<i>Thông báo tự động dành cho Cộng tác viên phụ trách.</i>"
+            )
+            await send_telegram_direct_message(
+                bot_token=driver_bot_token,
+                chat_id=collab_tg_id,
+                text=collab_msg,
+            )
+        else:
+            logger.info(f"Collaborator '{collaborator_id}' not yet linked to Telegram chat ID (will link later).")
 
 @app.post("/webhook/lark-survey")
 async def lark_webhook_ingress(

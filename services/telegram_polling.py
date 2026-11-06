@@ -1046,11 +1046,17 @@ class DriverBotRunner(TelegramPollingRunner):
                 await self.send_message(
                     chat_id,
                     f"📸 <b>Đang chờ nhận ảnh cho phiếu #{sub_id} ({slot_name}):</b>\n\n"
-                    f"👉 Bác tài hãy mở camera, chụp rõ nét và gửi thẳng ảnh vào chat này ngay nhé!",
+                    f"👉 Vui lòng mở camera, chụp rõ nét và gửi thẳng ảnh vào khung chat này ngay nhé!",
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
                 await self.answer_callback_query(cq_id, "Đang chờ gửi ảnh mới")
 
+            elif data.startswith("driver_support:"):
+                sub_id = data.split(":", 1)[1]
+                await self.handle_admin_help_request(
+                    chat_id, user_id, f"Cần hỗ trợ về phiếu khảo sát #{sub_id}", cq.get("from", {})
+                )
+                await self.answer_callback_query(cq_id, f"Đã gửi yêu cầu hỗ trợ cho #{sub_id}")
             elif data == "driver_confirm_scrub":
                 phone = await self.get_driver_phone(user_id)
                 if self.db_pool and phone:
