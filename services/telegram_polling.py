@@ -197,10 +197,11 @@ class TelegramPollingRunner:
         clean_text = text.strip()
         cmd = clean_text.split()[0].lower() if clean_text else ""
 
-        if cmd == "/start":
+        if cmd == "/start" or cmd == "/id":
             welcome_msg = (
                 "👋 <b>Chào mừng Ban Quản Trị đến với Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)!</b>\n\n"
-                "Hệ thống tự động đồng bộ hóa với pipeline kiểm định AI và cơ sở dữ liệu khảo sát tài xế.\n\n"
+                "Hệ thống tự động đồng bộ hóa với pipeline kiểm định AI và cơ sở dữ liệu khảo sát.\n\n"
+                f"📌 <b>ID Cuộc Trò Chuyện Hiện Tại:</b> <code>{chat_id}</code>\n\n"
                 "🛠️ <b>Lệnh điều hành nhanh:</b>\n"
                 "• <code>/check &lt;mã_phiếu&gt;</code> - Tra cứu hồ sơ & 1-click duyệt/từ chối\n"
                 "• <code>/audit &lt;mã_phiếu&gt;</code> - Kiểm toán niêm phong mật mã SHA-256\n"
@@ -372,6 +373,21 @@ class TelegramPollingRunner:
 
     async def handle_update(self, update: dict) -> None:
         """Dispatches an incoming update payload to message or callback handlers."""
+        if "my_chat_member" in update:
+            mcm = update["my_chat_member"]
+            chat = mcm.get("chat") or {}
+            chat_id = chat.get("id")
+            title = chat.get("title") or "Nhóm Quản Trị"
+            logger.info(f"🌟 [{self.role.upper()} BOT JOINED CHAT] '{title}' (ID: {chat_id})")
+            if chat_id and self.role == "admin":
+                await self.send_message(
+                    chat_id,
+                    f"👋 <b>Trust Bridge Admin Bot đã kết nối thành công vào nhóm!</b>\n\n"
+                    f"• <b>Tên nhóm:</b> {title}\n"
+                    f"• <b>Group Chat ID:</b> <code>{chat_id}</code>\n\n"
+                    f"👉 Hãy lưu mã <code>{chat_id}</code> vào cấu hình <code>TELEGRAM_ADMIN_GROUP_ID</code> trên máy chủ để nhận thông báo kiểm định!",
+                )
+
         if "message" in update and update["message"]:
             msg = update["message"]
             chat = msg.get("chat") or {}
@@ -383,7 +399,6 @@ class TelegramPollingRunner:
 
         elif "callback_query" in update and update["callback_query"]:
             await self.handle_callback_query(update["callback_query"])
-
     async def poll_once(self) -> int:
         """Executes a single long-polling request against getUpdates."""
         if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
@@ -401,7 +416,7 @@ class TelegramPollingRunner:
         params = {
             "offset": self.offset,
             "timeout": self.polling_timeout,
-            "allowed_updates": json.dumps(["message", "callback_query"]),
+            "allowed_updates": json.dumps(["message", "callback_query", "my_chat_member"]),
         }
 
         try:

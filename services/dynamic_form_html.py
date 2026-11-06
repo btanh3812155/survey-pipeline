@@ -824,7 +824,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             <div id="subResultAppealBox" style="display:none; flex-direction:column; gap:6px; margin-top:8px;">
                 <button type="button" id="btnRequestManualReview" onclick="requestManualReviewFromModal()" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 14px; border-radius:10px; background:linear-gradient(135deg, #d97706, #b45309); color:#fff; font-weight:700; font-size:0.92rem; border:none; cursor:pointer; box-shadow:0 4px 12px rgba(217,119,6,0.3); transition:all 0.2s;">
                     <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-                    <span>🙋 Yêu cầu người thật kiểm tra lại (Khiếu nại)</span>
+                    <span>🙋 Yêu cầu kiểm tra lại</span>
                 </button>
                 <div id="txtAppealQuotaHint" style="font-size:0.75rem; color:#fbbf24; text-align:center; line-height:1.4;">
                     ⚠️ Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế
@@ -1998,7 +1998,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         btnA.disabled = false;
                         btnA.style.opacity = '1';
                         btnA.style.background = 'linear-gradient(135deg, #d97706, #b45309)';
-                        btnA.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><span>🙋 Yêu cầu người thật kiểm tra lại (Khiếu nại)</span>';
+                        btnA.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><span>🙋 Yêu cầu kiểm tra lại</span>';
                     }}
                     const hint = document.getElementById('txtAppealQuotaHint');
                     if (hint) hint.textContent = '⚠️ Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế';
