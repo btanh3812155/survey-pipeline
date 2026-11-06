@@ -264,3 +264,40 @@ def test_html_escaping_in_form_manager_prevents_xss():
     editor_html = render_form_editor_html(schema, is_new=False)
     assert "<h1 id=\"txtEditorTitle\">Chỉnh Sửa: <script>" not in editor_html
     assert "&lt;script&gt;" in editor_html or html.escape(xss_title) in editor_html
+
+def test_admin_root_redirect_and_sample_images_gallery():
+    """Tests /admin redirect, auth gating, and test sample images gallery presence."""
+    import base64
+    client = TestClient(app)
+    auth_header = {"Authorization": f"Basic {base64.b64encode(b'admin:12345678').decode('ascii')}"}
+
+    # 1. Unauthenticated /admin must return 401
+    resp_unauth = client.get("/admin", follow_redirects=False)
+    assert resp_unauth.status_code == 401
+
+    # 2. Authenticated /admin must redirect 302 to /admin/forms
+    resp_auth = client.get("/admin", headers=auth_header, follow_redirects=False)
+    assert resp_auth.status_code == 302
+    assert resp_auth.headers["location"] == "/admin/forms"
+
+    # 3. Authenticated /admin/samples must redirect to #test-samples-section
+    resp_samples = client.get("/admin/samples", headers=auth_header, follow_redirects=False)
+    assert resp_samples.status_code == 302
+    assert resp_samples.headers["location"] == "/admin/forms#test-samples-section"
+
+    # 4. /admin/forms HTML must contain sample images gallery cards and buttons
+    resp_forms = client.get("/admin/forms", headers=auth_header)
+    assert resp_forms.status_code == 200
+    html_content = resp_forms.text
+    assert "test-samples-section" in html_content
+    assert "sample_app_profile.jpg" in html_content
+    assert "sample_app_income.jpg" in html_content
+    assert "sample_income_report.jpg" not in html_content
+    assert "gsm_sample_car_crop.jpg" not in html_content
+    assert "gsm_sample_car_photo.jpg" not in html_content
+    assert "gsm_sample_bike.jpg" not in html_content
+    assert "official_passing_survey_receipt.jpg" not in html_content
+    assert "btn-download-sample" in html_content
+    assert "btn-copy-sample" in html_content
+    assert "copySampleUrl" in html_content
+    assert 'download="sample_app_income.jpg"' in html_content

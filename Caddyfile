@@ -5,6 +5,13 @@
     }
 }
 
+submissions.146.190.201.32.sslip.io, data.146.190.201.32.sslip.io, view.146.190.201.32.sslip.io, submissions.trustbridgevn.com, data.trustbridgevn.com {
+    reverse_proxy app:8000
+    request_body {
+        max_size 25MB
+    }
+}
+
 :80 {
     reverse_proxy app:8000
     request_body {

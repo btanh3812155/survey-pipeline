@@ -1640,24 +1640,18 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             if (!vid || !vid.videoWidth) return;
             if (navigator.vibrate) navigator.vibrate(50);
 
-            const targetAspect = 2 / 3;
-            const videoAspect = vid.videoWidth / vid.videoHeight;
-            let cropW, cropH, cropX, cropY;
-            if (videoAspect > targetAspect) {{
-                cropH = vid.videoHeight;
-                cropW = Math.round(vid.videoHeight * targetAspect);
-                cropX = Math.round((vid.videoWidth - cropW) / 2);
-                cropY = 0;
-            }} else {{
-                cropW = vid.videoWidth;
-                cropH = Math.round(vid.videoWidth / targetAspect);
-                cropX = 0;
-                cropY = Math.round((vid.videoHeight - cropH) / 2);
+            // Full-frame un-distorted capture from camera sensor
+            const maxW = 1080;
+            let destW = vid.videoWidth;
+            let destH = vid.videoHeight;
+            if (destW > maxW) {{
+                destH = Math.round(destH * (maxW / destW));
+                destW = maxW;
             }}
-            cvs.width = Math.min(cropW, 1080);
-            cvs.height = Math.round(cvs.width / targetAspect);
+            cvs.width = destW;
+            cvs.height = destH;
             const ctx = cvs.getContext('2d');
-            ctx.drawImage(vid, cropX, cropY, cropW, cropH, 0, 0, cvs.width, cvs.height);
+            ctx.drawImage(vid, 0, 0, vid.videoWidth, vid.videoHeight, 0, 0, destW, destH);
 
             const q = SCHEMA.questions.find(item => item.id === qid);
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;

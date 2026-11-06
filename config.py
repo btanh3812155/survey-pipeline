@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL_PREFIX: str = "https://cdn.example.com"
 
     # tuning thresholds
-    BLUR_THRESHOLD: float = 40.0
+    BLUR_THRESHOLD: float = 15.0
     IMAGE_MAX_DIMENSION: int = 1024
     WEBP_QUALITY: int = 82
-    AI_TIMEOUT_SECONDS: float = 4.0
+    AI_TIMEOUT_SECONDS: float = 10.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

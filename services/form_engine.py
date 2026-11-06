@@ -29,11 +29,11 @@ class ImageCheckConfig(BaseModel):
     enable_blur_check: bool = True
     blur_threshold: Optional[float] = None  # None falls back to settings.BLUR_THRESHOLD (40.0)
     enable_ai_vision: bool = True           # DeepSeek / Gemini visual fact extraction
+    enable_object_detection: bool = False   # Strict receipt/odometer object recognition
     enable_vehicle_match: bool = True       # Vehicle plate & type persistence matching
     enable_anti_fraud: bool = True          # Duplicate reuse / stock photo check
     enable_ai_generated_check: bool = True  # 2D FFT synthetic diffusion check
     enable_screen_photo_check: bool = False  # Moiré / screen recapture detection (default False)
-
 class FormQuestion(BaseModel):
     id: str
     title: str
@@ -201,8 +201,8 @@ def get_effective_image_checks(schema: Optional[FormSchema], question_id: Option
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
     form_id="income_survey",
-    title="Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM (Lark Base)",
-    description="Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM từ hệ thống Lark Base",
+    title="Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM",
+    description="Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM",
     settings=FormSettings(
         response_limit=20000,
         access_control="public",
@@ -213,8 +213,10 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         is_test_mode=True,
         image_checks=ImageCheckConfig(
             enable_blur_check=True,
+            blur_threshold=15.0,
             enable_ai_vision=True,
-            enable_vehicle_match=True,
+            enable_object_detection=False,
+            enable_vehicle_match=False,
             enable_anti_fraud=True,
             enable_ai_generated_check=True,
             enable_screen_photo_check=False,
@@ -287,37 +289,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             ),
         ),
         FormQuestion(
-            id="driver_name",
-            title="4. Họ và tên tài xế",
-            type=QuestionType.TEXT,
-            required=True,
-            description="Họ tên đầy đủ theo giấy phép lái xe",
-            sample_response="Nguyễn Văn An",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-        ),
-        FormQuestion(
-            id="license_plate",
-            title="5. Biển số xe",
-            type=QuestionType.TEXT,
-            required=True,
-            description="Biển số xe vận hành (VD: 29E-123.45 hoặc 51H12345)",
-            sample_response="29E-123.45",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-        ),
-        FormQuestion(
             id="vehicle_type",
             title="Câu 1: Hiện tại anh đang chạy dòng xe nào cho hệ thống GSM ạ?",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
-            options=["Xe máy", "Ô tô", "Khác", "Ô tô điện VinFast (GSM)", "Xe máy điện (GSM Bike)", "Xe cá nhân khác"],
+            options=["Xe máy", "Ô tô"],
             description="Chọn dòng phương tiện đang vận hành cho hệ thống GSM",
             sample_response="Ô tô",
             conditional=ConditionalRule(
@@ -336,8 +312,8 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             sample_response="VF 5 Plus",
             conditional=ConditionalRule(
                 depends_on_question_id="vehicle_type",
-                operator="in",
-                expected_value=["Ô tô", "Ô tô điện VinFast (GSM)"],
+                operator="equals",
+                expected_value="Ô tô",
             ),
         ),
         FormQuestion(
@@ -410,7 +386,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         FormQuestion(
             id="gsm_incentive_policy",
             title="Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
-            type=QuestionType.SINGLE_CHOICE,
+            type=QuestionType.MULTIPLE_CHOICE,
             required=False,
             options=["Có áp dụng chỉ tiêu", "Có khung giờ vàng", "Có chương trình thưởng", "Không có", "Khác"],
             description="Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
@@ -422,40 +398,12 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             ),
         ),
         FormQuestion(
-            id="gross_revenue",
-            title="8. Tổng doanh thu trong ngày/tháng (VNĐ)",
-            type=QuestionType.NUMBER,
-            required=False,
-            description="Tổng doanh thu hiển thị trên ứng dụng tài xế cuối ca",
-            sample_response="1250000",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-            validation=ValidationRule(min_value=0, max_value=50000000),
-        ),
-        FormQuestion(
-            id="odometer_km",
-            title="9. Số km công-tơ-mét (Odometer)",
-            type=QuestionType.NUMBER,
-            required=False,
-            description="Số km trên đồng hồ xe tại thời điểm khảo sát",
-            sample_response="15200",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-            validation=ValidationRule(min_value=0),
-        ),
-        FormQuestion(
             id="camera_receipt",
-            title='Tải lên ảnh chụp màn hình (CTV dùng điện thoại chụp màn hình app tài xế khảo sát - mục  "Thống kê thu nhập" - Thu nhập tuần & tổng của tháng trước & tháng hiện tại)',
+            title='Chụp ảnh xác thực ứng dụng tài xế GSM (Ảnh 1: Hồ sơ App, Ảnh 2: Thống kê thu nhập)',
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
-            description="Chụp trực tiếp từ camera phần cứng, khung hình chuẩn 2:3",
-            sample_response="Đặt rõ nét màn hình doanh thu hoặc đồng hồ xe vào khung",
+            description="Chụp trực tiếp từ camera phần cứng: Ảnh 1 là màn hình hồ sơ/tiện ích tài xế, Ảnh 2 là màn hình thống kê thu nhập",
+            sample_response="Chụp rõ nét màn hình hồ sơ tài khoản và màn hình thống kê thu nhập",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
@@ -467,11 +415,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             ],
             allow_multiple_images=True,
             min_images=2,
-            max_images=3,
+            max_images=2,
+            exact_image_count=2,
             image_slots=[
-                {"slot": 0, "title": "Ảnh 1: Đồng hồ công-tơ-mét (Odometer)", "role": "odometer", "required": True},
-                {"slot": 1, "title": "Ảnh 2: Màn hình doanh thu ứng dụng", "role": "revenue_screen", "required": True},
-                {"slot": 2, "title": "Ảnh 3: Toàn cảnh xe & Biển số", "role": "vehicle_exterior", "required": False},
+                {"slot": 0, "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)", "role": "app_profile", "required": True},
+                {"slot": 1, "title": "Ảnh 2: Màn hình thống kê thu nhập (App Income)", "role": "app_income", "required": True},
             ],
         ),
     ],

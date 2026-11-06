@@ -1,7 +1,7 @@
 {
   "form_id": "income_survey",
-  "title": "Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM (Lark Base)",
-  "description": "Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM từ hệ thống Lark Base",
+  "title": "Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM",
+  "description": "Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM",
   "settings": {
     "response_limit": 20000,
     "current_responses": 0,
@@ -14,9 +14,10 @@
     "is_test_mode": true,
     "image_checks": {
       "enable_blur_check": true,
-      "blur_threshold": null,
+      "blur_threshold": 15.0,
       "enable_ai_vision": true,
-      "enable_vehicle_match": true,
+      "enable_object_detection": false,
+      "enable_vehicle_match": false,
       "enable_anti_fraud": true,
       "enable_ai_generated_check": true,
       "enable_screen_photo_check": false
@@ -144,50 +145,6 @@
       "image_slots": null
     },
     {
-      "id": "driver_name",
-      "title": "4. Họ và tên tài xế",
-      "type": "text",
-      "required": true,
-      "description": "Họ tên đầy đủ theo giấy phép lái xe",
-      "sample_response": "Nguyễn Văn An",
-      "sample_images": null,
-      "options": null,
-      "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
-      "image_checks": null,
-      "allow_multiple_images": false,
-      "min_images": null,
-      "max_images": null,
-      "exact_image_count": null,
-      "image_slots": null
-    },
-    {
-      "id": "license_plate",
-      "title": "5. Biển số xe",
-      "type": "text",
-      "required": true,
-      "description": "Biển số xe vận hành (VD: 29E-123.45 hoặc 51H12345)",
-      "sample_response": "29E-123.45",
-      "sample_images": null,
-      "options": null,
-      "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
-      "image_checks": null,
-      "allow_multiple_images": false,
-      "min_images": null,
-      "max_images": null,
-      "exact_image_count": null,
-      "image_slots": null
-    },
-    {
       "id": "vehicle_type",
       "title": "Câu 1: Hiện tại anh đang chạy dòng xe nào cho hệ thống GSM ạ?",
       "type": "single_choice",
@@ -197,11 +154,7 @@
       "sample_images": null,
       "options": [
         "Xe máy",
-        "Ô tô",
-        "Khác",
-        "Ô tô điện VinFast (GSM)",
-        "Xe máy điện (GSM Bike)",
-        "Xe cá nhân khác"
+        "Ô tô"
       ],
       "validation": null,
       "conditional": {
@@ -235,11 +188,8 @@
       "validation": null,
       "conditional": {
         "depends_on_question_id": "vehicle_type",
-        "operator": "in",
-        "expected_value": [
-          "Ô tô",
-          "Ô tô điện VinFast (GSM)"
-        ]
+        "operator": "equals",
+        "expected_value": "Ô tô"
       },
       "image_checks": null,
       "allow_multiple_images": false,
@@ -366,7 +316,7 @@
     {
       "id": "gsm_incentive_policy",
       "title": "Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
-      "type": "single_choice",
+      "type": "multiple_choice",
       "required": false,
       "description": "Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
       "sample_response": "Có áp dụng chỉ tiêu",
@@ -392,75 +342,15 @@
       "image_slots": null
     },
     {
-      "id": "gross_revenue",
-      "title": "8. Tổng doanh thu trong ngày/tháng (VNĐ)",
-      "type": "number",
-      "required": false,
-      "description": "Tổng doanh thu hiển thị trên ứng dụng tài xế cuối ca",
-      "sample_response": "1250000",
-      "sample_images": null,
-      "options": null,
-      "validation": {
-        "min_value": 0.0,
-        "max_value": 50000000.0,
-        "regex_pattern": null,
-        "regex_error_message": null,
-        "max_length": null,
-        "min_length": null,
-        "numbers_only": false
-      },
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
-      "image_checks": null,
-      "allow_multiple_images": false,
-      "min_images": null,
-      "max_images": null,
-      "exact_image_count": null,
-      "image_slots": null
-    },
-    {
-      "id": "odometer_km",
-      "title": "9. Số km công-tơ-mét (Odometer)",
-      "type": "number",
-      "required": false,
-      "description": "Số km trên đồng hồ xe tại thời điểm khảo sát",
-      "sample_response": "15200",
-      "sample_images": null,
-      "options": null,
-      "validation": {
-        "min_value": 0.0,
-        "max_value": null,
-        "regex_pattern": null,
-        "regex_error_message": null,
-        "max_length": null,
-        "min_length": null,
-        "numbers_only": false
-      },
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
-      "image_checks": null,
-      "allow_multiple_images": false,
-      "min_images": null,
-      "max_images": null,
-      "exact_image_count": null,
-      "image_slots": null
-    },
-    {
       "id": "camera_receipt",
-      "title": "Tải lên ảnh chụp màn hình (CTV dùng điện thoại chụp màn hình app tài xế khảo sát - mục  \"Thống kê thu nhập\" - Thu nhập tuần & tổng của tháng trước & tháng hiện tại)",
+      "title": "Chụp ảnh xác thực ứng dụng tài xế GSM (Ảnh 1: Hồ sơ App, Ảnh 2: Thống kê thu nhập)",
       "type": "camera_webrtc",
       "required": true,
-      "description": "Chụp trực tiếp từ camera phần cứng, khung hình chuẩn 2:3",
-      "sample_response": "Đặt rõ nét màn hình doanh thu hoặc đồng hồ xe vào khung",
+      "description": "Chụp trực tiếp từ camera phần cứng: Ảnh 1 là màn hình hồ sơ/tiện ích tài xế, Ảnh 2 là màn hình thống kê thu nhập",
+      "sample_response": "Chụp rõ nét màn hình hồ sơ tài khoản và màn hình thống kê thu nhập",
       "sample_images": [
-        "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
-        "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"
+        "/samples/sample_app_profile.jpg",
+        "/samples/sample_app_income.jpg"
       ],
       "options": null,
       "validation": null,
@@ -472,26 +362,20 @@
       "image_checks": null,
       "allow_multiple_images": true,
       "min_images": 2,
-      "max_images": 3,
-      "exact_image_count": null,
+      "max_images": 2,
+      "exact_image_count": 2,
       "image_slots": [
         {
           "slot": 0,
-          "title": "Ảnh 1: Đồng hồ công-tơ-mét (Odometer)",
-          "role": "odometer",
+          "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)",
+          "role": "app_profile",
           "required": true
         },
         {
           "slot": 1,
-          "title": "Ảnh 2: Màn hình doanh thu ứng dụng",
-          "role": "revenue_screen",
+          "title": "Ảnh 2: Màn hình thống kê thu nhập (App Income)",
+          "role": "app_income",
           "required": true
-        },
-        {
-          "slot": 2,
-          "title": "Ảnh 3: Toàn cảnh xe & Biển số",
-          "role": "vehicle_exterior",
-          "required": false
         }
       ]
     }

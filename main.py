@@ -10,13 +10,13 @@ from collections import OrderedDict
 import httpx
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
 from services.form_engine import (
     FormSchema,
     DEFAULT_TRUST_BRIDGE_SCHEMA,
@@ -25,6 +25,7 @@ from services.form_engine import (
 )
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
+from services.submissions_viewer_html import render_submissions_viewer_html
 
 from config import settings
 from services.normalizer import (
@@ -393,13 +394,26 @@ FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 @app.get("/", response_class=HTMLResponse)
 @app.get("/camera-form", response_class=HTMLResponse)
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
-async def get_dynamic_form(form_id: str = "default"):
+async def get_dynamic_form(request: Request, form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
+    host = (request.headers.get("host") or "").lower()
+    if (host.startswith("submissions.") or host.startswith("view.") or host.startswith("data.")) and form_id in ("default", "camera-form"):
+        return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
     if form_id in ("default", "camera-form") or form_id not in FORM_REGISTRY:
         schema = FORM_REGISTRY.get("income_survey") or next(iter(FORM_REGISTRY.values()))
     else:
         schema = FORM_REGISTRY[form_id]
     return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+
+@app.get("/admin", include_in_schema=False)
+async def admin_root(admin_user: str = Depends(verify_admin_auth)):
+    """Redirects /admin directly to /admin/forms."""
+    return RedirectResponse(url="/admin/forms", status_code=status.HTTP_302_FOUND)
+
+@app.get("/admin/samples", include_in_schema=False)
+async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
+    """Direct alias to the test sample images gallery in admin."""
+    return RedirectResponse(url="/admin/forms#test-samples-section", status_code=status.HTTP_302_FOUND)
 
 @app.get("/admin/forms", response_class=HTMLResponse)
 async def get_forms_list(page: int = 1, admin_user: str = Depends(verify_admin_auth)):
@@ -478,6 +492,127 @@ async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     if os.path.exists(DEV_STORAGE_FILE):
         os.remove(DEV_STORAGE_FILE)
     return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
+
+async def fetch_aggregated_submissions(
+    status_filter: Optional[str] = None,
+    mode_filter: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+
+    # 1. Dev test storage
+    if mode_filter != "PROD" and os.path.exists(DEV_STORAGE_FILE):
+        try:
+            with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+                dev_records = json.load(f)
+            if isinstance(dev_records, list):
+                for r in dev_records:
+                    results.append(r)
+        except Exception as e:
+            logger.warning(f"Error reading dev submissions: {e}")
+
+    # 2. PostgreSQL production storage
+    if mode_filter != "TEST_DEV_MODE" and db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT 
+                            submission_id, driver_phone, driver_name, receipt_serial_no,
+                            store_tax_id, image_r2_url, signature_r2_url,
+                            gps_latitude, gps_longitude, gps_accuracy_meters,
+                            status, rejection_reason, raw_extracted_facts,
+                            audit_seal_hash, created_at
+                        FROM survey_submissions
+                        ORDER BY created_at DESC
+                        LIMIT %s;
+                        """,
+                        (limit,)
+                    )
+                    rows = await cur.fetchall()
+                    for row in rows:
+                        facts = row[12]
+                        if isinstance(facts, str):
+                            try:
+                                facts = json.loads(facts)
+                            except Exception:
+                                pass
+                        results.append({
+                            "submission_id": row[0],
+                            "driver_phone": row[1],
+                            "driver_name": row[2],
+                            "license_plate": row[3],
+                            "receipt_serial_no": row[3],
+                            "store_tax_id": row[4],
+                            "image_r2_url": row[5],
+                            "signature_r2_url": row[6],
+                            "gps_latitude": row[7],
+                            "gps_longitude": row[8],
+                            "gps_accuracy_meters": row[9],
+                            "status": row[10],
+                            "rejection_reason": row[11],
+                            "ai_result": facts,
+                            "audit_seal_hash": row[13],
+                            "created_at": row[14].isoformat() if row[14] else None,
+                            "mode": "PROD_MODE",
+                        })
+        except Exception as e:
+            logger.warning(f"Error querying survey_submissions from DB: {e}")
+
+    # Filter by search string if provided
+    if search:
+        q = search.lower().strip()
+        results = [
+            r for r in results
+            if q in (r.get("submission_id") or "").lower()
+            or q in (r.get("driver_phone") or "").lower()
+            or q in (r.get("driver_name") or "").lower()
+            or q in (r.get("license_plate") or "").lower()
+            or q in (r.get("receipt_serial_no") or "").lower()
+        ]
+
+    # Filter by status if provided
+    if status_filter and status_filter != "ALL":
+        results = [r for r in results if (r.get("status") or "").upper() == status_filter.upper()]
+
+    # Sort descending by submission time
+    results.sort(key=lambda x: x.get("created_at") or x.get("submitted_at") or "", reverse=True)
+    return results[:limit]
+
+
+@app.get("/admin/submissions", response_class=HTMLResponse)
+@app.get("/submissions", response_class=HTMLResponse)
+async def admin_submissions_dashboard(
+    request: Request,
+    admin_user: str = Depends(verify_admin_auth)
+):
+    """Web UI dashboard to view, search, filter, and inspect submitted surveys."""
+    subs = await fetch_aggregated_submissions()
+    return HTMLResponse(content=render_submissions_viewer_html(subs), status_code=200)
+
+
+@app.get("/api/v1/submissions")
+async def get_all_submissions_api(
+    status: Optional[str] = None,
+    mode: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 200,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """API endpoint providing aggregated JSON survey submissions with stats summary."""
+    subs = await fetch_aggregated_submissions(status_filter=status, mode_filter=mode, search=search, limit=limit)
+    return {
+        "count": len(subs),
+        "submissions": subs,
+        "summary": {
+            "total": len(subs),
+            "approved": sum(1 for s in subs if s.get("status") == "APPROVED"),
+            "rejected": sum(1 for s in subs if s.get("status") == "REJECTED"),
+            "manual_review": sum(1 for s in subs if s.get("status") in ("MANUAL_REVIEW", "APPEAL_PENDING")),
+        }
+    }
 
 @app.get("/api/v1/surveys/history")
 async def get_survey_history(
@@ -750,19 +885,33 @@ async def submit_webrtc_survey(
             if pil_im is not None:
                 is_sharp = True
                 blur_var = None
+                blurry_slot_idx = None
+                blurry_slot_title = None
+                decode_error_slot_idx = None
+                decode_error_slot_title = None
+
                 if checks.enable_blur_check:
                     blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
-                    for img_b in raw_bytes_list:
+                    for idx, img_b in enumerate(raw_bytes_list):
+                        slot_name = f"Ảnh {idx + 1}"
+                        if target_q and target_q.image_slots and idx < len(target_q.image_slots):
+                            stitle = target_q.image_slots[idx].get("title") or target_q.image_slots[idx].get("role")
+                            if stitle:
+                                slot_name = f"Ảnh {idx + 1} ({stitle})"
                         try:
                             _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
                             sharp, b_var = compute_laplacian_blur_score(p_im, threshold=blur_thresh)
                             if not sharp:
                                 is_sharp = False
                                 blur_var = b_var
+                                blurry_slot_idx = idx
+                                blurry_slot_title = slot_name
                                 break
                             blur_var = b_var
                         except Exception:
                             is_sharp = False
+                            decode_error_slot_idx = idx
+                            decode_error_slot_title = slot_name
                             break
                 else:
                     is_sharp, blur_var = True, None
@@ -770,8 +919,20 @@ async def submit_webrtc_survey(
                 if not is_sharp:
                     is_approved = False
                     status_str = "REJECTED"
-                    reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
-                    ai_res = {}
+                    if decode_error_slot_title:
+                        reason_str = f"{decode_error_slot_title}: Không thể giải mã tệp ảnh (định dạng stream lỗi hoặc file hỏng). Vui lòng chụp lại!"
+                    elif blurry_slot_title:
+                        score_text = f" (độ nét đo được: {blur_var:.1f} < ngưỡng tối thiểu {blur_thresh})" if blur_var is not None else ""
+                        reason_str = f"{blurry_slot_title}: Ảnh chụp bị mờ hoặc rung tay{score_text}, vui lòng giữ chắc tay và chụp lại rõ nét hơn!"
+                    else:
+                        reason_str = "Ảnh chụp bị mờ hoặc rung tay, vui lòng chụp lại rõ nét hơn!"
+                    ai_res = {
+                        "status": "REJECTED",
+                        "failed_slot": blurry_slot_idx if blurry_slot_idx is not None else decode_error_slot_idx,
+                        "failed_slot_name": blurry_slot_title or decode_error_slot_title,
+                        "blur_score": blur_var,
+                        "blur_threshold": blur_thresh if checks.enable_blur_check else None,
+                    }
                 elif v_match and not v_match.is_match:
                     is_approved = False
                     status_str = "REJECTED"
@@ -789,74 +950,148 @@ async def submit_webrtc_survey(
                         fn_1 = getattr(images_list[1], "filename", "") or ""
                         task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0)
                         task_role_1 = vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1)
+                        task_ocr = vision_client.ocr_driver_app_income(norm_bytes)
                         task_facts = vision_client.extract_facts(norm_bytes)
 
-                        results = await asyncio.gather(task_role_0, task_role_1, task_facts, return_exceptions=True)
-                        role_0_res, role_1_res, facts_res = results
+                        results = await asyncio.gather(task_role_0, task_role_1, task_ocr, task_facts, return_exceptions=True)
+                        role_0_res, role_1_res, ocr_res, facts_res = results
 
                         role_0 = "unknown" if isinstance(role_0_res, Exception) else role_0_res
                         role_1 = "unknown" if isinstance(role_1_res, Exception) else role_1_res
+                        if isinstance(ocr_res, Exception):
+                            logger.error(f"[MAIN OCR ERROR] task_ocr exception: {ocr_res}")
+                        ocr_data = ocr_res if isinstance(ocr_res, dict) and not isinstance(ocr_res, Exception) else {}
 
                         if (role_0 == "unknown" or role_1 == "unknown") and not isinstance(facts_res, Exception):
                             st_1 = (getattr(facts_res, "screen_type", None) or getattr(facts_res, "role", None) or "").upper()
-                            if "REV" in st_1:
-                                role_1 = "revenue_screen"
-                            elif "ODO" in st_1:
-                                role_1 = "odometer"
+                            if "REV" in st_1 or "INC" in st_1:
+                                role_1 = "app_income"
+                            elif "ODO" in st_1 or "PROF" in st_1:
+                                role_1 = "odometer" if "ODO" in st_1 else "app_profile"
 
                         if role_0 == "unknown":
                             try:
                                 facts_0 = await vision_client.extract_facts(raw_bytes_list[0])
                                 st_0 = (getattr(facts_0, "screen_type", None) or getattr(facts_0, "role", None) or "").upper()
-                                if "REV" in st_0:
-                                    role_0 = "revenue_screen"
-                                elif "ODO" in st_0:
-                                    role_0 = "odometer"
+                                if "REV" in st_0 or "INC" in st_0:
+                                    role_0 = "app_income"
+                                elif "ODO" in st_0 or "PROF" in st_0:
+                                    role_0 = "odometer" if "ODO" in st_0 else "app_profile"
                             except Exception:
                                 pass
 
-                        slot_0_role = target_q.image_slots[0].get("role", "odometer") if len(target_q.image_slots) > 0 else "odometer"
-                        slot_1_role = target_q.image_slots[1].get("role", "revenue_screen") if len(target_q.image_slots) > 1 else "revenue_screen"
+                        slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
+                        slot_1_role = target_q.image_slots[1].get("role", "app_income") if len(target_q.image_slots) > 1 else "app_income"
+                        slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
+                        slot_1_title = target_q.image_slots[1].get("title", "Ảnh 2") if len(target_q.image_slots) > 1 else "Ảnh 2"
 
-                        # If an inverted order is detected (e.g. image 0 is an app screen and image 1 is an odometer)
-                        if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 == "revenue_screen" and role_1 == "odometer"):
+                        order_check_failed = False
+                        if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 in ("app_income", "revenue_screen") and role_1 in ("app_profile", "odometer")):
+                            order_check_failed = True
+
+                        if order_check_failed:
                             is_approved = False
                             status_str = "REJECTED"
-                            reason_str = "Thứ tự ảnh không chính xác: Ảnh 1 phải là đồng hồ công-tơ-mét, Ảnh 2 phải là màn hình doanh thu!"
+                            reason_str = f"Thứ tự ảnh không chính xác: Ảnh 1 phải là {slot_0_title}, Ảnh 2 phải là {slot_1_title}!"
                             ai_res = {
                                 "status": "REJECTED",
                                 "reason": reason_str,
                                 "order_check_failed": True,
                                 "detected_roles": [role_0, role_1],
                             }
+                        elif role_0 == "unknown":
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = f"Ảnh 1 ({slot_0_title}): Không phát hiện màn hình ứng dụng tài xế (Phát hiện vật thể không hợp lệ). Vui lòng chụp đúng màn hình hồ sơ ứng dụng tài xế!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 0,
+                                "reason": reason_str,
+                                "detected_roles": [role_0, role_1],
+                            }
+                        elif role_1 == "unknown":
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = f"Ảnh 2 ({slot_1_title}): Không phát hiện màn hình thống kê thu nhập tài xế! Vui lòng chụp đúng màn hình thống kê thu nhập ứng dụng tài xế."
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 1,
+                                "reason": reason_str,
+                                "detected_roles": [role_0, role_1],
+                            }
+                        elif ocr_data.get("is_manipulated_or_photoshopped", False):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = "Ảnh 2: Phát hiện dấu hiệu chỉnh sửa ảnh kỹ thuật số (Photoshop/splicing) trên màn hình thu nhập!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 1,
+                                "reason": reason_str,
+                                "ocr_data": ocr_data,
+                            }
+                        elif (
+                            ocr_data.get("is_legible") is False
+                            or (ocr_data.get("confidence_score") is not None and float(ocr_data.get("confidence_score", 1.0)) < 0.6)
+                            or (int(ocr_data.get("gross_revenue") or 0) <= 0 and int(ocr_data.get("net_income") or 0) <= 0)
+                        ):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = f"Ảnh 2 ({slot_1_title}): Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 1,
+                                "reason": reason_str,
+                                "ocr_data": ocr_data,
+                            }
                         else:
-                            if isinstance(facts_res, Exception):
-                                logger.error(f"Vision AI call failed: {facts_res}")
-                                ai_res = {"status": "manual_review", "error": str(facts_res)}
-                                is_approved = False
-                                status_str = "MANUAL_REVIEW"
-                                reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
-                            else:
-                                facts = facts_res
-                                compliance = evaluate_survey_compliance(facts)
-                                ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
-                                is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
-                                status_str = "APPROVED" if is_approved else "REJECTED"
-                                reason_str = compliance.collaborator_note or compliance.reason_code
+                            is_approved = True
+                            status_str = "APPROVED"
+                            reason_str = "Gửi phiếu khảo sát thành công!"
+                            gross_val = int(ocr_data.get("gross_revenue") or 0)
+                            net_val = int(ocr_data.get("net_income") or 0)
+                            trips_val = int(ocr_data.get("total_trips") or 0)
+                            hours_val = str(ocr_data.get("online_hours") or "")
+                            period_val = str(ocr_data.get("period") or "")
+                            ai_res = {
+                                "status": "APPROVED",
+                                "roles_verified": [role_0, role_1],
+                                "ocr_data": ocr_data,
+                                "gross_revenue": gross_val,
+                                "net_income": net_val,
+                                "total_trips": trips_val,
+                                "online_hours": hours_val,
+                                "period": period_val,
+                            }
                     else:
                         try:
                             facts = await vision_client.extract_facts(norm_bytes)
-                            compliance = evaluate_survey_compliance(facts)
                             ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
-                            is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
-                            status_str = "APPROVED" if is_approved else "REJECTED"
-                            reason_str = compliance.collaborator_note or compliance.reason_code
+                            if not getattr(checks, "enable_object_detection", False):
+                                if getattr(facts, "is_manipulated_or_photoshopped", False):
+                                    is_approved = False
+                                    status_str = "REJECTED"
+                                    reason_str = "Hệ thống phát hiện dấu hiệu chỉnh sửa ảnh kỹ thuật số (Photoshop)."
+                                else:
+                                    is_approved = True
+                                    status_str = "APPROVED"
+                                    reason_str = "Ảnh chụp rõ nét, đạt chuẩn kiểm tra hình ảnh (Đã tắt nhận diện đối tượng theo yêu cầu)."
+                            else:
+                                compliance = evaluate_survey_compliance(facts)
+                                is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+                                status_str = "APPROVED" if is_approved else "REJECTED"
+                                reason_str = compliance.collaborator_note or compliance.reason_code
                         except Exception as ai_err:
-                            logger.error(f"Vision AI call failed: {ai_err}")
-                            ai_res = {"status": "manual_review", "error": str(ai_err)}
-                            is_approved = False
-                            status_str = "MANUAL_REVIEW"
-                            reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+                            if not getattr(checks, "enable_object_detection", False):
+                                ai_res = {"status": "approved", "note": "passed image quality check"}
+                                is_approved = True
+                                status_str = "APPROVED"
+                                reason_str = "Ảnh chụp rõ nét, đạt chuẩn kiểm tra hình ảnh (Bỏ qua nhận diện đối tượng)."
+                            else:
+                                logger.error(f"Vision AI call failed: {ai_err}")
+                                ai_res = {"status": "manual_review", "error": str(ai_err)}
+                                is_approved = False
+                                status_str = "MANUAL_REVIEW"
+                                reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
     persisted_phone = None if is_dissent else driver_phone

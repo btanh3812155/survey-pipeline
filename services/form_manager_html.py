@@ -1,8 +1,43 @@
 import html
 import json
 import math
-from typing import Dict, Optional
+import os
+from typing import Dict, Optional, List, Any
 from services.form_engine import FormSchema
+
+DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
+    {
+        "filename": "sample_app_profile.jpg",
+        "title": "Ảnh Mẫu 1: Màn hình hồ sơ ứng dụng (App Profile)",
+        "slot_badge": "Slot 1: Hồ Sơ App",
+        "dimensions": "1568 × 1568",
+        "size_kb": "2.1 MB",
+        "desc": "Ảnh chụp màn hình menu/tiện ích ứng dụng tài xế GSM: Ví tài xế, Chương trình thưởng, Tiện ích bổ trợ, Kiểm tra an toàn vận doanh.",
+    },
+    {
+        "filename": "sample_app_income.jpg",
+        "title": "Ảnh Mẫu 2: Màn hình thống kê thu nhập (App Income)",
+        "slot_badge": "Slot 2: Thu Nhập App",
+        "dimensions": "1568 × 1568",
+        "size_kb": "2.5 MB",
+        "desc": "Ảnh chụp màn hình thống kê thu nhập thực tế: Tổng thu nhập 2.721.000 đ, Doanh số 2.664.000 đ, Chiết khấu -749.409 đ, Thu nhập ròng 1.971.591 đ, 18 chuyến.",
+    },
+]
+
+def get_sample_images_list() -> List[Dict[str, Any]]:
+    samples_dir = os.path.join(os.getcwd(), "data", "test_samples")
+    result = []
+
+    for item in DEFAULT_SAMPLE_IMAGES:
+        fname = item["filename"]
+        fpath = os.path.join(samples_dir, fname)
+        entry = dict(item)
+        if os.path.isfile(fpath):
+            sz = os.path.getsize(fpath)
+            entry["size_kb"] = f"{sz / 1024:.1f} KB" if sz < 1024 * 1024 else f"{sz / (1024 * 1024):.1f} MB"
+        result.append(entry)
+
+    return result
 def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6) -> str:
     # Deduplicate forms by form_id to prevent phantom duplicates
     unique_forms: Dict[str, FormSchema] = {}
@@ -38,10 +73,43 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             </div>
         </div>
         """
+    sample_images = get_sample_images_list()
+    samples_cards_html = ""
+    for s in sample_images:
+        fname = s["filename"]
+        title_esc = html.escape(s["title"])
+        badge_esc = html.escape(s["slot_badge"])
+        dim_esc = html.escape(s["dimensions"])
+        size_esc = html.escape(s["size_kb"])
+        desc_esc = html.escape(s["desc"])
+        url = f"/samples/{fname}"
+
+        samples_cards_html += f"""
+        <div class="sample-card">
+            <div class="sample-thumb-wrap" onclick="window.open('{url}', '_blank')">
+                <img src="{url}" alt="{title_esc}" loading="lazy">
+                <span class="sample-thumb-badge">{badge_esc}</span>
+                <span class="sample-thumb-meta">{dim_esc} • {size_esc}</span>
+            </div>
+            <div class="sample-body">
+                <div class="sample-title">{title_esc}</div>
+                <div class="sample-desc">{desc_esc}</div>
+                <div class="sample-actions">
+                    <a href="{url}" download="{fname}" class="btn-download-sample">
+                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                        Tải Về
+                    </a>
+                    <button type="button" onclick="copySampleUrl('{url}', this)" class="btn-copy-sample">
+                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                        Copy Link
+                    </button>
+                </div>
+            </div>
+        </div>
+        """
 
     prev_disabled = "disabled" if current_page <= 1 else ""
     next_disabled = "disabled" if current_page >= total_pages else ""
-
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -178,6 +246,172 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         }}
 
         .page-indicator {{ font-size: 0.85rem; color: var(--muted); }}
+
+        .btn-samples-nav {{
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--border);
+            color: #38bdf8;
+            padding: 9px 14px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .btn-samples-nav:hover {{
+            border-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.1);
+        }}
+        .samples-section {{
+            margin-top: 36px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }}
+        .samples-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+            gap: 12px;
+            flex-wrap: wrap;
+        }}
+        .samples-header h2 {{
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .samples-header p {{
+            font-size: 0.82rem;
+            color: var(--muted);
+            margin-top: 4px;
+        }}
+        .samples-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+        }}
+        .sample-card {{
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.15s ease, border-color 0.15s ease;
+        }}
+        .sample-card:hover {{
+            border-color: rgba(37, 99, 235, 0.6);
+        }}
+        .sample-thumb-wrap {{
+            position: relative;
+            width: 100%;
+            height: 180px;
+            background: #060911;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }}
+        .sample-thumb-wrap img {{
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transition: transform 0.2s ease;
+        }}
+        .sample-thumb-wrap:hover img {{
+            transform: scale(1.04);
+        }}
+        .sample-thumb-badge {{
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: rgba(9, 13, 22, 0.85);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #38bdf8;
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+        }}
+        .sample-thumb-meta {{
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(9, 13, 22, 0.85);
+            backdrop-filter: blur(4px);
+            color: var(--muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }}
+        .sample-body {{
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+        }}
+        .sample-title {{
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.3;
+        }}
+        .sample-desc {{
+            font-size: 0.8rem;
+            color: var(--muted);
+            line-height: 1.4;
+            flex: 1;
+        }}
+        .sample-actions {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 6px;
+        }}
+        .btn-download-sample {{
+            background: var(--accent);
+            color: #fff;
+            text-align: center;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }}
+        .btn-download-sample:hover {{
+            background: var(--accent-hover);
+        }}
+        .btn-copy-sample {{
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            color: var(--text);
+            text-align: center;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }}
+        .btn-copy-sample:hover {{
+            background: rgba(255, 255, 255, 0.12);
+        }}
     </style>
 </head>
 <body>
@@ -193,7 +427,11 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                 <h1 id="txtAdminTitle">Danh Sách Biểu Mẫu Khảo Sát</h1>
                 <p id="txtAdminSub">Tổng cộng: {total_forms} biểu mẫu trong hệ thống</p>
             </div>
-            <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">+ Tạo Biểu Mẫu Mới</a>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">📊 Dữ Liệu Nộp</a>
+                <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">🖼️ Ảnh Mẫu Test</a>
+                <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">+ Tạo Biểu Mẫu Mới</a>
+            </div>
         </header>
 
         <div class="form-grid">
@@ -205,19 +443,51 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             <span class="page-indicator">Trang {current_page} / {total_pages}</span>
             <a href="/admin/forms?page={current_page + 1}" class="btn-page {next_disabled}">Trang sau</a>
         </div>
+
+        <section id="test-samples-section" class="samples-section">
+            <div class="samples-header">
+                <div>
+                    <h2 id="txtSamplesTitle">🖼️ Kho Ảnh Mẫu Thử Nghiệm</h2>
+                    <p id="txtSamplesSub">Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI</p>
+                </div>
+                <span class="badge active">{len(sample_images)} Ảnh Có Sẵn</span>
+            </div>
+            <div class="samples-grid">
+                {samples_cards_html}
+            </div>
+        </section>
     </div>
     <script>
         let currentLang = localStorage.getItem('tb_lang') || 'vi';
+        function copySampleUrl(path, btn) {{
+            const fullUrl = window.location.origin + path;
+            navigator.clipboard.writeText(fullUrl).then(() => {{
+                const orig = btn.innerHTML;
+                btn.innerHTML = "✅ Đã copy!";
+                setTimeout(() => {{ btn.innerHTML = orig; }}, 2000);
+            }}).catch(() => {{
+                prompt("Sao chép link ảnh:", fullUrl);
+            }});
+        }}
         function applyAdminI18n() {{
             document.getElementById('adminLangCode').textContent = currentLang.toUpperCase();
+            const btnSamples = document.getElementById('btnAdminSamples');
+            const txtSTitle = document.getElementById('txtSamplesTitle');
+            const txtSSub = document.getElementById('txtSamplesSub');
             if (currentLang === 'en') {{
                 document.getElementById('txtAdminTitle').textContent = "Survey Forms Management";
                 document.getElementById('txtAdminSub').textContent = "Total: {total_forms} active forms in system";
                 document.getElementById('btnAdminCreate').textContent = "+ Create New Form";
+                if (btnSamples) btnSamples.textContent = "🖼️ Test Samples";
+                if (txtSTitle) txtSTitle.textContent = "🖼️ Test Sample Images Gallery";
+                if (txtSSub) txtSSub.textContent = "Download to phone camera roll or copy links to test WebRTC camera slots & AI verification";
             }} else {{
                 document.getElementById('txtAdminTitle').textContent = "Danh Sách Biểu Mẫu Khảo Sát";
                 document.getElementById('txtAdminSub').textContent = "Tổng cộng: {total_forms} biểu mẫu trong hệ thống";
                 document.getElementById('btnAdminCreate').textContent = "+ Tạo Biểu Mẫu Mới";
+                if (btnSamples) btnSamples.textContent = "🖼️ Ảnh Mẫu Test";
+                if (txtSTitle) txtSTitle.textContent = "🖼️ Kho Ảnh Mẫu Thử Nghiệm";
+                if (txtSSub) txtSSub.textContent = "Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI";
             }}
         }}
         function toggleAdminLang() {{

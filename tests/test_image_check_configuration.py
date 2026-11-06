@@ -1,4 +1,5 @@
 import io
+import json
 import pytest
 import numpy as np
 from PIL import Image
@@ -290,3 +291,70 @@ def test_schema_upload_with_custom_global_and_question_image_checks():
     assert saved_schema.questions[0].image_checks is not None
     assert saved_schema.questions[0].image_checks.enable_blur_check is True
     assert saved_schema.questions[0].image_checks.blur_threshold == 50.0
+
+def test_object_detection_disabled_preserves_image_blur_check():
+    """Verify image checks (blur) remain active while object detection is disabled."""
+    # Create sharp test image
+    sharp_bytes = make_sharp_image_bytes()
+    # Create blurry test image
+    blurry_bytes = make_blurry_image_bytes()
+
+    form_id = "test_obj_detection_flag"
+    schema = FormSchema(
+        form_id=form_id,
+        title="Test Object Detection Flag",
+        settings=FormSettings(
+            is_test_mode=True,
+            image_checks=ImageCheckConfig(
+                enable_blur_check=True,
+                blur_threshold=40.0,
+                enable_ai_vision=True,
+                enable_object_detection=False, # Object detection disabled!
+                enable_vehicle_match=False,
+                enable_anti_fraud=False,
+            ),
+        ),
+        questions=[
+            FormQuestion(
+                id="camera_receipt",
+                title="Chụp ảnh",
+                type=QuestionType.CAMERA_WEBRTC,
+                required=True,
+            )
+        ],
+    )
+    FORM_REGISTRY[form_id] = schema
+
+    # 1. Blurry image MUST fail image check even with object detection disabled
+    resp_blurry = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "form_id": form_id,
+            "question_id": "camera_receipt",
+            "driver_phone": "0988111222",
+            "is_test_mode": "true",
+            "bypass_img_check": "false",
+        },
+        files={"survey_photo": ("blurry.jpg", io.BytesIO(blurry_bytes), "image/jpeg")},
+    )
+    assert resp_blurry.status_code == 200
+    res_b = resp_blurry.json()
+    assert res_b["status"] == "REJECTED"
+    assert "mờ hoặc rung tay" in res_b["reason"]
+
+    # 2. Sharp image MUST pass image check when object detection is disabled
+    resp_sharp = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "form_id": form_id,
+            "question_id": "camera_receipt",
+            "driver_phone": "0988111222",
+            "is_test_mode": "true",
+            "bypass_img_check": "false",
+        },
+        files={"survey_photo": ("sharp.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
+    )
+    assert resp_sharp.status_code == 200
+    res_s = resp_sharp.json()
+    assert res_s["status"] == "APPROVED"
+    assert "đạt chuẩn" in res_s["reason"] or "APPROVED" in res_s["status"]

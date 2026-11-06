@@ -403,7 +403,7 @@ def test_multi_image_order_enforcement_inverted_rejected(monkeypatch):
     assert resp.status_code == 200
     res_json = resp.json()
     assert res_json["status"] == "REJECTED"
-    assert "Thứ tự ảnh không chính xác: Ảnh 1 phải là đồng hồ công-tơ-mét, Ảnh 2 phải là màn hình doanh thu!" in res_json["reason"]
+    assert "Thứ tự ảnh không chính xác" in res_json["reason"]
 
 def test_multi_image_order_enforcement_correct_approved(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")

@@ -16,6 +16,7 @@
       "enable_blur_check": true,
       "blur_threshold": null,
       "enable_ai_vision": true,
+      "enable_object_detection": false,
       "enable_vehicle_match": true,
       "enable_anti_fraud": true,
       "enable_ai_generated_check": true,

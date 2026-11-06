@@ -4,7 +4,7 @@ import os
 import re
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 
@@ -98,12 +98,12 @@ class DualModelVisionClient:
     ):
         self.timeout_seconds = timeout_seconds
         self.gemini_client = (
-            AsyncOpenAI(api_key=gemini_api_key, base_url=gemini_base_url)
+            AsyncOpenAI(api_key=gemini_api_key, base_url=gemini_base_url, max_retries=0)
             if gemini_api_key
             else None
         )
         self.deepseek_client = (
-            AsyncOpenAI(api_key=deepseek_api_key, base_url=deepseek_base_url)
+            AsyncOpenAI(api_key=deepseek_api_key, base_url=deepseek_base_url, max_retries=0)
             if deepseek_api_key
             else None
         )
@@ -120,19 +120,23 @@ class DualModelVisionClient:
         - 'vehicle_exterior': vehicle body / license plate
         """
         fn = (filename or "").lower()
+        if any(w in fn for w in ["profile", "account", "menu", "vi_tai_xe", "ho_so", "tien_ich"]):
+            return "app_profile"
+        if any(w in fn for w in ["income", "revenue", "thong_ke", "thu_nhap", "screen", "receipt", "doanh_thu", "report", "man_hinh", "fare"]):
+            return "app_income"
         if any(w in fn for w in ["odometer", "odo", "speedometer", "dashboard", "cong_to_met", "dong_ho", "km"]):
             return "odometer"
-        if any(w in fn for w in ["revenue", "income", "screen", "receipt", "doanh_thu", "report", "man_hinh", "fare"]):
-            return "revenue_screen"
         if any(w in fn for w in ["exterior", "vehicle", "car", "bike", "bien_so", "plate", "crop"]):
             return "vehicle_exterior"
 
         # Check raw bytes for test markers / metadata
         raw_head = image_bytes[:512].lower() if image_bytes else b""
+        if b"profile" in raw_head or b"account" in raw_head or b"ho_so" in raw_head:
+            return "app_profile"
+        if b"income" in raw_head or b"revenue" in raw_head or b"thong_ke" in raw_head:
+            return "app_income"
         if b"odometer" in raw_head or b"dashboard" in raw_head or b"cong_to_met" in raw_head:
             return "odometer"
-        if b"revenue" in raw_head or b"income" in raw_head or b"screen" in raw_head or b"receipt" in raw_head:
-            return "revenue_screen"
         if b"exterior" in raw_head or b"vehicle" in raw_head or b"car" in raw_head or b"bike" in raw_head:
             return "vehicle_exterior"
 
@@ -147,10 +151,12 @@ class DualModelVisionClient:
                 "content": (
                     "You are a specialized fleet survey image classifier. "
                     "Analyze the provided image and classify its primary content into exactly one role: "
+                    "'app_profile' (driver ride-hailing app account menu, profile, driver wallet, settings), "
+                    "'app_income' (driver ride-hailing app earnings, income statistics, trips, revenue screen), "
                     "'odometer' (car instrument cluster, dashboard, speedometer, mileage display), "
                     "'revenue_screen' (ride-hailing driver mobile app screen showing gross earnings, trips, revenue, or receipt), "
                     "'vehicle_exterior' (full exterior view of electric car or motorcycle, license plate, vehicle body). "
-                    "Output strictly a JSON object: {\"role\": \"odometer\" | \"revenue_screen\" | \"vehicle_exterior\" | \"unknown\"}."
+                    "Output strictly a JSON object: {\"role\": \"app_profile\" | \"app_income\" | \"odometer\" | \"revenue_screen\" | \"vehicle_exterior\" | \"unknown\"}."
                 ),
             },
             {
@@ -186,13 +192,13 @@ class DualModelVisionClient:
                     content = content[3:-3].strip()
                 data = json.loads(content)
                 role = data.get("role", "").lower()
-                if role in ("odometer", "revenue_screen", "vehicle_exterior"):
+                if role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
                     return role
             except Exception:
                 pass
 
         if self.gemini_client:
-            for model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
@@ -209,12 +215,103 @@ class DualModelVisionClient:
                         content = content[3:-3].strip()
                     data = json.loads(content)
                     role = data.get("role", "").lower()
-                    if role in ("odometer", "revenue_screen", "vehicle_exterior"):
+                    if role in ("app_profile", "app_income", "odometer", "revenue_screen", "vehicle_exterior", "unknown"):
                         return role
                 except Exception:
                     continue
 
         return "unknown"
+
+    async def ocr_driver_app_income(self, image_bytes: bytes) -> Dict[str, Any]:
+        """
+        Performs high-precision OCR on driver app income/earnings screens.
+        Extracts gross revenue, net income, discounts, trips, online hours, and tampering flags.
+        """
+        if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
+            return {
+                "gross_revenue": 2721000,
+                "net_income": 1971591,
+                "discount_and_tax": -749409,
+                "total_trips": 18,
+                "online_hours": "95h 7m",
+                "period": "08/2026",
+                "confidence_score": 0.98,
+                "is_legible": True,
+                "is_manipulated_or_photoshopped": False,
+            }
+
+        norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
+        b64_img = base64.b64encode(norm_b).decode("utf-8")
+        prompt = (
+            "You are an expert OCR engine for Vietnamese driver app screens.\n"
+            "Extract the exact financial and operational numbers from this image into a JSON object:\n"
+            "- gross_revenue (int, Tong thu nhap or Doanh so, in VND, or 0 if unreadable)\n"
+            "- net_income (int, Thu nhap rong, in VND, or 0 if unreadable)\n"
+            "- discount_and_tax (int, Chiet khau + thue, can be negative, or 0 if unreadable)\n"
+            "- total_trips (int, Tong so chuyen, or 0 if unreadable)\n"
+            "- online_hours (string, e.g. 95h 7m, or '' if unreadable)\n"
+            "- period (string, e.g. 08/2026 31 - 06, or '' if unreadable)\n"
+            "- confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately)\n"
+            "- is_legible (bool, true if income numbers are clearly readable, false if too blurry, distorted, or unreadable)\n"
+            "- is_manipulated_or_photoshopped (bool, true if digits or text appear digitally edited/spliced)\n"
+            "Output strictly valid JSON with these keys."
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/webp;base64,{b64_img}", "detail": "auto"},
+                    },
+                ],
+            }
+        ]
+
+        if self.deepseek_client:
+            try:
+                resp = await self.deepseek_client.chat.completions.create(
+                    model="deepseek-flash",
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                    max_tokens=1024,
+                    timeout=10.0,
+                )
+                content = resp.choices[0].message.content or "{}"
+                if content.startswith("```json"):
+                    content = content[7:-3].strip()
+                elif content.startswith("```"):
+                    content = content[3:-3].strip()
+                res_data = json.loads(content)
+                logger.info(f"[OCR SUCCESS] Extracted: {res_data}")
+                return res_data
+            except Exception as e:
+                logger.error(f"[OCR ERROR] DeepSeek OCR failed: {e}")
+
+        if self.gemini_client:
+            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+                try:
+                    resp = await self.gemini_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=0.0,
+                        max_tokens=1024,
+                        timeout=min(self.timeout_seconds, 6.0),
+                    )
+                    content = resp.choices[0].message.content or "{}"
+                    if content.startswith("```json"):
+                        content = content[7:-3].strip()
+                    elif content.startswith("```"):
+                        content = content[3:-3].strip()
+                    return json.loads(content)
+                except Exception:
+                    continue
+
+        return {"gross_revenue": 0, "net_income": 0, "total_trips": 0, "error": "OCR failed"}
 
     async def extract_facts(self, webp_bytes: bytes) -> ExtractedReceiptFacts:
         # offline / development mock mode
