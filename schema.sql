@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS authorized_users (
     username TEXT,
     full_name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('COLLABORATOR', 'DRIVER', 'ADMIN')),
+    driver_phone VARCHAR(20),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

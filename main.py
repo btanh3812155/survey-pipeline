@@ -1243,7 +1243,18 @@ async def submit_webrtc_survey(
                                 "order_check_failed": True,
                                 "detected_roles": [role_0, role_1],
                             }
-                        elif role_0 == "unknown":
+                        elif role_0 in ("app_income", "revenue_screen"):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 0,
+                                "reason": reason_str,
+                                "detected_roles": [role_0, role_1],
+                                "model": "DEEPSEEK_V3_CHAT",
+                            }
+                        elif role_0 != slot_0_role and role_0 not in ("app_profile", "odometer"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Không phát hiện màn hình ứng dụng tài xế (Phát hiện vật thể không hợp lệ). Vui lòng chụp đúng màn hình hồ sơ ứng dụng tài xế!"
@@ -1252,8 +1263,20 @@ async def submit_webrtc_survey(
                                 "failed_slot": 0,
                                 "reason": reason_str,
                                 "detected_roles": [role_0, role_1],
+                                "model": "DEEPSEEK_V3_CHAT",
                             }
-                        elif role_1 == "unknown":
+                        elif role_1 in ("app_profile", "odometer"):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = f"Ảnh 2 ({slot_1_title}): Phát hiện sai loại màn hình (đây là màn hình hồ sơ/tiện ích, không phải màn hình thống kê thu nhập). Vui lòng chụp đúng màn hình thống kê thu nhập ở Ảnh 2!"
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 1,
+                                "reason": reason_str,
+                                "detected_roles": [role_0, role_1],
+                                "model": "DEEPSEEK_V3_CHAT",
+                            }
+                        elif role_1 != slot_1_role and role_1 not in ("app_income", "revenue_screen"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 2 ({slot_1_title}): Không phát hiện màn hình thống kê thu nhập tài xế! Vui lòng chụp đúng màn hình thống kê thu nhập ứng dụng tài xế."
@@ -1262,6 +1285,7 @@ async def submit_webrtc_survey(
                                 "failed_slot": 1,
                                 "reason": reason_str,
                                 "detected_roles": [role_0, role_1],
+                                "model": "DEEPSEEK_V3_CHAT",
                             }
                         elif ocr_data.get("is_manipulated_or_photoshopped", False):
                             is_approved = False
@@ -1298,6 +1322,7 @@ async def submit_webrtc_survey(
                             period_val = str(ocr_data.get("period") or "")
                             ai_res = {
                                 "status": "APPROVED",
+                                "model": "DEEPSEEK_V3_CHAT",
                                 "roles_verified": [role_0, role_1],
                                 "ocr_data": ocr_data,
                                 "gross_revenue": gross_val,
