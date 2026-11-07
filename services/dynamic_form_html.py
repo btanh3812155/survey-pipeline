@@ -726,22 +726,31 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
         .btn-floating-reset {{
             position: fixed;
-            bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
-            right: 16px;
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 18px);
+            right: 18px;
             z-index: 1000;
-            background: rgba(30, 41, 59, 0.9);
-            border: 1.5px solid rgba(239, 68, 68, 0.4);
-            color: #f87171;
-            padding: 9px 18px;
-            border-radius: 24px;
-            font-size: 0.8rem;
-            font-weight: 700;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.95), rgba(185, 28, 28, 0.95));
+            border: 2px solid #fecaca;
+            color: #ffffff;
+            padding: 13px 24px;
+            border-radius: 30px;
+            font-size: 0.98rem;
+            font-weight: 800;
             cursor: pointer;
-            backdrop-filter: blur(8px);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 6px 22px rgba(239, 68, 68, 0.55);
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }}
-
+        .btn-floating-reset:hover {{
+            transform: scale(1.05);
+            box-shadow: 0 8px 26px rgba(239, 68, 68, 0.7);
+        }}
+        .btn-floating-reset:active {{
+            transform: scale(0.97);
+        }}
         .decree13-notice {{
             font-size: 0.76rem;
             color: var(--muted);
@@ -800,9 +809,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             <span id="txtSubmitBtn">Gửi Báo Cáo</span>
         </button>
 
-        <!-- Floating Reset Button Overlay -->
+        <!-- Prominent Redo Button Overlay -->
         <button type="button" class="btn-floating-reset" onclick="promptResetForm()" aria-label="Reset">
-            <span id="txtResetFloatBtn">Làm lại</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+            <span id="txtResetFloatBtn">Làm lại từ đầu</span>
         </button>
 
         <p class="decree13-notice" id="txtDecree13Footer">
@@ -898,7 +908,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         <span id="txtFloatingHelp">Hỗ Trợ</span>
     </a>
     <!-- QR Code Sharing Popup Modal -->
-    <div id="qrShareModal" class="paper-modal-overlay" style="display:none;" onclick="if(event.target===this)closeQrModal()">
+    <div id="qrShareModal" class="modal-paper-overlay" style="display:none; z-index:99999;" onclick="if(event.target===this)closeQrModal()">
         <div class="paper-sheet" style="background:#0f172a !important; color:#f8fafc !important; border:1px solid #334155; border-top:6px solid #10b981; max-width:440px;">
             <div class="paper-header" style="border-bottom:1px solid #334155; padding-bottom:12px; margin-bottom:16px;">
                 <h3 style="color:#f8fafc !important; margin:0; display:flex; align-items:center; gap:8px;">
@@ -1391,10 +1401,15 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }}
 
                 const cleanTitle = q.title.replace(/^[0-9]+[.:\\s-]+/, '');
+                const tooltipBtn = q.tooltip ? `
+                    <span class="q-tooltip-trigger" onclick="alert('${{escapeHtml(q.tooltip)}}')" title="Bấm để xem hướng dẫn">
+                        ℹ️
+                    </span>
+                ` : '';
                 card.innerHTML = `
                     <div class="q-header">
                         <div class="q-title-row">
-                            <span class="q-title">${{idx + 1}}. ${{cleanTitle}} ${{q.required ? '<span class="q-required">*</span>' : ''}}</span>
+                            <span class="q-title">${{idx + 1}}. ${{cleanTitle}} ${{q.required ? '<span class="q-required">*</span>' : ''}} ${{tooltipBtn}}</span>
                         </div>
                         ${{q.description ? `<p class="q-desc">${{q.description}}</p>` : ''}}
                         ${{sampleHtml}}
@@ -1685,10 +1700,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
             // Update slot guidance title on overlay & badge
             const slotObj = (q.image_slots && q.image_slots[slotIdx]) ? q.image_slots[slotIdx] : null;
-            const guideText = slotObj ? `Căn chỉnh: ${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}` : I18N[currentLang].cam_hint;
+            const slotTooltip = slotObj && slotObj.tooltip ? ` (${{slotObj.tooltip}})` : '';
+            const guideText = slotObj ? `Căn chỉnh: ${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}${{slotTooltip}}` : I18N[currentLang].cam_hint;
             const badge = document.getElementById(`slotBadge_${{qid}}`);
             if (badge) badge.textContent = guideText;
-
             // Check if current slot has a captured photo
             const slotKey = `${{qid}}_${{slotIdx}}`;
             const img = document.getElementById(`img_${{qid}}`);
@@ -1788,11 +1803,13 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
 
             cvs.toBlob(blob => {{
+                // Instant lightweight pre-check on photo capture (rate-limited)
+                triggerInstantPreCheck(qid, currentSlotIdx, blob);
+
                 if (hasSlots) {{
                     answers[`${{qid}}_${{currentSlotIdx}}`] = blob;
                     syncAnswersImageList(qid);
                     updateSlotPillCapturedState(qid, currentSlotIdx, true);
-
                     // Check if there are other uncaptured slots
                     let nextUncapturedIdx = -1;
                     for (let i = 0; i < q.image_slots.length; i++) {{
@@ -1832,6 +1849,49 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }}
                 vid.srcObject = null;
             }}, 'image/webp', 0.82);
+        }}
+
+        let lastPreCheckTimestamp = 0;
+        const PRE_CHECK_DEBOUNCE_MS = 1200; // Client-side rate-limit: 1 check per 1.2s
+
+        async function triggerInstantPreCheck(qid, slotIdx, blob) {{
+            const now = Date.now();
+            if (now - lastPreCheckTimestamp < PRE_CHECK_DEBOUNCE_MS) return;
+            lastPreCheckTimestamp = now;
+
+            const errEl = document.getElementById(`err_${{qid}}`);
+            const fd = new FormData();
+            fd.append('photo', blob, `slot_${{slotIdx}}.webp`);
+            fd.append('slot_index', slotIdx);
+            fd.append('form_id', SCHEMA.form_id || 'income_survey');
+            fd.append('question_id', qid);
+
+            try {{
+                const resp = await fetch('/api/v1/survey/pre-check', {{
+                    method: 'POST',
+                    body: fd
+                }});
+                if (!resp.ok) return;
+                const res = await resp.json();
+                if (res.status === 'BLURRY') {{
+                    if (errEl) {{
+                        errEl.textContent = `⚠️ Slot ${{slotIdx + 1}}: ${{res.message}}`;
+                        errEl.style.display = 'block';
+                    }}
+                }} else if (res.status === 'TAMPERED') {{
+                    if (errEl) {{
+                        errEl.textContent = `⚠️ Slot ${{slotIdx + 1}}: ${{res.message}}`;
+                        errEl.style.display = 'block';
+                    }}
+                }} else {{
+                    if (errEl && errEl.textContent.includes(`Slot ${{slotIdx + 1}}`)) {{
+                        errEl.style.display = 'none';
+                        errEl.textContent = '';
+                    }}
+                }}
+            }} catch(e) {{
+                // Pre-check is a background progressive enhancement; never block offline/slow connections
+            }}
         }}
 
         async function retakeCam(qid) {{

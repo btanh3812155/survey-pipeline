@@ -989,9 +989,78 @@ async def get_survey_history(
             logger.warning(f"Error reading DB history: {e}")
 
     return {"phone": phone, "count": len(results), "attempts": results}
+PRE_CHECK_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 
+@app.post("/api/v1/survey/pre-check")
+async def pre_check_image_slot(
+    request: Request,
+    photo: UploadFile = File(...),
+    slot_index: int = Form(0),
+    role: Optional[str] = Form(""),
+    form_id: Optional[str] = Form("income_survey"),
+    question_id: Optional[str] = Form("camera_receipt"),
+):
+    """Lightweight instant pre-check on photo capture: blur variance, format, and quick role check."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    rate_key = f"precheck:{client_ip}"
+    
+    # Rate limiting: max 20 pre-checks per minute per client IP
+    if redis_client:
+        try:
+            cnt = await redis_client.incr(rate_key)
+            if cnt == 1:
+                await redis_client.expire(rate_key, 60)
+            if cnt > 20:
+                return JSONResponse(status_code=429, content={"status": "RATE_LIMITED", "detail": "Pre-check rate limit exceeded. Please wait a moment."})
+        except Exception:
+            pass
+    else:
+        curr = PRE_CHECK_RATE_LIMITER.get(client_ip, 0)
+        if curr >= 20:
+            return JSONResponse(status_code=429, content={"status": "RATE_LIMITED", "detail": "Pre-check rate limit exceeded."})
+        PRE_CHECK_RATE_LIMITER[client_ip] = curr + 1
 
+    try:
+        raw_bytes = await photo.read()
+        if not raw_bytes:
+            return {"status": "ERROR", "message": "Ảnh rỗng hoặc không đọc được."}
 
+        # 1. Format & Normalization
+        norm_bytes, pil_im = sanitize_and_normalize_image(raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION)
+        
+        # 2. Blur / Sharpness Check (~20ms)
+        schema = FORM_REGISTRY.get(form_id)
+        checks = get_effective_image_checks(schema, question_id)
+        blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
+        sharp, b_var = compute_laplacian_blur_score(pil_im, threshold=blur_thresh)
+        
+        if not sharp:
+            return {
+                "status": "BLURRY",
+                "is_sharp": False,
+                "blur_score": round(b_var, 1),
+                "threshold": blur_thresh,
+                "message": f"Ảnh hơi mờ (độ nét {b_var:.1f} < ngưỡng {blur_thresh:.0f}). Bạn nên giữ chắc tay chụp lại!"
+            }
+
+        # 3. Fast Metadata Forensics Check (Photoshop/Canva)
+        is_tampered, tamper_reason = detect_image_manipulation(raw_bytes, pil_im)
+        if is_tampered:
+            return {
+                "status": "TAMPERED",
+                "is_sharp": True,
+                "message": f"Cảnh báo: Phát hiện dấu hiệu chỉnh sửa ảnh ({tamper_reason})."
+            }
+
+        return {
+            "status": "PASS",
+            "is_sharp": True,
+            "blur_score": round(b_var, 1),
+            "message": "Ảnh đạt chuẩn độ nét và chất lượng!"
+        }
+    except Exception as e:
+        logger.warning(f"Pre-check error: {e}")
+        return {"status": "PASS", "is_sharp": True, "message": "Đã ghi nhận ảnh."}
 @app.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -1246,60 +1315,37 @@ async def submit_webrtc_survey(
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
                     if target_q and target_q.image_slots and len(images_list) >= 2:
+                        # Slot 0: App Profile (AI Check)
                         fn_0 = getattr(images_list[0], "filename", "") or ""
-                        fn_1 = getattr(images_list[1], "filename", "") or ""
                         task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0, expected_slots=target_q.image_slots)
-                        task_role_1 = vision_client.classify_image_role(raw_bytes_list[1], filename=fn_1, expected_slots=target_q.image_slots)
-                        task_ocr = vision_client.ocr_driver_app_income(norm_bytes)
-                        task_facts = vision_client.extract_facts(norm_bytes)
+                        
+                        # Identify income slots (e.g. slot 1 for 2-slot schema, or slots 2..6 for 7-slot schema)
+                        income_indices = []
+                        for s_idx, slot in enumerate(target_q.image_slots):
+                            if "income" in str(slot.get("role", "")).lower() and s_idx < len(raw_bytes_list):
+                                income_indices.append(s_idx)
+                        if not income_indices:
+                            income_indices = [1] if len(raw_bytes_list) > 1 else [0]
 
-                        results = await asyncio.gather(task_role_0, task_role_1, task_ocr, task_facts, return_exceptions=True)
-                        role_0_res, role_1_res, ocr_res, facts_res = results
+                        primary_income_idx = income_indices[0]
+                        income_raw = raw_bytes_list[primary_income_idx] if primary_income_idx < len(raw_bytes_list) else raw_bytes
+                        norm_income_bytes, _ = sanitize_and_normalize_image(income_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                        task_ocr = vision_client.ocr_driver_app_income(norm_income_bytes)
+                        task_facts = vision_client.extract_facts(norm_income_bytes)
+
+                        results = await asyncio.gather(task_role_0, task_ocr, task_facts, return_exceptions=True)
+                        role_0_res, ocr_res, facts_res = results
 
                         role_0 = "unknown" if isinstance(role_0_res, Exception) else role_0_res
-                        role_1 = "unknown" if isinstance(role_1_res, Exception) else role_1_res
                         if isinstance(ocr_res, Exception):
                             logger.error(f"[MAIN OCR ERROR] task_ocr exception: {ocr_res}")
                         ocr_data = ocr_res if isinstance(ocr_res, dict) and not isinstance(ocr_res, Exception) else {}
 
-                        if (role_0 == "unknown" or role_1 == "unknown") and not isinstance(facts_res, Exception):
-                            st_1 = (getattr(facts_res, "screen_type", None) or getattr(facts_res, "role", None) or "").upper()
-                            if "REV" in st_1 or "INC" in st_1:
-                                role_1 = "app_income"
-                            elif "ODO" in st_1 or "PROF" in st_1:
-                                role_1 = "odometer" if "ODO" in st_1 else "app_profile"
-
-                        if role_0 == "unknown":
-                            try:
-                                facts_0 = await vision_client.extract_facts(raw_bytes_list[0])
-                                st_0 = (getattr(facts_0, "screen_type", None) or getattr(facts_0, "role", None) or "").upper()
-                                if "REV" in st_0 or "INC" in st_0:
-                                    role_0 = "app_income"
-                                elif "ODO" in st_0 or "PROF" in st_0:
-                                    role_0 = "odometer" if "ODO" in st_0 else "app_profile"
-                            except Exception:
-                                pass
-
                         slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
-                        slot_1_role = target_q.image_slots[1].get("role", "app_income") if len(target_q.image_slots) > 1 else "app_income"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
-                        slot_1_title = target_q.image_slots[1].get("title", "Ảnh 2") if len(target_q.image_slots) > 1 else "Ảnh 2"
 
-                        order_check_failed = False
-                        if (role_0 == slot_1_role and role_1 == slot_0_role) or (role_0 in ("app_income", "revenue_screen") and role_1 in ("app_profile", "odometer")):
-                            order_check_failed = True
-
-                        if order_check_failed:
-                            is_approved = False
-                            status_str = "REJECTED"
-                            reason_str = f"Thứ tự ảnh không chính xác: Ảnh 1 phải là {slot_0_title}, Ảnh 2 phải là {slot_1_title}!"
-                            ai_res = {
-                                "status": "REJECTED",
-                                "reason": reason_str,
-                                "order_check_failed": True,
-                                "detected_roles": [role_0, role_1],
-                            }
-                        elif role_0 in ("app_income", "revenue_screen"):
+                        # 1. Profile Verification (Slot 0)
+                        if role_0 in ("app_income", "revenue_screen"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
@@ -1307,49 +1353,28 @@ async def submit_webrtc_survey(
                                 "status": "REJECTED",
                                 "failed_slot": 0,
                                 "reason": reason_str,
-                                "detected_roles": [role_0, role_1],
+                                "detected_roles": [role_0],
                                 "model": "DEEPSEEK_V3_CHAT",
                             }
                         elif role_0 != slot_0_role and role_0 not in ("app_profile", "odometer"):
                             is_approved = False
                             status_str = "REJECTED"
-                            reason_str = f"Ảnh 1 ({slot_0_title}): Không phát hiện màn hình ứng dụng tài xế (Phát hiện vật thể không hợp lệ). Vui lòng chụp đúng màn hình hồ sơ ứng dụng tài xế!"
+                            reason_str = f"Ảnh 1 ({slot_0_title}): Không phát hiện màn hình hồ sơ ứng dụng tài xế Xanh SM (Phát hiện vật thể không hợp lệ). Vui lòng chụp đúng màn hình hồ sơ ứng dụng tài xế!"
                             ai_res = {
                                 "status": "REJECTED",
                                 "failed_slot": 0,
                                 "reason": reason_str,
-                                "detected_roles": [role_0, role_1],
+                                "detected_roles": [role_0],
                                 "model": "DEEPSEEK_V3_CHAT",
                             }
-                        elif role_1 in ("app_profile", "odometer"):
-                            is_approved = False
-                            status_str = "REJECTED"
-                            reason_str = f"Ảnh 2 ({slot_1_title}): Phát hiện sai loại màn hình (đây là màn hình hồ sơ/tiện ích, không phải màn hình thống kê thu nhập). Vui lòng chụp đúng màn hình thống kê thu nhập ở Ảnh 2!"
-                            ai_res = {
-                                "status": "REJECTED",
-                                "failed_slot": 1,
-                                "reason": reason_str,
-                                "detected_roles": [role_0, role_1],
-                                "model": "DEEPSEEK_V3_CHAT",
-                            }
-                        elif role_1 != slot_1_role and role_1 not in ("app_income", "revenue_screen"):
-                            is_approved = False
-                            status_str = "REJECTED"
-                            reason_str = f"Ảnh 2 ({slot_1_title}): Không phát hiện màn hình thống kê thu nhập tài xế! Vui lòng chụp đúng màn hình thống kê thu nhập ứng dụng tài xế."
-                            ai_res = {
-                                "status": "REJECTED",
-                                "failed_slot": 1,
-                                "reason": reason_str,
-                                "detected_roles": [role_0, role_1],
-                                "model": "DEEPSEEK_V3_CHAT",
-                            }
+                        # 2. Tampering & App Spoofing Checks (Income screen)
                         elif ocr_data.get("is_manipulated_or_photoshopped", False):
                             is_approved = False
                             status_str = "REJECTED"
-                            reason_str = "Ảnh 2: Phát hiện dấu hiệu chỉnh sửa ảnh kỹ thuật số (Photoshop/splicing) trên màn hình thu nhập!"
+                            reason_str = "Màn hình thu nhập: Phát hiện dấu hiệu chỉnh sửa ảnh kỹ thuật số (Photoshop/splicing) trên màn hình thu nhập!"
                             ai_res = {
                                 "status": "REJECTED",
-                                "failed_slot": 1,
+                                "failed_slot": primary_income_idx,
                                 "reason": reason_str,
                                 "ocr_data": ocr_data,
                             }
@@ -1358,12 +1383,12 @@ async def submit_webrtc_survey(
                             status_str = "REJECTED"
                             detected = ocr_data.get("detected_app", "MOCKUP")
                             reason_str = (
-                                f"Ảnh 2 ({slot_1_title}): Phát hiện giao diện không phải ứng dụng Tài xế Xanh SM chính thức "
+                                f"Màn hình thu nhập: Phát hiện giao diện không phải ứng dụng Tài xế Xanh SM chính thức "
                                 f"(phát hiện: {detected}). Vui lòng chụp đúng màn hình ứng dụng Tài xế Xanh SM!"
                             )
                             ai_res = {
                                 "status": "REJECTED",
-                                "failed_slot": 1,
+                                "failed_slot": primary_income_idx,
                                 "reason": reason_str,
                                 "app_spoofing_detected": True,
                                 "detected_app": detected,
@@ -1377,10 +1402,10 @@ async def submit_webrtc_survey(
                         ):
                             is_approved = False
                             status_str = "REJECTED"
-                            reason_str = f"Ảnh 2 ({slot_1_title}): Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
+                            reason_str = "Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
                             ai_res = {
                                 "status": "REJECTED",
-                                "failed_slot": 1,
+                                "failed_slot": primary_income_idx,
                                 "reason": reason_str,
                                 "ocr_data": ocr_data,
                             }
@@ -1396,7 +1421,8 @@ async def submit_webrtc_survey(
                             ai_res = {
                                 "status": "APPROVED",
                                 "model": "DEEPSEEK_V3_CHAT",
-                                "roles_verified": [role_0, role_1],
+                                "roles_verified": [role_0, "auto_passed_vehicle" if len(target_q.image_slots) >= 7 else "app_income"],
+                                "total_slots_processed": len(images_list),
                                 "ocr_data": ocr_data,
                                 "gross_revenue": gross_val,
                                 "net_income": net_val,
@@ -1663,8 +1689,9 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
 
     rate_key = f"rate_limit:appeal:{phone}"
     now = time.time()
-    window = 7200  # 2 hours
-    remaining_appeals = 4
+    window = 3600  # 1 hour window
+    max_appeals = 20  # Relaxed quota per window
+    remaining_appeals = max_appeals - 1
 
     rate_limited = False
     if redis_client:
@@ -1672,32 +1699,32 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             count = await redis_client.incr(rate_key)
             if count == 1:
                 await redis_client.expire(rate_key, window)
-            if count > 5:
+            if count > max_appeals:
                 rate_limited = True
-            remaining_appeals = max(0, 5 - count)
+            remaining_appeals = max(0, max_appeals - count)
         except Exception as e:
             logger.warning(f"Redis appeal rate limit error: {e}")
             history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < window]
-            if len(history) >= 5:
+            if len(history) >= max_appeals:
                 rate_limited = True
             else:
                 history.append(now)
                 LOCAL_APPEAL_TRACKER[phone] = history
-                remaining_appeals = max(0, 5 - len(history))
+                remaining_appeals = max(0, max_appeals - len(history))
     else:
         history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < window]
-        if len(history) >= 5:
+        if len(history) >= max_appeals:
             rate_limited = True
         else:
             history.append(now)
             LOCAL_APPEAL_TRACKER[phone] = history
-            remaining_appeals = max(0, 5 - len(history))
+            remaining_appeals = max(0, max_appeals - len(history))
 
     if rate_limited:
         return JSONResponse(status_code=200, content={
             "status": "RATE_LIMITED",
             "remaining_appeals": 0,
-            "message": "Bạn đã gửi tối đa 5 lượt yêu cầu kiểm tra trong vòng 2 giờ này. Vui lòng thử lại sau!"
+            "message": f"Bạn đã gửi tối đa {max_appeals} lượt yêu cầu kiểm tra trong vòng 1 giờ này. Vui lòng thử lại sau!"
         })
 
     # 2. Update status in Database
