@@ -1095,40 +1095,59 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
         let currentLang = localStorage.getItem('tb_lang') || 'vi';
 
+        function escapeHtml(str) {{
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }}
+
         function applyI18n() {{
             const t = I18N[currentLang];
-            document.getElementById('currentLangCode').textContent = t.code;
-            document.getElementById('gpsStatusText').textContent = t.gps_prompt;
-            document.getElementById('btnRequestGps').textContent = t.gps_btn;
-            document.getElementById('txtModeLabel').textContent = t.mode_label;
-            document.getElementById('btnHistoryNav').textContent = t.btn_history_nav;
-            document.getElementById('txtBypassLabel').textContent = t.bypass_label;
-            document.getElementById('txtSubmitBtn').textContent = t.btn_submit;
-            document.getElementById('txtResetFloatBtn').textContent = t.btn_reset;
-            document.getElementById('txtDecree13Footer').textContent = t.decree_footer;
+            const setTxt = (id, txt) => {{
+                const el = document.getElementById(id);
+                if (el && txt !== undefined) el.textContent = txt;
+            }};
+            const setPlaceholder = (id, ph) => {{
+                const el = document.getElementById(id);
+                if (el && ph !== undefined) el.placeholder = ph;
+            }};
 
-            document.getElementById('txtSigModalTitle').textContent = t.sig_title;
-            document.getElementById('txtSigModalSub').textContent = t.sig_sub;
-            document.getElementById('txtSigBaselineHint').textContent = t.sig_hint;
-            document.getElementById('btnSigClose').textContent = t.btn_close;
-            document.getElementById('btnSigClear').textContent = t.btn_clear;
-            document.getElementById('btnSigConfirm').textContent = t.btn_confirm;
+            setTxt('currentLangCode', t.code);
+            setTxt('gpsStatusText', t.gps_prompt);
+            setTxt('btnRequestGps', t.gps_btn);
+            setTxt('txtModeLabel', t.mode_label);
+            setTxt('btnHistoryNav', t.btn_history_nav);
+            setTxt('txtBypassLabel', t.bypass_label);
+            setTxt('txtSubmitBtn', t.btn_submit);
+            setTxt('txtResetFloatBtn', t.btn_reset);
+            setTxt('txtDecree13Footer', t.decree_footer);
 
-            document.getElementById('txtResetConfirmTitle').textContent = t.reset_title;
-            document.getElementById('txtResetConfirmDesc').textContent = t.reset_desc;
-            document.getElementById('btnResetCancel').textContent = t.btn_cancel;
-            document.getElementById('btnResetConfirm').textContent = t.btn_confirm_reset;
+            setTxt('txtSigModalTitle', t.sig_title);
+            setTxt('txtSigModalSub', t.sig_sub);
+            setTxt('txtSigBaselineHint', t.sig_hint);
+            setTxt('btnSigClose', t.btn_close);
+            setTxt('btnSigClear', t.btn_clear);
+            setTxt('btnSigConfirm', t.btn_confirm);
 
-            document.getElementById('txtHistoryModalTitle').textContent = t.history_title;
-            document.getElementById('historyPhoneInput').placeholder = t.history_ph;
-            document.getElementById('btnHistoryQuery').textContent = t.history_query;
-            document.getElementById('btnHistoryClose').textContent = t.btn_close;
+            setTxt('txtResetConfirmTitle', t.reset_title);
+            setTxt('txtResetConfirmDesc', t.reset_desc);
+            setTxt('btnResetCancel', t.btn_cancel);
+            setTxt('btnResetConfirm', t.btn_confirm_reset);
 
-            if (document.getElementById('txtSubResultHistory')) document.getElementById('txtSubResultHistory').textContent = t.btn_view_history_web;
-            if (document.getElementById('txtSubResultTelegram')) document.getElementById('txtSubResultTelegram').textContent = t.btn_open_telegram;
-            if (document.getElementById('btnSubResultClose')) document.getElementById('btnSubResultClose').textContent = t.btn_close;
-            if (document.getElementById('btnSubResultReset')) document.getElementById('btnSubResultReset').textContent = t.btn_new_submission;
-            updateTestModeUI();
+            setTxt('txtHistoryModalTitle', t.history_title);
+            setPlaceholder('historyPhoneInput', t.history_ph);
+            setTxt('btnHistoryQuery', t.history_query);
+            setTxt('btnHistoryClose', t.btn_close);
+
+            setTxt('txtSubResultHistory', t.btn_view_history_web);
+            setTxt('txtSubResultTelegram', t.btn_open_telegram);
+            setTxt('btnSubResultClose', t.btn_close);
+            setTxt('btnSubResultReset', t.btn_new_submission);
+            try {{ updateTestModeUI(); }} catch(e) {{}}
         }}
 
         function toggleLanguage() {{
@@ -2685,10 +2704,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
 
         window.addEventListener('DOMContentLoaded', async () => {{
-            applyI18n();
-            initGpsBannerBehavior();
-            renderForm();
-            await restoreDraftIfExists();
+            try {{ applyI18n(); }} catch(e) {{ console.error('applyI18n error:', e); }}
+            try {{ initGpsBannerBehavior(); }} catch(e) {{ console.error('initGps error:', e); }}
+            try {{ renderForm(); }} catch(e) {{ console.error('renderForm error:', e); }}
+            try {{ await restoreDraftIfExists(); }} catch(e) {{ console.error('restoreDraft error:', e); }}
         }});
     </script>
 </body>
