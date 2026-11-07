@@ -1499,6 +1499,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         scheduleDraftSave();
                     }};
                     list.appendChild(item);
+                }});
                 parent.appendChild(list);
             }} else if (q.type === 'multiple_choice') {{
                 const list = document.createElement('div');
@@ -2076,6 +2077,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
         function closeResetModal() {{ document.getElementById('confirmResetModal').style.display = 'none'; }}
         function executeResetForm(silent = false) {{
+            const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
+            try {{ localStorage.removeItem(storageKey); }} catch(e) {{}}
             for (let k in answers) delete answers[k];
             for (let k in activeSlotByQId) delete activeSlotByQId[k];
             document.querySelectorAll('#questionsContainer input, #questionsContainer select, #questionsContainer textarea').forEach(el => {{
@@ -2083,7 +2086,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 else el.value = '';
             }});
             document.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
-
             // Thoroughly reset all camera WebRTC questions and all image slots
             SCHEMA.questions.forEach(q => {{
                 if (q.type === 'camera_webrtc') {{
@@ -2611,7 +2613,6 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
         let draftTimer = null;
         function scheduleDraftSave() {{
-            if (!ACTIVE_CTV_SLUG) return;
             clearTimeout(draftTimer);
             draftTimer = setTimeout(() => {{
                 const textAnswers = {{}};
@@ -2620,36 +2621,67 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         textAnswers[k] = answers[k];
                     }}
                 }}
-                fetch('/api/v1/forms/draft', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{
-                        ctv_slug: ACTIVE_CTV_SLUG,
-                        ctv_id: LOCKED_CTV_CODE || null,
-                        form_id: SCHEMA.form_id || 'income_survey',
-                        draft_data: textAnswers
-                    }})
-                }}).catch(() => {{}});
-            }}, 800);
+                const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
+                try {{
+                    localStorage.setItem(storageKey, JSON.stringify(textAnswers));
+                }} catch(e) {{}}
+
+                // Optional server backup if running on a dedicated CTV link
+                if (ACTIVE_CTV_SLUG) {{
+                    fetch('/api/v1/forms/draft', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            ctv_slug: ACTIVE_CTV_SLUG,
+                            ctv_id: LOCKED_CTV_CODE || null,
+                            form_id: SCHEMA.form_id || 'income_survey',
+                            draft_data: textAnswers
+                        }})
+                    }}).catch(() => {{}});
+                }}
+            }}, 300);
         }}
 
         async function restoreDraftIfExists() {{
-            if (!ACTIVE_CTV_SLUG) return;
+            const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
+            let restored = false;
             try {{
-                const resp = await fetch(`/api/v1/forms/draft/${{encodeURIComponent(ACTIVE_CTV_SLUG)}}`);
-                if (!resp.ok) return;
-                const data = await resp.json();
-                if (data.status === 'success' && data.draft) {{
-                    for (let k in data.draft) {{
-                        answers[k] = data.draft[k];
-                        const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
-                        if (input) {{
-                            input.value = data.draft[k];
+                const cached = localStorage.getItem(storageKey);
+                if (cached) {{
+                    const data = JSON.parse(cached);
+                    if (data && typeof data === 'object') {{
+                        for (let k in data) {{
+                            answers[k] = data[k];
+                            const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
+                            if (input && input.id !== 'ctv_code') {{
+                                input.value = data[k];
+                            }}
                         }}
+                        restored = true;
+                        evaluateConditionals();
                     }}
-                    evaluateConditionals();
                 }}
             }} catch(e) {{}}
+
+            // Fallback cross-device server restore if local storage was empty
+            if (!restored && ACTIVE_CTV_SLUG) {{
+                try {{
+                    const resp = await fetch(`/api/v1/forms/draft/${{encodeURIComponent(ACTIVE_CTV_SLUG)}}`);
+                    if (resp.ok) {{
+                        const data = await resp.json();
+                        if (data.status === 'success' && data.draft) {{
+                            for (let k in data.draft) {{
+                                answers[k] = data.draft[k];
+                                const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
+                                if (input && input.id !== 'ctv_code') {{
+                                    input.value = data.draft[k];
+                                }}
+                            }}
+                            evaluateConditionals();
+                        }}
+                    }}
+                }} catch(e) {{}}
+            }}
         }}
 
         window.addEventListener('DOMContentLoaded', async () => {{
