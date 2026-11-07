@@ -29,7 +29,8 @@ from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.audit_viewer_html import render_audit_viewer_html
-
+from services.lark_base_sync import sync_submission_to_lark_base
+from fastapi.staticfiles import StaticFiles
 from config import settings
 from services.normalizer import (
     sanitize_and_normalize_image,
@@ -205,6 +206,17 @@ async def lifespan(app: FastAPI):
     await http_client.aclose()
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 
+STATIC_DIR = os.path.join(os.getcwd(), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/api/v1/caddy-check", include_in_schema=False)
+async def caddy_on_demand_tls_check(domain: str):
+    """Verifies domain eligibility for Caddy on-demand automatic TLS certificates."""
+    d = domain.lower().strip()
+    if d.endswith(".sslip.io") or d.endswith(".nip.io") or d.endswith(".trustbridgevn.com") or d == "trustbridgevn.com":
+        return HTMLResponse(content="OK", status_code=200)
+    return HTMLResponse(content="Forbidden", status_code=403)
 admin_security = HTTPBasic()
 
 def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)):
@@ -396,12 +408,25 @@ def load_persisted_forms() -> Dict[str, FormSchema]:
 FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 @app.get("/", include_in_schema=False)
 async def root_redirect(request: Request):
-    """Auto-redirects root URL to /forms/income_survey."""
+    """Auto-redirects root URL to /forms/income_survey or matches form from subdomain."""
     host = (request.headers.get("host") or "").lower()
     if host.startswith("audit.") or host.startswith("logs."):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
     if host.startswith("submissions.") or host.startswith("view.") or host.startswith("data."):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
+
+    # Check if host is a form-specific subdomain with random suffix, e.g. income-survey-dfjhgkshgksd.domain.com
+    sub_label = host.split(":")[0].split(".")[0]
+    parts = sub_label.split("-")
+    if len(parts) >= 2:
+        candidate_slug = "_".join(parts[:-1])  # e.g. income_survey
+        if candidate_slug in FORM_REGISTRY:
+            schema = FORM_REGISTRY[candidate_slug]
+            return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+        if parts[0] in FORM_REGISTRY:
+            schema = FORM_REGISTRY[parts[0]]
+            return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+
     query_str = str(request.url.query)
     target = "/forms/income_survey" + (f"?{query_str}" if query_str else "")
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
@@ -1329,6 +1354,23 @@ async def submit_webrtc_survey(
                                 "reason": reason_str,
                                 "ocr_data": ocr_data,
                             }
+                        elif ocr_data.get("is_authentic_gsm_ui") is False or ocr_data.get("detected_app") in ("GRAB", "BE", "GOJEK", "OTHER_MOCKUP"):
+                            is_approved = False
+                            status_str = "REJECTED"
+                            detected = ocr_data.get("detected_app", "MOCKUP")
+                            reason_str = (
+                                f"Ảnh 2 ({slot_1_title}): Phát hiện giao diện không phải ứng dụng Tài xế Xanh SM chính thức "
+                                f"(phát hiện: {detected}). Vui lòng chụp đúng màn hình ứng dụng Tài xế Xanh SM!"
+                            )
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": 1,
+                                "reason": reason_str,
+                                "app_spoofing_detected": True,
+                                "detected_app": detected,
+                                "ocr_data": ocr_data,
+                                "model": "DEEPSEEK_V3_CHAT",
+                            }
                         elif (
                             ocr_data.get("is_legible") is False
                             or (ocr_data.get("confidence_score") is not None and float(ocr_data.get("confidence_score", 1.0)) < 0.6)
@@ -1532,6 +1574,19 @@ async def submit_webrtc_survey(
         )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
+    try:
+        background_tasks.add_task(
+            sync_submission_to_lark_base,
+            submission_id=submission_id,
+            status_str=status_str,
+            driver_phone=driver_phone,
+            driver_name=driver_name,
+            license_plate=license_plate or ai_res.get("detected_plate"),
+            gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
+            reason_str=reason_str,
+        )
+    except Exception as lark_err:
+        logger.error(f"Failed to dispatch Lark Base sync task: {lark_err}")
     resp_data = {
         "status": status_str,
         "submission_id": submission_id,

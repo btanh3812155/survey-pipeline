@@ -4,7 +4,7 @@ from config import settings
 from services.form_engine import FormSchema
 
 def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional[str] = None) -> str:
-    tg_bot = telegram_bot_username if telegram_bot_username is not None else settings.TELEGRAM_BOT_USERNAME
+    tg_bot = telegram_bot_username if telegram_bot_username is not None else (getattr(settings, "TELEGRAM_DRIVER_BOT_USERNAME", None) or settings.TELEGRAM_BOT_USERNAME or "TrustBridgeVN_bot")
     escaped_title = html.escape(schema.title)
     escaped_desc = html.escape(schema.description or "")
     escaped_questions = []
@@ -162,6 +162,48 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             justify-content: space-between;
             font-size: 0.82rem;
             color: #e2e8f0;
+        }}
+
+        .btn-qr-share {{
+            background: rgba(16, 185, 129, 0.18);
+            border: 1px solid #10b981;
+            color: #10b981;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 5px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            transition: all 0.2s ease;
+        }}
+        .btn-qr-share:hover {{
+            background: #10b981;
+            color: #ffffff;
+        }}
+        .btn-floating-help {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #0284c7, #0369a1);
+            color: #ffffff !important;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 9px 15px;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            box-shadow: 0 6px 20px rgba(2, 132, 199, 0.45);
+            z-index: 99;
+            transition: all 0.2s ease;
+        }}
+        .btn-floating-help:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(2, 132, 199, 0.6);
+            color: #ffffff !important;
         }}
 
         .btn-test-toggle {{
@@ -737,7 +779,13 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 <span id="txtBypassLabel">Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)</span>
             </label>
         </div>
-        <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Bật thử nghiệm</button>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <button type="button" class="btn-qr-share" id="btnOpenQrModal" onclick="openFormQrModal()" title="Chia sẻ mã QR">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:middle; margin-right:4px;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                <span id="txtBtnQrShare">Mã QR</span>
+            </button>
+            <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Bật thử nghiệm</button>
+        </div>
     </div>
 
     <header>
@@ -844,6 +892,51 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             </div>
         </div>
     </div>
+    <!-- Floating Help & Support Button linking directly to Telegram Bot -->
+    <a href="https://t.me/{tg_bot}?start=support" target="_blank" rel="noopener noreferrer" class="btn-floating-help" id="btnFloatingHelp" title="Cần trợ giúp? Nhắn tin Telegram tới Ban Quản Trị">
+        <svg viewBox="0 0 24 24" style="width:17px; height:17px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+        <span id="txtFloatingHelp">Hỗ Trợ</span>
+    </a>
+    <!-- QR Code Sharing Popup Modal -->
+    <div id="qrShareModal" class="paper-modal-overlay" style="display:none;" onclick="if(event.target===this)closeQrModal()">
+        <div class="paper-sheet" style="background:#0f172a !important; color:#f8fafc !important; border:1px solid #334155; border-top:6px solid #10b981; max-width:440px;">
+            <div class="paper-header" style="border-bottom:1px solid #334155; padding-bottom:12px; margin-bottom:16px;">
+                <h3 style="color:#f8fafc !important; margin:0; display:flex; align-items:center; gap:8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span id="txtQrModalTitle">Chia Sẻ Biểu Mẫu (Mã QR)</span>
+                </h3>
+                <button type="button" class="btn-modal cancel" style="flex:0 0 auto; padding:4px 10px; font-size:0.8rem;" onclick="closeQrModal()">✕</button>
+            </div>
+            
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
+                <div id="qrCodeContainer" style="background:#ffffff; padding:16px; border-radius:12px; display:inline-flex; justify-content:center; align-items:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); min-width:220px; min-height:220px;"></div>
+                
+                <div style="width:100%;">
+                    <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;" id="txtQrUrlLabel">LINK TRUY CẬP (SUBDOMAIN NGẪU NHIÊN):</div>
+                    <div style="display:flex; gap:6px;">
+                        <input type="text" id="qrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
+                        <button type="button" onclick="regenerateRandomQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer;" title="Tạo mã ngẫu nhiên mới">🔄</button>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
+                    <button type="button" class="btn-modal confirm" onclick="copyQrLink()" style="background:#2563eb; color:#fff; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
+                        <span>📋 Sao Chép Link</span>
+                    </button>
+                    <button type="button" class="btn-modal confirm" onclick="shareQrLink()" style="background:#0284c7; color:#fff; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
+                        <span>📱 Chia Sẻ</span>
+                    </button>
+                </div>
+                
+                <button type="button" onclick="saveQrImage()" style="width:100%; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    <span>💾 Lưu Ảnh QR</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/qrcode.min.js"></script>
 
     <canvas id="hiddenCameraCanvas" style="display:none;"></canvas>
 
@@ -1369,6 +1462,34 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         list.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
                         item.classList.add('selected');
                         answers[q.id] = opt;
+                        evaluateConditionals();
+                    }};
+                    list.appendChild(item);
+                }});
+                parent.appendChild(list);
+            }} else if (q.type === 'multiple_choice') {{
+                const list = document.createElement('div');
+                list.className = 'choices-list';
+                if (!Array.isArray(answers[q.id])) {{
+                    answers[q.id] = [];
+                }}
+                (q.options || []).forEach(opt => {{
+                    const item = document.createElement('div');
+                    const isSelected = Array.isArray(answers[q.id]) && answers[q.id].includes(opt);
+                    item.className = 'choice-item' + (isSelected ? ' selected' : '');
+                    item.textContent = opt;
+                    item.onclick = () => {{
+                        if (!Array.isArray(answers[q.id])) {{
+                            answers[q.id] = [];
+                        }}
+                        const idx = answers[q.id].indexOf(opt);
+                        if (idx >= 0) {{
+                            answers[q.id].splice(idx, 1);
+                            item.classList.remove('selected');
+                        }} else {{
+                            answers[q.id].push(opt);
+                            item.classList.add('selected');
+                        }}
                         evaluateConditionals();
                     }};
                     list.appendChild(item);
@@ -1989,6 +2110,18 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 reasonEl.textContent = (res && res.reason) || t.modal_rejected_desc;
             }}
 
+            const tgBtn = document.getElementById('btnSubResultTelegram');
+            if (tgBtn) {{
+                const cleanSubId = (res && res.submission_id) ? String(res.submission_id).replace(/^#/, '') : '';
+                const param = cleanSubId ? `support_${{cleanSubId}}` : 'support';
+                tgBtn.href = `https://t.me/{tg_bot}?start=${{param}}`;
+                tgBtn.style.display = 'flex';
+                const tgTxt = document.getElementById('txtSubResultTelegram');
+                if (tgTxt) {{
+                    tgTxt.textContent = status === 'APPROVED' ? 'Xem trên Telegram' : '💬 Yêu Cầu Hỗ Trợ Qua Telegram';
+                }}
+            }}
+
             const appealBox = document.getElementById('subResultAppealBox');
             if (appealBox) {{
                 if (status === 'REJECTED') {{
@@ -2200,7 +2333,9 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     if (!k.includes('_')) {{
                         formData.append('survey_photo', answers[k], 'survey_camera.webp');
                     }}
-                }} else if (!Array.isArray(answers[k])) {{
+                }} else if (Array.isArray(answers[k])) {{
+                    formData.append(k, answers[k].join(', '));
+                }} else if (answers[k] !== undefined && answers[k] !== null) {{
                     formData.append(k, answers[k]);
                 }}
             }}
@@ -2267,6 +2402,132 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             }} finally {{
                 btn.disabled = false;
                 btn.textContent = t.btn_submit;
+            }}
+        }}
+        // QR Code Sharing Logic with Random Subdomain Generation
+        let currentQrRandomSlug = "";
+        let qrCodeInstance = null;
+
+        function generateRandomAlphanumeric(len = 10) {{
+            const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+            let res = "";
+            for (let i = 0; i < len; i++) {{
+                res += chars.charAt(Math.floor(Math.random() * chars.length));
+            }}
+            return res;
+        }}
+
+        function getFormSubdomainUrl(randSuffix) {{
+            const formSlug = (SCHEMA.form_id || "income_survey").replace(/_/g, "-");
+            const host = window.location.hostname;
+            let baseDomain = host;
+            if (host.includes("sslip.io")) {{
+                const parts = host.split(".");
+                const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
+                if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
+                    baseDomain = parts.slice(ipIndex).join(".");
+                }} else {{
+                    baseDomain = "146.190.201.32.sslip.io";
+                }}
+            }} else if (host.includes("trustbridgevn.com")) {{
+                baseDomain = "survey.trustbridgevn.com";
+            }}
+            const protocol = window.location.protocol;
+            return `${{protocol}}//${{formSlug}}-${{randSuffix}}.${{baseDomain}}`;
+        }}
+
+        function openFormQrModal() {{
+            if (!currentQrRandomSlug) {{
+                currentQrRandomSlug = generateRandomAlphanumeric(10);
+            }}
+            const url = getFormSubdomainUrl(currentQrRandomSlug);
+            const input = document.getElementById("qrShareUrlInput");
+            if (input) input.value = url;
+
+            const modal = document.getElementById("qrShareModal");
+            if (modal) modal.style.display = "flex";
+
+            renderQrCode(url);
+        }}
+
+        function closeQrModal() {{
+            const modal = document.getElementById("qrShareModal");
+            if (modal) modal.style.display = "none";
+        }}
+
+        function regenerateRandomQrSlug() {{
+            currentQrRandomSlug = generateRandomAlphanumeric(10);
+            const url = getFormSubdomainUrl(currentQrRandomSlug);
+            const input = document.getElementById("qrShareUrlInput");
+            if (input) input.value = url;
+            renderQrCode(url);
+        }}
+
+        function renderQrCode(url) {{
+            const container = document.getElementById("qrCodeContainer");
+            if (!container) return;
+            container.innerHTML = "";
+            if (typeof QRCode !== "undefined") {{
+                try {{
+                    qrCodeInstance = new QRCode(container, {{
+                        text: url,
+                        width: 220,
+                        height: 220,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.H
+                    }});
+                }} catch(e) {{
+                    container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
+                }}
+            }} else {{
+                container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
+            }}
+        }}
+
+        function copyQrLink() {{
+            const input = document.getElementById("qrShareUrlInput");
+            if (!input) return;
+            navigator.clipboard.writeText(input.value).then(() => {{
+                alert("Đã sao chép liên kết vào bộ nhớ tạm!");
+            }}).catch(() => {{
+                input.select();
+                document.execCommand("copy");
+                alert("Đã sao chép liên kết!");
+            }});
+        }}
+
+        function shareQrLink() {{
+            const input = document.getElementById("qrShareUrlInput");
+            const url = input ? input.value : window.location.href;
+            if (navigator.share) {{
+                navigator.share({{
+                    title: document.title,
+                    text: `Mời bạn tham gia biểu mẫu: ${{document.title}}`,
+                    url: url
+                }}).catch(() => {{}});
+            }} else {{
+                copyQrLink();
+            }}
+        }}
+
+        function saveQrImage() {{
+            const container = document.getElementById("qrCodeContainer");
+            if (!container) return;
+            let imgUri = "";
+            const canvas = container.querySelector("canvas");
+            const img = container.querySelector("img");
+            if (canvas) {{
+                imgUri = canvas.toDataURL("image/png");
+            }} else if (img && img.src) {{
+                imgUri = img.src;
+            }}
+            if (imgUri) {{
+                const a = document.createElement("a");
+                a.href = imgUri;
+                const formSlug = (SCHEMA.form_id || "income_survey").replace(/_/g, "-");
+                a.download = `QR_${{formSlug}}_${{currentQrRandomSlug}}.png`;
+                a.click();
             }}
         }}
 

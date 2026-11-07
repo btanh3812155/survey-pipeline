@@ -234,10 +234,12 @@ def test_admin_query_submission_dossier():
     asyncio.run(_test())
 
     # test Telegram webhook /query command integration
+    from config import settings
     client = TestClient(app)
+    admin_gid = int(settings.TELEGRAM_ADMIN_GROUP_ID) if settings.TELEGRAM_ADMIN_GROUP_ID.lstrip("-").isdigit() else -1001234567890
     payload = {
         "message": {
-            "chat": {"id": -1001234567890},
+            "chat": {"id": admin_gid},
             "from": {"id": 111222},
             "text": "/query VN-9921"
         }
@@ -245,3 +247,58 @@ def test_admin_query_submission_dossier():
     resp = client.post("/webhook/telegram", json=payload)
     assert resp.status_code == 200
     assert resp.json()["status"] == "query_command_handled"
+
+
+def test_reject_unauthorized_app_spoofing():
+    """Verify that screenshots from competitor apps (e.g. Grab/Be) or mockups are rejected."""
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    import main
+    client = TestClient(main.app)
+    buf = io.BytesIO()
+    im = Image.new("RGB", (600, 600), (255, 255, 255))
+    ImageDraw.Draw(im).text((50, 50), "APP INCOME 2500000", fill=(0, 0, 0))
+    im.save(buf, "JPEG")
+    sharp_img = buf.getvalue()
+    async def mock_role(img_bytes, filename=None, expected_slots=None):
+        fn = (filename or "").lower()
+        if "0" in fn or "profile" in fn:
+            return "app_profile"
+        return "app_income"
+
+    async def mock_ocr_grab(img_bytes):
+        return {
+            "gross_revenue": 2500000,
+            "net_income": 1900000,
+            "total_trips": 20,
+            "detected_app": "GRAB",
+            "is_authentic_gsm_ui": False,
+            "confidence_score": 0.95,
+            "is_legible": True,
+            "is_manipulated_or_photoshopped": False,
+        }
+
+    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
+         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_grab):
+        resp = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "driver_phone": "0988123456",
+                "license_plate": "29E-123.45",
+                "driver_name": "Tài xế Test",
+                "consent_choice": "Tôi đồng ý",
+                "signature_png": "data:image/png;base64,mock",
+                "vehicle_type": "Ô tô",
+                "is_test_mode": "true",
+            },
+            files={
+                "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_1": ("income.jpg", sharp_img, "image/jpeg"),
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "REJECTED"
+        assert "không phải ứng dụng Tài xế Xanh SM chính thức" in data["reason"]
+        assert data["ocr_data"]["detected_app"] == "GRAB"
+        assert data["ocr_data"]["is_authentic_gsm_ui"] is False

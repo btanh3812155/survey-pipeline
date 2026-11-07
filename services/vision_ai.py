@@ -285,6 +285,8 @@ class DualModelVisionClient:
                 "confidence_score": 0.98,
                 "is_legible": True,
                 "is_manipulated_or_photoshopped": False,
+                "detected_app": "XANH_SM",
+                "is_authentic_gsm_ui": True,
             }
 
         norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
@@ -295,15 +297,14 @@ class DualModelVisionClient:
             "- gross_revenue (int, Tong thu nhap or Doanh so, in VND, or 0 if unreadable)\n"
             "- net_income (int, Thu nhap rong, in VND, or 0 if unreadable)\n"
             "- discount_and_tax (int, Chiet khau + thue, can be negative, or 0 if unreadable)\n"
-            "- total_trips (int, Tong so chuyen, or 0 if unreadable)\n"
-            "- online_hours (string, e.g. 95h 7m, or '' if unreadable)\n"
             "- period (string, e.g. 08/2026 31 - 06, or '' if unreadable)\n"
             "- confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately)\n"
             "- is_legible (bool, true if income numbers are clearly readable, false if too blurry, distorted, or unreadable)\n"
             "- is_manipulated_or_photoshopped (bool, true if digits or text appear digitally edited/spliced)\n"
+            "- detected_app (string, 'XANH_SM' if official Xanh SM / GSM driver app, 'GRAB', 'BE', 'GOJEK', or 'OTHER_MOCKUP')\n"
+            "- is_authentic_gsm_ui (bool, true if official Xanh SM / GSM interface and teal/cyan theme, false for other apps/mockups)\n"
             "Output strictly valid JSON with these keys."
         )
-
         messages = [
             {
                 "role": "system",
@@ -318,7 +319,9 @@ class DualModelVisionClient:
                     "period (string, e.g. 08/2026, or '' if unreadable), "
                     "confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately), "
                     "is_legible (boolean, true if numbers are legible, false if too blurry/corrupted), "
-                    "is_manipulated_or_photoshopped (boolean, true if digits or text appear digitally edited/spliced). "
+                    "is_manipulated_or_photoshopped (boolean, true if digits or text appear digitally edited/spliced), "
+                    "detected_app (string, exactly one of 'XANH_SM', 'GRAB', 'BE', 'GOJEK', 'OTHER_MOCKUP'), "
+                    "is_authentic_gsm_ui (boolean, true only if authentically matching the official Xanh SM / GSM driver application layout, branding, and teal/cyan color scheme; false for competitors or custom fake mockups). "
                     "Do NOT output markdown commentary or extra text."
                 ),
             },
