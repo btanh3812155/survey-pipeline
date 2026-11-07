@@ -269,6 +269,32 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         .question-card.hidden {{
             display: none !important;
         }}
+        .locked-notice {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            border-radius: 12px;
+            background: rgba(245, 158, 11, 0.12);
+            border: 1.5px solid rgba(245, 158, 11, 0.35);
+            color: #fde68a;
+            font-size: 0.9rem;
+            font-weight: 500;
+            line-height: 1.45;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+        }}
+
+        .locked-notice-icon {{
+            font-size: 1.25rem;
+            flex-shrink: 0;
+            line-height: 1;
+        }}
+
+        .locked-notice-text {{
+            flex: 1;
+        }}
 
         .q-header {{
             display: flex;
@@ -1028,6 +1054,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_open_telegram: "Mở Telegram Bot",
                 btn_view_history_web: "Tra cứu lịch sử nộp trên web",
                 btn_new_submission: "Làm phiếu mới",
+                locked_notice: "🔒 Vui lòng ký tên (Câu 1) và chọn 'Tôi đồng ý' (Câu 2) để mở toàn bộ câu hỏi khảo sát (Mã CTV, Xe, Doanh thu, Chụp ảnh...)"
             }},
             en: {{
                 code: "EN",
@@ -1090,6 +1117,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_open_telegram: "Open Telegram Bot",
                 btn_view_history_web: "View submission history on web",
                 btn_new_submission: "New Submission",
+                locked_notice: "🔒 Please sign (Q1) and select 'Tôi đồng ý' (Q2) to unlock all survey questions (CTV Code, Vehicle, Revenue, Photos...)"
             }}
         }};
 
@@ -1147,6 +1175,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             setTxt('txtSubResultTelegram', t.btn_open_telegram);
             setTxt('btnSubResultClose', t.btn_close);
             setTxt('btnSubResultReset', t.btn_new_submission);
+            setTxt('lockedQuestionsNotice', t.locked_notice);
             try {{ updateTestModeUI(); }} catch(e) {{}}
         }}
 
@@ -1445,6 +1474,14 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 `;
 
                 container.appendChild(card);
+                if (q.id === 'consent_choice') {{
+                    const banner = document.createElement('div');
+                    banner.id = "lockedQuestionsNotice";
+                    banner.className = "locked-notice";
+                    banner.style.display = "flex";
+                    banner.textContent = t.locked_notice;
+                    container.appendChild(banner);
+                }}
                 renderQuestionInput(q, card.querySelector(`#body_${{q.id}}`));
             }});
 
@@ -1637,6 +1674,15 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const hasSigned = Boolean(answers['driver_signature']);
             const hasConsented = answers['consent_choice'] === 'Tôi đồng ý';
             const isUnlocked = hasSigned && hasConsented;
+
+            const lockedNoticeEl = document.getElementById('lockedQuestionsNotice');
+            if (lockedNoticeEl) {{
+                if (!isUnlocked) {{
+                    lockedNoticeEl.style.display = 'flex';
+                }} else {{
+                    lockedNoticeEl.style.display = 'none';
+                }}
+            }}
 
             SCHEMA.questions.forEach(q => {{
                 if (q.conditional) {{

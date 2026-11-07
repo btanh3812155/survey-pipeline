@@ -1,0 +1,12 @@
+{
+  "name": "survey-pipeline-frontend",
+  "version": "1.0.0",
+  "description": "Typed TypeScript structure for dynamic survey forms",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
