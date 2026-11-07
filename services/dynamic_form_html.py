@@ -1504,6 +1504,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }}
                 sel.onchange = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); scheduleDraftSave(); }};
                 parent.appendChild(sel);
+            }} else if (q.type === 'single_choice') {{
                 const list = document.createElement('div');
                 list.className = 'choices-list';
                 (q.options || []).forEach(opt => {{
