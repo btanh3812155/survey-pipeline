@@ -33,7 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_driver_vault_phone ON driver_identity_vault (driv
 CREATE TABLE IF NOT EXISTS survey_submissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     submission_id VARCHAR(64) UNIQUE NOT NULL,
+    form_id VARCHAR(64) NOT NULL DEFAULT 'income_survey',
     collaborator_id BIGINT REFERENCES authorized_users(telegram_user_id),
+    ctv_code VARCHAR(64),
     driver_id VARCHAR(32) REFERENCES driver_identity_vault(driver_id),
     driver_phone VARCHAR(20), -- NULL for REJECTED submissions or scrubbed records
     driver_name TEXT,
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     embedding vector(384),
     status VARCHAR(32) NOT NULL CHECK (status IN ('APPROVED', 'REJECTED', 'APPEAL_PENDING', 'MANUAL_REVIEW')),
     rejection_reason TEXT,
+    form_data JSONB NOT NULL DEFAULT '{}'::jsonb, -- Flexible payload supporting arbitrary form fields
     raw_extracted_facts JSONB,
     audit_seal_hash VARCHAR(64), -- Immutable SHA-256 seal (phone + ts + gps + signature)
     moderated_by_admin_id BIGINT,
@@ -55,6 +58,10 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     moderation_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Index for dynamic form queries
+CREATE INDEX IF NOT EXISTS idx_surveys_form_id ON survey_submissions (form_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_surveys_ctv_code ON survey_submissions (ctv_code, created_at DESC);
 -- Allows legitimate re-submissions of receipts previously rejected for blur/glare.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_serial_tax_approved 
 ON survey_submissions (receipt_serial_no, store_tax_id) 

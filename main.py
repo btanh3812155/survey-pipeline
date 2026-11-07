@@ -2,6 +2,7 @@ import os
 import html
 import re
 import secrets
+import hashlib
 import json
 import asyncio
 import time
@@ -13,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Union, List, Tuple
 from contextlib import asynccontextmanager
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks, status, File, UploadFile, Form, Depends
@@ -431,6 +432,26 @@ async def root_redirect(request: Request):
     query_str = str(request.url.query)
     target = "/forms/income_survey" + (f"?{query_str}" if query_str else "")
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
+def get_deterministic_ctv_slug(ctv_id: str, form_base: str = "income-survey") -> str:
+    """Deterministically generates a slug from CTV ID."""
+    clean_ctv = ctv_id.strip()
+    h = hashlib.sha256(f"tb_ctv_salt_2026:{clean_ctv}".encode("utf-8")).hexdigest()[:14]
+    return f"{form_base}-{h}"
+
+def resolve_ctv_from_slug(slug: str) -> Optional[str]:
+    """Resolves CTV ID from known CTV choices or registered options."""
+    schema = FORM_REGISTRY.get("income_survey") or next(iter(FORM_REGISTRY.values()), None)
+    if not schema:
+        return None
+    ctv_q = next((q for q in schema.questions if q.id in ("ctv_code", "collaborator_id")), None)
+    ctv_options = ctv_q.options if ctv_q and ctv_q.options else [
+        "CTV001_Dũng_HN", "CTV002_Tuấn_HN", "CTV003_Ngân_SG", "CTV004_Vỹ_SG", "CTV005_Hương_DN"
+    ]
+    for opt in ctv_options:
+        for base in ("income-survey", "income_survey"):
+            if get_deterministic_ctv_slug(opt, base) == slug:
+                return opt
+    return None
 
 @app.get("/camera-form", response_class=HTMLResponse)
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
@@ -441,11 +462,67 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
     if (host.startswith("submissions.") or host.startswith("view.") or host.startswith("data.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
-    if form_id in ("default", "camera-form") or form_id not in FORM_REGISTRY:
+    
+    matched_ctv = resolve_ctv_from_slug(form_id)
+    active_slug = form_id if matched_ctv else None
+    
+    if form_id in ("default", "camera-form") or matched_ctv or form_id not in FORM_REGISTRY:
         schema = FORM_REGISTRY.get("income_survey") or next(iter(FORM_REGISTRY.values()))
     else:
         schema = FORM_REGISTRY[form_id]
-    return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
+    return HTMLResponse(
+        content=render_dynamic_form_html(schema, ctv_code=matched_ctv, ctv_slug=active_slug),
+        status_code=200
+    )
+
+@app.get("/api/v1/forms/draft/{slug}")
+async def get_form_draft(slug: str):
+    """Retrieves saved draft responses for a specific CTV link."""
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT draft_data, ctv_id FROM survey_drafts WHERE ctv_slug = %s LIMIT 1;",
+                        (slug,)
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return {"status": "success", "slug": slug, "ctv_id": row[1], "draft": row[0]}
+        except Exception as e:
+            logger.warning(f"Error fetching draft from DB: {e}")
+    return {"status": "not_found", "slug": slug, "draft": {}}
+
+class DraftPayload(BaseModel):
+    ctv_slug: str
+    ctv_id: Optional[str] = None
+    form_id: Optional[str] = "income_survey"
+    draft_data: Dict[str, Any] = Field(default_factory=dict)
+
+@app.post("/api/v1/forms/draft")
+async def save_form_draft(payload: DraftPayload):
+    """Persists filled-in data per CTV link across page reloads and cross-device access."""
+    slug = payload.ctv_slug.strip()
+    ctv = payload.ctv_id or resolve_ctv_from_slug(slug) or "CTV_GENERAL"
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO survey_drafts (ctv_slug, ctv_id, form_id, draft_data, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW())
+                        ON CONFLICT (ctv_slug) DO UPDATE
+                        SET draft_data = EXCLUDED.draft_data, updated_at = NOW();
+                        """,
+                        (slug, ctv, payload.form_id, json.dumps(payload.draft_data))
+                    )
+                    await conn.commit()
+            return {"status": "saved", "slug": slug}
+        except Exception as e:
+            logger.warning(f"Error saving draft to DB: {e}")
+            return {"status": "db_error", "detail": str(e)}
+    return {"status": "saved_fallback"}
 
 @app.get("/admin", include_in_schema=False)
 async def admin_root(admin_user: str = Depends(verify_admin_auth)):
@@ -1191,6 +1268,13 @@ async def submit_webrtc_survey(
         is_schema_valid, validation_err = validate_submission_against_schema(schema, answers)
 
     blur_var = None
+    raw_bytes_list = []
+    for img in images_list:
+        await img.seek(0)
+        b = await img.read()
+        raw_bytes_list.append(b)
+        await img.seek(0)
+
     if not is_schema_valid:
         status_str = "REJECTED"
         is_approved = False
@@ -1209,12 +1293,7 @@ async def submit_webrtc_survey(
             )
 
         # Collect raw bytes for all uploaded images in images_list
-        raw_bytes_list = []
-        for img in images_list:
-            await img.seek(0)
-            b = await img.read()
-            raw_bytes_list.append(b)
-            await img.seek(0)
+        # Use previously collected raw bytes
 
         raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
 
@@ -1510,21 +1589,30 @@ async def submit_webrtc_survey(
                             """,
                             (driver_tag, persisted_phone, persisted_name),
                         )
+                    # Clean form_data JSON (excluding raw image streams for compact storage)
+                    clean_form_data = {
+                        k: v for k, v in answers.items()
+                        if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray))
+                    }
+                    effective_ctv = str(collab_param or answers.get("ctv_code") or "").strip() or None
                     await cur.execute(
                         """
                         INSERT INTO survey_submissions (
-                            submission_id, driver_phone, driver_name, receipt_serial_no,
-                            status, rejection_reason, raw_extracted_facts, driver_id
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
+                            status, rejection_reason, form_data, raw_extracted_facts, driver_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (submission_id) DO NOTHING;
                         """,
                         (
                             submission_id,
+                            active_form_id,
+                            effective_ctv,
                             persisted_phone,
                             persisted_name,
                             f"SN-{license_plate or 'AUTO'}",
                             status_str,
                             reason_str if not is_approved else None,
+                            json.dumps(clean_form_data),
                             json.dumps(ai_res),
                             driver_tag if not is_dissent else None,
                         ),

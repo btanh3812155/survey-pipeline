@@ -1496,9 +1496,9 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         item.classList.add('selected');
                         answers[q.id] = opt;
                         evaluateConditionals();
+                        scheduleDraftSave();
                     }};
                     list.appendChild(item);
-                }});
                 parent.appendChild(list);
             }} else if (q.type === 'multiple_choice') {{
                 const list = document.createElement('div');
@@ -1524,6 +1524,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                             item.classList.add('selected');
                         }}
                         evaluateConditionals();
+                        scheduleDraftSave();
                     }};
                     list.appendChild(item);
                 }});
@@ -2608,11 +2609,54 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 a.click();
             }}
         }}
+        let draftTimer = null;
+        function scheduleDraftSave() {{
+            if (!ACTIVE_CTV_SLUG) return;
+            clearTimeout(draftTimer);
+            draftTimer = setTimeout(() => {{
+                const textAnswers = {{}};
+                for (let k in answers) {{
+                    if (!(answers[k] instanceof Blob)) {{
+                        textAnswers[k] = answers[k];
+                    }}
+                }}
+                fetch('/api/v1/forms/draft', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{
+                        ctv_slug: ACTIVE_CTV_SLUG,
+                        ctv_id: LOCKED_CTV_CODE || null,
+                        form_id: SCHEMA.form_id || 'income_survey',
+                        draft_data: textAnswers
+                    }})
+                }}).catch(() => {{}});
+            }}, 800);
+        }}
 
-        window.addEventListener('DOMContentLoaded', () => {{
+        async function restoreDraftIfExists() {{
+            if (!ACTIVE_CTV_SLUG) return;
+            try {{
+                const resp = await fetch(`/api/v1/forms/draft/${{encodeURIComponent(ACTIVE_CTV_SLUG)}}`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.status === 'success' && data.draft) {{
+                    for (let k in data.draft) {{
+                        answers[k] = data.draft[k];
+                        const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
+                        if (input) {{
+                            input.value = data.draft[k];
+                        }}
+                    }}
+                    evaluateConditionals();
+                }}
+            }} catch(e) {{}}
+        }}
+
+        window.addEventListener('DOMContentLoaded', async () => {{
             applyI18n();
             initGpsBannerBehavior();
             renderForm();
+            await restoreDraftIfExists();
         }});
     </script>
 </body>
