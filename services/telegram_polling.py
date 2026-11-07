@@ -24,6 +24,10 @@ from services.normalizer import compute_laplacian_blur_score
 logger = logging.getLogger("telegram_polling")
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
 
+# Shared live support conversation registry between Admin Group and User Private DMs
+ACTIVE_SUPPORT_CONVERSATIONS: Dict[int, dict] = {}
+ADMIN_GROUP_ACTIVE_SESSION: Dict[str, int] = {}
+
 
 class TelegramPollingRunner:
     """
@@ -338,9 +342,50 @@ class TelegramPollingRunner:
             report_text = render_dossier_message(dossier)
             await self.send_message(cq_chat_id, report_text)
             await self.answer_callback_query(cq_id, f"Đã kiểm toán #{sub_id}")
+
+        elif data.startswith("admin_reply_chat:"):
+            target_user_id = int(data.split(":", 1)[1])
+            ACTIVE_SUPPORT_CONVERSATIONS[target_user_id] = {
+                "user_id": target_user_id,
+                "admin_chat_id": cq_chat_id,
+                "opened_at": time.time(),
+            }
+            ADMIN_GROUP_ACTIVE_SESSION[str(cq_chat_id)] = target_user_id
+            await self.send_message(
+                cq_chat_id,
+                f"🟢 <b>ĐÃ MỞ PHIÊN HỘI THOẠI TRỰC TIẾP VỚI THÀNH VIÊN (ID: <code>{target_user_id}</code>)!</b>\n\n"
+                f"👉 Mọi tin nhắn của bạn trong nhóm bây giờ sẽ được bot tự động chuyển tiếp tới người dùng.\n"
+                f"👉 Gõ <code>/close</code> hoặc <code>/end</code> để kết thúc cuộc trò chuyện bất cứ lúc nào.",
+            )
+            await self.answer_callback_query(cq_id, "Đã mở phiên chat trực tiếp")
+
+            driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+            if driver_token and driver_token != "mock_tg_token":
+                client = await self.get_client()
+                url = f"https://api.telegram.org/bot{driver_token}/sendMessage"
+                user_msg = (
+                    "🟢 <b>Quản trị viên đã tham gia cuộc hội thoại hỗ trợ trực tiếp!</b>\n\n"
+                    "Bạn có thể nhắn tin trao đổi tại đây. Quản trị viên sẽ đọc và trả lời bạn ngay trong khung chat này.\n"
+                    "👉 Gõ <code>/close</code> khi đã giải quyết xong để kết thúc phiên hỗ trợ."
+                )
+                try:
+                    await client.post(url, json={"chat_id": target_user_id, "text": user_msg, "parse_mode": "HTML"})
+                except Exception as ex:
+                    logger.error(f"Failed to notify user about open chat: {ex}")
+
+        elif data.startswith("admin_close_ticket:"):
+            target_user_id = int(data.split(":", 1)[1])
+            if target_user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+                del ACTIVE_SUPPORT_CONVERSATIONS[target_user_id]
+            if str(cq_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
+                del ADMIN_GROUP_ACTIVE_SESSION[str(cq_chat_id)]
+            await self.send_message(
+                cq_chat_id,
+                f"🔒 Đã đóng yêu cầu hỗ trợ của thành viên <code>{target_user_id}</code>."
+            )
+            await self.answer_callback_query(cq_id, "Đã đóng ticket")
         else:
             await self.answer_callback_query(cq_id)
-
     async def _update_submission_status(self, sub_id: str, new_status: str, reason: str = "") -> None:
         if self.db_pool:
             try:
@@ -370,6 +415,30 @@ class TelegramPollingRunner:
                         json.dump(records, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"Failed to update submission status in dev storage: {e}")
+    async def close_active_support(self, admin_chat_id: int, user_id: int, closed_by: str = "admin") -> None:
+        """Closes live support conversation from admin side."""
+        if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+            del ACTIVE_SUPPORT_CONVERSATIONS[user_id]
+        if str(admin_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
+            del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat_id)]
+
+        await self.send_message(
+            admin_chat_id,
+            f"🔒 <b>Đã đóng phiên hội thoại hỗ trợ với người dùng <code>{user_id}</code>.</b>"
+        )
+        driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+        if driver_token and driver_token != "mock_tg_token":
+            client = await self.get_client()
+            url = f"https://api.telegram.org/bot{driver_token}/sendMessage"
+            msg = (
+                "🔒 <b>Phiên hỗ trợ trực tiếp với Ban Quản Trị đã kết thúc.</b>\n\n"
+                "Cảm ơn bạn! Nếu có bất kỳ câu hỏi nào trong tương lai, bạn có thể gửi lại yêu cầu bất cứ lúc nào."
+            )
+            try:
+                await client.post(url, json={"chat_id": user_id, "text": msg, "parse_mode": "HTML"})
+            except Exception as e:
+                logger.error(f"Failed to notify user about closed session: {e}")
+
 
     async def handle_update(self, update: dict) -> None:
         """Dispatches an incoming update payload to message or callback handlers."""
@@ -393,10 +462,36 @@ class TelegramPollingRunner:
             chat = msg.get("chat") or {}
             chat_id = chat.get("id")
             text = msg.get("text") or ""
+            from_user = msg.get("from") or {}
+            admin_name = from_user.get("first_name", "Quản trị viên")
+
             if chat_id and text:
+                # Check for /close command in admin group
+                if text.strip().lower() in ("/close", "/end", "/ketthuc"):
+                    active_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id))
+                    if active_user:
+                        await self.close_active_support(chat_id, active_user, closed_by="admin")
+                        return
+                    else:
+                        await self.send_message(chat_id, "ℹ️ Hiện không có phiên hội thoại hỗ trợ nào đang mở.")
+                        return
+
+                # If there's an active session, relay non-slash messages to user DM
+                active_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id))
+                if active_user and not text.startswith("/"):
+                    driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+                    if driver_token and driver_token != "mock_tg_token":
+                        client = await self.get_client()
+                        url = f"https://api.telegram.org/bot{driver_token}/sendMessage"
+                        relay_text = f"💬 <b>Phản hồi từ Ban Quản Trị ({admin_name}):</b>\n\n{text}"
+                        try:
+                            await client.post(url, json={"chat_id": active_user, "text": relay_text, "parse_mode": "HTML"})
+                        except Exception as e:
+                            logger.error(f"Failed to relay admin message: {e}")
+                    return
+
                 if len(text) <= 4096 and text.startswith("/"):
                     await self.handle_command(chat_id, text)
-
         elif "callback_query" in update and update["callback_query"]:
             await self.handle_callback_query(update["callback_query"])
     async def poll_once(self) -> int:
@@ -894,9 +989,14 @@ class DriverBotRunner(TelegramPollingRunner):
                 f"• <b>Nội dung yêu cầu:</b>\n"
                 f"<i>\"{clean_msg}\"</i>"
             )
-            buttons = []
+            buttons = [
+                [
+                    {"text": f"💬 Trả lời {name[:16]}", "callback_data": f"admin_reply_chat:{user_id}"},
+                    {"text": "❌ Đóng", "callback_data": f"admin_close_ticket:{user_id}"},
+                ]
+            ]
             if username:
-                buttons.append([{"text": "💬 Nhắn Qua Telegram", "url": f"https://t.me/{username}"}])
+                buttons.append([{"text": "📱 Mở Telegram riêng", "url": f"https://t.me/{username}"}])
             payload: Dict[str, Any] = {
                 "chat_id": admin_group,
                 "text": admin_card,
@@ -916,6 +1016,29 @@ class DriverBotRunner(TelegramPollingRunner):
             f"Đội ngũ hỗ trợ sẽ xem xét và phản hồi bạn trong thời gian sớm nhất."
         )
         await self.send_message(chat_id, confirm_text, reply_markup=self.get_driver_reply_keyboard())
+    async def close_user_support(self, chat_id: int, user_id: int, closed_by: str = "user") -> None:
+        """Closes live support conversation from user side."""
+        convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, {})
+        admin_chat_id = convo.get("admin_chat_id") or getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-5445563473")
+        if str(admin_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
+            del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat_id)]
+
+        await self.send_message(
+            chat_id,
+            "🔒 <b>Cuộc trò chuyện hỗ trợ đã kết thúc theo yêu cầu của bạn.</b>\n\n"
+            "Cảm ơn bạn! Chúc bạn một ngày làm việc thuận lợi.",
+            reply_markup=self.get_driver_reply_keyboard(),
+        )
+        admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+        if admin_token and admin_token != "mock_tg_token":
+            client = await self.get_client()
+            url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
+            msg = f"🔒 <b>Người dùng <code>{user_id}</code> đã kết thúc cuộc trò chuyện hỗ trợ.</b>"
+            try:
+                await client.post(url, json={"chat_id": admin_chat_id, "text": msg, "parse_mode": "HTML"})
+            except Exception as e:
+                logger.error(f"Failed to notify admin: {e}")
+
 
     async def handle_driver_command(self, chat_id: int, user_id: int, text: str, from_user: dict) -> None:
         """Dispatches text commands and persistent keyboard button presses."""
@@ -924,6 +1047,18 @@ class DriverBotRunner(TelegramPollingRunner):
 
         if cmd == "/start" or clean == "Bắt đầu":
             parts = clean.split(" ", 1)
+            if len(parts) > 1 and parts[1].startswith("support"):
+                sub_ref = parts[1][7:].lstrip("_")
+                ref_text = f" (cho phiếu <code>#{sub_ref}</code>)" if sub_ref else ""
+                self.pending_support[chat_id] = True
+                prompt = (
+                    f"💬 <b>Bạn cần Ban Quản Trị hỗ trợ vấn đề gì{ref_text}?</b>\n\n"
+                    f"Hãy nhập nội dung thắc mắc hoặc khó khăn của bạn ngay tại đây.\n\n"
+                    f"Hệ thống sẽ chuyển tiếp trực tiếp tin nhắn của bạn tới Ban Quản Trị trong nhóm điều hành."
+                )
+                await self.send_message(chat_id, prompt, reply_markup=self.get_driver_reply_keyboard())
+                return
+
             if len(parts) > 1 and parts[1].startswith("fix_"):
                 # Deep link: /start fix_<sub_id>_<slot>
                 fix_data = parts[1][4:].split("_", 1)
@@ -938,7 +1073,6 @@ class DriverBotRunner(TelegramPollingRunner):
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
                 return
-
             welcome_text = (
                 "👋 <b>Chào mừng bạn đến với Kênh Hỗ Trợ Khảo Sát Trust Bridge!</b>\n\n"
                 "Kênh thông tin và hỗ trợ tự động dành cho Tài xế và Cộng tác viên:\n"
@@ -1003,6 +1137,16 @@ class DriverBotRunner(TelegramPollingRunner):
                 )
                 return
             await self.handle_driver_appeal(chat_id, user_id, parts[1].strip().lstrip("#"))
+        elif cmd in ("/close", "/end", "/ketthuc"):
+            if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+                await self.close_user_support(chat_id, user_id, closed_by="user")
+            else:
+                await self.send_message(
+                    chat_id,
+                    "ℹ️ Hiện tại không có phiên hội thoại hỗ trợ trực tiếp nào đang mở.",
+                    reply_markup=self.get_driver_reply_keyboard(),
+                )
+
 
         else:
             if self.pending_support.get(chat_id):
@@ -1036,6 +1180,27 @@ class DriverBotRunner(TelegramPollingRunner):
             # 3. Text Command or Button
             text = msg.get("text") or ""
             if chat_id and text:
+                # 1. Check if user wants to close active support conversation
+                if text.strip().lower() in ("/close", "/end", "/ketthuc") and user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+                    await self.close_user_support(chat_id, user_id, closed_by="user")
+                    return
+
+                # 2. Check if user is in an active support conversation open with admin
+                if user_id in ACTIVE_SUPPORT_CONVERSATIONS and not text.startswith("/"):
+                    convo = ACTIVE_SUPPORT_CONVERSATIONS[user_id]
+                    admin_chat_id = convo.get("admin_chat_id") or getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-5445563473")
+                    admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+                    user_display = from_user.get("first_name", f"User {user_id}")
+                    if admin_token and admin_token != "mock_tg_token":
+                        client = await self.get_client()
+                        url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
+                        relay_text = f"👤 <b>Tin nhắn từ {user_display} (ID: <code>{user_id}</code>):</b>\n\n{text}"
+                        try:
+                            await client.post(url, json={"chat_id": admin_chat_id, "text": relay_text, "parse_mode": "HTML"})
+                        except Exception as e:
+                            logger.error(f"Failed to relay user message to admin group: {e}")
+                    return
+
                 if self.pending_support.get(chat_id) and not text.startswith("/"):
                     await self.handle_admin_help_request(chat_id, user_id, text, from_user)
                 else:

@@ -68,6 +68,7 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                 <div>Quyền truy cập: <b>{f.settings.access_control if f.settings else 'public'}</b></div>
             </div>
             <div class="form-actions">
+                <button type="button" class="btn-action qr" onclick="openAdminQrModal('{f.form_id}', '{html.escape(f.title)}')">📱 Mã QR</button>
                 <a href="{form_link}" target="_blank" class="btn-action view">Mở Form</a>
                 <a href="/admin/forms/edit/{f.form_id}" class="btn-action edit">Sửa</a>
             </div>
@@ -219,6 +220,8 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         }}
         .btn-action.view {{ background: #2563eb; color: #fff; }}
         .btn-action.edit {{ background: #334155; color: #e2e8f0; }}
+        .btn-action.qr {{ background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; cursor: pointer; }}
+        .btn-action.qr:hover {{ background: #10b981; color: #fff; }}
 
         /* Pagination Controls */
         .pagination {{
@@ -497,6 +500,170 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             applyAdminI18n();
         }}
         window.addEventListener('DOMContentLoaded', applyAdminI18n);
+    </script>
+    <!-- Admin QR Modal Popup -->
+    <div id="adminQrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; padding:16px;" onclick="if(event.target===this)closeAdminQrModal()">
+        <div style="background:#0f172a; border:1px solid #334155; border-top:6px solid #10b981; border-radius:14px; padding:20px; max-width:440px; width:100%; box-shadow:0 25px 50px rgba(0,0,0,0.6);">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:12px; margin-bottom:16px;">
+                <h3 id="adminQrModalTitle" style="margin:0; font-size:1.05rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>Chia Sẻ Mã QR Biểu Mẫu</span>
+                </h3>
+                <button type="button" onclick="closeAdminQrModal()" style="background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:1rem; cursor:pointer; border-radius:6px; padding:2px 8px;">✕</button>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
+                <div id="adminQrCodeContainer" style="background:#ffffff; padding:16px; border-radius:12px; display:inline-flex; justify-content:center; align-items:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); min-width:220px; min-height:220px;"></div>
+                
+                <div style="width:100%;">
+                    <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">LINK TRUY CẬP (SUBDOMAIN NGẪU NHIÊN):</div>
+                    <div style="display:flex; gap:6px;">
+                        <input type="text" id="adminQrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
+                        <button type="button" onclick="regenerateAdminQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer;" title="Tạo mã ngẫu nhiên mới">🔄</button>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
+                    <button type="button" onclick="copyAdminQrLink()" style="background:#2563eb; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
+                        <span>📋 Sao Chép Link</span>
+                    </button>
+                    <button type="button" onclick="shareAdminQrLink()" style="background:#0284c7; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
+                        <span>📱 Chia Sẻ</span>
+                    </button>
+                </div>
+                
+                <button type="button" onclick="saveAdminQrImage()" style="width:100%; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    <span>💾 Lưu Ảnh QR (.png)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/qrcode.min.js"></script>
+    <script>
+        let currentAdminQrFormId = "";
+        let currentAdminQrSlug = "";
+
+        function generateAdminRandomSlug(len = 10) {{
+            const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+            let res = "";
+            for (let i = 0; i < len; i++) {{
+                res += chars.charAt(Math.floor(Math.random() * chars.length));
+            }}
+            return res;
+        }}
+
+        function getAdminFormSubdomainUrl(formId, randSuffix) {{
+            const formSlug = (formId || "income_survey").replace(/_/g, "-");
+            const host = window.location.hostname;
+            let baseDomain = host;
+            if (host.includes("sslip.io")) {{
+                const parts = host.split(".");
+                const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
+                if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
+                    baseDomain = parts.slice(ipIndex).join(".");
+                }} else {{
+                    baseDomain = "146.190.201.32.sslip.io";
+                }}
+            }} else if (host.includes("trustbridgevn.com")) {{
+                baseDomain = "survey.trustbridgevn.com";
+            }}
+            const protocol = window.location.protocol;
+            return `${{protocol}}//${{formSlug}}-${{randSuffix}}.${{baseDomain}}`;
+        }}
+
+        function openAdminQrModal(formId, formTitle) {{
+            currentAdminQrFormId = formId;
+            currentAdminQrSlug = generateAdminRandomSlug(10);
+            const titleEl = document.getElementById("adminQrModalTitle");
+            if (titleEl) titleEl.innerHTML = `<span>Mã QR: ${{formTitle}}</span>`;
+            const url = getAdminFormSubdomainUrl(currentAdminQrFormId, currentAdminQrSlug);
+            const input = document.getElementById("adminQrShareUrlInput");
+            if (input) input.value = url;
+            const modal = document.getElementById("adminQrModal");
+            if (modal) modal.style.display = "flex";
+            renderAdminQr(url);
+        }}
+
+        function closeAdminQrModal() {{
+            const modal = document.getElementById("adminQrModal");
+            if (modal) modal.style.display = "none";
+        }}
+
+        function regenerateAdminQrSlug() {{
+            currentAdminQrSlug = generateAdminRandomSlug(10);
+            const url = getAdminFormSubdomainUrl(currentAdminQrFormId, currentAdminQrSlug);
+            const input = document.getElementById("adminQrShareUrlInput");
+            if (input) input.value = url;
+            renderAdminQr(url);
+        }}
+
+        function renderAdminQr(url) {{
+            const container = document.getElementById("adminQrCodeContainer");
+            if (!container) return;
+            container.innerHTML = "";
+            if (typeof QRCode !== "undefined") {{
+                try {{
+                    new QRCode(container, {{
+                        text: url,
+                        width: 220,
+                        height: 220,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.H
+                    }});
+                }} catch(e) {{
+                    container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
+                }}
+            }} else {{
+                container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
+            }}
+        }}
+
+        function copyAdminQrLink() {{
+            const input = document.getElementById("adminQrShareUrlInput");
+            if (!input) return;
+            navigator.clipboard.writeText(input.value).then(() => {{
+                alert("Đã sao chép liên kết vào bộ nhớ tạm!");
+            }}).catch(() => {{
+                input.select();
+                document.execCommand("copy");
+                alert("Đã sao chép liên kết!");
+            }});
+        }}
+
+        function shareAdminQrLink() {{
+            const input = document.getElementById("adminQrShareUrlInput");
+            const url = input ? input.value : window.location.href;
+            if (navigator.share) {{
+                navigator.share({{
+                    title: "Khảo sát Trust Bridge",
+                    text: "Mời bạn tham gia biểu mẫu khảo sát Trust Bridge",
+                    url: url
+                }}).catch(() => {{}});
+            }} else {{
+                copyAdminQrLink();
+            }}
+        }}
+
+        function saveAdminQrImage() {{
+            const container = document.getElementById("adminQrCodeContainer");
+            if (!container) return;
+            let imgUri = "";
+            const canvas = container.querySelector("canvas");
+            const img = container.querySelector("img");
+            if (canvas) {{
+                imgUri = canvas.toDataURL("image/png");
+            }} else if (img && img.src) {{
+                imgUri = img.src;
+            }}
+            if (imgUri) {{
+                const a = document.createElement("a");
+                a.href = imgUri;
+                const formSlug = (currentAdminQrFormId || "income_survey").replace(/_/g, "-");
+                a.download = `QR_${{formSlug}}_${{currentAdminQrSlug}}.png`;
+                a.click();
+            }}
+        }}
     </script>
 </body>
 </html>

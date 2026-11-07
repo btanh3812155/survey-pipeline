@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     LARK_APP_SECRET: str = "mock_secret"
     LARK_ENCRYPT_KEY: str = "mock_encrypt_key"
     LARK_VERIFICATION_TOKEN: str = "mock_token"
+    LARK_BASE_APP_TOKEN: str = "UwVabU53laZe5OsKgEGjy7QRpOh"
+    LARK_BASE_TABLE_ID: str = "tblTpiVhUtY98Zc8"
 
     # telegram bots (admin & driver dual-bot architecture)
     TELEGRAM_BOT_TOKEN: str = "mock_tg_token"
@@ -33,8 +35,8 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: str = "mock_webhook_secret"
     TELEGRAM_ADMIN_GROUP_ID: str = "-1001234567890"
     TELEGRAM_POLLING_ENABLED: bool = False
-    TELEGRAM_BOT_USERNAME: str = ""
-    TELEGRAM_DRIVER_BOT_USERNAME: str = ""
+    TELEGRAM_BOT_USERNAME: str = "TrustBridgeVNAdmin_Bot"
+    TELEGRAM_DRIVER_BOT_USERNAME: str = "TrustBridgeVN_bot"
     # ai models
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
