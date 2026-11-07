@@ -1002,19 +1002,41 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             }}
         }}
 
+        function slugifyText(str) {{
+            return (str || '')
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '')
+                .substring(0, 32);
+        }}
         function addQuestion() {{
+            const num = questions.length + 1;
+            const autoId = `q_${{num}}_${{Date.now().toString(36)}}`;
             questions.push({{
-                id: `q_${{Date.now()}}`,
-                title: `Câu hỏi số ${{questions.length + 1}}`,
+                id: autoId,
+                title: `Câu hỏi số ${{num}}`,
                 type: 'text',
                 required: true,
                 description: '',
+                tooltip: '',
+                ai_detection_prompt: '',
                 sample_response: '',
                 options: []
             }});
             renderQuestions();
         }}
-
+        function syncQuestionId(idx) {{
+            const q = questions[idx];
+            if (!q) return;
+            const titleSlug = slugifyText(q.title);
+            if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {{
+                q.id = `${{titleSlug}}_${{idx + 1}}`;
+                const idInput = document.getElementById(`qid_${{idx}}`);
+                if (idInput) idInput.value = q.id;
+            }}
+        }}
         function removeQuestion(idx) {{
             questions.splice(idx, 1);
             renderQuestions();
@@ -1133,7 +1155,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                     <div class="row-2">
                         <div class="field-group">
                             <label>Tiêu đề câu hỏi</label>
-                            <input type="text" value="${{escapeHtml(q.title)}}" oninput="questions[${{idx}}].title = this.value">
+                            <input type="text" value="${{escapeHtml(q.title)}}" oninput="questions[${{idx}}].title = this.value; syncQuestionId(${{idx}});">
                         </div>
                         <div class="field-group">
                             <label>Loại câu hỏi</label>
@@ -1141,11 +1163,29 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                                 <option value="text" ${{q.type==='text'?'selected':''}}>Văn bản (Text)</option>
                                 <option value="number" ${{q.type==='number'?'selected':''}}>Số (Number)</option>
                                 <option value="single_choice" ${{q.type==='single_choice'?'selected':''}}>Chọn một (Single Choice)</option>
+                                <option value="multiple_choice" ${{q.type==='multiple_choice'?'selected':''}}>Chọn nhiều (Multiple Choice)</option>
                                 <option value="dropdown" ${{q.type==='dropdown'?'selected':''}}>Menu thả xuống (Dropdown)</option>
                                 <option value="camera_webrtc" ${{q.type==='camera_webrtc'?'selected':''}}>Chụp ảnh trực tiếp (Camera WebRTC)</option>
                                 <option value="signature" ${{q.type==='signature'?'selected':''}}>Chữ ký điện tử (Signature)</option>
                             </select>
                         </div>
+                    </div>
+                    <div class="row-2" style="margin-top:6px;">
+                        <div class="field-group">
+                            <label style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>Mã Question ID (Tự động tạo)</span>
+                                <span style="font-size:0.7rem; color:#94a3b8; font-weight:normal;">Định danh duy nhất</span>
+                            </label>
+                            <input type="text" id="qid_${{idx}}" value="${{escapeHtml(q.id || '')}}" placeholder="vd: driver_phone, camera_receipt..." oninput="questions[${{idx}}].id = this.value.trim()">
+                        </div>
+                        <div class="field-group">
+                            <label>Tooltip giải thích (Hiển thị popup khi rê chuột)</label>
+                            <input type="text" value="${{escapeHtml(q.tooltip || '')}}" placeholder="Thông tin trợ giúp nhanh..." oninput="questions[${{idx}}].tooltip = this.value">
+                        </div>
+                    </div>
+                    <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
+                        <label style="color:#fde047; font-size:0.75rem; font-weight:700;">🤖 AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
+                        <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${{idx}}].ai_detection_prompt = this.value">${{escapeHtml(q.ai_detection_prompt || '')}}</textarea>
                     </div>
                     ${{q.type === 'text' ? `
                         <div>
@@ -1156,7 +1196,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         <label>Mô tả / Hướng dẫn</label>
                         <input type="text" value="${{escapeHtml(q.description || '')}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">
                     </div>
-                    ${{['single_choice', 'dropdown'].includes(q.type) ? `
+                    ${{['single_choice', 'multiple_choice', 'dropdown'].includes(q.type) ? `
                         <div class="field-group">
                             <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
                             <input type="text" value="${{escapeHtml((q.options || []).join(', '))}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
@@ -1256,9 +1296,12 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             try {{
                 const resp = await fetch('/api/v1/forms/upload-schema', {{
                     method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json'
+                    }},
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 }});
-                const res = await resp.json();
                 if (resp.ok) {{
                     alert(`Biểu mẫu '${{formTitle}}' đã được lưu thành công!`);
                     window.location.href = '/admin/forms';

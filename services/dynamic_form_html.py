@@ -3,8 +3,10 @@ from typing import Optional
 from config import settings
 from services.form_engine import FormSchema
 
-def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional[str] = None) -> str:
+def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional[str] = None, ctv_code: Optional[str] = None, ctv_slug: Optional[str] = None) -> str:
     tg_bot = telegram_bot_username if telegram_bot_username is not None else (getattr(settings, "TELEGRAM_DRIVER_BOT_USERNAME", None) or settings.TELEGRAM_BOT_USERNAME or "TrustBridgeVN_bot")
+    locked_ctv = ctv_code or ""
+    active_ctv_slug = ctv_slug or ""
     escaped_title = html.escape(schema.title)
     escaped_desc = html.escape(schema.description or "")
     escaped_questions = []
@@ -23,6 +25,22 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         "description": escaped_desc,
         "questions": escaped_questions,
     })
+    is_form_test_mode = bool(schema.settings and schema.settings.is_test_mode)
+    test_banner_html = ""
+    if is_form_test_mode:
+        test_banner_html = """
+    <!-- Test Mode Banner with Bypass Toggle -->
+    <div class="test-banner" id="testModeBanner">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span><span id="txtModeLabel">Chế độ biểu mẫu:</span> <b id="testModeStatus">Thử nghiệm</b></span>
+            <label id="bypassCheckLabel" style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:#fde68a; cursor:pointer;">
+                <input type="checkbox" id="bypassImgToggle" onchange="toggleBypassImg(this.checked)">
+                <span id="txtBypassLabel">Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)</span>
+            </label>
+        </div>
+        <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Thử nghiệm</button>
+    </div>
+        """
     schema_json = escaped_schema.model_dump_json().replace("</script>", "<\\/script>")
     return f"""<!DOCTYPE html>
 <html lang="vi">
@@ -761,13 +779,16 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
     </style>
 </head>
 <body>
-    <!-- Top Nav with Globe Button -->
-    <div class="top-nav-bar">
+    <!-- Top Nav: QR Button & Language Switcher aligned to the right -->
+    <div class="top-nav-bar" style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:12px;">
+        <button type="button" class="btn-qr-share" id="btnOpenQrModal" onclick="openFormQrModal()" title="Chia sẻ mã QR">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:middle; margin-right:4px;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span id="txtBtnQrShare">Mã QR</span>
+        </button>
         <button type="button" class="btn-lang-toggle" onclick="toggleLanguage()" aria-label="Toggle Language">
             <svg viewBox="0 0 24 24" class="globe-icon"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
             <span id="currentLangCode">VI</span>
         </button>
-        <button type="button" class="btn-sample" onclick="openHistoryModal()" id="btnHistoryNav" style="display:none;">Xem lịch sử nộp</button>
     </div>
 
     <!-- GPS Authorization Banner -->
@@ -779,23 +800,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         <div class="gps-status-pill" id="gpsStatusPill" style="display:none;"></div>
     </div>
 
-    <!-- Test Mode Banner with Bypass Toggle -->
-    <div class="test-banner" id="testModeBanner">
-        <div style="display:flex; flex-direction:column; gap:4px;">
-            <span><span id="txtModeLabel">Chế độ biểu mẫu:</span> <b id="testModeStatus">Chính thức</b></span>
-            <label id="bypassCheckLabel" style="display:none; align-items:center; gap:6px; font-size:0.75rem; color:#fde68a; cursor:pointer;">
-                <input type="checkbox" id="bypassImgToggle" onchange="toggleBypassImg(this.checked)">
-                <span id="txtBypassLabel">Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)</span>
-            </label>
-        </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-            <button type="button" class="btn-qr-share" id="btnOpenQrModal" onclick="openFormQrModal()" title="Chia sẻ mã QR">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:middle; margin-right:4px;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-                <span id="txtBtnQrShare">Mã QR</span>
-            </button>
-            <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Bật thử nghiệm</button>
-        </div>
-    </div>
+    {test_banner_html}
 
     <header>
         <h1 id="headerTitle">{escaped_title}</h1>
@@ -952,7 +957,9 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
     <script>
         const SCHEMA = {schema_json};
-        const answers = {{}};
+        const LOCKED_CTV_CODE = "{locked_ctv}";
+        const ACTIVE_CTV_SLUG = "{active_ctv_slug}";
+        let answers = {{}};
         let gpsCoordinates = null;
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
@@ -1449,7 +1456,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     }};
                 }} else {{
                     inp.type = 'text';
-                    inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                    inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); scheduleDraftSave(); }};
                 }}
                 parent.appendChild(inp);
             }} else if (q.type === 'number') {{
@@ -1457,16 +1464,27 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 inp.type = 'number';
                 inp.className = 'q-input';
                 inp.placeholder = '0';
-                inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                inp.oninput = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); scheduleDraftSave(); }};
                 parent.appendChild(inp);
             }} else if (q.type === 'dropdown') {{
                 const sel = document.createElement('select');
                 sel.className = 'q-input';
+                const isCtvField = (q.id === 'ctv_code' || q.id === 'collaborator_id') && Boolean(LOCKED_CTV_CODE);
                 sel.innerHTML = '<option value="">-- Select --</option>' + 
-                    (q.options || []).map(o => `<option value="${{o}}">${{o}}</option>`).join('');
-                sel.onchange = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); }};
+                    (q.options || []).map(o => {{
+                        const isSel = (isCtvField && o === LOCKED_CTV_CODE) || (answers[q.id] === o);
+                        return `<option value="${{o}}" ${{isSel ? 'selected' : ''}}>${{o}}</option>`;
+                    }}).join('');
+                if (isCtvField) {{
+                    answers[q.id] = LOCKED_CTV_CODE;
+                    sel.value = LOCKED_CTV_CODE;
+                    sel.disabled = true;
+                    sel.style.opacity = '0.9';
+                    sel.style.borderColor = '#10b981';
+                    sel.style.color = '#a7f3d0';
+                }}
+                sel.onchange = (e) => {{ answers[q.id] = e.target.value; evaluateConditionals(); scheduleDraftSave(); }};
                 parent.appendChild(sel);
-            }} else if (q.type === 'single_choice') {{
                 const list = document.createElement('div');
                 list.className = 'choices-list';
                 (q.options || []).forEach(opt => {{

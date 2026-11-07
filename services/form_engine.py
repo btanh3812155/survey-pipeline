@@ -40,6 +40,8 @@ class FormQuestion(BaseModel):
     type: QuestionType
     required: bool = True
     description: Optional[str] = None
+    tooltip: Optional[str] = None # Helpful tooltip popover for collaborators/drivers
+    ai_detection_prompt: Optional[str] = None # Hidden instruction to describe to AI what needs to be detected
     sample_response: Optional[str] = None
     sample_images: Optional[List[str]] = None # List of sample image URLs for visual guidance
     options: Optional[List[str]] = None # For single_choice, multiple_choice, dropdown
@@ -51,7 +53,6 @@ class FormQuestion(BaseModel):
     max_images: Optional[int] = None
     exact_image_count: Optional[int] = None
     image_slots: Optional[List[Dict[str, Any]]] = None  # e.g. [{"slot": 0, "title": "Đồng hồ km", "role": "odometer", "required": True}, ...]
-
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
     current_responses: int = 0
@@ -210,7 +211,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         allow_edit_after_submit=False,
         notify_telegram_chat_id=-1001234567890,
         decree13_required=True,
-        is_test_mode=True,
+        is_test_mode=False,
         image_checks=ImageCheckConfig(
             enable_blur_check=True,
             blur_threshold=15.0,
@@ -247,7 +248,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="ctv_code",
             title="Mã CTV",
             type=QuestionType.DROPDOWN,
-            required=False,
+            required=True,
             options=["CTV001_Dũng_HN", "CTV002_Tuấn_HN", "CTV003_Ngân_SG", "CTV004_Vỹ_SG", "CTV005_Hương_DN", "Khác"],
             description="Mã định danh cộng tác viên thực hiện khảo sát",
             sample_response="CTV001_Dũng_HN",
@@ -258,24 +259,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             ),
         ),
         FormQuestion(
-            id="survey_location",
-            title="📍 Khu vực thực hiện khảo sát hiện tại của CTV",
+            id="driver_phone",
+            title="3. Số điện thoại tài xế (Không bắt buộc)",
             type=QuestionType.TEXT,
             required=False,
-            description="Địa điểm hoặc khu vực thực hiện khảo sát (VD: Bến xe Mỹ Đình, Hà Nội)",
-            sample_response="Bến xe Mỹ Đình, Hà Nội",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-        ),
-        FormQuestion(
-            id="driver_phone",
-            title="3. Số điện thoại tài xế",
-            type=QuestionType.TEXT,
-            required=True,
-            description="Số điện thoại chính chủ dùng để tra cứu lịch sử nộp và đối soát ca làm việc",
+            description="Số điện thoại dùng để tra cứu lịch sử nộp và đối soát ca làm việc (có thể để trống)",
             sample_response="0988123456",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
@@ -306,7 +294,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="car_model",
             title="Dòng xe VinFast đang chạy",
             type=QuestionType.DROPDOWN,
-            required=False,
+            required=True,
             options=["VF 5 Plus", "VF e34", "VF 6", "VF 7", "VF 8", "VF 9"],
             description="Dòng xe ô tô điện cụ thể trong ca (nếu chạy ô tô điện)",
             sample_response="VF 5 Plus",
@@ -320,7 +308,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_duration",
             title="Câu 2: Anh đã chạy xe cho GSM được bao lâu rồi ạ?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=["Dưới 3 tháng", "Từ 3 – 6 tháng", "Từ 6 – 12 tháng", "Từ 1 – 2 năm", "Trên 2 năm"],
             description="Thời gian đã cộng tác chạy xe cùng hệ thống GSM",
             sample_response="Từ 6 – 12 tháng",
@@ -334,7 +322,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_contract_type",
             title="Câu 3: Anh đang chạy theo hình thức nào cho GSM ạ?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=[
                 "Xe Partner (Hợp tác kinh doanh)",
                 "Xe tự mua & chạy",
@@ -355,7 +343,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="daily_trips",
             title="Câu 5: Trung bình 1 ngày anh hoàn thành khoảng bao nhiêu chuyến xe? (Số chuyến trung bình / ngày)",
             type=QuestionType.TEXT,
-            required=False,
+            required=True,
             description="Số chuyến xe hoàn thành trung bình mỗi ngày",
             sample_response="18",
             conditional=ConditionalRule(
@@ -373,7 +361,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="monthly_income_range",
             title="Câu 6: Sau khi trừ chi phí (hoặc theo mức thực nhận chuyển về tài khoản), thu nhập bình quân 1 tháng từ công việc này của anh dao động ở mức nào?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=["Dưới 3 triệu VNĐ", "3 – 6 triệu VNĐ", "7 – 12 triệu VNĐ", "12 – 20 triệu VNĐ", "Trên 20 triệu VNĐ"],
             description="Thu nhập thực nhận bình quân hàng tháng sau khi trừ chi phí",
             sample_response="12 – 20 triệu VNĐ",
@@ -387,7 +375,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_incentive_policy",
             title="Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
             type=QuestionType.MULTIPLE_CHOICE,
-            required=False,
+            required=True,
             options=["Có áp dụng chỉ tiêu", "Có khung giờ vàng", "Có chương trình thưởng", "Không có", "Khác"],
             description="Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
             sample_response="Có áp dụng chỉ tiêu",
@@ -399,11 +387,17 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         ),
         FormQuestion(
             id="camera_receipt",
-            title='Chụp ảnh xác thực ứng dụng tài xế GSM (Ảnh 1: Hồ sơ App, Ảnh 2: Thống kê thu nhập)',
+            title="Chụp ảnh xác thực 7 bước: Hồ sơ App, Phương tiện & Doanh thu 5 tuần Tháng 10",
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
-            description="Chụp trực tiếp từ camera phần cứng: Ảnh 1 là màn hình hồ sơ/tiện ích tài xế, Ảnh 2 là màn hình thống kê thu nhập",
-            sample_response="Chụp rõ nét màn hình hồ sơ tài khoản và màn hình thống kê thu nhập",
+            description="Chụp trực tiếp từ camera phần cứng: Ảnh 1 là Hồ sơ tài xế (kiểm tra AI), Ảnh 2 là Xe vận hành (thân/đầu xe hoặc vô lăng - lưu xác minh), Ảnh 3-7 là thống kê thu nhập 5 tuần Tháng 10 (kiểm tra AI).",
+            tooltip="Chụp rõ nét màn hình điện thoại và phương tiện. Xe máy/ô tô chụp góc rõ biển số hoặc khoang lái; màn hình thu nhập chuyển lần lượt qua từng tuần trong Tháng 10.",
+            ai_detection_prompt=(
+                "Slot 0 (app_profile): Verify authentic Xanh SM / GSM driver profile and account screen.\n"
+                "Slot 1 (vehicle_exterior_or_interior): Vehicle exterior body, front, or steering wheel/dashboard. Pass without strict block for post-audit verification.\n"
+                "Slots 2 to 6 (app_income_oct_week_1 to 5): Weekly earnings statements for October 2026. Verify authentic Xanh SM UI, legible revenue figures, and non-tampered numbers."
+            ),
+            sample_response="Chụp đủ 7 ảnh theo hướng dẫn của từng ô",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
@@ -414,17 +408,30 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
                 "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80",
             ],
             allow_multiple_images=True,
-            min_images=2,
-            max_images=2,
-            exact_image_count=2,
+            min_images=7,
+            max_images=7,
+            exact_image_count=7,
             image_slots=[
-                {"slot": 0, "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)", "role": "app_profile", "required": True},
-                {"slot": 1, "title": "Ảnh 2: Màn hình thống kê thu nhập (App Income)", "role": "app_income", "required": True},
+                {"slot": 0, "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)", "role": "app_profile", "required": True, "ai_check": True, "tooltip": "Mở tab Tài khoản / Hồ sơ trên ứng dụng Tài xế Xanh SM để chụp rõ họ tên, mã tài xế."},
+                {"slot": 1, "title": "Ảnh 2: Phương tiện xe máy (thân/đầu xe) hoặc ô tô (thân/đầu xe/vô lăng)", "role": "vehicle_exterior_or_interior", "required": True, "ai_check": False, "tooltip": "Chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện vận hành. Ảnh được lưu trữ để hậu kiểm cùng CTV."},
+                {"slot": 2, "title": "Ảnh 3: Doanh thu Tuần 1 Tháng 10 (Tuần 40: 28/09 - 04/10)", "role": "app_income_week_1", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 1 Tháng 10. Chụp rõ Doanh số, Thu nhập ròng, Chiết khấu."},
+                {"slot": 3, "title": "Ảnh 4: Doanh thu Tuần 2 Tháng 10 (Tuần 41: 05/10 - 11/10)", "role": "app_income_week_2", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 2 Tháng 10."},
+                {"slot": 4, "title": "Ảnh 5: Doanh thu Tuần 3 Tháng 10 (Tuần 42: 12/10 - 18/10)", "role": "app_income_week_3", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 3 Tháng 10."},
+                {"slot": 5, "title": "Ảnh 6: Doanh thu Tuần 4 Tháng 10 (Tuần 43: 19/10 - 25/10)", "role": "app_income_week_4", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 4 Tháng 10."},
+                {"slot": 6, "title": "Ảnh 7: Doanh thu Tuần 5 Tháng 10 (Tuần 44: 26/10 - 01/11)", "role": "app_income_week_5", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 5 Tháng 10."},
             ],
         ),
     ],
 )
 
+# Test mode clone with test banner enabled
+TEST_TRUST_BRIDGE_SCHEMA = DEFAULT_TRUST_BRIDGE_SCHEMA.model_copy(deep=True)
+TEST_TRUST_BRIDGE_SCHEMA.form_id = "income_survey_test"
+TEST_TRUST_BRIDGE_SCHEMA.title = "Trust Bridge - Khảo Sát Thu Nhập (Thử Nghiệm / Test Mode)"
+TEST_TRUST_BRIDGE_SCHEMA.settings.is_test_mode = True
+
 FORM_REGISTRY: Dict[str, FormSchema] = {
-    DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
+    DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA,
+    TEST_TRUST_BRIDGE_SCHEMA.form_id: TEST_TRUST_BRIDGE_SCHEMA,
 }
+

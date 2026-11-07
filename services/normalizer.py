@@ -42,18 +42,17 @@ def sanitize_and_normalize_image(
     
     try:
         im = Image.open(stream)
-        # libjpeg-turbo C-level draft scaling for large JPEG files
+        raw_exif = im.info.get("exif")
         if im.format == "JPEG" and min(im.size) > max_short_edge * 2:
             im.draft("RGB", (max_short_edge, max_short_edge))
         im.load()
     except Exception as e:
         raise ValueError(f"malformed or unreadable image stream: {e}")
 
-    # 1. auto-rotate according to EXIF tag 274
     try:
         im = ImageOps.exif_transpose(im)
     except Exception:
-        pass  # ignore corrupt maker notes
+        pass
 
     # 2. handle alpha channels and palette transparency (the black-out bug fix)
     has_alpha = im.mode in ("RGBA", "LA") or (
@@ -91,11 +90,13 @@ def sanitize_and_normalize_image(
 
     if alpha_mask is not None:
         im.info["alpha_mask"] = np.array(alpha_mask)
-    # 4. encode to WebP with stripped EXIF (preventing double-rotation downstream)
+    # 4. encode to WebP preserving EXIF metadata
     output_buf = io.BytesIO()
-    im.save(output_buf, format="WEBP", quality=webp_quality, exif=b"")
+    save_kwargs = {"format": "WEBP", "quality": webp_quality}
+    if raw_exif:
+        save_kwargs["exif"] = raw_exif
+    im.save(output_buf, **save_kwargs)
     webp_bytes = output_buf.getvalue()
-
     return webp_bytes, im
 
 

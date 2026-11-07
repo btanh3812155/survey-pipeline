@@ -11,7 +11,7 @@
     "notify_telegram_chat_id": -1001234567890,
     "notify_email": null,
     "decree13_required": true,
-    "is_test_mode": true,
+    "is_test_mode": false,
     "image_checks": {
       "enable_blur_check": true,
       "blur_threshold": 15.0,
@@ -30,6 +30,8 @@
       "type": "signature",
       "required": true,
       "description": "Dùng ngón tay ký tên trực tiếp trên giấy điện tử để xác nhận thông tin khảo sát",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Bấm nút 'Ký tên' và vẽ chữ ký trên bảng",
       "sample_images": null,
       "options": null,
@@ -48,6 +50,8 @@
       "type": "single_choice",
       "required": true,
       "description": "Tôi xác nhận các số liệu thu nhập và hình ảnh cung cấp là trung thực, đồng ý xử lý dữ liệu theo NĐ 13",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Tôi đồng ý",
       "sample_images": null,
       "options": [
@@ -67,8 +71,10 @@
       "id": "ctv_code",
       "title": "Mã CTV",
       "type": "dropdown",
-      "required": false,
+      "required": true,
       "description": "Mã định danh cộng tác viên thực hiện khảo sát",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "CTV001_Dũng_HN",
       "sample_images": null,
       "options": [
@@ -93,33 +99,13 @@
       "image_slots": null
     },
     {
-      "id": "survey_location",
-      "title": "📍 Khu vực thực hiện khảo sát hiện tại của CTV",
+      "id": "driver_phone",
+      "title": "3. Số điện thoại tài xế (Không bắt buộc)",
       "type": "text",
       "required": false,
-      "description": "Địa điểm hoặc khu vực thực hiện khảo sát (VD: Bến xe Mỹ Đình, Hà Nội)",
-      "sample_response": "Bến xe Mỹ Đình, Hà Nội",
-      "sample_images": null,
-      "options": null,
-      "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
-      "image_checks": null,
-      "allow_multiple_images": false,
-      "min_images": null,
-      "max_images": null,
-      "exact_image_count": null,
-      "image_slots": null
-    },
-    {
-      "id": "driver_phone",
-      "title": "3. Số điện thoại tài xế",
-      "type": "text",
-      "required": true,
-      "description": "Số điện thoại chính chủ dùng để tra cứu lịch sử nộp và đối soát ca làm việc",
+      "description": "Số điện thoại dùng để tra cứu lịch sử nộp và đối soát ca làm việc (có thể để trống)",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "0988123456",
       "sample_images": null,
       "options": null,
@@ -150,6 +136,8 @@
       "type": "single_choice",
       "required": true,
       "description": "Chọn dòng phương tiện đang vận hành cho hệ thống GSM",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Ô tô",
       "sample_images": null,
       "options": [
@@ -173,8 +161,10 @@
       "id": "car_model",
       "title": "Dòng xe VinFast đang chạy",
       "type": "dropdown",
-      "required": false,
+      "required": true,
       "description": "Dòng xe ô tô điện cụ thể trong ca (nếu chạy ô tô điện)",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "VF 5 Plus",
       "sample_images": null,
       "options": [
@@ -202,8 +192,10 @@
       "id": "gsm_duration",
       "title": "Câu 2: Anh đã chạy xe cho GSM được bao lâu rồi ạ?",
       "type": "single_choice",
-      "required": false,
+      "required": true,
       "description": "Thời gian đã cộng tác chạy xe cùng hệ thống GSM",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Từ 6 – 12 tháng",
       "sample_images": null,
       "options": [
@@ -230,8 +222,10 @@
       "id": "gsm_contract_type",
       "title": "Câu 3: Anh đang chạy theo hình thức nào cho GSM ạ?",
       "type": "single_choice",
-      "required": false,
+      "required": true,
       "description": "Hình thức hợp tác hoặc sở hữu xe với GSM",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Xe Taxi xanh GSM",
       "sample_images": null,
       "options": [
@@ -259,8 +253,10 @@
       "id": "daily_trips",
       "title": "Câu 5: Trung bình 1 ngày anh hoàn thành khoảng bao nhiêu chuyến xe? (Số chuyến trung bình / ngày)",
       "type": "text",
-      "required": false,
+      "required": true,
       "description": "Số chuyến xe hoàn thành trung bình mỗi ngày",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "18",
       "sample_images": null,
       "options": null,
@@ -289,8 +285,10 @@
       "id": "monthly_income_range",
       "title": "Câu 6: Sau khi trừ chi phí (hoặc theo mức thực nhận chuyển về tài khoản), thu nhập bình quân 1 tháng từ công việc này của anh dao động ở mức nào?",
       "type": "single_choice",
-      "required": false,
+      "required": true,
       "description": "Thu nhập thực nhận bình quân hàng tháng sau khi trừ chi phí",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "12 – 20 triệu VNĐ",
       "sample_images": null,
       "options": [
@@ -317,8 +315,10 @@
       "id": "gsm_incentive_policy",
       "title": "Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
       "type": "multiple_choice",
-      "required": false,
+      "required": true,
       "description": "Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
+      "tooltip": null,
+      "ai_detection_prompt": null,
       "sample_response": "Có áp dụng chỉ tiêu",
       "sample_images": null,
       "options": [
@@ -343,14 +343,16 @@
     },
     {
       "id": "camera_receipt",
-      "title": "Chụp ảnh xác thực ứng dụng tài xế GSM (Ảnh 1: Hồ sơ App, Ảnh 2: Thống kê thu nhập)",
+      "title": "Chụp ảnh xác thực 7 bước: Hồ sơ App, Phương tiện & Doanh thu 5 tuần Tháng 10",
       "type": "camera_webrtc",
       "required": true,
-      "description": "Chụp trực tiếp từ camera phần cứng: Ảnh 1 là màn hình hồ sơ/tiện ích tài xế, Ảnh 2 là màn hình thống kê thu nhập",
-      "sample_response": "Chụp rõ nét màn hình hồ sơ tài khoản và màn hình thống kê thu nhập",
+      "description": "Chụp trực tiếp từ camera phần cứng: Ảnh 1 là Hồ sơ tài xế (kiểm tra AI), Ảnh 2 là Xe vận hành (thân/đầu xe hoặc vô lăng - lưu xác minh), Ảnh 3-7 là thống kê thu nhập 5 tuần Tháng 10 (kiểm tra AI).",
+      "tooltip": "Chụp rõ nét màn hình điện thoại và phương tiện. Xe máy/ô tô chụp góc rõ biển số hoặc khoang lái; màn hình thu nhập chuyển lần lượt qua từng tuần trong Tháng 10.",
+      "ai_detection_prompt": "Slot 0 (app_profile): Verify authentic Xanh SM / GSM driver profile and account screen.\nSlot 1 (vehicle_exterior_or_interior): Vehicle exterior body, front, or steering wheel/dashboard. Pass without strict block for post-audit verification.\nSlots 2 to 6 (app_income_oct_week_1 to 5): Weekly earnings statements for October 2026. Verify authentic Xanh SM UI, legible revenue figures, and non-tampered numbers.",
+      "sample_response": "Chụp đủ 7 ảnh theo hướng dẫn của từng ô",
       "sample_images": [
-        "/samples/sample_app_profile.jpg",
-        "/samples/sample_app_income.jpg"
+        "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
+        "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"
       ],
       "options": null,
       "validation": null,
@@ -361,21 +363,65 @@
       },
       "image_checks": null,
       "allow_multiple_images": true,
-      "min_images": 2,
-      "max_images": 2,
-      "exact_image_count": 2,
+      "min_images": 7,
+      "max_images": 7,
+      "exact_image_count": 7,
       "image_slots": [
         {
           "slot": 0,
           "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)",
           "role": "app_profile",
-          "required": true
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Mở tab Tài khoản / Hồ sơ trên ứng dụng Tài xế Xanh SM để chụp rõ họ tên, mã tài xế."
         },
         {
           "slot": 1,
-          "title": "Ảnh 2: Màn hình thống kê thu nhập (App Income)",
-          "role": "app_income",
-          "required": true
+          "title": "Ảnh 2: Phương tiện xe máy (thân/đầu xe) hoặc ô tô (thân/đầu xe/vô lăng)",
+          "role": "vehicle_exterior_or_interior",
+          "required": true,
+          "ai_check": false,
+          "tooltip": "Chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện vận hành. Ảnh được lưu trữ để hậu kiểm cùng CTV."
+        },
+        {
+          "slot": 2,
+          "title": "Ảnh 3: Doanh thu Tuần 1 Tháng 10 (Tuần 40: 28/09 - 04/10)",
+          "role": "app_income_week_1",
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Màn hình thống kê thu nhập Tuần 1 Tháng 10. Chụp rõ Doanh số, Thu nhập ròng, Chiết khấu."
+        },
+        {
+          "slot": 3,
+          "title": "Ảnh 4: Doanh thu Tuần 2 Tháng 10 (Tuần 41: 05/10 - 11/10)",
+          "role": "app_income_week_2",
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Màn hình thống kê thu nhập Tuần 2 Tháng 10."
+        },
+        {
+          "slot": 4,
+          "title": "Ảnh 5: Doanh thu Tuần 3 Tháng 10 (Tuần 42: 12/10 - 18/10)",
+          "role": "app_income_week_3",
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Màn hình thống kê thu nhập Tuần 3 Tháng 10."
+        },
+        {
+          "slot": 5,
+          "title": "Ảnh 6: Doanh thu Tuần 4 Tháng 10 (Tuần 43: 19/10 - 25/10)",
+          "role": "app_income_week_4",
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Màn hình thống kê thu nhập Tuần 4 Tháng 10."
+        },
+        {
+          "slot": 6,
+          "title": "Ảnh 7: Doanh thu Tuần 5 Tháng 10 (Tuần 44: 26/10 - 01/11)",
+          "role": "app_income_week_5",
+          "required": true,
+          "ai_check": true,
+          "tooltip": "Màn hình thống kê thu nhập Tuần 5 Tháng 10."
         }
       ]
     }

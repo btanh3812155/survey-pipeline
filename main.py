@@ -30,6 +30,7 @@ from services.form_manager_html import render_forms_list_html, render_form_edito
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.audit_viewer_html import render_audit_viewer_html
 from services.lark_base_sync import sync_submission_to_lark_base
+from services.google_drive_delivery import upload_to_google_drive
 from fastapi.staticfiles import StaticFiles
 from config import settings
 from services.normalizer import (
@@ -1066,7 +1067,7 @@ async def submit_webrtc_survey(
     request: Request,
     background_tasks: BackgroundTasks,
     survey_photo: Optional[UploadFile] = File(None),
-    driver_phone: str = Form(...),
+    driver_phone: Optional[str] = Form(None),
     license_plate: Optional[str] = Form(None),
     driver_name: Optional[str] = Form(None),
     collaborator_id: Optional[str] = Form(None),
@@ -1082,15 +1083,16 @@ async def submit_webrtc_survey(
     question_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
-    # Privacy hashing & PII pseudonymization
-    driver_phone_hash = hash_phone(driver_phone)
+    clean_phone = driver_phone.strip() if driver_phone and driver_phone.strip() else None
+    driver_phone = clean_phone
+    driver_phone_hash = hash_phone(clean_phone) if clean_phone else None
     license_plate_hash = hash_plate(license_plate) if license_plate else None
-    driver_tag = generate_driver_tag(driver_phone)
+    driver_tag = generate_driver_tag(clean_phone) if clean_phone else f"ANON-{secrets.token_hex(4).upper()}"
 
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(8).upper()}"
     # 0. Idempotency Check: return cached response if key was already submitted
     if idempotency_key:
-        idemp_cache_key = f"idemp:{driver_phone}:{idempotency_key}"
+        idemp_cache_key = f"idemp:{clean_phone or 'anon'}:{idempotency_key}"
         cached_payload = None
         if redis_client:
             try:
@@ -1617,6 +1619,33 @@ async def submit_webrtc_survey(
         )
     except Exception as lark_err:
         logger.error(f"Failed to dispatch Lark Base sync task: {lark_err}")
+    try:
+        drive_rec = {
+            "submission_id": submission_id,
+            "status": status_str,
+            "driver_phone": driver_phone,
+            "driver_name": driver_name,
+            "collaborator_id": collab_param,
+            "license_plate": license_plate or ai_res.get("detected_plate"),
+            "gross_revenue": ai_res.get("gross_revenue") or gross_revenue,
+            "trip_count": trip_count,
+            "odometer_km": odometer_km,
+            "gps_latitude": getattr(request.state, "gps_lat", None),
+            "gps_longitude": getattr(request.state, "gps_lon", None),
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason_str,
+        }
+        drive_imgs = []
+        for i_idx, r_b in enumerate(raw_bytes_list):
+            drive_imgs.append({"filename": f"slot_{i_idx}.webp", "bytes": r_b})
+        background_tasks.add_task(
+            upload_to_google_drive,
+            submission_id=submission_id,
+            record=drive_rec,
+            images=drive_imgs,
+        )
+    except Exception as drive_err:
+        logger.error(f"Failed to dispatch Drive delivery: {drive_err}")
     resp_data = {
         "status": status_str,
         "submission_id": submission_id,

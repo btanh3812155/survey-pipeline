@@ -293,7 +293,12 @@ def test_reject_unauthorized_app_spoofing():
             },
             files={
                 "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_1": ("income.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_1": ("vehicle.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_2": ("income1.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_3": ("income2.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_4": ("income3.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_5": ("income4.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_6": ("income5.jpg", sharp_img, "image/jpeg"),
             },
         )
         assert resp.status_code == 200

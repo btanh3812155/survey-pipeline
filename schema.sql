@@ -197,3 +197,15 @@ CREATE TABLE IF NOT EXISTS telegram_sent_messages (
 CREATE INDEX IF NOT EXISTS idx_telegram_pending_deletions 
 ON telegram_sent_messages (delete_after ASC) 
 WHERE is_deleted = FALSE;
+
+-- 11. Cross-Device Collaborator Survey Drafts (Per-Link Persistence)
+CREATE TABLE IF NOT EXISTS survey_drafts (
+    ctv_slug VARCHAR(64) PRIMARY KEY,
+    ctv_id VARCHAR(64) NOT NULL,
+    form_id VARCHAR(64) NOT NULL DEFAULT 'income_survey',
+    draft_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_survey_drafts_ctv 
+ON survey_drafts (ctv_id, updated_at DESC);
