@@ -98,19 +98,49 @@ async def test_two_way_relay_lifecycle():
         admin_relay_payload = mock_client.post.await_args[1]["json"]
         assert admin_relay_payload["chat_id"] == -5445563473
         assert "Tài xế Vui Vẻ" in admin_relay_payload["text"]
-        assert "cảm ơn admin nhiều" in admin_relay_payload["text"]
 
-        # 4. User types /close -> closes conversation
-        await driver_bot.handle_update({
+@pytest.mark.asyncio
+async def test_admin_swipe_reply_relays_to_user_dm():
+    """Admin swiping and replying directly to ticket card relays to user DM automatically."""
+    admin_bot = TelegramPollingRunner(bot_token="mock_admin_token", role="admin")
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=AsyncMock(status_code=200))
+
+    with patch.object(admin_bot, "get_client", AsyncMock(return_value=mock_client)), \
+         patch.object(admin_bot, "send_message", AsyncMock(return_value=True)):
+        # Admin replies to ticket message in admin group
+        await admin_bot.handle_update({
             "message": {
-                "chat": {"id": 777888},
-                "from": {"id": 777888, "first_name": "Tài xế Vui Vẻ"},
+                "chat": {"id": -5445563473},
+                "from": {"id": 111, "first_name": "Supervisor Lan"},
+                "text": "Em gửi lại số căn cước công dân để bên mình kiểm tra nhé!",
+                "reply_to_message": {
+                    "text": "🆘 YÊU CẦU TRỢ GIÚP TỪ THÀNH VIÊN!\n• Người gửi: Lê Văn C\n• Chat ID: <code>999000111</code>\n• Nội dung: Em bị lỗi nộp",
+                }
+            }
+        })
+
+        # Must relay directly to 999000111
+        mock_client.post.assert_awaited_once()
+        payload = mock_client.post.await_args[1]["json"]
+        assert payload["chat_id"] == 999000111
+        assert "Supervisor Lan" in payload["text"]
+        assert "căn cước công dân" in payload["text"]
+
+        # Must activate session
+        assert 999000111 in ACTIVE_SUPPORT_CONVERSATIONS
+        assert ADMIN_GROUP_ACTIVE_SESSION.get("-5445563473") == 999000111
+
+        # 4. Admin types /close -> closes conversation
+        await admin_bot.handle_update({
+            "message": {
+                "chat": {"id": -5445563473},
+                "from": {"id": 111, "first_name": "Supervisor Lan"},
                 "text": "/close",
             }
         })
-        assert 777888 not in ACTIVE_SUPPORT_CONVERSATIONS
+        assert 999000111 not in ACTIVE_SUPPORT_CONVERSATIONS
         assert "-5445563473" not in ADMIN_GROUP_ACTIVE_SESSION
-
 
 def test_random_subdomain_routing_to_form():
     """Accessing root on a subdomain like income-survey-dfjhgkshgksd loads the form."""

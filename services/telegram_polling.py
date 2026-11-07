@@ -476,20 +476,50 @@ class TelegramPollingRunner:
                         await self.send_message(chat_id, "ℹ️ Hiện không có phiên hội thoại hỗ trợ nào đang mở.")
                         return
 
-                # If there's an active session, relay non-slash messages to user DM
-                active_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id))
-                if active_user and not text.startswith("/"):
+                # Check if message is replying to a support ticket, or if session is active
+                reply_to = msg.get("reply_to_message") or {}
+                reply_text = reply_to.get("text") or reply_to.get("caption") or ""
+                target_user = None
+
+                if reply_text:
+                    m = re.search(r"(?:Chat ID|User ID|ID):\s*(?:<code>)?(\d+)(?:</code>)?", reply_text, re.IGNORECASE)
+                    if m:
+                        target_user = int(m.group(1))
+
+                if not target_user:
+                    target_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id)) or ADMIN_GROUP_ACTIVE_SESSION.get(chat_id)
+
+                if target_user and not text.startswith("/"):
+                    ACTIVE_SUPPORT_CONVERSATIONS[target_user] = {
+                        "user_id": target_user,
+                        "admin_chat_id": chat_id,
+                        "opened_at": time.time(),
+                    }
+                    ADMIN_GROUP_ACTIVE_SESSION[str(chat_id)] = target_user
+                    ADMIN_GROUP_ACTIVE_SESSION[chat_id] = target_user
+
                     driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
                     if driver_token and driver_token != "mock_tg_token":
                         client = await self.get_client()
                         url = f"https://api.telegram.org/bot{driver_token}/sendMessage"
                         relay_text = f"💬 <b>Phản hồi từ Ban Quản Trị ({admin_name}):</b>\n\n{text}"
                         try:
-                            await client.post(url, json={"chat_id": active_user, "text": relay_text, "parse_mode": "HTML"})
+                            resp = await client.post(url, json={"chat_id": target_user, "text": relay_text, "parse_mode": "HTML"})
+                            if resp.status_code == 200:
+                                logger.info(f"Relayed admin message to user {target_user}")
+                                await self.send_message(
+                                    chat_id,
+                                    f"✅ <i>Đã gửi phản hồi tới người dùng (ID: <code>{target_user}</code>). Phiên hội thoại đang mở, gõ <code>/close</code> để kết thúc.</i>"
+                                )
+                            else:
+                                logger.error(f"Failed to relay admin message: {resp.text}")
+                                await self.send_message(
+                                    chat_id,
+                                    f"⚠️ Không thể chuyển tiếp tin nhắn tới người dùng (Mã lỗi HTTP {resp.status_code})."
+                                )
                         except Exception as e:
-                            logger.error(f"Failed to relay admin message: {e}")
+                            logger.error(f"Failed to relay message to user: {e}")
                     return
-
                 if len(text) <= 4096 and text.startswith("/"):
                     await self.handle_command(chat_id, text)
         elif "callback_query" in update and update["callback_query"]:

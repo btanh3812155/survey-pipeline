@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     LARK_ENCRYPT_KEY: str = "mock_encrypt_key"
     LARK_VERIFICATION_TOKEN: str = "mock_token"
     LARK_BASE_APP_TOKEN: str = "UwVabU53laZe5OsKgEGjy7QRpOh"
-    LARK_BASE_TABLE_ID: str = "tblTpiVhUtY98Zc8"
+    LARK_BASE_TABLE_ID: str = "tblfHqhN3FCCxrdP"
 
     # telegram bots (admin & driver dual-bot architecture)
     TELEGRAM_BOT_TOKEN: str = "mock_tg_token"

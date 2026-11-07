@@ -909,7 +909,6 @@ async def get_all_audit_logs_api(
 @app.get("/api/v1/surveys/history")
 async def get_survey_history(
     phone: str,
-    admin_user: str = Depends(verify_admin_auth),
 ):
     """Retrieves previous survey attempts and rejection reasons for a given driver phone number."""
     if not phone:
@@ -1503,6 +1502,7 @@ async def submit_webrtc_survey(
                         ),
                     )
                     if license_plate and not is_dissent:
+                        vtype_db = "BIKE" if "BIKE" in str(vehicle_type).upper() or "MÁY" in str(vehicle_type).upper() else "CAR"
                         await cur.execute(
                             """
                             INSERT INTO driver_registered_vehicles (
@@ -1510,7 +1510,7 @@ async def submit_webrtc_survey(
                             ) VALUES (%s, %s, %s)
                             ON CONFLICT (driver_phone) DO NOTHING;
                             """,
-                            (driver_phone, license_plate.upper(), vehicle_type or "CAR"),
+                            (driver_phone, license_plate.upper(), vtype_db),
                         )
                     outbox_payload = {
                         "submission_id": submission_id,
@@ -1586,7 +1586,7 @@ async def submit_webrtc_survey(
             net_income=ai_res.get("net_income"),
             total_trips=ai_res.get("total_trips") or trip_count,
             online_hours=ai_res.get("online_hours"),
-            vehicle_model=car_model or vehicle_type,
+            vehicle_model=str(form_data.get("car_model") or form_data.get("vehicle_model") or vehicle_type or "Xe điện GSM"),
             reason_str=reason_str,
         )
     except Exception as lark_err:
