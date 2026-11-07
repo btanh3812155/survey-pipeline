@@ -1,4 +1,5 @@
 import os
+import html
 import re
 import secrets
 import json
@@ -1381,7 +1382,13 @@ async def submit_webrtc_survey(
                                 status_str = "APPROVED" if is_approved else "REJECTED"
                                 reason_str = compliance.collaborator_note or compliance.reason_code
                         except Exception as ai_err:
-                            if not getattr(checks, "enable_object_detection", False):
+                            if isinstance(ai_err, (asyncio.TimeoutError, TimeoutError)):
+                                logger.error(f"Vision AI call timed out: {ai_err}")
+                                ai_res = {"status": "manual_review", "error": "AI Vision timeout"}
+                                is_approved = False
+                                status_str = "MANUAL_REVIEW"
+                                reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+                            elif not getattr(checks, "enable_object_detection", False):
                                 ai_res = {"status": "approved", "note": "passed image quality check"}
                                 is_approved = True
                                 status_str = "APPROVED"
@@ -1505,7 +1512,7 @@ async def submit_webrtc_survey(
         f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
         f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>\n"
         f"• <b>Biển số xe:</b> <code>{license_plate or ai_res.get('detected_plate') or 'N/A'}</code>\n"
-        f"• <b>Lý do / Ghi chú:</b> {reason_str or 'Hợp lệ'}"
+        f"• <b>Lý do / Ghi chú:</b> {html.escape(reason_str) if reason_str else 'Hợp lệ'}"
     )
     if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
         try:
