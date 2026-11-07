@@ -91,23 +91,46 @@ async def test_driver_bot_photo_upload_blurry(driver_runner):
 
 @pytest.mark.asyncio
 async def test_driver_bot_appeal_rate_limit(driver_runner):
-    """Driver appeals are rate limited to max 3 per 8 hours."""
+    """Driver appeals are rate limited to max 5 per 2 hours."""
     mock_send = AsyncMock()
     with patch.object(driver_runner, "send_message", mock_send), \
          patch.object(driver_runner, "_update_submission_status", AsyncMock()), \
          patch.object(driver_runner, "get_driver_phone", AsyncMock(return_value="0988111222")):
-        # Appeals 1, 2, 3 should succeed
-        for i in range(3):
+        # Appeals 1 to 5 should succeed (clearing active appeal between calls to test rate limit)
+        for i in range(5):
+            driver_runner.active_appeals.clear()
             await driver_runner.handle_driver_appeal(chat_id=555, user_id=555, sub_id=f"VN-APP{i}")
             assert "đã được gửi thành công" in mock_send.await_args[0][1]
 
-        # Appeal 4 must be rate-limited
+        # Appeal 6 must be rate-limited
         mock_send.reset_mock()
-        await driver_runner.handle_driver_appeal(chat_id=555, user_id=555, sub_id="VN-APP4")
+        driver_runner.active_appeals.clear()
+        await driver_runner.handle_driver_appeal(chat_id=555, user_id=555, sub_id="VN-APP6")
         mock_send.assert_awaited_once()
         text = mock_send.await_args[0][1]
-        assert "tối đa 3 lần phúc khảo" in text
+        assert "tối đa 5" in text
 
+
+@pytest.mark.asyncio
+async def test_driver_bot_prevent_duplicate_active_and_cancel(driver_runner):
+    """Prevents duplicate active requests and allows cancelling."""
+    mock_send = AsyncMock()
+    with patch.object(driver_runner, "send_message", mock_send), \
+         patch.object(driver_runner, "_update_submission_status", AsyncMock()):
+        # Step 1: Submit first appeal
+        await driver_runner.handle_driver_appeal(chat_id=601, user_id=601, sub_id="VN-ACTIVE1")
+        assert "đã được gửi thành công" in mock_send.await_args[0][1]
+
+        # Step 2: Try to appeal again while active -> blocked
+        mock_send.reset_mock()
+        await driver_runner.handle_driver_appeal(chat_id=601, user_id=601, sub_id="VN-ACTIVE1")
+        assert "đã có một yêu cầu kiểm tra/phúc khảo đang hoạt động" in mock_send.await_args[0][1]
+
+        # Step 3: Cancel active appeal via /cancel
+        mock_send.reset_mock()
+        await driver_runner.handle_cancel_request(chat_id=601, user_id=601, target_arg="VN-ACTIVE1")
+        assert "Đã hủy thành công" in mock_send.await_args[0][1]
+        assert 601 not in driver_runner.active_appeals
 
 @pytest.mark.asyncio
 async def test_driver_bot_privacy_scrub_prompt(driver_runner):

@@ -601,8 +601,14 @@ class DriverBotRunner(TelegramPollingRunner):
         self.pending_fixes: Dict[int, dict] = {}
         # In-memory tracking for appeal rate limits: phone -> list of timestamps
         self.appeal_history: Dict[str, List[float]] = {}
-        # In-memory tracking for pending support message input: chat_id -> True
-        self.pending_support: Dict[int, bool] = {}
+        # In-memory tracking for support rate limits: user_id -> list of timestamps
+        self.support_history: Dict[Union[int, str], List[float]] = {}
+        # In-memory tracking for pending support message input: chat_id -> True or dict
+        self.pending_support: Dict[int, Any] = {}
+        # In-memory tracking for active help tickets awaiting admin response
+        self.pending_help_tickets: Dict[int, dict] = {}
+        # In-memory tracking for active appeals: user_id -> sub_id
+        self.active_appeals: Dict[int, str] = {}
 
     def get_driver_reply_keyboard(self) -> dict:
         """Returns the persistent 1-tap quick action keyboard for drivers & collaborators."""
@@ -869,17 +875,41 @@ class DriverBotRunner(TelegramPollingRunner):
         await self.send_message(chat_id, "\n\n".join(lines), reply_markup=inline_markup)
 
     async def handle_driver_appeal(self, chat_id: int, user_id: int, sub_id: str) -> None:
-        """Handles driver appeal request with 8-hour rate limit (max 3)."""
-        phone = await self.get_driver_phone(user_id) or str(user_id)
-        now = time.time()
-        window = 8 * 3600
-
-        # Rate limit check: max 3 appeals in 8h
-        history = [t for t in self.appeal_history.get(phone, []) if now - t < window]
-        if len(history) >= 3:
+        """Handles driver appeal request with 2-hour rate limit (max 5) and active guard."""
+        # 1. Prevent duplicate active appeal
+        is_active = False
+        if sub_id in self.active_appeals.values() or user_id in self.active_appeals:
+            is_active = True
+        if not is_active and self.db_pool:
+            try:
+                async with self.db_pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT status FROM survey_submissions WHERE submission_id = %s;", (sub_id,))
+                        row = await cur.fetchone()
+                        if row and row[0] in ("APPEAL_PENDING", "MANUAL_REVIEW"):
+                            is_active = True
+            except Exception:
+                pass
+        if is_active:
             await self.send_message(
                 chat_id,
-                "🚫 <b>Bạn đã gửi tối đa 3 lần phúc khảo trong 8 giờ qua!</b>\n\n"
+                f"⚠️ <b>Phiếu #{sub_id} đã có một yêu cầu kiểm tra/phúc khảo đang hoạt động!</b>\n\n"
+                f"Bạn không thể gửi thêm yêu cầu mới khi yêu cầu cũ chưa hoàn tất.\n"
+                f"👉 Gõ <code>/cancel {sub_id}</code> nếu bạn muốn hủy yêu cầu này.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
+
+        phone = await self.get_driver_phone(user_id) or str(user_id)
+        now = time.time()
+        window = 2 * 3600  # 2 hours
+
+        # 2. Rate limit check: max 5 appeals in 2h
+        history = [t for t in self.appeal_history.get(phone, []) if now - t < window]
+        if len(history) >= 5:
+            await self.send_message(
+                chat_id,
+                "🚫 <b>Bạn đã gửi tối đa 5 lần phúc khảo trong vòng 2 giờ qua!</b>\n\n"
                 "Vui lòng đợi Ban Quản Trị xử lý các yêu cầu trước đó hoặc gửi yêu cầu trợ giúp qua lệnh <code>/support</code>.",
                 reply_markup=self.get_driver_reply_keyboard(),
             )
@@ -887,6 +917,7 @@ class DriverBotRunner(TelegramPollingRunner):
 
         history.append(now)
         self.appeal_history[phone] = history
+        self.active_appeals[user_id] = sub_id
 
         # Update status in DB / storage
         await self._update_submission_status(sub_id, "APPEAL_PENDING", reason="Thành viên gửi yêu cầu phúc khảo qua Telegram DM")
@@ -895,7 +926,8 @@ class DriverBotRunner(TelegramPollingRunner):
         await self.send_message(
             chat_id,
             f"📨 <b>Yêu cầu phúc khảo cho phiếu #{sub_id} đã được gửi thành công!</b>\n\n"
-            f"Ban Quản Trị sẽ trực tiếp kiểm tra lại hồ sơ và phản hồi kết quả sớm nhất tại đây.",
+            f"Ban Quản Trị sẽ trực tiếp kiểm tra lại hồ sơ và phản hồi kết quả sớm nhất tại đây.\n"
+            f"<i>(Bạn có thể gõ <code>/cancel {sub_id}</code> để hủy yêu cầu này bất cứ lúc nào).</i>",
             reply_markup=self.get_driver_reply_keyboard(),
         )
 
@@ -954,6 +986,16 @@ class DriverBotRunner(TelegramPollingRunner):
         self, chat_id: int, user_id: int, message_text: str, from_user: dict
     ) -> None:
         """Forwards support inquiries from drivers or collaborators to the Telegram Admin Group."""
+        # 1. Prevent duplicate active help request / session
+        if user_id in ACTIVE_SUPPORT_CONVERSATIONS or user_id in self.pending_help_tickets:
+            await self.send_message(
+                chat_id,
+                "⚠️ <b>Bạn đã có một yêu cầu hỗ trợ đang hoạt động với Ban Quản Trị!</b>\n\n"
+                "Bạn có thể nhắn tin trực tiếp để tiếp tục trao đổi, hoặc gõ <code>/cancel</code> để hủy yêu cầu hiện tại trước khi gửi yêu cầu mới.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
+
         clean_msg = message_text.strip()
         if not clean_msg:
             self.pending_support[chat_id] = True
@@ -964,6 +1006,23 @@ class DriverBotRunner(TelegramPollingRunner):
             )
             await self.send_message(chat_id, prompt, reply_markup=self.get_driver_reply_keyboard())
             return
+
+        # 2. Rate limit check: max 5 requests per 2 hours
+        now = time.time()
+        window = 2 * 3600
+        s_history = [t for t in self.support_history.get(user_id, []) if now - t < window]
+        if len(s_history) >= 5:
+            await self.send_message(
+                chat_id,
+                "🚫 <b>Bạn đã gửi tối đa 5 yêu cầu hỗ trợ trong vòng 2 giờ qua!</b>\n\n"
+                "Vui lòng chờ Ban Quản Trị xử lý các yêu cầu trước đó hoặc thử lại sau.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
+
+        s_history.append(now)
+        self.support_history[user_id] = s_history
+        self.pending_help_tickets[user_id] = {"chat_id": chat_id, "timestamp": now, "message": clean_msg}
 
         phone = await self.get_driver_phone(user_id) or "Chưa liên kết SĐT"
         name = from_user.get("first_name", "") + (" " + from_user.get("last_name", "") if from_user.get("last_name") else "")
@@ -1016,6 +1075,77 @@ class DriverBotRunner(TelegramPollingRunner):
             f"Đội ngũ hỗ trợ sẽ xem xét và phản hồi bạn trong thời gian sớm nhất."
         )
         await self.send_message(chat_id, confirm_text, reply_markup=self.get_driver_reply_keyboard())
+    async def handle_cancel_request(self, chat_id: int, user_id: int, target_arg: str = "") -> None:
+        """Allows cancelling active review/appeal requests, support tickets, or photo fix sessions."""
+        cancelled_items = []
+        admin_group = getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-5445563473")
+        admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+
+        # 1. Cancel active appeal
+        sub_id = target_arg.strip().lstrip("#") if target_arg else self.active_appeals.get(user_id)
+        if sub_id:
+            await self._update_submission_status(sub_id, "REJECTED", reason="Người dùng đã hủy yêu cầu phúc khảo")
+            if user_id in self.active_appeals:
+                del self.active_appeals[user_id]
+            cancelled_items.append(f"yêu cầu phúc khảo phiếu <code>#{sub_id}</code>")
+
+            if admin_token and admin_token != "mock_tg_token":
+                client = await self.get_client()
+                url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
+                try:
+                    await client.post(url, json={
+                        "chat_id": admin_group,
+                        "text": f"ℹ️ <b>Người dùng (ID: <code>{user_id}</code>) đã HỦY yêu cầu phúc khảo cho phiếu #{sub_id}.</b>",
+                        "parse_mode": "HTML",
+                    })
+                except Exception:
+                    pass
+
+        # 2. Cancel active support ticket or live chat
+        if user_id in ACTIVE_SUPPORT_CONVERSATIONS or user_id in self.pending_help_tickets:
+            if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+                convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, {})
+                admin_chat = convo.get("admin_chat_id") or admin_group
+                if str(admin_chat) in ADMIN_GROUP_ACTIVE_SESSION:
+                    del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat)]
+            if user_id in self.pending_help_tickets:
+                del self.pending_help_tickets[user_id]
+            cancelled_items.append("yêu cầu hỗ trợ Ban Quản Trị")
+
+            if admin_token and admin_token != "mock_tg_token":
+                client = await self.get_client()
+                url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
+                try:
+                    await client.post(url, json={
+                        "chat_id": admin_group,
+                        "text": f"ℹ️ <b>Người dùng (ID: <code>{user_id}</code>) đã HỦY yêu cầu hỗ trợ.</b>",
+                        "parse_mode": "HTML",
+                    })
+                except Exception:
+                    pass
+
+        # 3. Cancel pending photo fix
+        if chat_id in self.pending_fixes:
+            fix = self.pending_fixes.pop(chat_id)
+            cancelled_items.append(f"phiên gửi lại ảnh cho phiếu <code>#{fix.get('sub_id')}</code>")
+
+        # 4. Cancel pending support prompt
+        if chat_id in self.pending_support:
+            del self.pending_support[chat_id]
+
+        if cancelled_items:
+            details = ", ".join(cancelled_items)
+            await self.send_message(
+                chat_id,
+                f"✅ <b>Đã hủy thành công:</b> {details}.\n\nBây giờ bạn có thể thao tác bình thường hoặc gửi yêu cầu mới.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+        else:
+            await self.send_message(
+                chat_id,
+                "ℹ️ Hiện tại bạn không có yêu cầu hỗ trợ, phúc khảo hoặc gửi ảnh nào đang chờ để hủy.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
     async def close_user_support(self, chat_id: int, user_id: int, closed_by: str = "user") -> None:
         """Closes live support conversation from user side."""
         convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, {})
@@ -1113,6 +1243,11 @@ class DriverBotRunner(TelegramPollingRunner):
 
         elif cmd in ("/privacy", "/scrub_my_data") or clean == "🛡️ Quyền Riêng Tư":
             await self.handle_decree13_scrub(chat_id, user_id)
+        elif cmd in ("/cancel", "/huy", "/cancel_request") or clean == "❌ Hủy Yêu Cầu":
+            parts = clean.split(" ", 1)
+            target = parts[1].strip() if len(parts) > 1 else ""
+            await self.handle_cancel_request(chat_id, user_id, target)
+
 
         elif cmd in ("/help", "/trogiup") or clean == "❓ Trợ Giúp":
             help_text = (

@@ -1583,6 +1583,10 @@ async def submit_webrtc_survey(
             driver_name=driver_name,
             license_plate=license_plate or ai_res.get("detected_plate"),
             gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
+            net_income=ai_res.get("net_income"),
+            total_trips=ai_res.get("total_trips") or trip_count,
+            online_hours=ai_res.get("online_hours"),
+            vehicle_model=car_model or vehicle_type,
             reason_str=reason_str,
         )
     except Exception as lark_err:
@@ -1623,46 +1627,79 @@ class AppealRequest(BaseModel):
 
 @app.post("/api/v1/survey/appeal")
 async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundTasks):
-    """Processes driver manual review requests with atomic 8-hour rate limiting (max 3)."""
+    """Processes driver manual review requests with 2-hour rate limiting (max 5) and active guard."""
     phone = (req.driver_phone or "ANONYMOUS").strip()
     sub_id = req.submission_id.strip()
+
+    # 1. Prevent duplicate active appeal
+    is_already_active = False
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT status FROM survey_submissions WHERE submission_id = %s;", (sub_id,))
+                    row = await cur.fetchone()
+                    if row and row[0] in ("APPEAL_PENDING", "MANUAL_REVIEW"):
+                        is_already_active = True
+        except Exception:
+            pass
+    if not is_already_active and os.path.exists(DEV_STORAGE_FILE):
+        try:
+            with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+                dev_records = json.load(f)
+            for r in dev_records:
+                if r.get("submission_id") == sub_id and r.get("status") in ("APPEAL_PENDING", "MANUAL_REVIEW"):
+                    is_already_active = True
+                    break
+        except Exception:
+            pass
+
+    if is_already_active:
+        return JSONResponse(status_code=200, content={
+            "status": "ALREADY_ACTIVE",
+            "submission_id": sub_id,
+            "message": f"Phiếu #{sub_id} đã có yêu cầu kiểm tra đang hoạt động! Bạn không thể gửi thêm yêu cầu mới khi yêu cầu cũ chưa hoàn tất."
+        })
+
     rate_key = f"rate_limit:appeal:{phone}"
     now = time.time()
-    remaining_appeals = 2
+    window = 7200  # 2 hours
+    remaining_appeals = 4
 
     rate_limited = False
     if redis_client:
         try:
             count = await redis_client.incr(rate_key)
             if count == 1:
-                await redis_client.expire(rate_key, 28800)
-            if count > 3:
+                await redis_client.expire(rate_key, window)
+            if count > 5:
                 rate_limited = True
-            remaining_appeals = max(0, 3 - count)
+            remaining_appeals = max(0, 5 - count)
         except Exception as e:
             logger.warning(f"Redis appeal rate limit error: {e}")
-            history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < 28800]
-            if len(history) >= 3:
+            history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < window]
+            if len(history) >= 5:
                 rate_limited = True
             else:
                 history.append(now)
                 LOCAL_APPEAL_TRACKER[phone] = history
-                remaining_appeals = max(0, 3 - len(history))
+                remaining_appeals = max(0, 5 - len(history))
     else:
-        history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < 28800]
-        if len(history) >= 3:
+        history = [t for t in LOCAL_APPEAL_TRACKER.get(phone, []) if now - t < window]
+        if len(history) >= 5:
             rate_limited = True
         else:
             history.append(now)
             LOCAL_APPEAL_TRACKER[phone] = history
-            remaining_appeals = max(0, 3 - len(history))
+            remaining_appeals = max(0, 5 - len(history))
 
     if rate_limited:
         return JSONResponse(status_code=200, content={
             "status": "RATE_LIMITED",
             "remaining_appeals": 0,
-            "message": "Bạn đã dùng hết 3 lượt yêu cầu người thật kiểm tra trong 8 giờ này. Vui lòng nộp phiếu mới rõ nét hơn!"
+            "message": "Bạn đã gửi tối đa 5 lượt yêu cầu kiểm tra trong vòng 2 giờ này. Vui lòng thử lại sau!"
         })
+
     # 2. Update status in Database
     if db_pool:
         try:
@@ -1695,8 +1732,8 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         alert_text = (
             f"🚨 <b>YÊU CẦU NGƯỜI THẬT KIỂM TRA LẠI (KHIẾU NẠI) #{sub_id}</b>\n\n"
             f"• <b>Số điện thoại:</b> <code>{phone}</code>\n"
-            f"• <b>Lượt khiếu nại còn lại:</b> <b>{remaining_appeals}/3 lượt</b> (trong phiên 8h)\n"
-            f"• <b>Lý do:</b> {req.reason}\n\n"
+            f"• <b>Lượt khiếu nại còn lại:</b> <b>{remaining_appeals}/5 lượt</b> (trong phiên 2h)\n"
+            f"• <b>Lý do:</b> {html.escape(req.reason)}\n\n"
             f"👉 <i>Vui lòng vào <a href='https://survey.trustbridgevn.com/admin/submissions'>Quản trị phiếu</a> để đối soát ảnh gốc!</i>"
         )
         try:
@@ -1708,9 +1745,51 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         "status": "APPEAL_SUBMITTED",
         "submission_id": sub_id,
         "remaining_appeals": remaining_appeals,
-        "message": f"Đã gửi yêu cầu kiểm tra lại thành công! Bạn còn {remaining_appeals}/3 lượt khiếu nại trong phiên 8h này."
+        "message": f"Đã gửi yêu cầu kiểm tra lại thành công! Bạn còn {remaining_appeals}/5 lượt khiếu nại trong phiên 2h này."
     })
 
+
+@app.post("/api/v1/survey/appeal/cancel")
+async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundTasks):
+    """Allows cancelling an active manual review / appeal request."""
+    sub_id = req.submission_id.strip()
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE survey_submissions SET status = 'REJECTED', rejection_reason = 'Yêu cầu kiểm tra lại đã bị hủy bởi người dùng' WHERE submission_id = %s;",
+                        (sub_id,)
+                    )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to cancel appeal in DB: {e}")
+
+    if os.path.exists(DEV_STORAGE_FILE):
+        try:
+            with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
+                dev_records = json.load(f)
+            for r in dev_records:
+                if r.get("submission_id") == sub_id:
+                    r["status"] = "REJECTED"
+                    r["reason"] = "Yêu cầu kiểm tra lại đã bị hủy bởi người dùng"
+            with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(dev_records, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to cancel appeal in dev storage: {e}")
+
+    if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
+        alert_text = f"ℹ️ <b>Người dùng đã HỦY yêu cầu kiểm tra lại cho phiếu #{sub_id}.</b>"
+        try:
+            background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, alert_text)
+        except Exception:
+            pass
+
+    return JSONResponse(status_code=200, content={
+        "status": "CANCELLED",
+        "submission_id": sub_id,
+        "message": f"Đã hủy yêu cầu kiểm tra lại cho phiếu #{sub_id} thành công!"
+    })
 
 async def send_telegram_notification(chat_id: Union[int, str], text: str):
     """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram."""

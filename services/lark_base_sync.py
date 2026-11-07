@@ -13,8 +13,8 @@ logger = logging.getLogger("lark_base_sync")
 
 # Default Base & Table owned by the custom app
 LARK_BASE_APP_TOKEN = getattr(settings, "LARK_BASE_APP_TOKEN", "UwVabU53laZe5OsKgEGjy7QRpOh")
-LARK_BASE_TABLE_ID = getattr(settings, "LARK_BASE_TABLE_ID", "tblTpiVhUtY98Zc8")
-
+# Updated to dedicated table: "Income Survey Verified Submissions"
+LARK_BASE_TABLE_ID = getattr(settings, "LARK_BASE_TABLE_ID", "tblfHqhN3FCCxrdP")
 _cached_token: Optional[str] = None
 _token_expires_at: float = 0.0
 
@@ -60,6 +60,10 @@ async def sync_submission_to_lark_base(
     driver_name: Optional[str] = None,
     license_plate: Optional[str] = None,
     gross_revenue: Optional[Union[str, int]] = None,
+    net_income: Optional[Union[str, int]] = None,
+    total_trips: Optional[Union[str, int]] = None,
+    online_hours: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
     reason_str: Optional[str] = None,
     submitted_at_iso: Optional[str] = None,
     app_token: Optional[str] = None,
@@ -83,6 +87,20 @@ async def sync_submission_to_lark_base(
         except Exception:
             num_revenue = 0
 
+    num_net = 0
+    if net_income and str(net_income).strip() not in ("0", ""):
+        try:
+            num_net = int(re.sub(r"[^\d]", "", str(net_income)))
+        except Exception:
+            num_net = 0
+
+    num_trips = 0
+    if total_trips and str(total_trips).strip() not in ("0", ""):
+        try:
+            num_trips = int(re.sub(r"[^\d]", "", str(total_trips)))
+        except Exception:
+            num_trips = 0
+
     time_str = submitted_at_iso or datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
 
     record_fields: Dict[str, Any] = {
@@ -91,11 +109,14 @@ async def sync_submission_to_lark_base(
         "Số Điện Thoại (Driver Phone)": driver_phone or "N/A",
         "Họ Tên (Driver Name)": driver_name or "Tài xế",
         "Biển Số Xe (License Plate)": license_plate or "N/A",
+        "Dòng Xe (Vehicle Model)": vehicle_model or "N/A",
         "Doanh Thu (Gross Revenue)": num_revenue,
+        "Thu Nhập Ròng (Net Income)": num_net,
+        "Số Chuyến (Total Trips)": num_trips,
+        "Giờ Online (Online Hours)": str(online_hours or "N/A"),
         "Lý Do / Ghi Chú (Reason / Note)": reason_str or "Hợp lệ",
         "Thời Gian Nộp (Submitted At)": time_str,
     }
-
     url = f"https://open.larksuite.com/open-apis/bitable/v1/apps/{target_app}/tables/{target_table}/records"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
