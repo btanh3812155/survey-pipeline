@@ -55,50 +55,61 @@ flowchart TD
 
 ```mermaid
 gantt
-    title Pipeline Migration, Hardening & Expansion Roadmap
+    title Pipeline Migration, Client Milestones & Expansion Roadmap
     dateFormat YYYY-MM-DD
     axisFormat %m/%d
 
-    section Phase 1: Stabilization
-    Lark API token caching & memory streaming     :done, p1_1, 2026-10-25, 2026-10-28
-    EXIF auto-rotation & RGBA flattening         :done, p1_2, 2026-10-26, 2026-10-29
-    WebRTC multi-slot continuous camera           :done, p1_3, 2026-10-28, 2026-10-31
+    section Core Engine & Architecture
+    Media Normalizer & EXIF orientation           :done, p1_1, 2026-10-25, 2026-10-29
+    WebRTC continuous camera & GPS fallback       :done, p1_2, 2026-10-28, 2026-11-01
+    Dual-model AI vision (Gemini / DeepSeek)      :done, p2_1, 2026-10-31, 2026-11-03
+    PostgreSQL SSOT & Transactional Outbox        :done, p2_2, 2026-11-02, 2026-11-06
 
-    section Phase 2: Performance & Security
-    Fast Laplacian blur pre-filtering             :done, p2_1, 2026-10-29, 2026-11-01
-    PostgreSQL BIT(64) Hamming duplicate queries  :done, p2_2, 2026-10-30, 2026-11-02
-    Dual-model AI vision (Gemini / DeepSeek)      :done, p2_3, 2026-10-31, 2026-11-03
-    Deterministic compliance evaluator             :done, p2_4, 2026-11-01, 2026-11-04
-    PII hashing & Decree 13 anonymization         :done, p2_5, 2026-11-03, 2026-11-05
-    Server-side IP geolocation fallback           :done, p2_6, 2026-11-04, 2026-11-06
+    section Client Launch Milestones (Nov 2026)
+    Admin Manual Telegram Bot & 2-Way Relay       :done, cl_1, 2026-11-06, 2026-11-07
+    QR Code Sharing & Random Subdomains           :done, cl_2, 2026-11-06, 2026-11-07
+    Lark Base Table Synchronization               :done, cl_3, 2026-11-06, 2026-11-07
+    Pre-Flight Form Polish & Dry-Run (Test 09.11) :active, cl_4, 2026-11-07, 2026-11-09
+    Google Sheets Fast-Path Data Export Bridge    :active, cl_5, 2026-11-08, 2026-11-10
+    Official Production Run Launch (Run 11.11)    :milestone, cl_6, 2026-11-11, 2026-11-11
 
-    section Phase 3: Downstream Expansion
-    Transactional outbox & background worker      :done, p3_1, 2026-11-02, 2026-11-06
-    Zalo ZNS & customer notification dispatch     :active, p3_2, 2026-11-07, 2026-11-15
-    Collaborator payout & customer billing ledger :active, p3_3, 2026-11-10, 2026-11-20
-    ClickHouse / BI analytics warehouse streaming :p3_4, 2026-11-18, 2026-11-30
-    DINOv2 deep visual embeddings in pgvector     :p3_5, 2026-11-25, 2026-12-10
+    section Post-Launch Expansion (Post-11.11)
+    Full Custom Web Platform Portal               :p3_1, 2026-11-12, 2026-11-25
+    Automated Conversational Chatbot Revamp       :p3_2, 2026-11-15, 2026-11-28
+    Zalo ZNS Official Outreach Subsystem          :p3_3, 2026-11-20, 2026-11-30
+    Financial Billing Ledger & Payroll Automation :p3_4, 2026-11-25, 2026-12-10
+    DINOv2 Visual Embeddings Vector Screening     :p3_5, 2026-12-01, 2026-12-20
 ```
 
-### 2.1 Phase 1 Status: Media Normalization & Lark Ingestion (100% Complete)
-- **Zero Disk Buffer Streaming:** Raw multipart uploads stream into `io.BytesIO()`; no ephemeral disk files.
-- **EXIF Transposition:** `ImageOps.exif_transpose` corrects mobile camera rotation tags before hashing.
-- **Color Space Flattening:** Strips RGBA/CMYK channels and pastes onto solid white RGB canvas, resolving JPEG mode crashes.
-- **Continuous Multi-Slot Camera:** Keeps WebRTC video stream active across multi-slot captures (`1 *`, `2 *`), automatically advancing without freezing the viewfinder.
+### 2.1 Critical Client Milestones (November 2026 Alignment)
+Following direct directive and timeline alignment with leadership on 2026-11-07, priorities are calibrated around a two-stage field delivery:
+1. **Pre-Flight System Test (Target: 2026-11-09 / 09.11):**
+   - Complete polish and locking of dynamic survey forms (`/forms/income_survey`).
+   - Verify end-to-end QR code generation, random subdomain routing, camera capture quality on real mobile browsers, and bilingual Vietnamese/English strings.
+   - Execute rehearsal across simulated and real GSM driver input submissions.
+2. **Official Live Production Run (Target: 2026-11-11 / 11.11):**
+   - Production cutover and live data collection deployment across the full collaborator fleet.
 
-### 2.2 Phase 2 Status: Latency Crushing & Privacy Hardening (100% Complete)
-- **Laplacian Blur Pre-Check:** Rejects blurred images in `< 25ms` before invoking LLM inference.
-- **Indexed Bitwise Hamming Query:** PostgreSQL `BIT(64)` duplicate search executes in `< 15ms`.
-- **Dual-Model Vision AI:** Primary Gemini Flash vision extracts strict JSON facts in `~1.8s - 2.5s`; DeepSeek structured fallback provides high-availability failover.
-- **Deterministic Rule Evaluator:** Prompt injection surface reduced to zero; arithmetic consistency enforced deterministically.
-- **Privacy & PII Protection:** HMAC-SHA256 phone/plate hashing; pseudonymous `driver_tag` primary keys; history API locked behind admin authentication (HTTP 401 Unauthorized for public access).
-- **Resilient Geolocation:** Browser permission persistence, 15s timeout, and 30ms server-side IP fallback (`GET /api/v1/geo/ip-fallback`) resolving domestic Vietnamese DNS stalls.
+### 2.2 Architectural Scope Calibration
+To guarantee uncompromised reliability for the 11.11 live run, non-critical automations are cleanly staged:
+* **Telegram Operations -> Admin Manual Moderation Prioritized (COMPLETED & ACTIVE):**
+  - The Telegram dual-bot network (`@TrustBridgeVNAdmin_Bot` and `@TrustBridgeVN_bot`) operates with human supervisor oversight in the Admin Moderation Group (`-5445563473`).
+  - Features active: 2-way live relay chat between admins and requesters, 1-click dossier inspection, 1-tap manual review decisions, request locking, cancellation (`/cancel`), and 5/2h rolling rate limits.
+  - *Automated Chatbot Revamp* (conversational auto-agent dialogue tree) is deferred post-11.11 launch as confirmed by client directive (*"luồng revamp auto ko kịp mình để sau (aka Admin manual done)"*).
+* **Customer Deliverable -> Google Sheets Fast-Path Bridge Prioritized:**
+  - Client mandate: *"Đổ tạm data về google sheet cho khách hàng (luồng web platform mình xây từ từ cho chuẩn chỉnh sau)..để ra số đc"*.
+  - Instead of holding customer deliverables waiting for a complex full-scale custom web portal, the system streams verified survey data directly to **Google Sheets**.
+  - This ensures external stakeholders immediately receive clean daily numbers, while the permanent web platform is built out systematically post-launch.
+* **Resource Procurement Open Channel:**
+  - Client support: *"em cần gì thì cứ nói anh nha ^_^ mua gì thì để anh mua cho"*.
+  - Requisite external resources flagged: Google Cloud Service Account credentials (for Google Sheets API access) and custom domain DNS records.
 
-### 2.3 Phase 3 Status: Decoupled Outbox Event Bus (Core Live, Subsystems Expanding)
-- **Transactional Outbox Table:** Masters table `survey_submissions` and `outbox_events` are written in a single atomic transaction.
-- **Outbox Worker Daemon:** Continuous worker consumes pending events via `SELECT ... FOR UPDATE SKIP LOCKED` and dispatches to background targets.
-
----
+### 2.3 Phase 1 & 2 Completed Status: Ingress, Verification & Security
+- **Media Normalization:** Raw multipart uploads stream into memory buffer (`io.BytesIO()`); zero disk contention; EXIF auto-rotation; RGBA/CMYK flattened to white RGB canvas.
+- **Fast Quality Gates:** Laplacian blur pre-check rejects unreadable receipts in `< 25ms`; BIT(64) Hamming distance queries detect duplicates in `< 15ms`.
+- **Dual-Model AI Vision:** Primary DeepSeek Flash / Gemini 3.5 Flash transcription with deterministic Python compliance evaluator; zero prompt injection exposure.
+- **Dual Telegram Bots & Lark Base Sync:** `@TrustBridgeVNAdmin_Bot` (Admin group `-5445563473`) + `@TrustBridgeVN_bot` (Driver DM) live on DigitalOcean; automated row writes into Lark Base (`UwVabU53laZe5OsKgEGjy7QRpOh` / `tblTpiVhUtY98Zc8`).
+- **Request Hardening:** Active request locking, `/cancel` support, and 5 requests per 2-hour rolling rate limits active.
 
 ## 3. Downstream Expansion Plan
 
