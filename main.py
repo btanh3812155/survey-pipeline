@@ -1887,8 +1887,7 @@ async def submit_webrtc_survey(
                                     status_str = "APPROVED"
                                     reason_str = "Ảnh chụp rõ nét, đạt chuẩn kiểm tra hình ảnh (Đã tắt nhận diện đối tượng theo yêu cầu)."
                             else:
-                                compliance = evaluate_survey_compliance(facts)
-                                is_approved = bool(compliance.passed or compliance.status_tier == "APPROVED")
+                                compliance = evaluate_survey_compliance(facts, checks=checks)
                                 status_str = "APPROVED" if is_approved else "REJECTED"
                                 reason_str = compliance.collaborator_note or compliance.reason_code
                         except Exception as ai_err:

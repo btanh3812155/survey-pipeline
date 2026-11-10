@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 from services.vision_ai import ExtractedReceiptFacts
 
@@ -13,15 +13,24 @@ class EvaluationResult(BaseModel):
     can_appeal: bool = False
 
 
-def evaluate_survey_compliance(facts: ExtractedReceiptFacts) -> EvaluationResult:
+def evaluate_survey_compliance(facts: ExtractedReceiptFacts, checks: Optional[Any] = None) -> EvaluationResult:
     """
     Deterministically evaluates compliance rules in Python.
     Strictly isolated from LLM prompt injection attacks.
     """
     missing: List[str] = []
-    # 1. Screen recapture of driver phone screen / odometer is permitted for collaborators
-    # Collaborators take pictures of the driver's phone screen showing the revenue app or odometer.
-    # This is explicitly permitted and NOT rejected as fraud.
+    # 1. Screen recapture check: by default False because collaborators take pictures of driver phone screens.
+    # When enable_screen_photo_check is True, taking a picture of another screen is rejected.
+    if checks and getattr(checks, "enable_screen_photo_check", False) and getattr(facts, "is_screen_photo", False):
+        return EvaluationResult(
+            passed=False,
+            status_tier="REJECTED",
+            reason_code="SCREEN_RECAPTURE_DETECTED",
+            missing_fields=["ảnh chụp vật thể/giấy tờ thực tế"],
+            collaborator_note="Hệ thống phát hiện ảnh chụp lại từ màn hình thiết bị khác (Moiré / Recapture). Vui lòng chụp vật thể hoặc tài liệu thực tế!",
+            can_appeal=True,
+        )
+
     # 2. Hard Rejection: Forensic digital manipulation / Photoshop
     if facts.is_manipulated_or_photoshopped:
         evidence = facts.tamper_evidence or "chắp vá hoặc tẩy xóa kỹ thuật số"
