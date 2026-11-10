@@ -26,12 +26,23 @@ from services.form_engine import (
     validate_submission_against_schema,
     get_effective_image_checks,
 )
-from services.dynamic_form_html import render_dynamic_form_html
+from services.dynamic_form_html import render_dynamic_form_html, render_ctv_selector_landing_html
+from services.duplicate_detector import (
+    check_intra_submission_duplicates,
+    check_inter_submission_duplicates,
+    compute_dinov2_embedding,
+    compute_image_dhash_str,
+)
+from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.audit_viewer_html import render_audit_viewer_html
 from services.lark_base_sync import sync_submission_to_lark_base
-from services.google_drive_delivery import upload_to_google_drive
+from services.google_drive_delivery import (
+    upload_to_google_drive,
+    has_google_credentials,
+    sync_all_approved_to_drive,
+)
 from fastapi.staticfiles import StaticFiles
 from config import settings
 from services.normalizer import (
@@ -163,6 +174,43 @@ async def lifespan(app: FastAPI):
     try:
         db_pool = AsyncConnectionPool(conninfo=settings.DATABASE_URL, min_size=1, max_size=10, open=False)
         await db_pool.open()
+        try:
+            async with db_pool.connection() as mig_conn:
+                async with mig_conn.cursor() as mig_cur:
+                    await mig_cur.execute(
+                        """
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS consent_choice TEXT;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS car_model VARCHAR(64);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_duration VARCHAR(64);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_contract_type VARCHAR(64);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS daily_trips INT;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS monthly_income_range VARCHAR(64);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_incentive_policy TEXT;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS membership_type VARCHAR(64);
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_gross BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_net BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_trips INT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_gross BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_net BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_trips INT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_gross BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_net BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_trips INT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_gross BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_net BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_trips INT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_gross BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_net BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_trips INT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_gross_revenue BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_net_income BIGINT DEFAULT 0;
+                        ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_trips INT DEFAULT 0;
+                        """
+                    )
+                    await mig_conn.commit()
+        except Exception as mig_err:
+            logger.debug(f"Schema column check: {mig_err}")
     except Exception as e:
         logger.warning(f"Could not open DB pool: {e}")
         db_pool = None
@@ -184,7 +232,34 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start telegram polling runner: {e}")
 
+    drive_sync_task = None
+    async def run_periodic_drive_sync(interval_seconds: int = 900):
+        """
+        Periodic background task that auto syncs approved survey deliverables to Google Drive.
+        Runs on startup + every interval_seconds (default 15 minutes).
+        """
+        logger.info(f"🚀 [DRIVE AUTO-SYNC] Started periodic background worker (interval: {interval_seconds}s).")
+        while True:
+            try:
+                if has_google_credentials():
+                    logger.info("🔄 [DRIVE AUTO-SYNC] Running scheduled Google Drive sync for approved submissions...")
+                    await sync_all_approved_to_drive(db_pool=db_pool)
+                else:
+                    logger.debug("⏳ [DRIVE AUTO-SYNC] Google Drive credentials not configured; waiting for next interval.")
+            except Exception as e:
+                logger.error(f"❌ [DRIVE AUTO-SYNC] Error during periodic sync: {e}")
+            await asyncio.sleep(interval_seconds)
+
+    drive_sync_task = asyncio.create_task(run_periodic_drive_sync())
+
     yield
+
+    if drive_sync_task:
+        drive_sync_task.cancel()
+        try:
+            await drive_sync_task
+        except asyncio.CancelledError:
+            pass
 
     if polling_runner:
         polling_runner.stop()
@@ -452,6 +527,47 @@ def resolve_ctv_from_slug(slug: str) -> Optional[str]:
             if get_deterministic_ctv_slug(opt, base) == slug:
                 return opt
     return None
+CTV_CODE_MAP = {
+    "ctv001": "CTV001_Dũng_HN",
+    "ctv002": "CTV002_Tuấn_HN",
+    "ctv003": "CTV003_Ngân_SG",
+    "ctv004": "CTV004_Vỹ_SG",
+    "ctv005": "CTV005_Hương_DN",
+}
+
+def extract_ctv_short_code(ctv_id: str) -> str:
+    """Extracts short ref code (e.g. 'ctv001') from full CTV ID or raw code."""
+    clean = ctv_id.strip().lower()
+    m = re.match(r"(ctv\d+)", clean)
+    if m:
+        return m.group(1)
+    parts = clean.split("_")
+    if parts and parts[0].startswith("ctv"):
+        return parts[0]
+    return clean
+
+def resolve_ctv_identifier(ref: str) -> Optional[str]:
+    """Resolves short code (e.g. 'ctv001'), slug, or full CTV name to authoritative CTV ID."""
+    if not ref:
+        return None
+    clean = ref.strip()
+    short = extract_ctv_short_code(clean)
+    if short in CTV_CODE_MAP:
+        return CTV_CODE_MAP[short]
+    for k, v in CTV_CODE_MAP.items():
+        if k == clean.lower() or v.lower() == clean.lower():
+            return v
+    return clean
+
+def get_ctv_options_for_form(schema: FormSchema) -> List[str]:
+    """Retrieves list of CTV options from schema or fallback list."""
+    ctv_q = next((q for q in schema.questions if q.id in ("ctv_code", "collaborator_id")), None)
+    if ctv_q and ctv_q.options:
+        opts = []
+        for o in ctv_q.options:
+            opts.append(o.get("label", str(o)) if isinstance(o, dict) else str(o))
+        return opts
+    return list(CTV_CODE_MAP.values())
 
 @app.get("/camera-form", response_class=HTMLResponse)
 @app.get("/forms/{form_id}", response_class=HTMLResponse)
@@ -463,15 +579,50 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
     if (host.startswith("submissions.") or host.startswith("view.") or host.startswith("data.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
     
-    matched_ctv = resolve_ctv_from_slug(form_id)
-    active_slug = form_id if matched_ctv else None
-    
-    if form_id in ("default", "camera-form") or matched_ctv or form_id not in FORM_REGISTRY:
-        schema = FORM_REGISTRY.get("income_survey") or next(iter(FORM_REGISTRY.values()))
+    # 1. Primary: Check ?ref= query parameter (also supports ?ctv=, ?collaborator_id=)
+    ref_param = (
+        request.query_params.get("ref")
+        or request.query_params.get("ctv")
+        or request.query_params.get("collaborator_id")
+    )
+
+    matched_ctv = None
+    active_slug = None
+    active_ref = None
+    if ref_param and ref_param.strip():
+        matched_ctv = resolve_ctv_identifier(ref_param.strip())
+        active_ref = extract_ctv_short_code(ref_param.strip())
+        active_slug = f"ref-{active_ref}"
     else:
-        schema = FORM_REGISTRY[form_id]
+        # 2. Secondary fallback: check deterministic slug in URL path e.g. /forms/income-survey-59443eedf25522
+        matched_ctv = resolve_ctv_from_slug(form_id)
+        if matched_ctv:
+            active_slug = form_id
+            active_ref = extract_ctv_short_code(matched_ctv)
+    # 3. Resolve schema
+    effective_form_id = "income_survey" if (form_id in ("default", "camera-form") or matched_ctv or form_id not in FORM_REGISTRY) else form_id
+    schema = FORM_REGISTRY.get(effective_form_id) or next(iter(FORM_REGISTRY.values()))
+
+    has_ctv_tracking = (
+        effective_form_id in ("income_survey", "default", "camera-form")
+        or any(q.id in ("ctv_code", "collaborator_id") for q in schema.questions)
+    )
+
+    # 4. If accessed WITHOUT ?ref= on a CTV-tracked form, show CTV selection dropdown!
+    if not matched_ctv and has_ctv_tracking:
+        ctv_options = get_ctv_options_for_form(schema)
+        return HTMLResponse(
+            content=render_ctv_selector_landing_html(
+                schema=schema,
+                ctv_options=ctv_options,
+                form_id=effective_form_id,
+                query_params=dict(request.query_params),
+            ),
+            status_code=200,
+        )
+    # 5. Render individual form with locked CTV code
     return HTMLResponse(
-        content=render_dynamic_form_html(schema, ctv_code=matched_ctv, ctv_slug=active_slug),
+        content=render_dynamic_form_html(schema, ctv_code=matched_ctv, ctv_slug=active_slug, ref_code=active_ref),
         status_code=200
     )
 
@@ -578,6 +729,27 @@ async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verif
         "message": f"Biểu mẫu '{schema.title}' đã sẵn sàng hoạt động!",
     }
 
+@app.post("/api/v1/admin/sync-drive")
+async def trigger_manual_drive_sync(
+    background_tasks: BackgroundTasks,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """
+    Triggers an immediate Google Drive deliverables synchronization in the background.
+    Syncs the Master_Survey_Deliverables.csv data sheet and the Images folder.
+    """
+    if not has_google_credentials():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google Drive credentials (OAuth2 / Service Account) are not configured.",
+        )
+    background_tasks.add_task(sync_all_approved_to_drive, db_pool=db_pool)
+    return {
+        "status": "QUEUED",
+        "message": "Đã kích hoạt đồng bộ Google Drive thành công trong nền.",
+        "target_account": settings.GOOGLE_ADMIN_EMAIL,
+    }
+
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
 os.makedirs(os.path.dirname(DEV_STORAGE_FILE), exist_ok=True)
 
@@ -613,10 +785,11 @@ async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
     return {"status": "cleared", "message": "Bộ nhớ tạm thử nghiệm đã được dọn sạch!"}
 
 async def fetch_aggregated_submissions(
+    form_id: Optional[str] = None,
     status_filter: Optional[str] = None,
     mode_filter: Optional[str] = None,
     search: Optional[str] = None,
-    limit: int = 200,
+    limit: int = 1000,
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
 
@@ -627,7 +800,12 @@ async def fetch_aggregated_submissions(
                 dev_records = json.load(f)
             if isinstance(dev_records, list):
                 for r in dev_records:
-                    results.append(r)
+                    rec_form_id = r.get("form_id") or "income_survey"
+                    if form_id and rec_form_id != form_id:
+                        continue
+                    r_copy = dict(r)
+                    r_copy["form_id"] = rec_form_id
+                    results.append(r_copy)
         except Exception as e:
             logger.warning(f"Error reading dev submissions: {e}")
 
@@ -636,23 +814,35 @@ async def fetch_aggregated_submissions(
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
+                    query = """
                         SELECT 
-                            submission_id, driver_phone, driver_name, receipt_serial_no,
+                            submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
                             store_tax_id, image_r2_url, signature_r2_url,
                             gps_latitude, gps_longitude, gps_accuracy_meters,
-                            status, rejection_reason, raw_extracted_facts,
+                            status, rejection_reason, form_data, raw_extracted_facts,
+                            consent_choice, vehicle_type, car_model, gsm_duration, gsm_contract_type,
+                            daily_trips, monthly_income_range, gsm_incentive_policy, membership_type,
+                            total_gross_revenue, total_net_income, total_trips,
                             audit_seal_hash, created_at
                         FROM survey_submissions
-                        ORDER BY created_at DESC
-                        LIMIT %s;
-                        """,
-                        (limit,)
-                    )
+                    """
+                    params = []
+                    if form_id:
+                        query += " WHERE form_id = %s"
+                        params.append(form_id)
+                    query += " ORDER BY created_at DESC LIMIT %s;"
+                    params.append(limit)
+
+                    await cur.execute(query, tuple(params))
                     rows = await cur.fetchall()
                     for row in rows:
-                        facts = row[12]
+                        f_data = row[14]
+                        if isinstance(f_data, str):
+                            try:
+                                f_data = json.loads(f_data)
+                            except Exception:
+                                pass
+                        facts = row[15]
                         if isinstance(facts, str):
                             try:
                                 facts = json.loads(facts)
@@ -660,21 +850,36 @@ async def fetch_aggregated_submissions(
                                 pass
                         results.append({
                             "submission_id": row[0],
-                            "driver_phone": row[1],
-                            "driver_name": row[2],
-                            "license_plate": row[3],
-                            "receipt_serial_no": row[3],
-                            "store_tax_id": row[4],
-                            "image_r2_url": row[5],
-                            "signature_r2_url": row[6],
-                            "gps_latitude": row[7],
-                            "gps_longitude": row[8],
-                            "gps_accuracy_meters": row[9],
-                            "status": row[10],
-                            "rejection_reason": row[11],
-                            "ai_result": facts,
-                            "audit_seal_hash": row[13],
-                            "created_at": row[14].isoformat() if row[14] else None,
+                            "form_id": row[1] or "income_survey",
+                            "ctv_code": row[2],
+                            "driver_phone": row[3],
+                            "driver_name": row[4],
+                            "license_plate": row[5],
+                            "receipt_serial_no": row[5],
+                            "store_tax_id": row[6],
+                            "image_r2_url": row[7],
+                            "signature_r2_url": row[8],
+                            "gps_latitude": row[9],
+                            "gps_longitude": row[10],
+                            "gps_accuracy_meters": row[11],
+                            "status": row[12],
+                            "rejection_reason": row[13],
+                            "form_data": f_data or {},
+                            "ai_result": facts or {},
+                            "consent_choice": row[16],
+                            "vehicle_type": row[17],
+                            "car_model": row[18],
+                            "gsm_duration": row[19],
+                            "gsm_contract_type": row[20],
+                            "daily_trips": row[21],
+                            "monthly_income_range": row[22],
+                            "gsm_incentive_policy": row[23],
+                            "membership_type": row[24],
+                            "total_gross_revenue": row[25],
+                            "total_net_income": row[26],
+                            "total_trips": row[27],
+                            "audit_seal_hash": row[28],
+                            "created_at": row[29].isoformat() if row[29] else None,
                             "mode": "PROD_MODE",
                         })
         except Exception as e:
@@ -683,14 +888,17 @@ async def fetch_aggregated_submissions(
     # Filter by search string if provided
     if search:
         q = search.lower().strip()
-        results = [
-            r for r in results
-            if q in (r.get("submission_id") or "").lower()
-            or q in (r.get("driver_phone") or "").lower()
-            or q in (r.get("driver_name") or "").lower()
-            or q in (r.get("license_plate") or "").lower()
-            or q in (r.get("receipt_serial_no") or "").lower()
-        ]
+        filtered = []
+        for r in results:
+            text_corpus = (
+                f"{r.get('submission_id', '')} {r.get('driver_phone', '')} "
+                f"{r.get('driver_name', '')} {r.get('license_plate', '')} "
+                f"{r.get('ctv_code', '')} {r.get('form_id', '')} "
+                f"{json.dumps(r.get('form_data', {}), ensure_ascii=False)}"
+            ).lower()
+            if q in text_corpus:
+                filtered.append(r)
+        results = filtered
 
     # Filter by status if provided
     if status_filter and status_filter != "ALL":
@@ -703,14 +911,23 @@ async def fetch_aggregated_submissions(
 
 @app.get("/admin/submissions", response_class=HTMLResponse)
 @app.get("/submissions", response_class=HTMLResponse)
+@app.get("/admin/data", response_class=HTMLResponse)
+@app.get("/data", response_class=HTMLResponse)
+@app.get("/admin/data/{form_id}", response_class=HTMLResponse)
 async def admin_submissions_dashboard(
     request: Request,
-    admin_user: str = Depends(verify_admin_auth)
+    form_id: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    admin_user: str = Depends(verify_admin_auth),
 ):
-    """Web UI dashboard to view, search, filter, and inspect submitted surveys."""
-    subs = await fetch_aggregated_submissions()
-    return HTMLResponse(content=render_submissions_viewer_html(subs), status_code=200)
-
+    """Web UI dashboard to view, query, sort, and filter survey data in a table per form."""
+    subs = await fetch_aggregated_submissions(form_id=form_id, status_filter=status, search=search, limit=2000)
+    forms_dict = {fid: f.model_dump() for fid, f in FORM_REGISTRY.items()}
+    return HTMLResponse(
+        content=render_submissions_viewer_html(subs, forms=forms_dict, selected_form_id=form_id),
+        status_code=200,
+    )
 
 @app.get("/api/v1/submissions")
 async def get_all_submissions_api(
@@ -1267,6 +1484,7 @@ async def submit_webrtc_survey(
     if schema:
         is_schema_valid, validation_err = validate_submission_against_schema(schema, answers)
 
+    pil_im = None
     blur_var = None
     raw_bytes_list = []
     for img in images_list:
@@ -1340,31 +1558,40 @@ async def submit_webrtc_survey(
                 decode_error_slot_idx = None
                 decode_error_slot_title = None
 
-                if checks.enable_blur_check:
-                    blur_thresh = checks.blur_threshold if checks.blur_threshold is not None else settings.BLUR_THRESHOLD
-                    for idx, img_b in enumerate(raw_bytes_list):
-                        slot_name = f"Ảnh {idx + 1}"
-                        if target_q and target_q.image_slots and idx < len(target_q.image_slots):
-                            stitle = target_q.image_slots[idx].get("title") or target_q.image_slots[idx].get("role")
-                            if stitle:
-                                slot_name = f"Ảnh {idx + 1} ({stitle})"
-                        try:
-                            _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                            sharp, b_var = compute_laplacian_blur_score(p_im, threshold=blur_thresh)
-                            if not sharp:
-                                is_sharp = False
-                                blur_var = b_var
-                                blurry_slot_idx = idx
-                                blurry_slot_title = slot_name
-                                break
-                            blur_var = b_var
-                        except Exception:
+                is_sharp = True
+                blur_var = None
+                blur_thresh = settings.BLUR_THRESHOLD
+                blurry_slot_idx = None
+                blurry_slot_title = None
+                decode_error_slot_idx = None
+                decode_error_slot_title = None
+
+                for idx, img_b in enumerate(raw_bytes_list):
+                    slot_checks = get_effective_image_checks(schema, target_question_id, slot_index=idx)
+                    if not slot_checks.enable_blur_check:
+                        continue
+                    slot_blur_thresh = slot_checks.blur_threshold if slot_checks.blur_threshold is not None else settings.BLUR_THRESHOLD
+                    slot_name = f"Ảnh {idx + 1}"
+                    if target_q and target_q.image_slots and idx < len(target_q.image_slots):
+                        stitle = target_q.image_slots[idx].get("title") or target_q.image_slots[idx].get("role")
+                        if stitle:
+                            slot_name = f"Ảnh {idx + 1} ({stitle})"
+                    try:
+                        _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                        sharp, b_var = compute_laplacian_blur_score(p_im, threshold=slot_blur_thresh)
+                        if not sharp:
                             is_sharp = False
-                            decode_error_slot_idx = idx
-                            decode_error_slot_title = slot_name
+                            blur_var = b_var
+                            blurry_slot_idx = idx
+                            blurry_slot_title = slot_name
+                            blur_thresh = slot_blur_thresh
                             break
-                else:
-                    is_sharp, blur_var = True, None
+                        blur_var = b_var
+                    except Exception:
+                        is_sharp = False
+                        decode_error_slot_idx = idx
+                        decode_error_slot_title = slot_name
+                        break
 
                 if not is_sharp:
                     is_approved = False
@@ -1396,11 +1623,13 @@ async def submit_webrtc_survey(
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
                     if target_q and target_q.image_slots and len(images_list) >= 2:
-                        # Slot 0: App Profile (AI Check)
+                        # Slot 0: App Profile (AI Check & Membership Type extraction)
                         fn_0 = getattr(images_list[0], "filename", "") or ""
-                        task_role_0 = vision_client.classify_image_role(raw_bytes_list[0], filename=fn_0, expected_slots=target_q.image_slots)
+                        norm_0_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[0], max_dimension=settings.IMAGE_MAX_DIMENSION)
+                        task_role_0 = vision_client.classify_image_role(norm_0_bytes, filename=fn_0, expected_slots=target_q.image_slots)
+                        task_profile_ocr = vision_client.ocr_driver_app_profile(norm_0_bytes)
                         
-                        # Identify income slots (e.g. slot 1 for 2-slot schema, or slots 2..6 for 7-slot schema)
+                        # Identify income slots (e.g. slots 2..6 for 7-slot schema or slot 1 for 2-slot schema)
                         income_indices = []
                         for s_idx, slot in enumerate(target_q.image_slots):
                             if "income" in str(slot.get("role", "")).lower() and s_idx < len(raw_bytes_list):
@@ -1408,19 +1637,56 @@ async def submit_webrtc_survey(
                         if not income_indices:
                             income_indices = [1] if len(raw_bytes_list) > 1 else [0]
 
+                        # Spawn parallel OCR tasks for all income weeks
+                        income_tasks = []
+                        for i_pos, s_idx in enumerate(income_indices):
+                            img_raw = raw_bytes_list[s_idx]
+                            n_bytes, _ = sanitize_and_normalize_image(img_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                            income_tasks.append(vision_client.ocr_driver_app_income(n_bytes, week_idx=i_pos + 1))
+
                         primary_income_idx = income_indices[0]
                         income_raw = raw_bytes_list[primary_income_idx] if primary_income_idx < len(raw_bytes_list) else raw_bytes
                         norm_income_bytes, _ = sanitize_and_normalize_image(income_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                        task_ocr = vision_client.ocr_driver_app_income(norm_income_bytes)
                         task_facts = vision_client.extract_facts(norm_income_bytes)
 
-                        results = await asyncio.gather(task_role_0, task_ocr, task_facts, return_exceptions=True)
-                        role_0_res, ocr_res, facts_res = results
+                        all_results = await asyncio.gather(task_role_0, task_profile_ocr, task_facts, *income_tasks, return_exceptions=True)
+                        role_0_res = all_results[0]
+                        profile_res = all_results[1]
+                        facts_res = all_results[2]
+                        income_res_list = all_results[3:]
 
                         role_0 = "unknown" if isinstance(role_0_res, Exception) else role_0_res
-                        if isinstance(ocr_res, Exception):
-                            logger.error(f"[MAIN OCR ERROR] task_ocr exception: {ocr_res}")
-                        ocr_data = ocr_res if isinstance(ocr_res, dict) and not isinstance(ocr_res, Exception) else {}
+                        membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else "Tiêu chuẩn"
+                        
+                        primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
+                        ocr_data = primary_ocr
+
+                        weekly_incomes = {}
+                        tot_gross = 0
+                        tot_net = 0
+                        tot_trips = 0
+                        for w_i in range(5):
+                            w_num = w_i + 1
+                            if w_i < len(income_res_list) and isinstance(income_res_list[w_i], dict) and not isinstance(income_res_list[w_i], Exception):
+                                ocr_w = income_res_list[w_i]
+                            elif w_i == 0 and isinstance(ocr_data, dict):
+                                ocr_w = ocr_data
+                            else:
+                                ocr_w = {}
+                            g_val = int(ocr_w.get("gross_revenue") or 0)
+                            n_val = int(ocr_w.get("net_income") or 0)
+                            t_val = int(ocr_w.get("total_trips") or 0)
+                            weekly_incomes[f"week_{w_num}"] = {
+                                "gross_revenue": g_val,
+                                "net_income": n_val,
+                                "total_trips": t_val,
+                                "discount_and_tax": ocr_w.get("discount_and_tax", 0),
+                                "period": ocr_w.get("period", f"Tuần {w_num}"),
+                                "online_hours": ocr_w.get("online_hours", ""),
+                            }
+                            tot_gross += g_val
+                            tot_net += n_val
+                            tot_trips += t_val
 
                         slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
@@ -1504,13 +1770,109 @@ async def submit_webrtc_survey(
                                 "model": "DEEPSEEK_V3_CHAT",
                                 "roles_verified": [role_0, "auto_passed_vehicle" if len(target_q.image_slots) >= 7 else "app_income"],
                                 "total_slots_processed": len(images_list),
-                                "ocr_data": ocr_data,
-                                "gross_revenue": gross_val,
-                                "net_income": net_val,
-                                "total_trips": trips_val,
+                                "membership_type": membership_type,
+                                "weekly_incomes": weekly_incomes,
+                                "total_gross_revenue": tot_gross,
+                                "total_net_income": tot_net,
+                                "total_trips_count": tot_trips if tot_trips > 0 else trips_val,
                                 "online_hours": hours_val,
                                 "period": period_val,
                             }
+
+                        should_check_fraud = bool(getattr(checks, "enable_anti_fraud", True) and getattr(checks, "require_unique", True))
+                        if is_approved and should_check_fraud:
+                            # 3. Anti-Fraud: Intra-submission duplicate check across weekly income slots (Meta DINOv2 + dHash + numbers)
+                            intra_dup, intra_reason = check_intra_submission_duplicates(raw_bytes_list, target_q, weekly_incomes)
+                            if intra_dup:
+                                is_approved = False
+                                status_str = "REJECTED"
+                                reason_str = intra_reason
+                                ai_res["status"] = "REJECTED"
+                                ai_res["reason"] = reason_str
+                                ai_res["duplicate_detected"] = True
+                                ai_res["duplicate_type"] = "INTRA_SUBMISSION"
+                            else:
+                                # Pick primary image that requires uniqueness for inter-submission checking
+                                check_im = None
+                                if target_q and getattr(target_q, "image_slots", None):
+                                    for s_idx, slot in enumerate(target_q.image_slots):
+                                        if slot.get("require_unique") is not False and s_idx < len(raw_bytes_list):
+                                            try:
+                                                _, s_im = sanitize_and_normalize_image(raw_bytes_list[s_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
+                                                if s_im is not None:
+                                                    check_im = s_im
+                                                    break
+                                            except Exception:
+                                                pass
+                                if check_im is None:
+                                    check_im = pil_im
+
+                                if check_im is not None:
+                                    if db_pool:
+                                        # 4. Anti-Fraud: Inter-submission duplicate check against approved submissions (Meta DINOv2 + dHash + identical data)
+                                        primary_emb = compute_dinov2_embedding(check_im)
+                                        inter_dup, matched_sub_id, dup_type = await check_inter_submission_duplicates(
+                                            db_pool, check_im, primary_emb,
+                                            weekly_incomes=weekly_incomes,
+                                            tot_gross=tot_gross,
+                                            tot_trips=tot_trips,
+                                        )
+                                        if inter_dup:
+                                            is_approved = False
+                                            status_str = "REJECTED"
+                                            if dup_type == "DATA_DUPLICATE":
+                                                reason_str = f"Số liệu doanh thu 5 tuần bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{matched_sub_id})! Hệ thống chống gian lận phát hiện số liệu bị sao chép."
+                                            else:
+                                                reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{matched_sub_id})! Hệ thống Meta DINOv2 phát hiện ảnh bị nộp lại."
+                                            ai_res["status"] = "REJECTED"
+                                            ai_res["reason"] = reason_str
+                                            ai_res["duplicate_detected"] = True
+                                            ai_res["matched_submission_id"] = matched_sub_id
+                                            ai_res["duplicate_type"] = dup_type or "INTER_SUBMISSION"
+                                    elif is_test_mode:
+                                        dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+                                        if os.path.exists(dev_storage_file):
+                                            try:
+                                                with open(dev_storage_file, "r", encoding="utf-8") as df:
+                                                    dev_recs = json.load(df)
+                                                target_dhash = compute_dhash_int(check_im)
+                                                for prev in dev_recs:
+                                                    if prev.get("status") == "APPROVED":
+                                                        # 1. Identical financial data check
+                                                        prev_w = prev.get("weekly_incomes") or {}
+                                                        prev_g = int(prev.get("total_gross_revenue") or prev.get("gross_revenue") or 0)
+                                                        prev_t = int(prev.get("total_trips") or prev.get("trip_count") or 0)
+                                                        cur_w1 = int(weekly_incomes.get("week_1", {}).get("gross_revenue") or 0)
+                                                        cur_w2 = int(weekly_incomes.get("week_2", {}).get("gross_revenue") or 0)
+                                                        if prev_g > 0 and tot_gross > 0 and prev_g == tot_gross and prev_t > 0 and prev_t == tot_trips:
+                                                            p_w1 = int(prev_w.get("week_1", {}).get("gross_revenue") or prev.get("income_week_1_gross") or 0)
+                                                            p_w2 = int(prev_w.get("week_2", {}).get("gross_revenue") or prev.get("income_week_2_gross") or 0)
+                                                            if p_w1 > 0 and p_w1 == cur_w1 and p_w2 > 0 and p_w2 == cur_w2:
+                                                                is_approved = False
+                                                                status_str = "REJECTED"
+                                                                reason_str = f"Số liệu doanh thu 5 tuần bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{prev.get('submission_id')})! Phát hiện sao chép số liệu thu nhập."
+                                                                ai_res["status"] = "REJECTED"
+                                                                ai_res["reason"] = reason_str
+                                                                ai_res["duplicate_detected"] = True
+                                                                ai_res["matched_submission_id"] = prev.get('submission_id')
+                                                                ai_res["duplicate_type"] = "INTER_SUBMISSION_DATA"
+                                                                break
+
+                                                        # 2. Image hash check
+                                                        if prev.get("image_dhash_int") is not None:
+                                                            prev_dh = int(prev["image_dhash_int"])
+                                                            if hamming_distance(target_dhash, prev_dh) <= 6:
+                                                                is_approved = False
+                                                                status_str = "REJECTED"
+                                                                reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{prev.get('submission_id')})! Phát hiện trùng lặp hình ảnh."
+                                                                ai_res["status"] = "REJECTED"
+                                                                ai_res["reason"] = reason_str
+                                                                ai_res["duplicate_detected"] = True
+                                                                ai_res["matched_submission_id"] = prev.get('submission_id')
+                                                                ai_res["duplicate_type"] = "INTER_SUBMISSION"
+                                                                break
+                                            except Exception:
+                                                pass
                     else:
                         try:
                             facts = await vision_client.extract_facts(norm_bytes)
@@ -1552,18 +1914,92 @@ async def submit_webrtc_survey(
     persisted_phone = None if is_dissent else driver_phone
     persisted_name = None if is_dissent else (driver_name or "Tài xế")
 
+    # Form specific metrics and 5-week income extractions
+    vehicle_type_val = str(form_data.get("vehicle_type") or vehicle_type or "Xe điện GSM")
+    car_model_val = str(form_data.get("car_model") or "")
+    gsm_duration_val = str(form_data.get("gsm_duration") or "")
+    gsm_contract_type_val = str(form_data.get("gsm_contract_type") or "")
+    raw_daily_trips = form_data.get("daily_trips")
+    daily_trips_val = int(raw_daily_trips) if raw_daily_trips is not None and str(raw_daily_trips).isdigit() else None
+    monthly_income_range_val = str(form_data.get("monthly_income_range") or "")
+    raw_policy = form_data.get("gsm_incentive_policy") or ""
+    gsm_policy_val = "; ".join(str(x) for x in raw_policy) if isinstance(raw_policy, list) else str(raw_policy)
+    membership_type_val = ai_res.get("membership_type") or form_data.get("membership_type") or "Tiêu chuẩn"
+
+    w_incomes = ai_res.get("weekly_incomes") or {}
+    w1_g = int(w_incomes.get("week_1", {}).get("gross_revenue") or ai_res.get("gross_revenue") or gross_revenue or 0)
+    w1_n = int(w_incomes.get("week_1", {}).get("net_income") or ai_res.get("net_income") or 0)
+    w1_t = int(w_incomes.get("week_1", {}).get("total_trips") or trip_count or 0)
+
+    w2_g = int(w_incomes.get("week_2", {}).get("gross_revenue") or 0)
+    w2_n = int(w_incomes.get("week_2", {}).get("net_income") or 0)
+    w2_t = int(w_incomes.get("week_2", {}).get("total_trips") or 0)
+
+    w3_g = int(w_incomes.get("week_3", {}).get("gross_revenue") or 0)
+    w3_n = int(w_incomes.get("week_3", {}).get("net_income") or 0)
+    w3_t = int(w_incomes.get("week_3", {}).get("total_trips") or 0)
+
+    w4_g = int(w_incomes.get("week_4", {}).get("gross_revenue") or 0)
+    w4_n = int(w_incomes.get("week_4", {}).get("net_income") or 0)
+    w4_t = int(w_incomes.get("week_4", {}).get("total_trips") or 0)
+
+    w5_g = int(w_incomes.get("week_5", {}).get("gross_revenue") or 0)
+    w5_n = int(w_incomes.get("week_5", {}).get("net_income") or 0)
+    w5_t = int(w_incomes.get("week_5", {}).get("total_trips") or 0)
+
+    computed_tot_g = w1_g + w2_g + w3_g + w4_g + w5_g
+    computed_tot_n = w1_n + w2_n + w3_n + w4_n + w5_n
+    computed_tot_t = w1_t + w2_t + w3_t + w4_t + w5_t
+
+    tot_gross_val = int(ai_res.get("total_gross_revenue") or (computed_tot_g if computed_tot_g > 0 else (ai_res.get("gross_revenue") or gross_revenue or 0)))
+    tot_net_val = int(ai_res.get("total_net_income") or (computed_tot_n if computed_tot_n > 0 else (ai_res.get("net_income") or 0)))
+    tot_trips_val = int(ai_res.get("total_trips") or (computed_tot_t if computed_tot_t > 0 else (trip_count or 0)))
+    clean_form_data = {
+        k: v for k, v in answers.items()
+        if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")
+    }
+
     if is_test_mode:
         dev_record = {
             "submission_id": submission_id,
             "mode": "TEST_DEV_MODE",
+            "status": status_str,
+            "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
+            "form_data": clean_form_data,
+            "weekly_incomes": w_incomes,
+            "total_gross_revenue": tot_gross_val,
+            "total_net_income": tot_net_val,
+            "total_trips": tot_trips_val,
+            "income_week_1_gross": w1_g,
+            "income_week_1_net": w1_n,
+            "income_week_1_trips": w1_t,
+            "income_week_2_gross": w2_g,
+            "income_week_2_net": w2_n,
+            "income_week_2_trips": w2_t,
+            "income_week_3_gross": w3_g,
+            "income_week_3_net": w3_n,
+            "income_week_3_trips": w3_t,
+            "income_week_4_gross": w4_g,
+            "income_week_4_net": w4_n,
+            "income_week_4_trips": w4_t,
+            "income_week_5_gross": w5_g,
+            "income_week_5_net": w5_n,
+            "income_week_5_trips": w5_t,
             "driver_tag": driver_tag,
-            "driver_phone_hash": driver_phone_hash,
-            "license_plate_hash": license_plate_hash,
             "driver_phone": persisted_phone,
             "driver_name": persisted_name,
-            "license_plate": license_plate,
-            "vehicle_type": vehicle_type,
-            "status": status_str,
+            "collaborator_id": collab_param,
+            "vehicle_type": vehicle_type_val,
+            "car_model": car_model_val,
+            "gsm_duration": gsm_duration_val,
+            "gsm_contract_type": gsm_contract_type_val,
+            "daily_trips": daily_trips_val,
+            "ai_result": ai_res,
+            "image_dhash_int": compute_dhash_int(pil_im) if pil_im is not None else None,
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "net_income": tot_net_val,
+            "trip_count": tot_trips_val,
+            "license_plate": license_plate or ai_res.get("detected_plate"),
             "reason": reason_str,
             "ai_result": ai_res,
             "submitted_at": datetime.now(timezone.utc).isoformat(),
@@ -1589,34 +2025,120 @@ async def submit_webrtc_survey(
                             """,
                             (driver_tag, persisted_phone, persisted_name),
                         )
-                    # Clean form_data JSON (excluding raw image streams for compact storage)
-                    clean_form_data = {
-                        k: v for k, v in answers.items()
-                        if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray))
-                    }
                     effective_ctv = str(collab_param or answers.get("ctv_code") or "").strip() or None
-                    await cur.execute(
-                        """
-                        INSERT INTO survey_submissions (
-                            submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
-                            status, rejection_reason, form_data, raw_extracted_facts, driver_id
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (submission_id) DO NOTHING;
-                        """,
-                        (
-                            submission_id,
-                            active_form_id,
-                            effective_ctv,
-                            persisted_phone,
-                            persisted_name,
-                            f"SN-{license_plate or 'AUTO'}",
-                            status_str,
-                            reason_str if not is_approved else None,
-                            json.dumps(clean_form_data),
-                            json.dumps(ai_res),
-                            driver_tag if not is_dissent else None,
-                        ),
+                    consent_val = str(answers.get("consent_choice") or "Tôi đồng ý")
+                    calc_dhash = compute_image_dhash_str(pil_im) if pil_im is not None else None
+                    calc_emb = compute_dinov2_embedding(pil_im) if pil_im is not None else None
+                    calc_emb_str = ("[" + ",".join(str(x) for x in calc_emb) + "]") if calc_emb else None
+                    insert_vals_full = (
+                        submission_id,
+                        active_form_id,
+                        effective_ctv,
+                        persisted_phone,
+                        persisted_name,
+                        f"SN-{license_plate or 'AUTO'}",
+                        status_str,
+                        reason_str if not is_approved else None,
+                        json.dumps(clean_form_data),
+                        json.dumps(ai_res),
+                        driver_tag if not is_dissent else None,
+                        calc_dhash,
+                        calc_emb_str,
+                        consent_val,
+                        vehicle_type_val,
+                        car_model_val,
+                        gsm_duration_val,
+                        gsm_contract_type_val,
+                        daily_trips_val,
+                        monthly_income_range_val,
+                        gsm_policy_val,
+                        membership_type_val,
+                        w1_g, w1_n, w1_t,
+                        w2_g, w2_n, w2_t,
+                        w3_g, w3_n, w3_t,
+                        w4_g, w4_n, w4_t,
+                        w5_g, w5_n, w5_t,
+                        tot_gross_val, tot_net_val, tot_trips_val,
                     )
+                    try:
+                        await cur.execute(
+                            """
+                            INSERT INTO survey_submissions (
+                                submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
+                                status, rejection_reason, form_data, raw_extracted_facts, driver_id,
+                                image_dhash, embedding,
+                                consent_choice, vehicle_type, car_model, gsm_duration, gsm_contract_type, daily_trips,
+                                monthly_income_range, gsm_incentive_policy, membership_type,
+                                income_week_1_gross, income_week_1_net, income_week_1_trips,
+                                income_week_2_gross, income_week_2_net, income_week_2_trips,
+                                income_week_3_gross, income_week_3_net, income_week_3_trips,
+                                income_week_4_gross, income_week_4_net, income_week_4_trips,
+                                income_week_5_gross, income_week_5_net, income_week_5_trips,
+                                total_gross_revenue, total_net_income, total_trips
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s
+                            )
+                            ON CONFLICT (submission_id) DO UPDATE SET
+                                image_dhash = EXCLUDED.image_dhash,
+                                embedding = EXCLUDED.embedding,
+                                consent_choice = EXCLUDED.consent_choice,
+                                vehicle_type = EXCLUDED.vehicle_type,
+                                car_model = EXCLUDED.car_model,
+                                gsm_duration = EXCLUDED.gsm_duration,
+                                gsm_contract_type = EXCLUDED.gsm_contract_type,
+                                daily_trips = EXCLUDED.daily_trips,
+                                monthly_income_range = EXCLUDED.monthly_income_range,
+                                gsm_incentive_policy = EXCLUDED.gsm_incentive_policy,
+                                membership_type = EXCLUDED.membership_type,
+                                income_week_1_gross = EXCLUDED.income_week_1_gross,
+                                income_week_1_net = EXCLUDED.income_week_1_net,
+                                income_week_1_trips = EXCLUDED.income_week_1_trips,
+                                income_week_2_gross = EXCLUDED.income_week_2_gross,
+                                income_week_2_net = EXCLUDED.income_week_2_net,
+                                income_week_2_trips = EXCLUDED.income_week_2_trips,
+                                income_week_3_gross = EXCLUDED.income_week_3_gross,
+                                income_week_3_net = EXCLUDED.income_week_3_net,
+                                income_week_3_trips = EXCLUDED.income_week_3_trips,
+                                income_week_4_gross = EXCLUDED.income_week_4_gross,
+                                income_week_4_net = EXCLUDED.income_week_4_net,
+                                income_week_4_trips = EXCLUDED.income_week_4_trips,
+                                income_week_5_gross = EXCLUDED.income_week_5_gross,
+                                income_week_5_net = EXCLUDED.income_week_5_net,
+                                income_week_5_trips = EXCLUDED.income_week_5_trips,
+                                total_gross_revenue = EXCLUDED.total_gross_revenue,
+                                total_net_income = EXCLUDED.total_net_income,
+                                total_trips = EXCLUDED.total_trips;
+                            """,
+                            insert_vals_full,
+                        )
+                    except Exception as ins_err:
+                        logger.debug(f"Extended column insert fallback: {ins_err}")
+                        await cur.execute(
+                            """
+                            INSERT INTO survey_submissions (
+                                submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
+                                status, rejection_reason, form_data, raw_extracted_facts, driver_id
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (submission_id) DO NOTHING;
+                            """,
+                            (
+                                submission_id,
+                                active_form_id,
+                                effective_ctv,
+                                persisted_phone,
+                                persisted_name,
+                                f"SN-{license_plate or 'AUTO'}",
+                                status_str,
+                                reason_str if not is_approved else None,
+                                json.dumps(clean_form_data),
+                                json.dumps(ai_res),
+                                driver_tag if not is_dissent else None,
+                            ),
+                        )
                     if license_plate and not is_dissent:
                         vtype_db = "BIKE" if "BIKE" in str(vehicle_type).upper() or "MÁY" in str(vehicle_type).upper() else "CAR"
                         await cur.execute(
@@ -1708,20 +2230,41 @@ async def submit_webrtc_survey(
     except Exception as lark_err:
         logger.error(f"Failed to dispatch Lark Base sync task: {lark_err}")
     try:
+        effective_ctv_drive = str(collab_param or answers.get("ctv_code") or "").strip() or None
+        effective_vehicle = str(form_data.get("car_model") or form_data.get("vehicle_model") or vehicle_type or "Xe điện GSM")
         drive_rec = {
             "submission_id": submission_id,
             "status": status_str,
-            "driver_phone": driver_phone,
-            "driver_name": driver_name,
-            "collaborator_id": collab_param,
-            "license_plate": license_plate or ai_res.get("detected_plate"),
-            "gross_revenue": ai_res.get("gross_revenue") or gross_revenue,
-            "trip_count": trip_count,
-            "odometer_km": odometer_km,
-            "gps_latitude": getattr(request.state, "gps_lat", None),
-            "gps_longitude": getattr(request.state, "gps_lon", None),
+            "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
+            "form_data": clean_form_data,
+            "membership_type": membership_type_val,
+            "weekly_incomes": w_incomes,
+            "total_gross_revenue": tot_gross_val,
+            "total_net_income": tot_net_val,
+            "total_trips": tot_trips_val,
+            "income_week_1_gross": w1_g,
+            "income_week_1_net": w1_n,
+            "income_week_1_trips": w1_t,
+            "income_week_2_gross": w2_g,
+            "income_week_2_net": w2_n,
+            "income_week_2_trips": w2_t,
+            "income_week_3_gross": w3_g,
+            "income_week_3_net": w3_n,
+            "income_week_3_trips": w3_t,
+            "income_week_4_gross": w4_g,
+            "income_week_4_net": w4_n,
+            "income_week_4_trips": w4_t,
+            "income_week_5_gross": w5_g,
+            "income_week_5_net": w5_n,
+            "income_week_5_trips": w5_t,
+            "ocr_data": ai_res.get("ocr_data") or {},
+            "gross_revenue": tot_gross_val,
+            "net_income": tot_net_val,
+            "trip_count": tot_trips_val,
+            "gps_latitude": getattr(request.state, "gps_lat", None) or form_data.get("gps_latitude"),
+            "gps_longitude": getattr(request.state, "gps_lon", None) or form_data.get("gps_longitude"),
             "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "reason": reason_str,
+            "vehicle_type": effective_vehicle,
         }
         drive_imgs = []
         for i_idx, r_b in enumerate(raw_bytes_list):
@@ -1747,6 +2290,9 @@ async def submit_webrtc_survey(
         "trip_count": ai_res.get("total_trips") or trip_count,
         "ocr_data": ai_res.get("ocr_data"),
     }
+    if ai_res.get("duplicate_detected"):
+        resp_data["duplicate_detected"] = ai_res.get("duplicate_detected")
+        resp_data["duplicate_type"] = ai_res.get("duplicate_type")
     if blur_var is not None:
         resp_data["blur_score"] = blur_var
 

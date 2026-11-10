@@ -7,6 +7,9 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Trust Bridge - Khảo Sát Phương Tiện & Doanh Thu GSM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #090d16;
@@ -30,7 +33,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100dvh;
@@ -455,12 +458,11 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
                 <label>Loại phương tiện</label>
                 <div class="type-selector">
                     <div class="type-chip selected" id="chipCar" onclick="selectType('CAR')">
-                        🚗 Ô tô điện GSM
+                        Ô tô điện GSM
                     </div>
                     <div class="type-chip" id="chipBike" onclick="selectType('BIKE')">
-                        🏍️ Xe máy điện
+                        Xe máy điện
                     </div>
-                </div>
                 <input type="hidden" id="vehicleType" value="CAR">
             </div>
         </div>
@@ -509,8 +511,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
                 <button type="button" class="btn-shutter" id="shutterBtn" aria-label="Chụp ảnh">
                     <svg viewBox="0 0 24 24"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
                 </button>
-                <button type="button" class="btn-retake" id="retakeBtn" onclick="retakePhoto()">🔄 Chụp lại</button>
-            </div>
+                <button type="button" class="btn-retake" id="retakeBtn" onclick="retakePhoto()">Chụp lại</button>
         </div>
 
         <!-- Card 4: Chữ ký điện tử & Cam kết Nghị định 13 -->
@@ -535,7 +536,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
         </div>
 
         <button type="button" class="btn-submit" id="submitBtn" onclick="submitSurvey()">
-            <span>🚀 Gửi Phiếu Khảo Sát</span>
+            <span>Gửi Phiếu Khảo Sát</span>
         </button>
     </form>
 
@@ -693,8 +694,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
             }
 
             submitBtn.disabled = true;
-            submitBtn.innerHTML = `<span>⏳ Đang gửi & AI thẩm định...</span>`;
-
+            submitBtn.innerHTML = `<span>Đang gửi & AI thẩm định...</span>`;
             // Prepare multipart payload
             const formData = new FormData();
             formData.append('survey_photo', capturedBlob, 'survey_photo.webp');
@@ -724,12 +724,11 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
 
                 if (res.status === 'APPROVED') {
                     card.className = "verdict-card approved";
-                    title.textContent = "✅ KHẢO SÁT HỢP LỆ!";
+                    title.textContent = "KHẢO SÁT HỢP LỆ!";
                     desc.textContent = `Hệ thống đã phê duyệt phiếu #${res.submission_id}. Dữ liệu đã được ghi nhận vào sổ cái tài chính.`;
                 } else {
                     card.className = "verdict-card rejected";
-                    title.textContent = "❌ KHẢO SÁT CHƯA HỢP LỆ";
-                    desc.textContent = res.reason || "Ảnh không đủ độ nét hoặc lệch thông tin khảo sát.";
+                    title.textContent = "KHẢO SÁT CHƯA HỢP LỆ";
                 }
 
                 details.innerHTML = `
@@ -744,8 +743,7 @@ CAMERA_FORM_HTML = """<!DOCTYPE html>
                 alert("Lỗi kết nối máy chủ! Vui lòng thử lại.");
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = `<span>🚀 Gửi Phiếu Khảo Sát Khác</span>`;
-            }
+                submitBtn.innerHTML = `<span>Gửi Phiếu Khảo Sát Khác</span>`;
         }
 
         window.addEventListener('DOMContentLoaded', () => {

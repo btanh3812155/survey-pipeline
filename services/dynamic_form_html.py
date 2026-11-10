@@ -3,28 +3,20 @@ from typing import Optional
 from config import settings
 from services.form_engine import FormSchema
 
-def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional[str] = None, ctv_code: Optional[str] = None, ctv_slug: Optional[str] = None) -> str:
+def render_dynamic_form_html(
+    schema: FormSchema,
+    telegram_bot_username: Optional[str] = None,
+    ctv_code: Optional[str] = None,
+    ctv_slug: Optional[str] = None,
+    ref_code: Optional[str] = None,
+) -> str:
     tg_bot = telegram_bot_username if telegram_bot_username is not None else (getattr(settings, "TELEGRAM_DRIVER_BOT_USERNAME", None) or settings.TELEGRAM_BOT_USERNAME or "TrustBridgeVN_bot")
     locked_ctv = ctv_code or ""
     active_ctv_slug = ctv_slug or ""
-    escaped_title = html.escape(schema.title)
+    active_ref = ref_code or (ctv_code.split("_")[0].lower() if ctv_code and ctv_code.lower().startswith("ctv") else "")
+    escaped_title = html.escape(schema.title or "")
     escaped_desc = html.escape(schema.description or "")
-    escaped_questions = []
-    for q in schema.questions:
-        q_copy = q.model_copy()
-        if q_copy.title:
-            q_copy.title = html.escape(q_copy.title)
-        if q_copy.description:
-            q_copy.description = html.escape(q_copy.description)
-        if q_copy.options:
-            q_copy.options = [html.escape(opt) for opt in q_copy.options]
-        escaped_questions.append(q_copy)
-
-    escaped_schema = schema.model_copy(update={
-        "title": escaped_title,
-        "description": escaped_desc,
-        "questions": escaped_questions,
-    })
+    # schema_json prepared below
     is_form_test_mode = bool(schema.settings and schema.settings.is_test_mode)
     test_banner_html = ""
     if is_form_test_mode:
@@ -41,7 +33,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         <button type="button" class="btn-test-toggle" id="btnToggleTestMode" onclick="toggleTestMode()">Thử nghiệm</button>
     </div>
         """
-    schema_json = escaped_schema.model_dump_json().replace("</script>", "<\\/script>")
+    schema_json = schema.model_dump_json().replace("</script>", "<\\/script>")
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -51,6 +43,9 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>{escaped_title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg: #090d16;
@@ -78,7 +73,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100%;
@@ -201,21 +196,24 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
         .btn-floating-help {{
             position: fixed;
-            bottom: 20px;
-            right: 20px;
+            right: 18px;
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+            width: 170px;
+            box-sizing: border-box;
             background: linear-gradient(135deg, #0284c7, #0369a1);
             color: #ffffff !important;
             border: 1px solid rgba(255, 255, 255, 0.25);
-            padding: 9px 15px;
+            padding: 10px 14px;
             border-radius: 999px;
-            font-size: 0.82rem;
+            font-size: 0.88rem;
             font-weight: 700;
             text-decoration: none;
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 7px;
             box-shadow: 0 6px 20px rgba(2, 132, 199, 0.45);
-            z-index: 99;
+            z-index: 1000;
             transition: all 0.2s ease;
         }}
         .btn-floating-help:hover {{
@@ -323,9 +321,54 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         }}
 
         .q-desc {{
-            font-size: 0.8rem;
+            font-size: 0.82rem;
             color: var(--muted);
-            line-height: 1.4;
+            line-height: 1.45;
+            margin-top: 4px;
+        }}
+        .q-desc a {{
+            color: #38bdf8;
+            text-decoration: underline;
+            font-weight: 600;
+            transition: color 0.15s;
+        }}
+        .q-desc a:hover {{
+            color: #60a5fa;
+        }}
+        .q-desc img, .q-desc-img {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            margin: 8px 0;
+            border: 1px solid var(--border);
+            display: block;
+        }}
+        .q-tooltip-circle-btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            color: #38bdf8;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 0;
+            flex-shrink: 0;
+        }}
+
+        .q-tooltip-circle-btn:hover {{
+            background: rgba(56, 189, 248, 0.25);
+            border-color: #38bdf8;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+            transform: scale(1.08);
+        }}
+
+        .q-tooltip-circle-btn svg {{
+            display: block;
+            stroke: currentColor;
         }}
 
         .btn-sample {{
@@ -469,15 +512,57 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             border-radius: 50%;
             border: 4px solid #fff;
             background: linear-gradient(135deg, #10b981, #059669);
-            margin: 10px auto 0 auto;
+            margin: 0;
             display: none;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            transition: opacity 0.15s, filter 0.15s;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }}
+        .btn-camera-snap:hover {{
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+        }}
+        .btn-camera-snap:active {{
+            transform: scale(0.96);
         }}
 
-        /* Greyed out during retake delay */
+        .btn-camera-upload {{
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            border: 4px solid #fff;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            margin: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }}
+        .btn-camera-upload:hover {{
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.6);
+        }}
+        .btn-camera-upload:active {{
+            transform: scale(0.96);
+        }}
+        .btn-camera-upload svg {{
+            width: 30px;
+            height: 30px;
+            fill: #ffffff;
+            display: block;
+        }}
         .btn-camera-snap.disabled-delay {{
             opacity: 0.35 !important;
             filter: grayscale(1) !important;
@@ -569,19 +654,22 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             top: 12px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.75);
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            backdrop-filter: blur(4px);
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(6px);
             color: #f8fafc;
-            font-size: 0.76rem;
+            font-size: 0.95rem;
+            line-height: 1.4;
             font-weight: 600;
-            padding: 4px 12px;
-            border-radius: 16px;
-            max-width: 90%;
+            padding: 8px 14px;
+            border-radius: 12px;
+            max-width: 92%;
+            width: max-content;
+            box-sizing: border-box;
             text-align: center;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: normal;
+            word-break: break-word;
             pointer-events: none;
             z-index: 4;
         }}
@@ -770,15 +858,18 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
         .btn-floating-reset {{
             position: fixed;
-            bottom: calc(env(safe-area-inset-bottom, 20px) + 18px);
             right: 18px;
+            left: auto;
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 72px);
+            width: 170px;
+            box-sizing: border-box;
             z-index: 1000;
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.95), rgba(185, 28, 28, 0.95));
             border: 2px solid #fecaca;
             color: #ffffff;
-            padding: 13px 24px;
+            padding: 10px 14px;
             border-radius: 30px;
-            font-size: 0.98rem;
+            font-size: 0.92rem;
             font-weight: 800;
             cursor: pointer;
             backdrop-filter: blur(10px);
@@ -786,10 +877,11 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
         }}
         .btn-floating-reset:hover {{
-            transform: scale(1.05);
+            transform: scale(1.03);
             box-shadow: 0 8px 26px rgba(239, 68, 68, 0.7);
         }}
         .btn-floating-reset:active {{
@@ -863,10 +955,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 <div class="sig-baseline"></div>
                 <div class="sig-baseline-text" id="txtSigBaselineHint">Ký tên phía trên đường kẻ</div>
             </div>
-            <div class="paper-footer">
-                <button type="button" class="btn-modal cancel" onclick="closeSigModal()" id="btnSigClose">Đóng</button>
-                <button type="button" class="btn-modal clear" onclick="clearModalSig()" id="btnSigClear">Ký lại</button>
-                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()" id="btnSigConfirm">Hoàn tất chữ ký</button>
+            <div class="paper-footer" style="touch-action: manipulation;">
+                <button type="button" class="btn-modal cancel" onclick="closeSigModal()" ontouchend="closeSigModal()" id="btnSigClose">Đóng</button>
+                <button type="button" class="btn-modal clear" onclick="clearModalSig()" ontouchend="clearModalSig()" id="btnSigClear">Ký lại</button>
+                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()" ontouchend="confirmModalSig()" id="btnSigConfirm">Hoàn tất chữ ký</button>
             </div>
         </div>
     </div>
@@ -913,10 +1005,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             <div id="subResultAppealBox" style="display:none; flex-direction:column; gap:6px; margin-top:8px;">
                 <button type="button" id="btnRequestManualReview" onclick="requestManualReviewFromModal()" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 14px; border-radius:10px; background:linear-gradient(135deg, #d97706, #b45309); color:#fff; font-weight:700; font-size:0.92rem; border:none; cursor:pointer; box-shadow:0 4px 12px rgba(217,119,6,0.3); transition:all 0.2s;">
                     <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-                    <span>🙋 Yêu cầu kiểm tra lại</span>
+                    <span>Yêu cầu kiểm tra lại</span>
                 </button>
                 <div id="txtAppealQuotaHint" style="font-size:0.75rem; color:#fbbf24; text-align:center; line-height:1.4;">
-                    ⚠️ Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế
+                    Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế
                 </div>
             </div>
             <button type="button" id="btnSubResultHistory" onclick="closeSubmissionResultModal(); openHistoryModal();" style="display:none; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3); border:none; cursor:pointer;">
@@ -946,32 +1038,32 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     <span id="txtQrModalTitle">Chia Sẻ Biểu Mẫu (Mã QR)</span>
                 </h3>
-                <button type="button" class="btn-modal cancel" style="flex:0 0 auto; padding:4px 10px; font-size:0.8rem;" onclick="closeQrModal()">✕</button>
+                <button type="button" class="btn-modal cancel" style="flex:0 0 auto; padding:4px 10px; font-size:1.1rem; line-height:1;" onclick="closeQrModal()">&times;</button>
             </div>
             
             <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
                 <div id="qrCodeContainer" style="background:#ffffff; padding:16px; border-radius:12px; display:inline-flex; justify-content:center; align-items:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); min-width:220px; min-height:220px;"></div>
                 
                 <div style="width:100%;">
-                    <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;" id="txtQrUrlLabel">LINK TRUY CẬP (SUBDOMAIN NGẪU NHIÊN):</div>
+                    <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;" id="txtQrUrlLabel">LINK TRUY CẬP BIỂU MẪU:</div>
                     <div style="display:flex; gap:6px;">
                         <input type="text" id="qrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
-                        <button type="button" onclick="regenerateRandomQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer;" title="Tạo mã ngẫu nhiên mới">🔄</button>
+                        <button type="button" onclick="regenerateRandomQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Tạo mã ngẫu nhiên mới"><svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                     </div>
                 </div>
 
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
                     <button type="button" class="btn-modal confirm" onclick="copyQrLink()" style="background:#2563eb; color:#fff; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <span>📋 Sao Chép Link</span>
+                        <span>Sao Chép Link</span>
                     </button>
                     <button type="button" class="btn-modal confirm" onclick="shareQrLink()" style="background:#0284c7; color:#fff; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <span>📱 Chia Sẻ</span>
+                        <span>Chia Sẻ</span>
                     </button>
                 </div>
                 
                 <button type="button" onclick="saveQrImage()" style="width:100%; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    <span>💾 Lưu Ảnh QR</span>
+                    <span>Lưu Ảnh QR</span>
                 </button>
             </div>
         </div>
@@ -985,12 +1077,17 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
         const SCHEMA = {schema_json};
         const LOCKED_CTV_CODE = "{locked_ctv}";
         const ACTIVE_CTV_SLUG = "{active_ctv_slug}";
+        const ACTIVE_REF_CODE = "{active_ref}";
+
+        function decodeHtmlEntities(str) {{
+            if (typeof str !== 'string') return str;
+            return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+        }}
         let answers = {{}};
         let gpsCoordinates = null;
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
         const activeSlotByQId = {{}};
-
         // Bilingual Translations
         const I18N = {{
             vi: {{
@@ -999,7 +1096,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 gps_btn: "Bật vị trí",
                 gps_getting: "Đang xác định vị trí...",
                 gps_acquiring: "Đang lấy vị trí...",
-                gps_acquired: "📍 Đã xác nhận vị trí",
+                gps_acquired: "Đã xác nhận vị trí",
                 gps_denied: "Quyền vị trí bị từ chối. Vui lòng cho phép trong cài đặt.",
                 gps_err: "Chưa thể lấy vị trí. Vui lòng thử lại.",
                 mode_label: "Chế độ biểu mẫu:",
@@ -1054,7 +1151,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_open_telegram: "Mở Telegram Bot",
                 btn_view_history_web: "Tra cứu lịch sử nộp trên web",
                 btn_new_submission: "Làm phiếu mới",
-                locked_notice: "🔒 Vui lòng ký tên (Câu 1) và chọn 'Tôi đồng ý' (Câu 2) để mở toàn bộ câu hỏi khảo sát (Mã CTV, Xe, Doanh thu, Chụp ảnh...)"
+                locked_notice: "Vui lòng ký tên (Câu 1) và chọn 'Tôi đồng ý' (Câu 2) để mở toàn bộ câu hỏi khảo sát (Mã CTV, Xe, Doanh thu, Chụp ảnh...)"
             }},
             en: {{
                 code: "EN",
@@ -1062,7 +1159,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 gps_btn: "Enable Location",
                 gps_getting: "Detecting location...",
                 gps_acquiring: "Getting location...",
-                gps_acquired: "📍 Location acquired",
+                gps_acquired: "Location acquired",
                 gps_denied: "Location permission denied. Please allow in settings.",
                 gps_err: "Cannot obtain location. Please try again.",
                 mode_label: "Form Mode:",
@@ -1117,7 +1214,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 btn_open_telegram: "Open Telegram Bot",
                 btn_view_history_web: "View submission history on web",
                 btn_new_submission: "New Submission",
-                locked_notice: "🔒 Please sign (Q1) and select 'Tôi đồng ý' (Q2) to unlock all survey questions (CTV Code, Vehicle, Revenue, Photos...)"
+                locked_notice: "Please sign (Q1) and select 'Tôi đồng ý' (Q2) to unlock all survey questions (CTV Code, Vehicle, Revenue, Photos...)"
             }}
         }};
 
@@ -1131,6 +1228,28 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
+        }}
+
+        function formatRichDescription(text) {{
+            if (!text) return '';
+            let raw = String(text);
+            
+            // 1. Markdown Images: ![alt](url) -> <img ...>
+            raw = raw.replace(/!\\[([^\\]]*)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, (match, alt, url) => {{
+                return `<img src="${{url}}" alt="${{escapeHtml(alt || '')}}" class="q-desc-img" loading="lazy">`;
+            }});
+
+            // 2. Markdown Links: [label](url) -> <a ...>
+            raw = raw.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, (match, label, url) => {{
+                return `<a href="${{url}}" target="_blank" rel="noopener noreferrer">${{escapeHtml(label)}}</a>`;
+            }});
+
+            // 3. Raw URLs (not already part of an href or src)
+            raw = raw.replace(/(^|[^"'])(https?:\\/\\/[^\\s<)]+)/g, (match, prefix, url) => {{
+                return `${{prefix}}<a href="${{url}}" target="_blank" rel="noopener noreferrer">${{url}}</a>`;
+            }});
+
+            return raw;
         }}
 
         function applyI18n() {{
@@ -1424,7 +1543,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const t = I18N[currentLang];
             SCHEMA.questions.forEach((q, idx) => {{
                 const card = document.createElement('div');
-                card.className = "question-card";
+                card.className = idx > 1 ? "question-card hidden" : "question-card";
                 card.id = `card_${{q.id}}`;
                 card.dataset.qid = q.id;
 
@@ -1457,16 +1576,21 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
                 const cleanTitle = q.title.replace(/^[0-9]+[.:\\s-]+/, '');
                 const tooltipBtn = q.tooltip ? `
-                    <span class="q-tooltip-trigger" onclick="alert('${{escapeHtml(q.tooltip)}}')" title="Bấm để xem hướng dẫn">
-                        ℹ️
-                    </span>
+                    <button type="button" class="q-tooltip-circle-btn" onclick="alert('${{escapeHtml(q.tooltip)}}')" title="Bấm để xem hướng dẫn" aria-label="Hướng dẫn câu hỏi">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                    </button>
                 ` : '';
                 card.innerHTML = `
                     <div class="q-header">
                         <div class="q-title-row">
-                            <span class="q-title">${{idx + 1}}. ${{cleanTitle}} ${{q.required ? '<span class="q-required">*</span>' : ''}} ${{tooltipBtn}}</span>
+                            <span class="q-title">${{idx + 1}}. ${{cleanTitle}} ${{q.required ? '<span class="q-required">*</span>' : ''}}</span>
+                            ${{tooltipBtn}}
                         </div>
-                        ${{q.description ? `<p class="q-desc">${{q.description}}</p>` : ''}}
+                        ${{q.description ? `<div class="q-desc">${{formatRichDescription(q.description)}}</div>` : ''}}
                         ${{sampleHtml}}
                     </div>
                     <div class="q-body" id="body_${{q.id}}" style="width:100%;"></div>
@@ -1528,8 +1652,9 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 const isCtvField = (q.id === 'ctv_code' || q.id === 'collaborator_id') && Boolean(LOCKED_CTV_CODE);
                 sel.innerHTML = '<option value="">-- Select --</option>' + 
                     (q.options || []).map(o => {{
-                        const isSel = (isCtvField && o === LOCKED_CTV_CODE) || (answers[q.id] === o);
-                        return `<option value="${{o}}" ${{isSel ? 'selected' : ''}}>${{o}}</option>`;
+                        const cleanOpt = decodeHtmlEntities(o);
+                        const isSel = (isCtvField && (cleanOpt === LOCKED_CTV_CODE || cleanOpt === ACTIVE_REF_CODE)) || (answers[q.id] === cleanOpt);
+                        return `<option value="${{escapeHtml(cleanOpt)}}" ${{isSel ? 'selected' : ''}}>${{escapeHtml(cleanOpt)}}</option>`;
                     }}).join('');
                 if (isCtvField) {{
                     answers[q.id] = LOCKED_CTV_CODE;
@@ -1545,13 +1670,14 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 const list = document.createElement('div');
                 list.className = 'choices-list';
                 (q.options || []).forEach(opt => {{
+                    const cleanOpt = decodeHtmlEntities(opt);
                     const item = document.createElement('div');
                     item.className = 'choice-item';
-                    item.textContent = opt;
+                    item.textContent = cleanOpt;
                     item.onclick = () => {{
                         list.querySelectorAll('.choice-item').forEach(c => c.classList.remove('selected'));
                         item.classList.add('selected');
-                        answers[q.id] = opt;
+                        answers[q.id] = cleanOpt;
                         evaluateConditionals();
                         scheduleDraftSave();
                     }};
@@ -1564,27 +1690,50 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 if (!Array.isArray(answers[q.id])) {{
                     answers[q.id] = [];
                 }}
+                const compat = q.group_compatibility || {{}};
+                const items = [];
                 (q.options || []).forEach(opt => {{
+                    const rawLabel = typeof opt === 'object' && opt !== null ? opt.label : opt;
+                    const label = decodeHtmlEntities(rawLabel);
+                    const grp = (typeof opt === 'object' && opt !== null && opt.group) ? opt.group : 'default';
                     const item = document.createElement('div');
-                    const isSelected = Array.isArray(answers[q.id]) && answers[q.id].includes(opt);
+                    const isSelected = Array.isArray(answers[q.id]) && (answers[q.id].includes(label) || answers[q.id].includes(rawLabel));
                     item.className = 'choice-item' + (isSelected ? ' selected' : '');
-                    item.textContent = opt;
+                    item.textContent = label;
                     item.onclick = () => {{
                         if (!Array.isArray(answers[q.id])) {{
                             answers[q.id] = [];
                         }}
-                        const idx = answers[q.id].indexOf(opt);
+                        const idx = answers[q.id].indexOf(label);
                         if (idx >= 0) {{
                             answers[q.id].splice(idx, 1);
                             item.classList.remove('selected');
                         }} else {{
-                            answers[q.id].push(opt);
+                            items.forEach(other => {{
+                                if (other.item !== item && other.item.classList.contains('selected')) {{
+                                    const otherGrp = other.group;
+                                    const isCompat = (
+                                        grp === otherGrp ||
+                                        (compat[grp] && compat[grp].includes(otherGrp)) ||
+                                        (compat[otherGrp] && compat[otherGrp].includes(grp))
+                                    );
+                                    if (!isCompat) {{
+                                        const remIdx = answers[q.id].indexOf(other.label);
+                                        if (remIdx >= 0) {{
+                                            answers[q.id].splice(remIdx, 1);
+                                        }}
+                                        other.item.classList.remove('selected');
+                                    }}
+                                }}
+                            }});
+                            answers[q.id].push(label);
                             item.classList.add('selected');
                         }}
                         evaluateConditionals();
                         scheduleDraftSave();
                     }};
                     list.appendChild(item);
+                    items.push({{ item, label, group: grp }});
                 }});
                 parent.appendChild(list);
             }} else if (q.type === 'camera_webrtc') {{
@@ -1618,7 +1767,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }}
 
                 const activeSlotObj = (hasSlots && q.image_slots[activeSlotIdx]) ? q.image_slots[activeSlotIdx] : null;
-                const slotGuideText = activeSlotObj ? `Căn chỉnh: ${{activeSlotObj.title || ('Ảnh ' + (activeSlotIdx + 1))}}` : t.cam_hint;
+                const activeSlotTooltip = activeSlotObj && activeSlotObj.tooltip && activeSlotObj.tooltip.trim() ? ` - ${{activeSlotObj.tooltip.trim()}}` : '';
+                const slotGuideText = activeSlotObj ? `${{activeSlotObj.title || ('Ảnh ' + (activeSlotIdx + 1))}}${{activeSlotTooltip}}` : t.cam_hint;
 
                 parent.innerHTML = `
                     ${{slotsHtml}}
@@ -1636,9 +1786,15 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         <img id="img_${{q.id}}" class="captured-img" alt="Captured">
                     </div>
                     <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:8px;">
-                        <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')">
-                            <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
-                        </button>
+                        <div style="display:flex; align-items:center; justify-content:center; gap:20px; margin-top:6px;">
+                            <button type="button" class="btn-camera-snap" id="snap_${{q.id}}" onclick="snapPhoto('${{q.id}}')" title="Chụp ảnh trực tiếp">
+                                <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff"><path d="M12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3m0-7C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8"/></svg>
+                            </button>
+                            <label class="btn-camera-upload" id="uploadLabel_${{q.id}}" title="Tải ảnh có sẵn từ thiết bị / Thư viện" style="display:${{activeSlotObj && activeSlotObj.allow_upload === false ? 'none' : 'inline-flex'}};">
+                                <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+                                <input type="file" accept="image/*" style="display:none;" onchange="handleSlotFileUpload('${{q.id}}', this)">
+                            </label>
+                        </div>
                         <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">${{t.btn_retake}}</button>
                         <button type="button" class="btn-cam-deactivate" id="btnCamOff_${{q.id}}" onclick="deactivateCamera('${{q.id}}')">${{t.btn_cam_off}}</button>
                     </div>
@@ -1677,34 +1833,44 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
             const lockedNoticeEl = document.getElementById('lockedQuestionsNotice');
             if (lockedNoticeEl) {{
-                if (!isUnlocked) {{
-                    lockedNoticeEl.style.display = 'flex';
-                }} else {{
-                    lockedNoticeEl.style.display = 'none';
-                }}
+                lockedNoticeEl.style.display = isUnlocked ? 'none' : 'flex';
             }}
 
-            SCHEMA.questions.forEach(q => {{
+            SCHEMA.questions.forEach((q, idx) => {{
+                // Q1 (driver_signature) and Q2 (consent_choice) are always visible
+                if (q.id === 'driver_signature' || q.id === 'consent_choice' || idx <= 1) {{
+                    return;
+                }}
+
+                const card = document.getElementById(`card_${{q.id}}`);
+                if (!card) return;
+
+                // Rule 1: If first 2 consent questions are not satisfied, ALL subsequent questions are HIDDEN!
+                if (!isUnlocked) {{
+                    card.classList.add('hidden');
+                    return;
+                }}
+
+                // Rule 2: If unlocked, check specific question conditional rule
+                let isMatch = true;
                 if (q.conditional) {{
                     const parentVal = answers[q.conditional.depends_on_question_id];
-                    const card = document.getElementById(`card_${{q.id}}`);
-                    if (!card) return;
-
-                    let isMatch = false;
                     if (q.conditional.depends_on_question_id === 'consent_choice') {{
                         isMatch = isUnlocked;
                     }} else if (q.conditional.operator === 'equals') {{
                         isMatch = (parentVal === q.conditional.expected_value);
                     }} else if (q.conditional.operator === 'in') {{
                         isMatch = Array.isArray(q.conditional.expected_value) && q.conditional.expected_value.includes(parentVal);
-                    }}
-
-                    if (isMatch) {{
-                        card.classList.remove('hidden');
                     }} else {{
-                        card.classList.add('hidden');
-                        delete answers[q.id];
+                        isMatch = Boolean(parentVal);
                     }}
+                }}
+
+                if (isMatch) {{
+                    card.classList.remove('hidden');
+                }} else {{
+                    card.classList.add('hidden');
+                    delete answers[q.id];
                 }}
             }});
         }}
@@ -1786,8 +1952,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
             // Update slot guidance title on overlay & badge
             const slotObj = (q.image_slots && q.image_slots[slotIdx]) ? q.image_slots[slotIdx] : null;
-            const slotTooltip = slotObj && slotObj.tooltip ? ` (${{slotObj.tooltip}})` : '';
-            const guideText = slotObj ? `Căn chỉnh: ${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}${{slotTooltip}}` : I18N[currentLang].cam_hint;
+            const slotTooltip = slotObj && slotObj.tooltip && slotObj.tooltip.trim() ? ` - ${{slotObj.tooltip.trim()}}` : '';
+            const guideText = slotObj ? `${{slotObj.title || ('Ảnh ' + (slotIdx + 1))}}${{slotTooltip}}` : I18N[currentLang].cam_hint;
             const badge = document.getElementById(`slotBadge_${{qid}}`);
             if (badge) badge.textContent = guideText;
             // Check if current slot has a captured photo
@@ -1798,6 +1964,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             const snapBtn = document.getElementById(`snap_${{qid}}`);
             const retakeBtn = document.getElementById(`retake_${{qid}}`);
             const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
+            const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
+            if (uploadLabel) {{
+                uploadLabel.style.display = (slotObj && slotObj.allow_upload === false) ? 'none' : 'inline-flex';
+            }}
 
             if (answers[slotKey] && answers[slotKey] instanceof Blob) {{
                 // Show captured image preview for this slot
@@ -1860,6 +2030,55 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             }}
         }}
 
+        function handleSlotFileUpload(qid, input) {{
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
+            const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
+
+            const img = document.getElementById(`img_${{qid}}`);
+            const vid = document.getElementById(`vid_${{qid}}`);
+            const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
+            const snapBtn = document.getElementById(`snap_${{qid}}`);
+            const retakeBtn = document.getElementById(`retake_${{qid}}`);
+            const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
+
+            if (vid) vid.style.display = 'none';
+            if (screenOff) screenOff.style.display = 'none';
+            if (img) {{
+                img.src = URL.createObjectURL(file);
+                img.style.display = 'block';
+            }}
+            if (snapBtn) snapBtn.style.display = 'none';
+            const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
+            if (uploadLabel) uploadLabel.style.display = 'none';
+            if (retakeBtn) retakeBtn.style.display = 'inline-block';
+            if (btnCamOff) btnCamOff.style.display = 'inline-block';
+
+            if (hasSlots) {{
+                answers[`${{qid}}_${{currentSlotIdx}}`] = file;
+                syncAnswersImageList(qid);
+                updateSlotPillCapturedState(qid, currentSlotIdx, true);
+
+                let nextUncapturedIdx = -1;
+                for (let i = 0; i < q.image_slots.length; i++) {{
+                    const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
+                    if (!answers[`${{qid}}_${{checkIdx}}`]) {{
+                        nextUncapturedIdx = checkIdx;
+                        break;
+                    }}
+                }}
+                if (nextUncapturedIdx !== -1) {{
+                    selectCameraSlot(qid, nextUncapturedIdx);
+                }}
+            }} else {{
+                answers[qid] = file;
+            }}
+
+            evaluateConditionals();
+            scheduleDraftSave();
+        }}
         function snapPhoto(qid) {{
             const vid = document.getElementById(`vid_${{qid}}`);
             const img = document.getElementById(`img_${{qid}}`);
@@ -1925,9 +2144,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 img.style.display = 'block';
                 vid.style.display = 'none';
                 snapBtn.style.display = 'none';
+                const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
+                if (uploadLabel) uploadLabel.style.display = 'none';
                 if (btnCamOff) btnCamOff.style.display = 'none';
                 retakeBtn.style.display = 'inline-block';
-
                 // Automatically shut off camera tracks to save battery when all captured
                 if (activeVideoStream) {{
                     activeVideoStream.getTracks().forEach(t => t.stop());
@@ -1961,12 +2181,12 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 const res = await resp.json();
                 if (res.status === 'BLURRY') {{
                     if (errEl) {{
-                        errEl.textContent = `⚠️ Slot ${{slotIdx + 1}}: ${{res.message}}`;
+                        errEl.textContent = `Lưu ý Slot ${{slotIdx + 1}}: ${{res.message}}`;
                         errEl.style.display = 'block';
                     }}
                 }} else if (res.status === 'TAMPERED') {{
                     if (errEl) {{
-                        errEl.textContent = `⚠️ Slot ${{slotIdx + 1}}: ${{res.message}}`;
+                        errEl.textContent = `Lưu ý Slot ${{slotIdx + 1}}: ${{res.message}}`;
                         errEl.style.display = 'block';
                     }}
                 }} else {{
@@ -1999,7 +2219,11 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
             if (img) img.style.display = 'none';
             if (retakeBtn) retakeBtn.style.display = 'none';
-
+            const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
+            if (uploadLabel) {{
+                const slotObj = (hasSlots && q.image_slots[currentSlotIdx]) ? q.image_slots[currentSlotIdx] : null;
+                uploadLabel.style.display = (slotObj && slotObj.allow_upload === false) ? 'none' : 'inline-flex';
+            }}
             // Auto turn camera back on
             await activateCamera(qid);
 
@@ -2012,8 +2236,11 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             }}
         }}
 
-        // 5. Paper Signature Modal (Root Window Touchmove Prevention = 100% Zero Jerk)
+        // 5. Paper Signature Modal
         function preventWindowScroll(e) {{
+            if (e.target && (e.target.closest('button') || e.target.closest('.btn-modal') || e.target.closest('.paper-footer'))) {{
+                return;
+            }}
             e.preventDefault();
         }}
 
@@ -2047,24 +2274,50 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
             hasModalSignature = false;
         }}
+        function hasCanvasContent(canvas) {{
+            try {{
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imgData.data;
+                for (let i = 0; i < data.length; i += 32) {{
+                    if (data[i] < 240 || data[i+1] < 240 || data[i+2] < 240) {{
+                        return true;
+                    }}
+                }}
+            }} catch(e) {{}}
+            return false;
+        }}
 
         function confirmModalSig() {{
-            if (!hasModalSignature) {{
-                alert("Vui lòng vẽ chữ ký!");
+            const targetQId = activeSignatureTargetQId || 'driver_signature';
+            const hasDrawn = hasModalSignature || hasCanvasContent(sigCanvas);
+            if (!hasDrawn) {{
+                alert("Vui lòng vẽ chữ ký trên bảng trắng trước khi bấm Hoàn tất!");
                 return;
             }}
-            const dataUrl = sigCanvas.toDataURL('image/jpeg', 0.95);
-            answers[activeSignatureTargetQId] = dataUrl;
+            try {{
+                const dataUrl = sigCanvas.toDataURL('image/png');
+                answers[targetQId] = dataUrl;
+                answers['driver_signature'] = dataUrl;
 
-            const previewImg = document.getElementById(`sigImg_${{activeSignatureTargetQId}}`);
-            const label = document.getElementById(`sigBtnLabel_${{activeSignatureTargetQId}}`);
-            previewImg.src = dataUrl;
-            previewImg.style.display = 'block';
-            label.textContent = I18N[currentLang].sig_done;
-            label.style.color = "#0f172a";
-            label.style.fontWeight = "700";
+                const previewImg = document.getElementById(`sigImg_${{targetQId}}`);
+                const label = document.getElementById(`sigBtnLabel_${{targetQId}}`);
+                if (previewImg) {{
+                    previewImg.src = dataUrl;
+                    previewImg.style.display = 'block';
+                }}
+                if (label) {{
+                    const t = (typeof currentLang !== 'undefined' && I18N[currentLang]) ? I18N[currentLang] : I18N.vi;
+                    label.textContent = t.sig_done;
+                    label.style.color = "#0f172a";
+                    label.style.fontWeight = "700";
+                }}
+            }} catch(err) {{
+                console.error("Signature save error:", err);
+            }}
             closeSigModal();
             evaluateConditionals();
+            if (typeof scheduleDraftSave === 'function') scheduleDraftSave();
         }}
 
         function getSigPos(e) {{
@@ -2133,11 +2386,25 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             if (e.pointerType === 'touch') return;
             stopDrawing();
         }});
-
         sigCanvas.addEventListener('pointercancel', (e) => {{
             if (e.pointerType === 'touch') return;
             stopDrawing();
         }});
+
+        sigCanvas.addEventListener('mousedown', (e) => {{
+            const p = getSigPos(e);
+            startDrawing(p.x, p.y);
+        }});
+
+        sigCanvas.addEventListener('mousemove', (e) => {{
+            if (isDrawing) {{
+                const p = getSigPos(e);
+                drawMove(p.x, p.y);
+            }}
+        }});
+
+        sigCanvas.addEventListener('mouseup', () => stopDrawing());
+        sigCanvas.addEventListener('mouseleave', () => stopDrawing());
 
         // 6. Reset Form
         function promptResetForm() {{ document.getElementById('confirmResetModal').style.display = 'flex'; }}
@@ -2192,7 +2459,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     }}
 
                     const slot0 = (q.image_slots && q.image_slots[0]) ? q.image_slots[0] : null;
-                    const guideText = slot0 ? `Căn chỉnh: ${{slot0.title || 'Ảnh 1'}}` : I18N[currentLang].cam_hint;
+                    const slot0Tooltip = slot0 && slot0.tooltip && slot0.tooltip.trim() ? ` - ${{slot0.tooltip.trim()}}` : '';
+                    const guideText = slot0 ? `${{slot0.title || 'Ảnh 1'}}${{slot0Tooltip}}` : I18N[currentLang].cam_hint;
                     const badge = document.getElementById(`slotBadge_${{q.id}}`);
                     if (badge) badge.textContent = guideText;
                 }}
@@ -2265,7 +2533,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 tgBtn.style.display = 'flex';
                 const tgTxt = document.getElementById('txtSubResultTelegram');
                 if (tgTxt) {{
-                    tgTxt.textContent = status === 'APPROVED' ? 'Xem trên Telegram' : '💬 Yêu Cầu Hỗ Trợ Qua Telegram';
+                    tgTxt.textContent = status === 'APPROVED' ? 'Xem trên Telegram' : 'Yêu Cầu Hỗ Trợ Qua Telegram';
                 }}
             }}
 
@@ -2278,10 +2546,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                         btnA.disabled = false;
                         btnA.style.opacity = '1';
                         btnA.style.background = 'linear-gradient(135deg, #d97706, #b45309)';
-                        btnA.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><span>🙋 Yêu cầu kiểm tra lại</span>';
+                        btnA.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><span>Yêu cầu kiểm tra lại</span>';
                     }}
                     const hint = document.getElementById('txtAppealQuotaHint');
-                    if (hint) hint.textContent = '⚠️ Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế';
+                    if (hint) hint.textContent = 'Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế';
                 }} else {{
                     appealBox.style.display = 'none';
                 }}
@@ -2303,7 +2571,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             if (btn) {{
                 btn.disabled = true;
                 btn.style.opacity = '0.6';
-                btn.innerHTML = '<span>⏳ Đang gửi yêu cầu...</span>';
+                btn.innerHTML = '<span>Đang gửi yêu cầu...</span>';
             }}
 
             try {{
@@ -2320,24 +2588,24 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 if (data.status === 'RATE_LIMITED') {{
                     if (btn) {{
                         btn.style.background = '#64748b';
-                        btn.innerHTML = '<span>⚠️ Đã hết lượt khiếu nại</span>';
+                        btn.innerHTML = '<span>Đã hết lượt khiếu nại</span>';
                     }}
                     if (hint) hint.textContent = data.message || 'Bạn đã dùng hết 3 lượt khiếu nại trong 8 giờ này.';
                     alert(data.message || 'Bạn đã dùng hết 3 lượt khiếu nại trong 8 giờ này.');
                 }} else {{
                     if (btn) {{
                         btn.style.background = '#059669';
-                        btn.innerHTML = '<span>✅ Đã gửi yêu cầu thành công!</span>';
+                        btn.innerHTML = '<span>Đã gửi yêu cầu thành công!</span>';
                     }}
                     const rem = data.remaining_appeals !== undefined ? data.remaining_appeals : 2;
-                    if (hint) hint.textContent = `✅ Đã tiếp nhận! Bạn còn ${{rem}}/3 lượt khiếu nại trong phiên 8h này.`;
+                    if (hint) hint.textContent = `Đã tiếp nhận! Bạn còn ${{rem}}/3 lượt khiếu nại trong phiên 8h này.`;
                     alert(`Đã gửi yêu cầu kiểm tra lại thành công!\\n\\nBạn còn ${{rem}}/3 lượt trong vòng 8 giờ. Điều phối viên sẽ đối soát ảnh và phản hồi sớm.`);
                 }}
             }} catch (err) {{
                 if (btn) {{
                     btn.disabled = false;
                     btn.style.opacity = '1';
-                    btn.innerHTML = '<span>❌ Lỗi kết nối, thử lại</span>';
+                    btn.innerHTML = '<span>Lỗi kết nối, thử lại</span>';
                 }}
                 alert('Không thể kết nối đến máy chủ: ' + err.message);
             }}
@@ -2513,6 +2781,10 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             formData.append('idempotency_key', clientSubmissionId);
             formData.append('bypass_img_check', shouldBypass ? 'true' : 'false');
+            if (LOCKED_CTV_CODE) {{
+                formData.append('ctv_code', LOCKED_CTV_CODE);
+                formData.append('collaborator_id', LOCKED_CTV_CODE);
+            }}
 
             if (answers['driver_phone']) formData.append('driver_phone', answers['driver_phone']);
             if (answers['license_plate']) formData.append('license_plate', answers['license_plate']);
@@ -2564,11 +2836,12 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             return res;
         }}
 
-        function getFormSubdomainUrl(randSuffix) {{
-            const formSlug = (SCHEMA.form_id || "income_survey").replace(/_/g, "-");
+        function getFormShareUrl(randSuffix) {{
             const host = window.location.hostname;
-            let baseDomain = host;
-            if (host.includes("sslip.io")) {{
+            let baseDomain = window.location.host;
+            if (host.includes("trustbridgevn.com")) {{
+                baseDomain = "survey.trustbridgevn.com";
+            }} else if (host.includes("sslip.io")) {{
                 const parts = host.split(".");
                 const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
                 if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
@@ -2576,18 +2849,37 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                 }} else {{
                     baseDomain = "146.190.201.32.sslip.io";
                 }}
-            }} else if (host.includes("trustbridgevn.com")) {{
-                baseDomain = "survey.trustbridgevn.com";
             }}
-            const protocol = window.location.protocol;
-            return `${{protocol}}//${{formSlug}}-${{randSuffix}}.${{baseDomain}}`;
+            const protocol = (window.location.protocol && window.location.protocol.startsWith("http")) ? window.location.protocol : "https:";
+            const baseUrl = `${{protocol}}//${{baseDomain}}`;
+
+            const targetRef = (ACTIVE_REF_CODE && ACTIVE_REF_CODE.trim()) || (LOCKED_CTV_CODE ? LOCKED_CTV_CODE.trim().split("_")[0].toLowerCase() : "");
+            if (targetRef) {{
+                const params = new URLSearchParams(window.location.search);
+                params.set("ref", targetRef);
+                return `${{baseUrl}}/forms/${{formId}}?${{params.toString()}}`;
+            }}
+
+            if (ACTIVE_CTV_SLUG && ACTIVE_CTV_SLUG.trim() !== "") {{
+                return `${{baseUrl}}/forms/${{ACTIVE_CTV_SLUG.trim()}}`;
+            }}
+
+            const formId = SCHEMA.form_id || "income_survey";
+            if (randSuffix && randSuffix.trim() !== "") {{
+                return `${{baseUrl}}/forms/${{formId}}?ref=${{encodeURIComponent(randSuffix.trim())}}`;
+            }}
+            return `${{baseUrl}}/forms/${{formId}}`;
+        }}
+
+        function getFormSubdomainUrl(randSuffix) {{
+            return getFormShareUrl(randSuffix);
         }}
 
         function openFormQrModal() {{
             if (!currentQrRandomSlug) {{
                 currentQrRandomSlug = generateRandomAlphanumeric(10);
             }}
-            const url = getFormSubdomainUrl(currentQrRandomSlug);
+            const url = getFormShareUrl(currentQrRandomSlug);
             const input = document.getElementById("qrShareUrlInput");
             if (input) input.value = url;
 
@@ -2604,7 +2896,7 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
 
         function regenerateRandomQrSlug() {{
             currentQrRandomSlug = generateRandomAlphanumeric(10);
-            const url = getFormSubdomainUrl(currentQrRandomSlug);
+            const url = getFormShareUrl(currentQrRandomSlug);
             const input = document.getElementById("qrShareUrlInput");
             if (input) input.value = url;
             renderQrCode(url);
@@ -2672,8 +2964,8 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             if (imgUri) {{
                 const a = document.createElement("a");
                 a.href = imgUri;
-                const formSlug = (SCHEMA.form_id || "income_survey").replace(/_/g, "-");
-                a.download = `QR_${{formSlug}}_${{currentQrRandomSlug}}.png`;
+                const fileSlug = (ACTIVE_CTV_SLUG || SCHEMA.form_id || "income_survey").replace(/_/g, "-");
+                a.download = `QR_${{fileSlug}}${{!ACTIVE_CTV_SLUG && currentQrRandomSlug ? '_' + currentQrRandomSlug : ''}}.png`;
                 a.click();
             }}
         }}
@@ -2717,11 +3009,17 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
                     const data = JSON.parse(cached);
                     if (data && typeof data === 'object') {{
                         for (let k in data) {{
+                            if (k === 'driver_signature' || k === 'consent_choice') continue;
                             answers[k] = data[k];
-                            const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
                             if (input && input.id !== 'ctv_code') {{
                                 input.value = data[k];
                             }}
+                            const choices = document.querySelectorAll(`[data-qid="${{k}}"] .choice-item`);
+                            choices.forEach(ci => {{
+                                if (ci.textContent.trim() === String(data[k]).trim()) {{
+                                    ci.classList.add('selected');
+                                }}
+                            }});
                         }}
                         restored = true;
                         evaluateConditionals();
@@ -2756,6 +3054,200 @@ def render_dynamic_form_html(schema: FormSchema, telegram_bot_username: Optional
             try {{ renderForm(); }} catch(e) {{ console.error('renderForm error:', e); }}
             try {{ await restoreDraftIfExists(); }} catch(e) {{ console.error('restoreDraft error:', e); }}
         }});
+    </script>
+</body>
+</html>
+"""
+
+def render_ctv_selector_landing_html(
+    schema: FormSchema,
+    ctv_options: list[str],
+    form_id: str = "income_survey",
+    query_params: Optional[dict] = None,
+) -> str:
+    """Renders clean mobile-first CTV selection landing page when accessed without ?ref=."""
+    escaped_title = html.escape(schema.title or "Biểu Mẫu Khảo Sát")
+    escaped_desc = html.escape(schema.description or "Khảo sát và xác thực thông tin đối soát")
+    
+    options_html = '<option value="">-- Vui lòng chọn CTV phụ trách --</option>'
+    for opt in ctv_options:
+        clean = opt.strip()
+        parts = clean.split("_")
+        short_code = parts[0].lower() if parts[0].lower().startswith("ctv") else clean.lower()
+        if len(parts) >= 3:
+            label = f"{parts[0]} - {parts[1]} ({parts[2]})"
+        elif len(parts) == 2:
+            label = f"{parts[0]} - {parts[1]}"
+        else:
+            label = clean
+        options_html += f'<option value="{html.escape(short_code)}">{html.escape(label)}</option>'
+    return f"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>{escaped_title} - Chọn CTV</title>
+    <style>
+        :root {{
+            --bg: #0b0f19;
+            --card: #1e293b;
+            --card-border: #334155;
+            --primary: #0284c7;
+            --primary-hover: #0369a1;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --success: #10b981;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
+        body {{
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 16px;
+        }}
+        .landing-card {{
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            width: 100%;
+            max-width: 480px;
+            padding: 28px 24px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+            text-align: center;
+        }}
+        .badge-brand {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: var(--accent);
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 4px 12px;
+            border-radius: 999px;
+            margin-bottom: 16px;
+        }}
+        h1 {{
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }}
+        p.desc {{
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }}
+        .form-section {{
+            text-align: left;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 18px 16px;
+            margin-bottom: 22px;
+        }}
+        label {{
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            margin-bottom: 8px;
+        }}
+        select {{
+            width: 100%;
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1.5px solid #475569;
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.15s ease;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%2394a3b8%22%20d%3D%22M2%204l4%204%204-4z%22%2F%3E%3C%2Fsvg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+        }}
+        select:focus {{
+            border-color: var(--accent);
+        }}
+        .btn-open {{
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            padding: 14px 18px;
+            font-size: 1rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: transform 0.1s ease, filter 0.15s ease;
+            box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+        }}
+        .btn-open:hover {{
+            filter: brightness(1.1);
+        }}
+        .btn-open:active {{
+            transform: scale(0.98);
+        }}
+        .footer-note {{
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 18px;
+            line-height: 1.4;
+        }}
+    </style>
+</head>
+<body>
+    <div class="landing-card">
+        <div class="badge-brand">Trust Bridge SSOT</div>
+        <h1>{escaped_title}</h1>
+        <p class="desc">{escaped_desc}</p>
+        
+        <div class="form-section">
+            <label for="ctvSelect">Cộng Tác Viên (CTV) Phụ Trách</label>
+            <select id="ctvSelect">
+                {options_html}
+            </select>
+        </div>
+        
+        <button type="button" class="btn-open" id="btnOpenForm" onclick="openSelectedCtvForm()">
+            <span>Mở Biểu Mẫu Khảo Sát</span>
+            <span>&rarr;</span>
+        </button>
+        <p class="footer-note">Liên kết khảo sát sẽ tự động gắn mã CTV phụ trách để đảm bảo quyền lợi đối soát và thù lao.</p>
+    </div>
+
+    <script>
+        function openSelectedCtvForm() {{
+            const sel = document.getElementById("ctvSelect");
+            const ctv = sel ? sel.value.trim() : "";
+            if (!ctv) {{
+                alert("Vui lòng chọn Cộng tác viên (CTV) trong danh sách để mở biểu mẫu!");
+                sel.focus();
+                return;
+            }}
+            const params = new URLSearchParams(window.location.search);
+            params.set("ref", ctv);
+            const targetPath = window.location.pathname.startsWith("/forms/")
+                ? window.location.pathname
+                : "/forms/" + encodeURIComponent("{form_id}");
+            window.location.href = targetPath + "?" + params.toString();
+        }}
     </script>
 </body>
 </html>

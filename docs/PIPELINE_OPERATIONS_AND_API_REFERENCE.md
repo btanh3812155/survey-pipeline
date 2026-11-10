@@ -6,6 +6,9 @@
 **Production Host:** `146.190.201.32` (`146.190.201.32.sslip.io`, `survey.trustbridgevn.com`)  
 **Target Operating Throughput:** 20,000+ submissions/day with < 2,500ms synchronous response SLA  
 
+
+> **Authoritative Administrative Account Notice**:
+> `admin@trustbridgevn.com` is the authoritative administrative account to be used for this project, Google Drive deliverables, and all work regarding Trust Bridge. All deliverables synchronization, cloud storage targets, and project administrative privileges are bound to `admin@trustbridgevn.com`.
 ---
 
 ## 1. Dynamic WebRTC Mobile Form Architecture

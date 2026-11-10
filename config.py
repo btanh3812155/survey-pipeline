@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = "surveys"
     R2_PUBLIC_URL_PREFIX: str = "https://cdn.example.com"
 
+    # google drive / workspace delivery
+    GOOGLE_ADMIN_EMAIL: str = "admin@trustbridgevn.com"
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: Optional[str] = None
+    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None
+    GOOGLE_DRIVE_REFRESH_TOKEN: Optional[str] = None
+    GOOGLE_DRIVE_CLIENT_ID: Optional[str] = None
+    GOOGLE_DRIVE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_DRIVE_ACCESS_TOKEN: Optional[str] = None
     # tuning thresholds
     BLUR_THRESHOLD: float = 15.0
     IMAGE_MAX_DIMENSION: int = 1024

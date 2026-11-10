@@ -266,7 +266,7 @@ def test_reject_unauthorized_app_spoofing():
             return "app_profile"
         return "app_income"
 
-    async def mock_ocr_grab(img_bytes):
+    async def mock_ocr_grab(img_bytes, *args, **kwargs):
         return {
             "gross_revenue": 2500000,
             "net_income": 1900000,
@@ -282,15 +282,21 @@ def test_reject_unauthorized_app_spoofing():
          patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_grab):
         resp = client.post(
             "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0988123456",
-                "license_plate": "29E-123.45",
-                "driver_name": "Tài xế Test",
-                "consent_choice": "Tôi đồng ý",
-                "signature_png": "data:image/png;base64,mock",
-                "vehicle_type": "Ô tô",
-                "is_test_mode": "true",
-            },
+                data={
+                    "driver_phone": "0988123456",
+                    "license_plate": "29E-123.45",
+                    "driver_name": "Tài xế Test",
+                    "consent_choice": "Tôi đồng ý",
+                    "signature_png": "data:image/png;base64,mock",
+                    "vehicle_type": "Ô tô",
+                    "car_model": "VF 5 Plus",
+                    "gsm_duration": "Từ 6 – 12 tháng",
+                    "gsm_contract_type": "Xe Taxi xanh GSM",
+                    "daily_trips": "18",
+                    "monthly_income_range": "12 – 20 triệu VNĐ",
+                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                    "is_test_mode": "true",
+                },
             files={
                 "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
                 "survey_photo_1": ("vehicle.jpg", sharp_img, "image/jpeg"),
@@ -307,3 +313,156 @@ def test_reject_unauthorized_app_spoofing():
         assert "không phải ứng dụng Tài xế Xanh SM chính thức" in data["reason"]
         assert data["ocr_data"]["detected_app"] == "GRAB"
         assert data["ocr_data"]["is_authentic_gsm_ui"] is False
+
+def test_reject_intra_submission_duplicates_same_screen():
+    """Verify that uploading the exact same screen for multiple weeks is rejected for duplication."""
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    import main
+    client = TestClient(main.app)
+    buf = io.BytesIO()
+    im = Image.new("RGB", (600, 600), (255, 255, 255))
+    ImageDraw.Draw(im).text((50, 50), "APP INCOME 3500000", fill=(0, 0, 0))
+    im.save(buf, "JPEG")
+    sharp_img = buf.getvalue()
+    
+    async def mock_role(img_bytes, filename=None, *args, **kwargs):
+        fn = (filename or "").lower()
+        if "0" in fn or "profile" in fn:
+            return "app_profile"
+        return "app_income"
+        
+    async def mock_ocr_same(img_bytes, *args, **kwargs):
+        return {
+            "is_authentic_gsm_ui": True,
+            "detected_app": "XANH_SM",
+            "gross_revenue": 3500000,
+            "net_income": 3000000,
+            "total_trips": 40,
+            "period": "Tuần 1",
+            "discount_and_tax": 500000,
+            "online_hours": "35h",
+            "confidence_score": 0.95,
+            "is_legible": True,
+            "is_manipulated_or_photoshopped": False,
+        }
+    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
+         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_same):
+        resp = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "driver_phone": "0988123456",
+                "license_plate": "29E-123.45",
+                "driver_name": "Tài xế Test",
+                "consent_choice": "Tôi đồng ý",
+                "signature_png": "data:image/png;base64,mock",
+                "vehicle_type": "Ô tô",
+                "car_model": "VF 5 Plus",
+                "gsm_duration": "Từ 6 – 12 tháng",
+                "gsm_contract_type": "Xe Taxi xanh GSM",
+                "daily_trips": "18",
+                "monthly_income_range": "12 – 20 triệu VNĐ",
+                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                "is_test_mode": "true",
+            },
+            files={
+                "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_1": ("vehicle.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_2": ("income1.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_3": ("income2.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_4": ("income3.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_5": ("income4.jpg", sharp_img, "image/jpeg"),
+                "survey_photo_6": ("income5.jpg", sharp_img, "image/jpeg"),
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "REJECTED"
+        assert "trùng lặp" in data["reason"]
+        assert data.get("duplicate_detected") is True
+        assert data.get("duplicate_type") == "INTRA_SUBMISSION"
+
+def test_censored_profile_slot_allowed_when_require_unique_false(monkeypatch):
+    """Verify that identical censored profile images are allowed when slot has require_unique: False."""
+    monkeypatch.setenv("MOCK_AI", "1")
+    import time, random
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    import main
+    client = TestClient(main.app)
+    
+    # Shared static "censored profile" image used by multiple drivers
+    buf_prof = io.BytesIO()
+    im_prof = Image.new("RGB", (600, 600), (240, 240, 240))
+    ImageDraw.Draw(im_prof).text((50, 50), "CENSORED PROFILE", fill=(0, 0, 0))
+    im_prof.save(buf_prof, "JPEG")
+    censored_profile_bytes = buf_prof.getvalue()
+    
+    def make_random_income_buf(pattern):
+        im = Image.new("RGB", (600, 800), (255, 255, 255))
+        d = ImageDraw.Draw(im)
+        rng = random.Random(f"{pattern}_{time.time()}")
+        for _ in range(30):
+            x1 = rng.randint(0, 500)
+            y1 = rng.randint(0, 700)
+            d.rectangle([(x1, y1), (x1 + rng.randint(20, 80), y1 + rng.randint(20, 80))], fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
+        b = io.BytesIO()
+        im.save(b, "JPEG")
+        return b.getvalue()
+
+    async def mock_role(img_bytes, filename=None, *args, **kwargs):
+        fn = (filename or "").lower()
+        if "0" in fn or "profile" in fn:
+            return "app_profile"
+        return "app_income"
+        
+    async def mock_ocr_distinct(img_bytes, week_idx=None, *args, **kwargs):
+        w = week_idx or 1
+        return {
+            "is_authentic_gsm_ui": True,
+            "detected_app": "XANH_SM",
+            "gross_revenue": 3000000 * w,
+            "net_income": 2500000 * w,
+            "total_trips": 30 * w,
+            "period": f"Tuần {w}",
+            "discount_and_tax": 500000 * w,
+            "online_hours": f"{20 * w}h",
+            "confidence_score": 0.95,
+            "is_legible": True,
+            "is_authentic_gsm_ui": True,
+            "is_manipulated_or_photoshopped": False,
+        }
+        
+    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
+         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_distinct):
+        resp = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "driver_phone": "0988654321",
+                "license_plate": "30F-999.88",
+                "driver_name": "Tài xế Hồ Sơ Che",
+                "consent_choice": "Tôi đồng ý",
+                "signature_png": "data:image/png;base64,mock",
+                "vehicle_type": "Ô tô",
+                "car_model": "VF 5 Plus",
+                "gsm_duration": "Từ 6 – 12 tháng",
+                "gsm_contract_type": "Xe Taxi xanh GSM",
+                "daily_trips": "18",
+                "monthly_income_range": "12 – 20 triệu VNĐ",
+                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                "is_test_mode": "true",
+            },
+            files={
+                "survey_photo_0": ("profile.jpg", censored_profile_bytes, "image/jpeg"),
+                "survey_photo_1": ("vehicle.jpg", make_random_income_buf("veh"), "image/jpeg"),
+                "survey_photo_2": ("income1.jpg", make_random_income_buf("inc1"), "image/jpeg"),
+                "survey_photo_3": ("income2.jpg", make_random_income_buf("inc2"), "image/jpeg"),
+                "survey_photo_4": ("income3.jpg", make_random_income_buf("inc3"), "image/jpeg"),
+                "survey_photo_5": ("income4.jpg", make_random_income_buf("inc4"), "image/jpeg"),
+                "survey_photo_6": ("income5.jpg", make_random_income_buf("inc5"), "image/jpeg"),
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "APPROVED"
+        assert data.get("duplicate_detected") is not True

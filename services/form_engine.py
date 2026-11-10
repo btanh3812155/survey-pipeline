@@ -32,6 +32,7 @@ class ImageCheckConfig(BaseModel):
     enable_object_detection: bool = False   # Strict receipt/odometer object recognition
     enable_vehicle_match: bool = True       # Vehicle plate & type persistence matching
     enable_anti_fraud: bool = True          # Duplicate reuse / stock photo check
+    require_unique: bool = True             # Enforce unique images across submissions and slots (checkbox in UI)
     enable_ai_generated_check: bool = True  # 2D FFT synthetic diffusion check
     enable_screen_photo_check: bool = False  # Moiré / screen recapture detection (default False)
 class FormQuestion(BaseModel):
@@ -44,7 +45,8 @@ class FormQuestion(BaseModel):
     ai_detection_prompt: Optional[str] = None # Hidden instruction to describe to AI what needs to be detected
     sample_response: Optional[str] = None
     sample_images: Optional[List[str]] = None # List of sample image URLs for visual guidance
-    options: Optional[List[str]] = None # For single_choice, multiple_choice, dropdown
+    options: Optional[List[Any]] = None # For single_choice, multiple_choice, dropdown
+    group_compatibility: Optional[Dict[str, List[str]]] = None # For multiple_choice mutual exclusivity
     validation: Optional[ValidationRule] = None
     conditional: Optional[ConditionalRule] = None # Logic branching
     image_checks: Optional[ImageCheckConfig] = None
@@ -186,17 +188,72 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
                         return False, f"Giá trị câu hỏi '{q.title}' không được lớn hơn {q.validation.max_value}!"
                 except ValueError:
                     return False, f"Câu hỏi '{q.title}' phải là số hợp lệ!"
+        # Mutual exclusivity check for MULTIPLE_CHOICE questions
+        if q.type == QuestionType.MULTIPLE_CHOICE and q.options:
+            selected_items = val if isinstance(val, list) else [val]
+            if len(selected_items) > 1:
+                # Build lookup from option label to group
+                opt_to_group = {}
+                for opt in q.options:
+                    if isinstance(opt, dict):
+                        lbl = str(opt.get("label", ""))
+                        grp = str(opt.get("group") or "default")
+                    else:
+                        lbl = str(opt)
+                        grp = "default"
+                    opt_to_group[lbl] = grp
+
+                # Collect unique groups present in the selected items
+                selected_groups = list({
+                    opt_to_group.get(item, "default")
+                    for item in selected_items
+                })
+
+                compat = q.group_compatibility or {}
+                # Verify pairwise compatibility among selected groups
+                for i in range(len(selected_groups)):
+                    for j in range(i + 1, len(selected_groups)):
+                        g1 = selected_groups[i]
+                        g2 = selected_groups[j]
+                        is_compat = (
+                            g1 == g2
+                            or g2 in compat.get(g1, [])
+                            or g1 in compat.get(g2, [])
+                        )
+                        if not is_compat:
+                            return False, f"Câu hỏi '{q.title}': Các lựa chọn thuộc nhóm đối lập không thể cùng được chọn!"
     return True, None
 
-def get_effective_image_checks(schema: Optional[FormSchema], question_id: Optional[str] = None) -> ImageCheckConfig:
+def get_effective_image_checks(
+    schema: Optional[FormSchema],
+    question_id: Optional[str] = None,
+    slot_index: Optional[int] = None,
+) -> ImageCheckConfig:
     if not schema:
         return ImageCheckConfig()
     base = schema.settings.image_checks.model_copy() if schema.settings and schema.settings.image_checks else ImageCheckConfig()
     if question_id:
         for q in schema.questions:
-            if q.id == question_id and q.image_checks is not None:
-                overrides = q.image_checks.model_dump(exclude_unset=True)
-                return base.model_copy(update=overrides)
+            if q.id == question_id:
+                if q.image_checks is not None:
+                    overrides = q.image_checks.model_dump(exclude_unset=True)
+                    base = base.model_copy(update=overrides)
+                if slot_index is not None and q.image_slots and 0 <= slot_index < len(q.image_slots):
+                    slot = q.image_slots[slot_index]
+                    if isinstance(slot, dict):
+                        slot_checks = slot.get("image_checks")
+                        if isinstance(slot_checks, dict):
+                            clean_checks = {k: v for k, v in slot_checks.items() if v is not None}
+                            base = base.model_copy(update=clean_checks)
+                        flat_keys = (
+                            "enable_blur_check", "blur_threshold", "enable_ai_vision",
+                            "enable_vehicle_match", "enable_anti_fraud", "require_unique",
+                            "enable_ai_generated_check", "enable_screen_photo_check"
+                        )
+                        flat_overrides = {k: slot[k] for k in flat_keys if k in slot and slot[k] is not None}
+                        if flat_overrides:
+                            base = base.model_copy(update=flat_overrides)
+                break
     return base
 
 # Default Production Form Schema for Trust Bridge Fleet Survey
@@ -243,21 +300,6 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             description="Tôi xác nhận các số liệu thu nhập và hình ảnh cung cấp là trung thực, đồng ý xử lý dữ liệu theo NĐ 13",
             sample_response="Tôi đồng ý",
         ),
-        # Subsequent Questions - ALL CONDITIONAL on consent_choice == 'Tôi đồng ý'
-        FormQuestion(
-            id="ctv_code",
-            title="Mã CTV",
-            type=QuestionType.DROPDOWN,
-            required=False,
-            options=["CTV001_Dũng_HN", "CTV002_Tuấn_HN", "CTV003_Ngân_SG", "CTV004_Vỹ_SG", "CTV005_Hương_DN", "Khác"],
-            description="Mã định danh cộng tác viên thực hiện khảo sát",
-            sample_response="CTV001_Dũng_HN",
-            conditional=ConditionalRule(
-                depends_on_question_id="consent_choice",
-                operator="equals",
-                expected_value="Tôi đồng ý",
-            ),
-        ),
         FormQuestion(
             id="driver_phone",
             title="3. Số điện thoại tài xế (Không bắt buộc)",
@@ -293,8 +335,8 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
         FormQuestion(
             id="car_model",
             title="Dòng xe VinFast đang chạy",
-            type=QuestionType.DROPDOWN,
-            required=False,
+            type=QuestionType.SINGLE_CHOICE,
+            required=True,
             options=["VF 5 Plus", "VF e34", "VF 6", "VF 7", "VF 8", "VF 9"],
             description="Dòng xe ô tô điện cụ thể trong ca (nếu chạy ô tô điện)",
             sample_response="VF 5 Plus",
@@ -308,7 +350,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_duration",
             title="Câu 2: Anh đã chạy xe cho GSM được bao lâu rồi ạ?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=["Dưới 3 tháng", "Từ 3 – 6 tháng", "Từ 6 – 12 tháng", "Từ 1 – 2 năm", "Trên 2 năm"],
             description="Thời gian đã cộng tác chạy xe cùng hệ thống GSM",
             sample_response="Từ 6 – 12 tháng",
@@ -322,7 +364,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_contract_type",
             title="Câu 3: Anh đang chạy theo hình thức nào cho GSM ạ?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=[
                 "Xe Partner (Hợp tác kinh doanh)",
                 "Xe tự mua & chạy",
@@ -343,7 +385,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="daily_trips",
             title="Câu 5: Trung bình 1 ngày anh hoàn thành khoảng bao nhiêu chuyến xe? (Số chuyến trung bình / ngày)",
             type=QuestionType.TEXT,
-            required=False,
+            required=True,
             description="Số chuyến xe hoàn thành trung bình mỗi ngày",
             sample_response="18",
             conditional=ConditionalRule(
@@ -361,7 +403,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="monthly_income_range",
             title="Câu 6: Sau khi trừ chi phí (hoặc theo mức thực nhận chuyển về tài khoản), thu nhập bình quân 1 tháng từ công việc này của anh dao động ở mức nào?",
             type=QuestionType.SINGLE_CHOICE,
-            required=False,
+            required=True,
             options=["Dưới 3 triệu VNĐ", "3 – 6 triệu VNĐ", "7 – 12 triệu VNĐ", "12 – 20 triệu VNĐ", "Trên 20 triệu VNĐ"],
             description="Thu nhập thực nhận bình quân hàng tháng sau khi trừ chi phí",
             sample_response="12 – 20 triệu VNĐ",
@@ -375,8 +417,14 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             id="gsm_incentive_policy",
             title="Câu 7: Về phía GSM, công ty hiện có áp dụng các yêu cầu về tiến độ/chỉ tiêu và chính sách thưởng hiệu suất như thế nào?",
             type=QuestionType.MULTIPLE_CHOICE,
-            required=False,
-            options=["Có áp dụng chỉ tiêu", "Có khung giờ vàng", "Có chương trình thưởng", "Không có", "Khác"],
+            required=True,
+            options=[
+                {"label": "Có áp dụng chỉ tiêu", "group": "applicable"},
+                {"label": "Có khung giờ vàng", "group": "applicable"},
+                {"label": "Có chương trình thưởng", "group": "applicable"},
+                {"label": "Khác", "group": "applicable"},
+                {"label": "Không có", "group": "none_exclusive"},
+            ],
             description="Chính sách thưởng hiệu suất và yêu cầu chỉ tiêu của GSM",
             sample_response="Có áp dụng chỉ tiêu",
             conditional=ConditionalRule(
@@ -390,8 +438,8 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             title="Chụp ảnh xác thực 7 bước: Hồ sơ App, Phương tiện & Doanh thu 5 tuần Tháng 10",
             type=QuestionType.CAMERA_WEBRTC,
             required=True,
-            description="Chụp trực tiếp từ camera phần cứng: Ảnh 1 là Hồ sơ tài xế (kiểm tra AI), Ảnh 2 là Xe vận hành (thân/đầu xe hoặc vô lăng - lưu xác minh), Ảnh 3-7 là thống kê thu nhập 5 tuần Tháng 10 (kiểm tra AI).",
-            tooltip="Chụp rõ nét màn hình điện thoại và phương tiện. Xe máy/ô tô chụp góc rõ biển số hoặc khoang lái; màn hình thu nhập chuyển lần lượt qua từng tuần trong Tháng 10.",
+            description="Chụp trực tiếp từ camera phần cứng: Ảnh 1 là Hồ sơ tài xế, Ảnh 2 là Xe vận hành (thân xe, đầu xe hoặc vô lăng khoang lái), Ảnh 3-7 là thống kê thu nhập 5 tuần Tháng 10.",
+            tooltip="Chụp rõ nét màn hình điện thoại và phương tiện. Xe máy hoặc ô tô chụp góc rõ thân xe, đầu xe hoặc vô lăng khoang lái; màn hình thu nhập chuyển lần lượt qua từng tuần trong Tháng 10.",
             ai_detection_prompt=(
                 "Slot 0 (app_profile): Verify authentic Xanh SM / GSM driver profile and account screen.\n"
                 "Slot 1 (vehicle_exterior_or_interior): Vehicle exterior body, front, or steering wheel/dashboard. Pass without strict block for post-audit verification.\n"
@@ -412,13 +460,13 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             max_images=7,
             exact_image_count=7,
             image_slots=[
-                {"slot": 0, "title": "Ảnh 1: Màn hình hồ sơ ứng dụng (App Profile)", "role": "app_profile", "required": True, "ai_check": True, "tooltip": "Mở tab Tài khoản / Hồ sơ trên ứng dụng Tài xế Xanh SM để chụp rõ họ tên, mã tài xế."},
-                {"slot": 1, "title": "Ảnh 2: Phương tiện xe máy (thân/đầu xe) hoặc ô tô (thân/đầu xe/vô lăng)", "role": "vehicle_exterior_or_interior", "required": True, "ai_check": False, "tooltip": "Chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện vận hành. Ảnh được lưu trữ để hậu kiểm cùng CTV."},
-                {"slot": 2, "title": "Ảnh 3: Doanh thu Tuần 1 Tháng 10 (Tuần 40: 28/09 - 04/10)", "role": "app_income_week_1", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 1 Tháng 10. Chụp rõ Doanh số, Thu nhập ròng, Chiết khấu."},
-                {"slot": 3, "title": "Ảnh 4: Doanh thu Tuần 2 Tháng 10 (Tuần 41: 05/10 - 11/10)", "role": "app_income_week_2", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 2 Tháng 10."},
-                {"slot": 4, "title": "Ảnh 5: Doanh thu Tuần 3 Tháng 10 (Tuần 42: 12/10 - 18/10)", "role": "app_income_week_3", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 3 Tháng 10."},
-                {"slot": 5, "title": "Ảnh 6: Doanh thu Tuần 4 Tháng 10 (Tuần 43: 19/10 - 25/10)", "role": "app_income_week_4", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 4 Tháng 10."},
-                {"slot": 6, "title": "Ảnh 7: Doanh thu Tuần 5 Tháng 10 (Tuần 44: 26/10 - 01/11)", "role": "app_income_week_5", "required": True, "ai_check": True, "tooltip": "Màn hình thống kê thu nhập Tuần 5 Tháng 10."},
+                {"slot": 0, "title": "Ảnh 1: Màn hình hồ sơ ứng dụng", "role": "app_profile", "required": True, "require_unique": False, "ai_check": True, "tooltip": ""},
+                {"slot": 1, "title": "Ảnh 2: Thân xe, đầu xe hoặc vô lăng khoang lái phương tiện", "role": "vehicle_exterior_or_interior", "required": True, "require_unique": False, "ai_check": False, "tooltip": ""},
+                {"slot": 2, "title": "Ảnh 3: Doanh thu Tuần 1 Tháng 10 - 28/09 đến 04/10", "role": "app_income_week_1", "required": True, "require_unique": True, "ai_check": True, "tooltip": ""},
+                {"slot": 3, "title": "Ảnh 4: Doanh thu Tuần 2 Tháng 10 - 05/10 đến 11/10", "role": "app_income_week_2", "required": True, "require_unique": True, "ai_check": True, "tooltip": ""},
+                {"slot": 4, "title": "Ảnh 5: Doanh thu Tuần 3 Tháng 10 - 12/10 đến 18/10", "role": "app_income_week_3", "required": True, "require_unique": True, "ai_check": True, "tooltip": ""},
+                {"slot": 5, "title": "Ảnh 6: Doanh thu Tuần 4 Tháng 10 - 19/10 đến 25/10", "role": "app_income_week_4", "required": True, "require_unique": True, "ai_check": True, "tooltip": ""},
+                {"slot": 6, "title": "Ảnh 7: Doanh thu Tuần 5 Tháng 10 - 26/10 đến 01/11", "role": "app_income_week_5", "required": True, "require_unique": True, "ai_check": True, "tooltip": ""},
             ],
         ),
     ],

@@ -5,6 +5,7 @@
 **Target Operating Throughput:** 20,000+ daily submissions (~600,000 surveys/month)  
 **Nominal Service Level Agreement (SLA):** Synchronous validation loop < 2,500 ms (p50), < 3,800 ms (p99 under complete dual-AI failover)  
 **Target Operating Infrastructure Cost:** ~$83.00 - $93.00 / month (DigitalOcean SGP1 + Cloudflare R2 + API inference)  
+**Authoritative Administrative Account:** `admin@trustbridgevn.com` (Designated for Google Drive deliverables, cloud storage targets, and all Trust Bridge operations)
 
 ---
 

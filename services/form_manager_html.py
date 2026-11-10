@@ -7,20 +7,60 @@ from services.form_engine import FormSchema
 
 DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
     {
-        "filename": "sample_app_profile.jpg",
-        "title": "Ảnh Mẫu 1: Màn hình hồ sơ ứng dụng (App Profile)",
+        "filename": "sample_profile.jpg",
+        "title": "Ảnh 1: Hồ Sơ Tài Xế Ứng Dụng",
         "slot_badge": "Slot 1: Hồ Sơ App",
         "dimensions": "1568 × 1568",
         "size_kb": "2.1 MB",
-        "desc": "Ảnh chụp màn hình menu/tiện ích ứng dụng tài xế GSM: Ví tài xế, Chương trình thưởng, Tiện ích bổ trợ, Kiểm tra an toàn vận doanh.",
+        "desc": "Màn hình hồ sơ ứng dụng tài xế Xanh SM: Thông tin tài xế, Ví tài xế, Hạng Bạch Kim, Chương trình thưởng hiệu suất.",
     },
     {
-        "filename": "sample_app_income.jpg",
-        "title": "Ảnh Mẫu 2: Màn hình thống kê thu nhập (App Income)",
-        "slot_badge": "Slot 2: Thu Nhập App",
-        "dimensions": "1568 × 1568",
-        "size_kb": "2.5 MB",
-        "desc": "Ảnh chụp màn hình thống kê thu nhập thực tế: Tổng thu nhập 2.721.000 đ, Doanh số 2.664.000 đ, Chiết khấu -749.409 đ, Thu nhập ròng 1.971.591 đ, 18 chuyến.",
+        "filename": "sample_vehicle.jpg",
+        "title": "Ảnh 2: Phương Tiện Vận Hành",
+        "slot_badge": "Slot 2: Phương Tiện",
+        "dimensions": "1164 × 1169",
+        "size_kb": "116 KB",
+        "desc": "Ảnh chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện Xanh SM (VinFast) phục vụ đối soát.",
+    },
+    {
+        "filename": "sample_income_week_1.jpg",
+        "title": "Ảnh 3: Doanh Thu Tuần 1 (28/09 - 04/10)",
+        "slot_badge": "Slot 3: Tuần 1",
+        "dimensions": "1080 × 1440",
+        "size_kb": "108 KB",
+        "desc": "Báo cáo thu nhập Tuần 1 Tháng 10: Doanh số 2.721.000 đ, Thu nhập ròng 1.971.591 đ, 18 chuyến hoàn thành.",
+    },
+    {
+        "filename": "sample_income_week_2.jpg",
+        "title": "Ảnh 4: Doanh Thu Tuần 2 (05/10 - 11/10)",
+        "slot_badge": "Slot 4: Tuần 2",
+        "dimensions": "1080 × 1440",
+        "size_kb": "108 KB",
+        "desc": "Báo cáo thu nhập Tuần 2 Tháng 10: Doanh số 3.150.000 đ, Thu nhập ròng 2.450.000 đ, 22 chuyến hoàn thành.",
+    },
+    {
+        "filename": "sample_income_week_3.jpg",
+        "title": "Ảnh 5: Doanh Thu Tuần 3 (12/10 - 18/10)",
+        "slot_badge": "Slot 5: Tuần 3",
+        "dimensions": "1080 × 1440",
+        "size_kb": "108 KB",
+        "desc": "Báo cáo thu nhập Tuần 3 Tháng 10: Doanh số 2.890.000 đ, Thu nhập ròng 2.150.000 đ, 19 chuyến hoàn thành.",
+    },
+    {
+        "filename": "sample_income_week_4.jpg",
+        "title": "Ảnh 6: Doanh Thu Tuần 4 (19/10 - 25/10)",
+        "slot_badge": "Slot 6: Tuần 4",
+        "dimensions": "1080 × 1440",
+        "size_kb": "109 KB",
+        "desc": "Báo cáo thu nhập Tuần 4 Tháng 10: Doanh số 3.420.000 đ, Thu nhập ròng 2.700.000 đ, 25 chuyến hoàn thành.",
+    },
+    {
+        "filename": "sample_income_week_5.jpg",
+        "title": "Ảnh 7: Doanh Thu Tuần 5 (26/10 - 01/11)",
+        "slot_badge": "Slot 7: Tuần 5",
+        "dimensions": "1080 × 1440",
+        "size_kb": "108 KB",
+        "desc": "Báo cáo thu nhập Tuần 5 Tháng 10: Doanh số 2.950.000 đ, Thu nhập ròng 2.280.000 đ, 20 chuyến hoàn thành.",
     },
 ]
 
@@ -68,9 +108,15 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                 <div>Quyền truy cập: <b>{f.settings.access_control if f.settings else 'public'}</b></div>
             </div>
             <div class="form-actions">
-                <button type="button" class="btn-action qr" onclick="openAdminQrModal('{f.form_id}', '{html.escape(f.title)}')">📱 Mã QR</button>
-                <a href="{form_link}" target="_blank" class="btn-action view">Mở Form</a>
-                <a href="/admin/forms/edit/{f.form_id}" class="btn-action edit">Sửa</a>
+                <button type="button" class="btn-action qr" onclick="openAdminQrModal('{f.form_id}', '{html.escape(f.title)}')" title="Mã QR" aria-label="Mã QR">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zm-3 2h2v3h-2v-3zm3 3h3v3h-3v-3zm-5 1h2v2h-2v-2zm3-3h2v2h-2v-2zM7 7h-.01v.01H7V7zm10 0h-.01v.01H17V7zM7 17h-.01v.01H7V17z"/></svg>
+                </button>
+                <a href="{form_link}" target="_blank" class="btn-action view" title="Mở Form" aria-label="Mở Form">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                </a>
+                <a href="/admin/forms/edit/{f.form_id}" class="btn-action edit" title="Sửa Biểu Mẫu" aria-label="Sửa Biểu Mẫu">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                </a>
             </div>
         </div>
         """
@@ -117,6 +163,9 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Trust Bridge - Danh Sách Biểu Mẫu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg: #090d16;
@@ -132,7 +181,7 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -207,20 +256,32 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         .badge.active {{ background: rgba(16, 185, 129, 0.2); color: #34d399; }}
         .badge.test {{ background: rgba(245, 158, 11, 0.2); color: #fbbf24; }}
 
-        .form-actions {{ display: flex; gap: 8px; margin-top: 6px; }}
+        .form-actions {{ display: flex; gap: 8px; margin-top: 10px; }}
 
         .btn-action {{
             flex: 1;
-            text-align: center;
-            padding: 8px 12px;
-            font-size: 0.82rem;
-            font-weight: 700;
-            border-radius: 6px;
+            height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
             text-decoration: none;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+            padding: 0;
+        }}
+        .btn-action svg {{
+            width: 18px;
+            height: 18px;
+            display: block;
+            margin: auto;
         }}
         .btn-action.view {{ background: #2563eb; color: #fff; }}
-        .btn-action.edit {{ background: #334155; color: #e2e8f0; }}
-        .btn-action.qr {{ background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; cursor: pointer; }}
+        .btn-action.view:hover {{ background: #1d4ed8; }}
+        .btn-action.edit {{ background: #1e293b; border-color: #334155; color: #cbd5e1; }}
+        .btn-action.edit:hover {{ background: #334155; color: #fff; }}
+        .btn-action.qr {{ background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; }}
         .btn-action.qr:hover {{ background: #10b981; color: #fff; }}
 
         /* Pagination Controls */
@@ -431,10 +492,22 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                 <p id="txtAdminSub">Tổng cộng: {total_forms} biểu mẫu trong hệ thống</p>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">📊 Dữ Liệu Nộp</a>
-                <a href="/admin/audit" class="btn-samples-nav" id="btnAdminAudit">🛡️ Nhật Ký Kiểm Toán</a>
-                <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">🖼️ Ảnh Mẫu Test</a>
-                <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">+ Tạo Biểu Mẫu Mới</a>
+                <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+                    Dữ Liệu Nộp
+                </a>
+                <a href="/admin/audit" class="btn-samples-nav" id="btnAdminAudit">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                    Nhật Ký Kiểm Toán
+                </a>
+                <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                    Ảnh Mẫu Test
+                </a>
+                <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    Tạo Biểu Mẫu Mới
+                </a>
             </div>
         </header>
 
@@ -451,10 +524,19 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         <section id="test-samples-section" class="samples-section">
             <div class="samples-header">
                 <div>
-                    <h2 id="txtSamplesTitle">🖼️ Kho Ảnh Mẫu Thử Nghiệm</h2>
+                    <h2 id="txtSamplesTitle" style="display:flex; align-items:center; gap:8px;">
+                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:#38bdf8;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                        Kho Ảnh Mẫu Thử Nghiệm
+                    </h2>
                     <p id="txtSamplesSub">Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI</p>
                 </div>
-                <span class="badge active">{len(sample_images)} Ảnh Có Sẵn</span>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <a href="/samples/TrustBridge_Test_Image_Set_7Slots.zip" download class="btn-create" style="background:#0284c7; padding:8px 14px; font-size:0.82rem; text-decoration:none;">
+                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                        Tải Trọn Bộ 7 Ảnh Test (.zip)
+                    </a>
+                    <span class="badge active">{len(sample_images)} Ảnh Có Sẵn</span>
+                </div>
             </div>
             <div class="samples-grid">
                 {samples_cards_html}
@@ -467,8 +549,7 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             const fullUrl = window.location.origin + path;
             navigator.clipboard.writeText(fullUrl).then(() => {{
                 const orig = btn.innerHTML;
-                btn.innerHTML = "✅ Đã copy!";
-                setTimeout(() => {{ btn.innerHTML = orig; }}, 2000);
+                btn.innerHTML = "Đã sao chép link!";
             }}).catch(() => {{
                 prompt("Sao chép link ảnh:", fullUrl);
             }});
@@ -482,15 +563,15 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                 document.getElementById('txtAdminTitle').textContent = "Survey Forms Management";
                 document.getElementById('txtAdminSub').textContent = "Total: {total_forms} active forms in system";
                 document.getElementById('btnAdminCreate').textContent = "+ Create New Form";
-                if (btnSamples) btnSamples.textContent = "🖼️ Test Samples";
-                if (txtSTitle) txtSTitle.textContent = "🖼️ Test Sample Images Gallery";
+                if (btnSamples) btnSamples.textContent = "Test Samples";
+                if (txtSTitle) txtSTitle.textContent = "Test Sample Images Gallery";
                 if (txtSSub) txtSSub.textContent = "Download to phone camera roll or copy links to test WebRTC camera slots & AI verification";
             }} else {{
                 document.getElementById('txtAdminTitle').textContent = "Danh Sách Biểu Mẫu Khảo Sát";
                 document.getElementById('txtAdminSub').textContent = "Tổng cộng: {total_forms} biểu mẫu trong hệ thống";
                 document.getElementById('btnAdminCreate').textContent = "+ Tạo Biểu Mẫu Mới";
-                if (btnSamples) btnSamples.textContent = "🖼️ Ảnh Mẫu Test";
-                if (txtSTitle) txtSTitle.textContent = "🖼️ Kho Ảnh Mẫu Thử Nghiệm";
+                if (btnSamples) btnSamples.textContent = "Ảnh Mẫu Test";
+                if (txtSTitle) txtSTitle.textContent = "Kho Ảnh Mẫu Thử Nghiệm";
                 if (txtSSub) txtSSub.textContent = "Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI";
             }}
         }}
@@ -509,8 +590,7 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     <span>Chia Sẻ Mã QR Biểu Mẫu</span>
                 </h3>
-                <button type="button" onclick="closeAdminQrModal()" style="background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:1rem; cursor:pointer; border-radius:6px; padding:2px 8px;">✕</button>
-            </div>
+                <button type="button" onclick="closeAdminQrModal()" style="background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:1.2rem; cursor:pointer; border-radius:6px; padding:2px 8px; line-height:1;">&times;</button>
             <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
                 <div id="adminQrCodeContainer" style="background:#ffffff; padding:16px; border-radius:12px; display:inline-flex; justify-content:center; align-items:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); min-width:220px; min-height:220px;"></div>
                 
@@ -518,23 +598,26 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                     <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">LINK TRUY CẬP (SUBDOMAIN NGẪU NHIÊN):</div>
                     <div style="display:flex; gap:6px;">
                         <input type="text" id="adminQrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
-                        <button type="button" onclick="regenerateAdminQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer;" title="Tạo mã ngẫu nhiên mới">🔄</button>
+                        <button type="button" onclick="regenerateAdminQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Tạo mã ngẫu nhiên mới">
+                            <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        </button>
                     </div>
                 </div>
 
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
                     <button type="button" onclick="copyAdminQrLink()" style="background:#2563eb; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <span>📋 Sao Chép Link</span>
+                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                        <span>Sao Chép Link</span>
                     </button>
                     <button type="button" onclick="shareAdminQrLink()" style="background:#0284c7; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <span>📱 Chia Sẻ</span>
+                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92c0-1.61-1.31-2.92-2.92-2.92z"/></svg>
+                        <span>Chia Sẻ</span>
                     </button>
                 </div>
                 
                 <button type="button" onclick="saveAdminQrImage()" style="width:100%; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    <span>💾 Lưu Ảnh QR (.png)</span>
-                </button>
+                    <span>Lưu Ảnh QR (.png)</span>
             </div>
         </div>
     </div>
@@ -703,6 +786,9 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa Biểu Mẫu: ' + title_val}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg: #090d16;
@@ -720,7 +806,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -859,6 +945,69 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             margin-top: 16px;
             width: 100%;
         }}
+
+        /* Modern Switch Toggle Component */
+        .toggle-switch {{
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            font-weight: 600;
+        }}
+
+        .toggle-switch input[type="checkbox"] {{
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+        }}
+
+        .toggle-slider {{
+            position: relative;
+            width: 38px;
+            height: 20px;
+            background-color: #334155;
+            border-radius: 20px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid #475569;
+            flex-shrink: 0;
+        }}
+
+        .toggle-slider::before {{
+            content: "";
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 2px;
+            top: 2px;
+            background-color: #f8fafc;
+            border-radius: 50%;
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }}
+
+        .toggle-switch input[type="checkbox"]:checked + .toggle-slider {{
+            background-color: var(--accent);
+            border-color: #3b82f6;
+        }}
+
+        .toggle-switch input[type="checkbox"]:checked + .toggle-slider::before {{
+            transform: translateX(18px);
+            background-color: #ffffff;
+        }}
+
+        .toggle-switch:hover .toggle-slider {{
+            border-color: #64748b;
+        }}
+
+        .toggle-switch input[type="checkbox"]:checked:hover + .toggle-slider {{
+            background-color: var(--accent-hover);
+        }}
     </style>
 </head>
 <body>
@@ -935,30 +1084,41 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
 
                     <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
                         <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 12px;">
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableBlurCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_blur_check', True) else ''}>
-                                Kiểm tra độ mờ / rung tay
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra độ mờ / rung tay</span>
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableAiVision" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_vision', True) else ''}>
-                                Kiểm tra AI Vision trích xuất hóa đơn
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra AI Vision trích xuất hóa đơn</span>
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableVehicleMatch" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_vehicle_match', True) else ''}>
-                                Kiểm tra đối chiếu biển số phương tiện
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra đối chiếu biển số</span>
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableAntiFraud" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_anti_fraud', True) else ''}>
-                                Kiểm tra chống gian lận & ảnh trùng lặp
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra chống gian lận & trùng lặp</span>
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalRequireUnique" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('require_unique', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Yêu cầu ảnh độc nhất (Chống trùng lặp)</span>
+                            </label>
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableAiGeneratedCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_generated_check', True) else ''}>
-                                Kiểm tra ảnh AI tổng hợp
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra ảnh AI tổng hợp</span>
                             </label>
-                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; color: var(--text);">
+                            <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', False) else ''}>
-                                Kiểm tra ảnh chụp màn hình
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra ảnh chụp màn hình</span>
                             </label>
                         </div>
                         <div class="field-group" style="max-width: 320px;">
@@ -1080,7 +1240,9 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                 slot: sidx,
                 title: `Ảnh ${{sidx + 1}}: `,
                 role: 'custom_object',
-                required: true
+                required: true,
+                require_unique: true,
+                allow_upload: true
             }});
             questions[qidx].allow_multiple_images = true;
             questions[qidx].min_images = questions[qidx].image_slots.length;
@@ -1103,6 +1265,73 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                 questions[qidx].image_slots[sidx][field] = val;
             }}
         }}
+        function addMultipleChoiceOption(qidx) {{
+            if (!Array.isArray(questions[qidx].options)) {{
+                questions[qidx].options = [];
+            }}
+            questions[qidx].options.push({{ label: `Lựa chọn ${{questions[qidx].options.length + 1}}`, group: 'default' }});
+            renderQuestions();
+        }}
+        function removeMultipleChoiceOption(qidx, optIdx) {{
+            if (Array.isArray(questions[qidx].options)) {{
+                questions[qidx].options.splice(optIdx, 1);
+                renderQuestions();
+            }}
+        }}
+        function updateMultipleChoiceOption(qidx, optIdx, field, val) {{
+            if (Array.isArray(questions[qidx].options) && questions[qidx].options[optIdx]) {{
+                let opt = questions[qidx].options[optIdx];
+                if (typeof opt !== 'object' || opt === null) {{
+                    opt = {{ label: String(opt), group: 'default' }};
+                    questions[qidx].options[optIdx] = opt;
+                }}
+                opt[field] = val;
+            }}
+        }}
+        function updateGroupCompatibilityJson(qidx, jsonStr) {{
+            try {{
+                if (!jsonStr || !jsonStr.trim()) {{
+                    delete questions[qidx].group_compatibility;
+                }} else {{
+                    questions[qidx].group_compatibility = JSON.parse(jsonStr);
+                }}
+            }} catch(e) {{
+                // Ignore parse errors while typing
+            }}
+        }}
+        function renderMultipleChoiceOptionsBuilder(q, qidx) {{
+            const opts = (q.options || []).map(opt => typeof opt === 'object' && opt !== null ? opt : {{ label: String(opt), group: 'default' }});
+            const rows = opts.map((opt, oidx) => `
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                    <input type="text" style="flex:2; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(opt.label || '')}}" placeholder="Tên lựa chọn (Label)" oninput="updateMultipleChoiceOption(${{qidx}}, ${{oidx}}, 'label', this.value)">
+                    <input type="text" style="flex:1; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#38bdf8; border-radius:4px; font-family:monospace;" value="${{escapeHtml(opt.group || 'default')}}" placeholder="Nhóm (Group)" oninput="updateMultipleChoiceOption(${{qidx}}, ${{oidx}}, 'group', this.value)">
+                    <button type="button" style="background:#ef4444; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:0.75rem; cursor:pointer;" onclick="removeMultipleChoiceOption(${{qidx}}, ${{oidx}})">Xóa</button>
+                </div>
+            `).join('');
+            const compatJson = q.group_compatibility ? JSON.stringify(q.group_compatibility, null, 2) : '';
+            return `
+                <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span style="font-size:0.84rem; font-weight:700; color:#38bdf8;">Danh sách Lựa chọn & Nhóm đối kháng (Option Groups)</span>
+                        <button type="button" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addMultipleChoiceOption(${{qidx}})">+ Thêm lựa chọn</button>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        ${{rows.length ? rows : '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có lựa chọn nào.</div>'}}
+                    </div>
+                    <details style="margin-top:10px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${{q.group_compatibility ? 'open' : ''}}>
+                        <summary style="font-size:0.78rem; font-weight:700; color:#93c5fd; cursor:pointer; user-select:none;">
+                            Cấu hình nhóm tương thích (Group Compatibility - Advanced)
+                        </summary>
+                        <div style="margin-top:6px;">
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:4px;">
+                                Mặc định các nhóm khác nhau sẽ <b>đối kháng</b> (mutually exclusive). Nhập JSON mapping những nhóm được phép cùng tồn tại, ví dụ: <code>{{"applicable": ["other_group"]}}</code>
+                            </div>
+                            <textarea style="width:100%; min-height:60px; background:#020617; border:1px solid #334155; color:#38bdf8; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace;" placeholder='{{"group_a": ["group_b"]}}' oninput="updateGroupCompatibilityJson(${{qidx}}, this.value)">${{escapeHtml(compatJson)}}</textarea>
+                        </div>
+                    </details>
+                </div>
+            `;
+        }}
         function renderSlotsBuilderHtml(q, qidx) {{
             const slots = q.image_slots || [];
             if (!slots.length) {{
@@ -1124,13 +1353,103 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.role || '')}}" placeholder="VD: app_profile, app_income, id_card_front, restaurant_bill..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'role', this.value)">
                         </div>
                     </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
-                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; cursor:pointer;">
-                            <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)"> Bắt buộc chụp
+                    <div>
+                        <label style="font-size:0.72rem; color:#94a3b8;">Tooltip hướng dẫn riêng cho slot</label>
+                        <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.tooltip || '')}}" placeholder="VD: Chụp rõ họ tên và mã tài xế..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'tooltip', this.value)">
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; flex-wrap:wrap; gap:12px; background:#0f172a; padding:8px 10px; border-radius:6px; border:1px solid #1e293b;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Bắt buộc chụp</span>
+                        </label>
+                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép các ảnh chụp giống nhau (ví dụ: màn hình hồ sơ đã che thông tin / censored profile)">
+                            <input type="checkbox" ${{s.require_unique !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'require_unique', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Ảnh độc nhất</span>
+                        </label>
+                        <label class="toggle-switch" title="Cho phép người dùng tải ảnh có sẵn từ bộ sưu tập/file thay vì chỉ chụp camera trực tiếp">
+                            <input type="checkbox" ${{s.allow_upload !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'allow_upload', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Cho phép tải ảnh lên</span>
                         </label>
                     </div>
+                    <details style="margin-top:8px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${{s.image_checks ? 'open' : ''}}>
+                        <summary style="font-size:0.76rem; font-weight:700; color:#38bdf8; cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px;">
+                            <span>Cấu hình kiểm tra nâng cao riêng cho slot này</span>
+                        </summary>
+                        <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                            <label class="toggle-switch" style="font-size:0.78rem;">
+                                <input type="checkbox" ${{s.image_checks ? 'checked' : ''}} onchange="toggleSlotImageChecks(${{qidx}}, ${{sidx}}, this.checked)">
+                                <span class="toggle-slider"></span>
+                                <span>Kích hoạt cấu hình riêng (ghi đè câu hỏi)</span>
+                            </label>
+                            ${{s.image_checks ? `
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; margin-top:8px; padding-left:10px; border-left:2px solid var(--accent);">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_blur_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_blur_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra độ mờ / rung</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_ai_vision !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_ai_vision', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra AI Vision</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_vehicle_match !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_vehicle_match', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Đối chiếu biển số</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_anti_fraud !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_anti_fraud', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Chống gian lận & trùng lặp</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_ai_generated_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_ai_generated_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra ảnh AI</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${{s.image_checks.enable_screen_photo_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_screen_photo_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra chụp màn hình</span>
+                                    </label>
+                                </div>
+                                <div class="field-group" style="max-width:220px; margin-top:6px; padding-left:10px;">
+                                    <label style="font-size:0.72rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
+                                    <input type="number" step="0.1" value="${{s.image_checks.blur_threshold !== undefined && s.image_checks.blur_threshold !== null ? s.image_checks.blur_threshold : 40}}" oninput="setSlotCheck(${{qidx}}, ${{sidx}}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
+                                </div>
+                            ` : ''}}
+                        </div>
+                    </details>
                 </div>
             `).join('');
+        }}
+        function toggleSlotImageChecks(qidx, sidx, isEnabled) {{
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (isEnabled) {{
+                slot.image_checks = {{
+                    enable_blur_check: true,
+                    blur_threshold: 40.0,
+                    enable_ai_vision: true,
+                    enable_vehicle_match: false,
+                    enable_anti_fraud: true,
+                    enable_ai_generated_check: true,
+                    enable_screen_photo_check: false
+                }};
+            }} else {{
+                delete slot.image_checks;
+            }}
+            renderQuestions();
+        }}
+        function setSlotCheck(qidx, sidx, key, val) {{
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (!slot.image_checks) slot.image_checks = {{}};
+            slot.image_checks[key] = val;
         }}
         function escapeHtml(str) {{
             if (str === null || str === undefined) return '';
@@ -1183,29 +1502,42 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                             <input type="text" value="${{escapeHtml(q.tooltip || '')}}" placeholder="Thông tin trợ giúp nhanh..." oninput="questions[${{idx}}].tooltip = this.value">
                         </div>
                     </div>
-                    <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
-                        <label style="color:#fde047; font-size:0.75rem; font-weight:700;">🤖 AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
-                        <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${{idx}}].ai_detection_prompt = this.value">${{escapeHtml(q.ai_detection_prompt || '')}}</textarea>
+                    <div>
+                        <label class="toggle-switch" style="margin-top:4px;">
+                            <input type="checkbox" ${{q.required !== false ? 'checked' : ''}} onchange="questions[${{idx}}].required = this.checked;">
+                            <span class="toggle-slider"></span>
+                            <span style="color:#38bdf8;">Bắt buộc trả lời (Mandatory Question)</span>
+                        </label>
                     </div>
+                    ${{q.type === 'camera_webrtc' ? `
+                        <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
+                            <label style="color:#fde047; font-size:0.75rem; font-weight:700;">AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
+                            <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${{idx}}].ai_detection_prompt = this.value">${{escapeHtml(q.ai_detection_prompt || '')}}</textarea>
+                        </div>
+                    ` : ''}}
                     ${{q.type === 'text' ? `
                         <div>
                             <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${{idx}}, this.checked)" ${{q.validation && q.validation.numbers_only ? 'checked' : ''}}> Chỉ cho phép chữ số (Bàn phím số numeric keypad)</label>
                         </div>
                     ` : ''}}
                     <div class="field-group">
-                        <label>Mô tả / Hướng dẫn</label>
+                        <label style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Mô tả / Hướng dẫn</span>
+                            <span style="font-size:0.7rem; color:#38bdf8; font-weight:normal;">Hỗ trợ chèn link [Tên link](url) và ảnh ![Mô tả](url)</span>
+                        </label>
                         <input type="text" value="${{escapeHtml(q.description || '')}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">
                     </div>
-                    ${{['single_choice', 'multiple_choice', 'dropdown'].includes(q.type) ? `
+                    ${{q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? `
                         <div class="field-group">
                             <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
-                            <input type="text" value="${{escapeHtml((q.options || []).join(', '))}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
+                            <input type="text" value="${{escapeHtml((q.options || []).map(o => typeof o === 'object' && o !== null ? o.label : o).join(', '))}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
                         </div>
-                    ` : ''}}
+                    ` : '')}}
+                    <div style="display:none;" data-options-marker="true" value="${{escapeHtml((q.options || []).join(', '))}}"></div>
                     ${{q.type === 'camera_webrtc' ? `
                         <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">📸 Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
+                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
                                 <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${{idx}})">+ Thêm Slot Ảnh</button>
                             </div>
                             <div id="slotsWrap_${{idx}}" style="display:flex; flex-direction:column; gap:8px;">
@@ -1214,38 +1546,50 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         </div>
                         <details style="background:rgba(15, 23, 42, 0.7); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:4px;" ${{q.image_checks ? 'open' : ''}}>
                             <summary style="font-size:0.84rem; font-weight:700; color:#60a5fa; cursor:pointer; user-select:none;">
-                                ⚙ Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
+                                Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
                             </summary>
                             <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-                                <label style="display:flex; align-items:center; gap:8px; font-size:0.8rem; cursor:pointer;">
+                                <label class="toggle-switch" style="font-size:0.82rem;">
                                     <input type="checkbox" ${{q.image_checks ? 'checked' : ''}} onchange="toggleQuestionImageChecks(${{idx}}, this.checked)">
-                                    <span>Kích hoạt cấu hình kiểm tra riêng (ghi đè cấu hình toàn cục)</span>
+                                    <span class="toggle-slider"></span>
+                                    <span>Kích hoạt cấu hình kiểm tra riêng (ghi đè toàn cục)</span>
                                 </label>
                                 ${{q.image_checks ? `
-                                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px; margin-top:6px; padding-left:12px; border-left:2px solid var(--accent);">
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; margin-top:8px; padding-left:12px; border-left:2px solid var(--accent);">
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_blur_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_blur_check', this.checked)">
-                                            Kiểm tra độ mờ / rung tay
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra độ mờ / rung tay</span>
                                         </label>
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_ai_vision !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_vision', this.checked)">
-                                            Kiểm tra AI Vision
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra AI Vision</span>
                                         </label>
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_vehicle_match !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_vehicle_match', this.checked)">
-                                            Đối chiếu biển số
+                                            <span class="toggle-slider"></span>
+                                            <span>Đối chiếu biển số</span>
                                         </label>
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_anti_fraud !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_anti_fraud', this.checked)">
-                                            Chống gian lận & trùng lặp
+                                            <span class="toggle-slider"></span>
+                                            <span>Chống gian lận & trùng lặp</span>
                                         </label>
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép ảnh chụp giống nhau (ví dụ: hồ sơ che mờ)">
+                                            <input type="checkbox" ${{q.image_checks.require_unique !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'require_unique', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Ảnh độc nhất (Unique)</span>
+                                        </label>
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_ai_generated_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_generated_check', this.checked)">
-                                            Kiểm tra ảnh AI tổng hợp
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra ảnh AI</span>
                                         </label>
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                                        <label class="toggle-switch">
                                             <input type="checkbox" ${{q.image_checks.enable_screen_photo_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_screen_photo_check', this.checked)">
-                                            Kiểm tra chụp màn hình
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra chụp màn hình</span>
                                         </label>
                                     </div>
                                     <div class="field-group" style="max-width:240px; margin-top:6px; padding-left:12px;">
@@ -1286,11 +1630,15 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         enable_ai_vision: document.getElementById('globalEnableAiVision') ? document.getElementById('globalEnableAiVision').checked : true,
                         enable_vehicle_match: document.getElementById('globalEnableVehicleMatch') ? document.getElementById('globalEnableVehicleMatch').checked : true,
                         enable_anti_fraud: document.getElementById('globalEnableAntiFraud') ? document.getElementById('globalEnableAntiFraud').checked : true,
+                        require_unique: document.getElementById('globalRequireUnique') ? document.getElementById('globalRequireUnique').checked : true,
                         enable_ai_generated_check: document.getElementById('globalEnableAiGeneratedCheck') ? document.getElementById('globalEnableAiGeneratedCheck').checked : true,
                         enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : false
                     }}
                 }},
-                questions: questions
+                questions: questions.map(q => ({{
+                    ...q,
+                    required: q.required !== false
+                }}))
             }};
 
             try {{

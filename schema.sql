@@ -50,6 +50,35 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     embedding vector(384),
     status VARCHAR(32) NOT NULL CHECK (status IN ('APPROVED', 'REJECTED', 'APPEAL_PENDING', 'MANUAL_REVIEW')),
     rejection_reason TEXT,
+    -- Form specific survey fields
+    consent_choice TEXT,
+    vehicle_type VARCHAR(32),
+    car_model VARCHAR(64),
+    gsm_duration VARCHAR(64),
+    gsm_contract_type VARCHAR(64),
+    daily_trips INT,
+    monthly_income_range VARCHAR(64),
+    gsm_incentive_policy TEXT,
+    membership_type VARCHAR(64),
+    -- 5-week income statistics (October 2026)
+    income_week_1_gross BIGINT DEFAULT 0,
+    income_week_1_net BIGINT DEFAULT 0,
+    income_week_1_trips INT DEFAULT 0,
+    income_week_2_gross BIGINT DEFAULT 0,
+    income_week_2_net BIGINT DEFAULT 0,
+    income_week_2_trips INT DEFAULT 0,
+    income_week_3_gross BIGINT DEFAULT 0,
+    income_week_3_net BIGINT DEFAULT 0,
+    income_week_3_trips INT DEFAULT 0,
+    income_week_4_gross BIGINT DEFAULT 0,
+    income_week_4_net BIGINT DEFAULT 0,
+    income_week_4_trips INT DEFAULT 0,
+    income_week_5_gross BIGINT DEFAULT 0,
+    income_week_5_net BIGINT DEFAULT 0,
+    income_week_5_trips INT DEFAULT 0,
+    total_gross_revenue BIGINT DEFAULT 0,
+    total_net_income BIGINT DEFAULT 0,
+    total_trips INT DEFAULT 0,
     form_data JSONB NOT NULL DEFAULT '{}'::jsonb, -- Flexible payload supporting arbitrary form fields
     raw_extracted_facts JSONB,
     audit_seal_hash VARCHAR(64), -- Immutable SHA-256 seal (phone + ts + gps + signature)
@@ -58,6 +87,34 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     moderation_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Auto-migration: ensure columns exist for existing databases
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS consent_choice TEXT;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS car_model VARCHAR(64);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_duration VARCHAR(64);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_contract_type VARCHAR(64);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS daily_trips INT;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS monthly_income_range VARCHAR(64);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS gsm_incentive_policy TEXT;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS membership_type VARCHAR(64);
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_gross BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_net BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_1_trips INT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_gross BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_net BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_2_trips INT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_gross BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_net BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_3_trips INT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_gross BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_net BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_4_trips INT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_gross BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_net BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS income_week_5_trips INT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_gross_revenue BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_net_income BIGINT DEFAULT 0;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS total_trips INT DEFAULT 0;
 
 -- Index for dynamic form queries
 CREATE INDEX IF NOT EXISTS idx_surveys_form_id ON survey_submissions (form_id, created_at DESC);

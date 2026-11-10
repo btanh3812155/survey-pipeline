@@ -28,6 +28,9 @@ def render_audit_viewer_html(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Trust Bridge - Nhật Ký Kiểm Toán Toàn Hệ Thống</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg: #090d16;
@@ -53,7 +56,7 @@ def render_audit_viewer_html(
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -468,14 +471,29 @@ def render_audit_viewer_html(
     <div class="container">
         <header>
             <div class="header-brand">
-                <h1>🛡️ Nhật Ký Kiểm Toán Toàn Hệ Thống</h1>
+                <h1>
+                    <svg viewBox="0 0 24 24" style="width:22px; height:22px; fill:#38bdf8; display:inline-block; vertical-align:middle; margin-right:8px;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                    Nhật Ký Kiểm Toán Toàn Hệ Thống
+                </h1>
                 <p>Immutable Audit Trail & Cryptographic Hop Chains (Decree 13 / GDPR Legal Compliance)</p>
             </div>
             <div class="header-actions">
-                <a href="/admin/forms" class="nav-btn">📋 Quản Lý Form</a>
-                <a href="/admin/submissions" class="nav-btn">📊 Dữ Liệu Nộp</a>
-                <a href="/admin/samples" class="nav-btn">🖼️ Ảnh Mẫu Test</a>
-                <button type="button" onclick="location.reload()" class="nav-btn primary">🔄 Làm Mới</button>
+                <a href="/admin/forms" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                    Quản Lý Form
+                </a>
+                <a href="/admin/submissions" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+                    Dữ Liệu Nộp
+                </a>
+                <a href="/admin/forms#test-samples-section" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                    Ảnh Mẫu Test
+                </a>
+                <button type="button" onclick="location.reload()" class="nav-btn primary">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    Làm Mới
+                </button>
             </div>
         </header>
 
@@ -502,7 +520,7 @@ def render_audit_viewer_html(
         <!-- Filter & Search Toolbar -->
         <div class="controls-bar">
             <div class="filter-group">
-                <input type="text" id="searchInput" class="search-box" placeholder="🔍 Tìm theo Mã Hồ Sơ, Entity, Action, Actor, Hash..." oninput="filterData()">
+                <input type="text" id="searchInput" class="search-box" placeholder="Tìm theo Mã Hồ Sơ, Entity, Action, Actor, Hash..." oninput="filterData()">
                 <select id="compFilter" class="select-filter" onchange="filterData()">
                     <option value="ALL">Tất cả thành phần (Components)</option>
                     <option value="INGRESS">INGRESS (Nhận Webhook/Form)</option>
@@ -526,8 +544,14 @@ def render_audit_viewer_html(
                 </select>
             </div>
             <div class="export-group">
-                <button type="button" class="nav-btn" onclick="exportCSV()">📥 Xuất CSV</button>
-                <button type="button" class="nav-btn" onclick="exportJSON()">📥 Xuất JSON</button>
+                <button type="button" class="nav-btn" onclick="exportCSV()">
+                    <svg viewBox="0 0 24 24" style="width:15px; height:15px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    Xuất CSV
+                </button>
+                <button type="button" class="nav-btn" onclick="exportJSON()">
+                    <svg viewBox="0 0 24 24" style="width:15px; height:15px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    Xuất JSON
+                </button>
             </div>
         </div>
 
@@ -568,7 +592,8 @@ def render_audit_viewer_html(
                 <div class="seal-verification">
                     <div>
                         <b style="color:var(--success); display:flex; align-items:center; gap:6px;">
-                            🛡️ Chữ Ký Mật Mã Học Hợp Lệ (Tamper-Evident SHA-256)
+                            <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                            Chữ Ký Mật Mã Học Hợp Lệ (Tamper-Evident SHA-256)
                         </b>
                         <div class="seal-verification-text">Bảo đảm tính toàn vẹn dữ liệu chuỗi chặng theo Nghị định 13/2023/NĐ-CP & Luật An ninh mạng.</div>
                     </div>
@@ -650,7 +675,7 @@ def render_audit_viewer_html(
         function copyText(txt, el) {{
             navigator.clipboard.writeText(txt).then(() => {{
                 const orig = el.textContent;
-                el.textContent = "✅ Copied!";
+                el.textContent = "Đã sao chép!";
                 setTimeout(() => {{ el.textContent = orig; }}, 1500);
             }}).catch(() => prompt("Copy hash:", txt));
         }}
@@ -698,7 +723,7 @@ def render_audit_viewer_html(
                     </td>
                     <td data-label="SHA-256 Seal">
                         <span class="hash-code" onclick="copyText('${{hash}}', this)" title="Click để sao chép toàn bộ mã SHA-256">
-                            🔒 ${{truncHash}}
+                            ${{truncHash}}
                         </span>
                     </td>
                     <td data-label="Thao Tác" style="text-align: right;">

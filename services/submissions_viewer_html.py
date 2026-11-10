@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-HTML rendering service for the Survey Submissions Viewer Dashboard.
-Provides a modern, responsive web interface for inspecting survey submissions
-from both PostgreSQL master storage and dev test storage.
+HTML rendering service for the Survey Submissions & Data Hub Dashboard.
+Provides a modern, high-performance web interface for querying, sorting,
+filtering, and inspecting survey submissions per form, with dynamic
+per-form question columns and Excel-compatible CSV export.
 """
 
 import json
@@ -11,9 +12,12 @@ from typing import List, Dict, Any, Optional
 
 def render_submissions_viewer_html(
     submissions: List[Dict[str, Any]],
+    forms: Optional[Dict[str, Any]] = None,
+    selected_form_id: Optional[str] = None,
     stats: Optional[Dict[str, int]] = None,
-    current_mode: str = "all"
+    current_mode: str = "all",
 ) -> str:
+    forms = forms or {}
     stats = stats or {
         "total": len(submissions),
         "approved": sum(1 for s in submissions if s.get("status") == "APPROVED"),
@@ -21,23 +25,30 @@ def render_submissions_viewer_html(
         "manual_review": sum(1 for s in submissions if s.get("status") in ("MANUAL_REVIEW", "APPEAL_PENDING", "PENDING")),
     }
 
-    # Pre-encode submissions for frontend filtering and modal viewing
+    # Pre-encode submissions and form schemas for frontend interactivity
     submissions_json = json.dumps(submissions, ensure_ascii=False)
+    forms_json = json.dumps(forms, ensure_ascii=False)
+    active_form_id_str = json.dumps(selected_form_id or "all", ensure_ascii=False)
 
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Trust Bridge - Dữ Liệu Khảo Sát Đã Nộp</title>
+    <title>Trust Bridge - Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg: #090d16;
             --surface: #131b2e;
             --surface-hover: #1a253e;
+            --surface-active: #223254;
             --border: #23314f;
             --accent: #2563eb;
             --accent-hover: #1d4ed8;
+            --accent-soft: rgba(37, 99, 235, 0.15);
             --success: #10b981;
             --success-bg: rgba(16, 185, 129, 0.15);
             --danger: #ef4444;
@@ -48,26 +59,27 @@ def render_submissions_viewer_html(
             --info-bg: rgba(6, 182, 212, 0.15);
             --text: #f8fafc;
             --muted: #94a3b8;
+            --card-radius: 12px;
         }}
 
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
             padding: 20px 16px;
         }}
 
-        .container {{ max-width: 1280px; margin: 0 auto; }}
+        .container {{ max-width: 1440px; margin: 0 auto; }}
 
-        /* Top Navigation Header */
+        /* Top Header */
         header {{
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             border-bottom: 1px solid var(--border);
             padding-bottom: 16px;
             gap: 16px;
@@ -80,10 +92,11 @@ def render_submissions_viewer_html(
             display: flex;
             align-items: center;
             gap: 8px;
+            color: #60a5fa;
         }}
 
         .header-brand p {{
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             color: var(--muted);
             margin-top: 4px;
         }}
@@ -125,22 +138,71 @@ def render_submissions_viewer_html(
             background: var(--accent-hover);
         }}
 
-        /* KPI Cards */
+        /* Per-Form Selector Tabs */
+        .form-selector-bar {{
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            overflow-x: auto;
+            padding-bottom: 6px;
+            scrollbar-width: thin;
+            border-bottom: 1px solid var(--border);
+        }}
+
+        .form-tab-btn {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }}
+
+        .form-tab-btn:hover {{
+            color: var(--text);
+            background: var(--surface-hover);
+            border-color: #3b82f6;
+        }}
+
+        .form-tab-btn.active {{
+            background: var(--accent-soft);
+            border-color: var(--accent);
+            color: #60a5fa;
+            font-weight: 700;
+        }}
+
+        .form-pill {{
+            background: #1e293b;
+            color: var(--text);
+            font-size: 0.72rem;
+            padding: 2px 7px;
+            border-radius: 12px;
+            font-weight: 700;
+        }}
+
+        /* KPI Summary Cards */
         .stats-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
         }}
 
         .stat-card {{
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px 20px;
+            border-radius: 10px;
+            padding: 14px 16px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 4px;
             position: relative;
             overflow: hidden;
         }}
@@ -156,100 +218,153 @@ def render_submissions_viewer_html(
         .stat-card.approved::before {{ background: var(--success); }}
         .stat-card.rejected::before {{ background: var(--danger); }}
         .stat-card.review::before {{ background: var(--warning); }}
+        .stat-card.gross::before {{ background: #8b5cf6; }}
 
         .stat-title {{
-            font-size: 0.82rem;
+            font-size: 0.76rem;
             color: var(--muted);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
             font-weight: 700;
+            letter-spacing: 0.03em;
         }}
 
         .stat-value {{
-            font-size: 1.8rem;
+            font-size: 1.4rem;
             font-weight: 800;
+            line-height: 1.2;
         }}
 
-        /* Controls & Filter Bar */
-        .controls-bar {{
+        /* Control & Filter Toolbar */
+        .controls-card {{
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 20px;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
             display: flex;
+            flex-direction: column;
             gap: 12px;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: space-between;
         }}
 
-        .filter-group {{
+        .controls-row {{
             display: flex;
             gap: 10px;
-            flex-wrap: wrap;
             align-items: center;
-            flex: 1;
+            flex-wrap: wrap;
         }}
 
         .search-box {{
             flex: 1;
             min-width: 240px;
-            background: var(--bg);
+            background: #090d16;
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 12px;
             color: var(--text);
-            font-size: 0.85rem;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.84rem;
             outline: none;
+            transition: border-color 0.2s;
         }}
-        .search-box:focus {{ border-color: var(--accent); }}
+        .search-box:focus {{
+            border-color: var(--accent);
+        }}
 
         .select-filter {{
-            background: var(--bg);
+            background: #090d16;
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 12px;
             color: var(--text);
-            font-size: 0.85rem;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
             outline: none;
             cursor: pointer;
+            min-width: 140px;
+        }}
+        .select-filter:focus {{ border-color: var(--accent); }}
+
+        .date-input {{
+            background: #090d16;
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 7px 10px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            outline: none;
         }}
 
-        .export-group {{
-            display: flex;
-            gap: 8px;
+        .btn-toolbar {{
+            background: var(--surface-hover);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
             align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }}
+        .btn-toolbar:hover {{
+            background: #1e293b;
+            border-color: #3b82f6;
         }}
 
-        /* Table Styling */
+        /* Table Container & Sticky Headers */
         .table-wrap {{
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 12px;
+            border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }}
+
+        .table-scroll {{
+            max-height: 68vh;
+            overflow-x: auto;
+            overflow-y: auto;
+            scrollbar-width: thin;
         }}
 
         table {{
             width: 100%;
             border-collapse: collapse;
             text-align: left;
-            font-size: 0.86rem;
-        }}
-
-        th {{
-            background: rgba(35, 49, 79, 0.4);
-            padding: 12px 16px;
-            font-weight: 700;
-            color: var(--muted);
-            border-bottom: 1px solid var(--border);
+            font-size: 0.82rem;
             white-space: nowrap;
         }}
 
+        th {{
+            background: #0b1120;
+            color: var(--muted);
+            font-weight: 700;
+            padding: 12px 14px;
+            border-bottom: 2px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            user-select: none;
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+        }}
+
+        th:hover {{
+            color: #60a5fa;
+            background: #0f172a;
+        }}
+
+        th.sorted-asc::after {{ content: ' ▲'; color: var(--accent); }}
+        th.sorted-desc::after {{ content: ' ▼'; color: var(--accent); }}
+        th:not(.sorted-asc):not(.sorted-desc)::after {{ content: ' ↕'; opacity: 0.3; }}
+        th.no-sort {{ cursor: default; }}
+        th.no-sort::after {{ display: none; }}
+
         td {{
-            padding: 14px 16px;
+            padding: 12px 14px;
             border-bottom: 1px solid var(--border);
+            color: var(--text);
             vertical-align: middle;
         }}
 
@@ -257,121 +372,153 @@ def render_submissions_viewer_html(
             background: var(--surface-hover);
         }}
 
+        /* Badges & Chips */
         .badge {{
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
             font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
+            letter-spacing: 0.02em;
         }}
+        .badge-approved {{ background: var(--success-bg); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }}
+        .badge-rejected {{ background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }}
+        .badge-review {{ background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }}
+        .badge-pill {{ background: #1e293b; color: #94a3b8; border: 1px solid #334155; }}
+        .badge-ctv {{ background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }}
 
-        .badge.approved {{ background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }}
-        .badge.rejected {{ background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }}
-        .badge.review {{ background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }}
-        .badge.test {{ background: var(--info-bg); color: var(--info); border: 1px solid rgba(6, 182, 212, 0.3); }}
-        .badge.prod {{ background: rgba(148, 163, 184, 0.15); color: var(--muted); border: 1px solid var(--border); }}
-
-        .sub-id {{
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-weight: 700;
+        .id-link {{
             color: #60a5fa;
+            font-family: monospace;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
         }}
+        .id-link:hover {{ text-decoration: underline; }}
 
-        .sub-time {{
-            font-size: 0.75rem;
+        /* Table Pagination Footer */
+        .pagination-bar {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: #0b1120;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
             color: var(--muted);
-            margin-top: 3px;
+            flex-wrap: wrap;
+            gap: 12px;
         }}
 
-        .driver-name {{ font-weight: 600; }}
-        .driver-phone {{ font-size: 0.78rem; color: var(--muted); }}
+        .pagination-controls {{
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }}
 
-        .btn-detail {{
-            background: transparent;
+        .page-btn {{
+            background: var(--surface);
             border: 1px solid var(--border);
             color: var(--text);
-            padding: 6px 12px;
+            padding: 5px 10px;
             border-radius: 6px;
+            font-size: 0.78rem;
             cursor: pointer;
-            font-size: 0.8rem;
-            font-weight: 600;
             transition: all 0.15s;
         }}
-
-        .btn-detail:hover {{
+        .page-btn:hover:not(:disabled) {{
             background: var(--accent);
             border-color: var(--accent);
             color: #fff;
         }}
+        .page-btn:disabled {{
+            opacity: 0.4;
+            cursor: not-allowed;
+        }}
 
         /* Empty State */
         .empty-state {{
+            padding: 48px 24px;
             text-align: center;
-            padding: 60px 20px;
             color: var(--muted);
         }}
         .empty-state svg {{
-            width: 48px; height: 48px; fill: var(--border);
+            width: 48px;
+            height: 48px;
+            fill: #475569;
             margin-bottom: 12px;
         }}
 
-        /* Detail Modal */
+        /* Inspection Modal */
         .modal-overlay {{
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
+            inset: 0;
             background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 1000;
-            backdrop-filter: blur(4px);
             padding: 16px;
         }}
-
         .modal-box {{
-            background: var(--surface);
+            background: #0f172a;
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: var(--card-radius);
             width: 100%;
-            max-width: 800px;
+            max-width: 900px;
             max-height: 90vh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
         }}
-
         .modal-header {{
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: #0b1120;
         }}
-
-        .modal-header h3 {{
-            font-size: 1.1rem;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-
+        .modal-header h3 {{ font-size: 1.1rem; color: #fff; font-weight: 800; }}
         .modal-close {{
             background: none;
             border: none;
             color: var(--muted);
-            font-size: 1.4rem;
+            font-size: 1.5rem;
             cursor: pointer;
             line-height: 1;
         }}
-        .modal-close:hover {{ color: var(--text); }}
+        .modal-close:hover {{ color: #fff; }}
+
+        .modal-tabs {{
+            display: flex;
+            background: #0b1120;
+            border-bottom: 1px solid var(--border);
+            padding: 0 20px;
+            gap: 16px;
+        }}
+        .modal-tab-btn {{
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--muted);
+            padding: 10px 4px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+        .modal-tab-btn.active {{
+            color: #60a5fa;
+            border-bottom-color: var(--accent);
+        }}
 
         .modal-body {{
             padding: 20px;
             overflow-y: auto;
+            flex: 1;
             display: flex;
             flex-direction: column;
             gap: 16px;
@@ -379,14 +526,13 @@ def render_submissions_viewer_html(
 
         .meta-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             gap: 12px;
-            background: rgba(0, 0, 0, 0.2);
+            background: var(--surface);
             padding: 14px;
-            border-radius: 10px;
+            border-radius: 8px;
             border: 1px solid var(--border);
         }}
-
         .meta-item label {{
             display: block;
             font-size: 0.72rem;
@@ -395,375 +541,782 @@ def render_submissions_viewer_html(
             font-weight: 700;
             margin-bottom: 2px;
         }}
-
         .meta-item span {{
-            font-size: 0.9rem;
+            font-size: 0.86rem;
+            color: var(--text);
             font-weight: 600;
-        }}
-
-        .json-preview {{
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 14px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 0.78rem;
-            max-height: 250px;
-            overflow-y: auto;
-            color: #38bdf8;
-            white-space: pre-wrap;
             word-break: break-all;
         }}
 
-        @media (max-width: 768px) {{
-            table thead {{ display: none; }}
-            table, tbody, tr, td {{ display: block; width: 100%; }}
-            tr {{
-                margin-bottom: 12px;
-                border: 1px solid var(--border);
-                border-radius: 10px;
-                background: var(--surface);
-                padding: 10px;
-            }}
-            td {{
-                padding: 8px 6px;
-                border: none;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-            td::before {{
-                content: attr(data-label);
-                font-weight: 700;
-                color: var(--muted);
-                font-size: 0.78rem;
-            }}
+        .qa-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .qa-item {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+        }}
+        .qa-item .q-title {{
+            font-size: 0.8rem;
+            color: #94a3b8;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }}
+        .qa-item .q-ans {{
+            font-size: 0.9rem;
+            color: #fff;
+            font-weight: 600;
+        }}
+
+        .img-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+        }}
+        .img-card {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        .img-card img {{
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+            cursor: pointer;
+        }}
+        .img-card .img-title {{
+            font-size: 0.72rem;
+            color: var(--muted);
+            font-weight: 700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+
+        .json-box {{
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            color: #a5f3fc;
+            font-family: monospace;
+            font-size: 0.76rem;
+            max-height: 300px;
+            overflow: auto;
+            white-space: pre-wrap;
         }}
     </style>
 </head>
 <body>
     <div class="container">
+        <!-- Top Brand & Header -->
         <header>
             <div class="header-brand">
-                <h1>📊 Dữ Liệu Khảo Sát Đã Nộp</h1>
-                <p>Trust Bridge Survey Verification & Fraud Detection Data Hub</p>
+                <h1>
+                    <svg viewBox="0 0 24 24" style="width:22px; height:22px; fill:#60a5fa; display:inline-block; vertical-align:middle; margin-right:8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+                    Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn
+                </h1>
+                <p>Tra cứu, lọc câu hỏi, sắp xếp cột & xuất dữ liệu phân tách theo từng biểu mẫu</p>
             </div>
             <div class="header-actions">
-                <a href="/admin/forms" class="nav-btn">📋 Quản Lý Form</a>
-                <a href="/admin/audit" class="nav-btn">🛡️ Nhật Ký Kiểm Toán</a>
-                <a href="/admin/samples" class="nav-btn">🖼️ Ảnh Mẫu Test</a>
-                <button type="button" onclick="location.reload()" class="nav-btn primary">🔄 Làm Mới</button>
+                <a href="/admin/forms" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                    Quản Lý Form
+                </a>
+                <a href="/admin/audit" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                    Nhật Ký Kiểm Toán
+                </a>
+                <button type="button" onclick="exportFilteredCSV()" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    Xuất Excel (CSV)
+                </button>
+                <button type="button" onclick="exportFilteredJSON()" class="nav-btn">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    Xuất JSON
+                </button>
+                <button type="button" onclick="location.reload()" class="nav-btn primary">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    Làm Mới
+                </button>
             </div>
         </header>
+
+        <!-- Per-Form Selector Tabs -->
+        <div class="form-selector-bar" id="formTabsBar">
+            <!-- Rendered dynamically by JS -->
+        </div>
 
         <!-- KPI Summary Cards -->
         <div class="stats-grid">
             <div class="stat-card total">
-                <div class="stat-title">Tổng Số Hồ Sơ</div>
-                <div class="stat-value" id="kpiTotal">{stats["total"]}</div>
+                <div class="stat-title">Tổng Bản Ghi (Bộ Lọc)</div>
+                <div class="stat-value" id="kpiTotal" style="color:var(--info);">0</div>
             </div>
             <div class="stat-card approved">
                 <div class="stat-title">Đã Duyệt (Approved)</div>
-                <div class="stat-value" id="kpiApproved" style="color: var(--success);">{stats["approved"]}</div>
+                <div class="stat-value" id="kpiApproved" style="color:var(--success);">0</div>
             </div>
             <div class="stat-card review">
-                <div class="stat-title">Chờ Duyệt (Manual Review)</div>
-                <div class="stat-value" id="kpiReview" style="color: var(--warning);">{stats["manual_review"]}</div>
+                <div class="stat-title">Chờ Duyệt (Review)</div>
+                <div class="stat-value" id="kpiReview" style="color:var(--warning);">0</div>
             </div>
             <div class="stat-card rejected">
                 <div class="stat-title">Bị Từ Chối (Rejected)</div>
-                <div class="stat-value" id="kpiRejected" style="color: var(--danger);">{stats["rejected"]}</div>
+                <div class="stat-value" id="kpiRejected" style="color:var(--danger);">0</div>
             </div>
         </div>
 
-        <!-- Filter & Search Toolbar -->
-        <div class="controls-bar">
-            <div class="filter-group">
-                <input type="text" id="searchInput" class="search-box" placeholder="🔍 Tìm theo ID, SĐT, Tên tài xế, Biển số..." oninput="filterData()">
-                <select id="statusFilter" class="select-filter" onchange="filterData()">
+        <!-- Query & Filtering Toolbar -->
+        <div class="controls-card">
+            <div class="controls-row">
+                <input type="text" id="searchInput" class="search-box" placeholder="Truy vấn từ khóa (Mã ID, Tên, SĐT, Biển số, CTV, Câu trả lời...)" oninput="handleSearchInput()">
+                
+                <select id="statusFilter" class="select-filter" onchange="applyFilters()">
                     <option value="ALL">Tất cả trạng thái</option>
                     <option value="APPROVED">Đã Duyệt (APPROVED)</option>
                     <option value="REJECTED">Bị Từ Chối (REJECTED)</option>
                     <option value="MANUAL_REVIEW">Chờ Duyệt (MANUAL_REVIEW)</option>
+                    <option value="APPEAL_PENDING">Khiếu Nại (APPEAL_PENDING)</option>
                 </select>
-                <select id="sourceFilter" class="select-filter" onchange="filterData()">
-                    <option value="ALL">Tất cả nguồn lưu trữ</option>
-                    <option value="PROD">Chính thức (Postgres)</option>
+
+                <select id="ctvFilter" class="select-filter" onchange="applyFilters()">
+                    <option value="ALL">Tất cả CTV / Giới thiệu</option>
+                </select>
+
+                <select id="sourceFilter" class="select-filter" onchange="applyFilters()">
+                    <option value="ALL">Tất cả nguồn lưu</option>
+                    <option value="PROD_MODE">PostgreSQL (Chính thức)</option>
                     <option value="TEST_DEV_MODE">Thử nghiệm (Dev Test)</option>
                 </select>
-            </div>
-            <div class="export-group">
-                <button type="button" class="nav-btn" onclick="exportCSV()">📥 Xuất CSV</button>
-                <button type="button" class="nav-btn" onclick="exportJSON()">📥 Xuất JSON</button>
+
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:0.75rem; color:var(--muted);">Từ:</span>
+                    <input type="date" id="dateFrom" class="date-input" onchange="applyFilters()">
+                    <span style="font-size:0.75rem; color:var(--muted);">Đến:</span>
+                    <input type="date" id="dateTo" class="date-input" onchange="applyFilters()">
+                </div>
+
+                <button type="button" class="btn-toolbar" onclick="resetFilters()">↺ Đặt lại lọc</button>
             </div>
         </div>
 
-        <!-- Submissions Table -->
+        <!-- Dynamic Data Table per Form -->
         <div class="table-wrap">
-            <table id="submissionsTable">
-                <thead>
-                    <tr>
-                        <th>Mã Hồ Sơ</th>
-                        <th>Tài Xế / Người Nộp</th>
-                        <th>Phương Tiện</th>
-                        <th>Trạng Thái</th>
-                        <th>Lý Do / Ghi Chú</th>
-                        <th>Nguồn Lưu</th>
-                        <th style="text-align: right;">Thao Tác</th>
-                    </tr>
-                </thead>
-                <tbody id="tableBody">
-                    <!-- Populated dynamically by JS -->
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table id="dataTable">
+                    <thead id="tableHead">
+                        <!-- Populated dynamically based on active form's schema -->
+                    </thead>
+                    <tbody id="tableBody">
+                        <!-- Populated dynamically by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty State -->
             <div id="emptyState" class="empty-state" style="display: none;">
                 <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                <h3>Chưa có dữ liệu khảo sát nào phù hợp bộ lọc</h3>
-                <p>Dữ liệu sẽ xuất hiện tự động ngay khi tài xế nộp khảo sát.</p>
+                <h3 style="font-size:1rem; color:#f1f5f9; margin-bottom:4px;">Không tìm thấy bản ghi nào phù hợp bộ lọc</h3>
+                <p style="font-size:0.82rem;">Hãy thử xóa bớt từ khóa tìm kiếm hoặc chọn biểu mẫu khác.</p>
+            </div>
+
+            <!-- Pagination Bar -->
+            <div class="pagination-bar">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span>Hiển thị mỗi trang:</span>
+                    <select id="pageSizeSelect" class="select-filter" style="min-width:70px; padding:4px 8px;" onchange="changePageSize(this.value)">
+                        <option value="15">15</option>
+                        <option value="25" selected>25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="500">500</option>
+                    </select>
+                    <span id="pageSummary">Đang tải...</span>
+                </div>
+                <div class="pagination-controls">
+                    <button type="button" class="page-btn" id="btnFirst" onclick="goToPage(1)">« Đầu</button>
+                    <button type="button" class="page-btn" id="btnPrev" onclick="goToPage(currentPage - 1)">‹ Trước</button>
+                    <span id="pageCurrent" style="padding:0 8px; font-weight:700; color:#fff;">Trang 1 / 1</span>
+                    <button type="button" class="page-btn" id="btnNext" onclick="goToPage(currentPage + 1)">Sau ›</button>
+                    <button type="button" class="page-btn" id="btnLast" onclick="goToPage(totalPages)">Cuối »</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Details Modal -->
+    <!-- Inspector Modal -->
     <div id="detailModal" class="modal-overlay" onclick="closeModalOnBackdrop(event)">
         <div class="modal-box">
             <div class="modal-header">
-                <h3 id="modalTitle">Chi Tiết Hồ Sơ</h3>
+                <h3 id="modalTitle">Chi Tiết Hồ Sơ Khảo Sát</h3>
                 <button class="modal-close" onclick="closeModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <div class="meta-grid">
-                    <div class="meta-item">
-                        <label>Mã Hồ Sơ</label>
-                        <span id="mId" class="sub-id">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Thời Gian Nộp</label>
-                        <span id="mTime">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Trạng Thái</label>
-                        <span id="mStatus">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Tài Xế</label>
-                        <span id="mDriver">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Số Điện Thoại</label>
-                        <span id="mPhone">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Biển Số Xe</label>
-                        <span id="mPlate">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Vị Trí GPS</label>
-                        <span id="mGps">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <label>Nguồn Lưu Trữ</label>
-                        <span id="mSource">-</span>
-                    </div>
-                </div>
-
-                <div id="reasonBox" style="display:none; background:var(--danger-bg); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px; color:#fca5a5;">
-                    <b style="color:var(--danger);">Lý do từ chối:</b> <span id="mReason"></span>
-                </div>
-
-                <div>
-                    <label style="display:block; font-size:0.75rem; color:var(--muted); text-transform:uppercase; font-weight:700; margin-bottom:6px;">Dữ Liệu Trích Xuất AI / Chi Tiết JSON</label>
-                    <pre id="mJson" class="json-preview"></pre>
-                </div>
+            <div class="modal-tabs">
+                <button type="button" class="modal-tab-btn active" id="mtab_answers" onclick="switchModalTab('answers')">Câu Trả Lời Biểu Mẫu</button>
+                <button type="button" class="modal-tab-btn" id="mtab_images" onclick="switchModalTab('images')">Hình Ảnh Upload</button>
+                <button type="button" class="modal-tab-btn" id="mtab_ai" onclick="switchModalTab('ai')">Kết Quả Kiểm Toán AI</button>
+                <button type="button" class="modal-tab-btn" id="mtab_json" onclick="switchModalTab('json')">Dữ Liệu Gốc (JSON)</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Injected dynamically -->
             </div>
         </div>
     </div>
 
     <script>
-        const RAW_DATA = {submissions_json};
+        // Injected data payload from FastAPI backend
+        const RAW_SUBMISSIONS = {submissions_json};
+        const FORMS_REGISTRY = {forms_json};
+        let currentFormId = {active_form_id_str};
 
-        function formatDate(dStr) {{
-            if (!dStr) return "-";
-            try {{
-                const d = new Date(dStr);
-                return d.toLocaleString("vi-VN", {{ hour12: false }});
-            }} catch(e) {{
-                return dStr;
-            }}
-        }}
+        // Application State
+        let filteredSubmissions = [];
+        let sortColumn = 'created_at';
+        let sortDirection = 'desc'; // 'asc' or 'desc'
+        let currentPage = 1;
+        let pageSize = 25;
+        let totalPages = 1;
+        let currentModalRecord = null;
 
-        function getStatusBadge(status) {{
-            const s = (status || "").toUpperCase();
-            if (s === "APPROVED") return '<span class="badge approved">Đã Duyệt</span>';
-            if (s === "REJECTED") return '<span class="badge rejected">Từ Chối</span>';
-            if (s === "MANUAL_REVIEW" || s === "APPEAL_PENDING") return '<span class="badge review">Chờ Duyệt</span>';
-            return `<span class="badge prod">${{s || "N/A"}}</span>`;
-        }}
+        // Initialize Dashboard
+        window.addEventListener('DOMContentLoaded', () => {{
+            buildFormTabs();
+            populateCtvFilter();
+            applyFilters();
+        }});
 
-        function renderRows(items) {{
-            const tbody = document.getElementById("tableBody");
-            const empty = document.getElementById("emptyState");
-            if (!items.length) {{
-                tbody.innerHTML = "";
-                empty.style.display = "block";
-                return;
-            }}
-            empty.style.display = "none";
+        function buildFormTabs() {{
+            const tabsBar = document.getElementById('formTabsBar');
+            tabsBar.innerHTML = '';
 
-            tbody.innerHTML = items.map((sub, idx) => {{
-                const id = sub.submission_id || "-";
-                const time = formatDate(sub.created_at || sub.submitted_at);
-                const name = sub.driver_name || "Tài xế";
-                const phone = sub.driver_phone || "Không xác định";
-                const plate = sub.license_plate || sub.receipt_serial_no || "-";
-                const vType = sub.vehicle_type || "";
-                const statusBadge = getStatusBadge(sub.status);
-                const reason = sub.rejection_reason || sub.reason || (sub.status === "APPROVED" ? "Hợp lệ" : "-");
-                const isDev = sub.mode === "TEST_DEV_MODE" || id.startsWith("DEV-");
-                const sourceBadge = isDev ? '<span class="badge test">Dev Test</span>' : '<span class="badge prod">Postgres</span>';
-
-                return `
-                <tr>
-                    <td data-label="Mã Hồ Sơ">
-                        <div class="sub-id">${{id}}</div>
-                        <div class="sub-time">${{time}}</div>
-                    </td>
-                    <td data-label="Tài Xế">
-                        <div class="driver-name">${{name}}</div>
-                        <div class="driver-phone">${{phone}}</div>
-                    </td>
-                    <td data-label="Phương Tiện">
-                        <div style="font-weight:600;">${{plate}}</div>
-                        <div style="font-size:0.75rem; color:var(--muted);">${{vType}}</div>
-                    </td>
-                    <td data-label="Trạng Thái">${{statusBadge}}</td>
-                    <td data-label="Ghi Chú" style="max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                        ${{reason}}
-                    </td>
-                    <td data-label="Nguồn Lưu">${{sourceBadge}}</td>
-                    <td data-label="Thao Tác" style="text-align: right;">
-                        <button type="button" class="btn-detail" onclick="openDetail(${{idx}})">Xem Chi Tiết</button>
-                    </td>
-                </tr>
-                `;
-            }}).join("");
-        }}
-
-        let filteredItems = [...RAW_DATA];
-
-        function filterData() {{
-            const query = (document.getElementById("searchInput").value || "").toLowerCase().trim();
-            const statusFilter = document.getElementById("statusFilter").value;
-            const sourceFilter = document.getElementById("sourceFilter").value;
-
-            filteredItems = RAW_DATA.filter(item => {{
-                const id = (item.submission_id || "").toLowerCase();
-                const name = (item.driver_name || "").toLowerCase();
-                const phone = (item.driver_phone || "").toLowerCase();
-                const plate = (item.license_plate || item.receipt_serial_no || "").toLowerCase();
-                const reason = (item.rejection_reason || item.reason || "").toLowerCase();
-
-                const matchQuery = !query || id.includes(query) || name.includes(query) || phone.includes(query) || plate.includes(query) || reason.includes(query);
-                
-                const itemStatus = (item.status || "").toUpperCase();
-                let matchStatus = true;
-                if (statusFilter !== "ALL") {{
-                    if (statusFilter === "MANUAL_REVIEW") {{
-                        matchStatus = (itemStatus === "MANUAL_REVIEW" || itemStatus === "APPEAL_PENDING");
-                    }} else {{
-                        matchStatus = (itemStatus === statusFilter);
-                    }}
-                }}
-
-                const isDev = item.mode === "TEST_DEV_MODE" || (item.submission_id || "").startsWith("DEV-");
-                let matchSource = true;
-                if (sourceFilter === "TEST_DEV_MODE") matchSource = isDev;
-                if (sourceFilter === "PROD") matchSource = !isDev;
-
-                return matchQuery && matchStatus && matchSource;
+            // Count per form
+            const formCounts = {{}};
+            RAW_SUBMISSIONS.forEach(s => {{
+                const fid = s.form_id || 'income_survey';
+                formCounts[fid] = (formCounts[fid] || 0) + 1;
             }});
 
-            renderRows(filteredItems);
+            // 1. "All Forms" Tab
+            const allBtn = document.createElement('button');
+            allBtn.type = 'button';
+            allBtn.className = `form-tab-btn ${{currentFormId === 'all' ? 'active' : ''}}`;
+            allBtn.innerHTML = `Tất cả biểu mẫu <span class="form-pill">${{RAW_SUBMISSIONS.length}}</span>`;
+            allBtn.onclick = () => selectFormTab('all');
+            tabsBar.appendChild(allBtn);
+
+            // 2. Specific Form Tabs
+            Object.keys(FORMS_REGISTRY).forEach(fid => {{
+                const f = FORMS_REGISTRY[fid];
+                const count = formCounts[fid] || 0;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `form-tab-btn ${{currentFormId === fid ? 'active' : ''}}`;
+                btn.innerHTML = `${{escapeHtml(f.title || fid)}} <span class="form-pill">${{count}}</span>`;
+                btn.onclick = () => selectFormTab(fid);
+                tabsBar.appendChild(btn);
+            }});
         }}
 
-        function openDetail(idx) {{
-            const item = filteredItems[idx] || RAW_DATA[idx];
-            if (!item) return;
+        function selectFormTab(formId) {{
+            currentFormId = formId;
+            document.querySelectorAll('.form-tab-btn').forEach(btn => btn.classList.remove('active'));
+            // Update active styling
+            document.querySelectorAll('.form-tab-btn').forEach(btn => {{
+                if ((formId === 'all' && btn.innerText.includes('Tất cả')) ||
+                    (formId !== 'all' && btn.innerText.includes(FORMS_REGISTRY[formId]?.title || formId))) {{
+                    btn.classList.add('active');
+                }}
+            }});
+            currentPage = 1;
+            applyFilters();
+        }}
 
-            document.getElementById("mId").textContent = item.submission_id || "-";
-            document.getElementById("mTime").textContent = formatDate(item.created_at || item.submitted_at);
-            document.getElementById("mStatus").innerHTML = getStatusBadge(item.status);
-            document.getElementById("mDriver").textContent = item.driver_name || "Tài xế";
-            document.getElementById("mPhone").textContent = item.driver_phone || "-";
-            document.getElementById("mPlate").textContent = item.license_plate || item.receipt_serial_no || "-";
+        function populateCtvFilter() {{
+            const ctvSelect = document.getElementById('ctvFilter');
+            const uniqueCtvs = new Set();
+            RAW_SUBMISSIONS.forEach(s => {{
+                if (s.ctv_code) uniqueCtvs.add(s.ctv_code);
+            }});
+            uniqueCtvs.forEach(ctv => {{
+                const opt = document.createElement('option');
+                opt.value = ctv;
+                opt.textContent = `CTV: ${{ctv}}`;
+                ctvSelect.appendChild(opt);
+            }});
+        }}
+
+        function handleSearchInput() {{
+            currentPage = 1;
+            applyFilters();
+        }}
+
+        function resetFilters() {{
+            document.getElementById('searchInput').value = '';
+            document.getElementById('statusFilter').value = 'ALL';
+            document.getElementById('ctvFilter').value = 'ALL';
+            document.getElementById('sourceFilter').value = 'ALL';
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            currentFormId = 'all';
+            buildFormTabs();
+            currentPage = 1;
+            applyFilters();
+        }}
+
+        // Filter, Sort & Query Engine
+        function applyFilters() {{
+            const searchQ = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+            const statusQ = document.getElementById('statusFilter').value;
+            const ctvQ = document.getElementById('ctvFilter').value;
+            const sourceQ = document.getElementById('sourceFilter').value;
+            const dateFromQ = document.getElementById('dateFrom').value;
+            const dateToQ = document.getElementById('dateTo').value;
+
+            filteredSubmissions = RAW_SUBMISSIONS.filter(s => {{
+                // 1. Form Filter
+                if (currentFormId !== 'all') {{
+                    const sForm = s.form_id || 'income_survey';
+                    if (sForm !== currentFormId) return false;
+                }}
+
+                // 2. Status Filter
+                if (statusQ !== 'ALL') {{
+                    if ((s.status || '').toUpperCase() !== statusQ) return false;
+                }}
+
+                // 3. CTV Filter
+                if (ctvQ !== 'ALL') {{
+                    if (s.ctv_code !== ctvQ) return false;
+                }}
+
+                // 4. Source Filter
+                if (sourceQ !== 'ALL') {{
+                    if (s.mode !== sourceQ) return false;
+                }}
+
+                // 5. Date Range Filter
+                const subDate = s.created_at || s.submitted_at || '';
+                if (dateFromQ && subDate && subDate.slice(0, 10) < dateFromQ) return false;
+                if (dateToQ && subDate && subDate.slice(0, 10) > dateToQ) return false;
+
+                // 6. Search Query Filter across all text fields
+                if (searchQ) {{
+                    const corpus = [
+                        s.submission_id || '',
+                        s.driver_phone || '',
+                        s.driver_name || '',
+                        s.license_plate || '',
+                        s.ctv_code || '',
+                        s.status || '',
+                        s.rejection_reason || '',
+                        JSON.stringify(s.form_data || {{}}),
+                        JSON.stringify(s.ai_result || {{}})
+                    ].join(' ').toLowerCase();
+                    if (!corpus.includes(searchQ)) return false;
+                }}
+
+                return true;
+            }});
+
+            // Apply Sorting
+            sortFilteredData();
+
+            // Update KPIs
+            updateKpis();
+
+            // Render Table & Columns
+            renderTableStructure();
+            renderTableRows();
+        }}
+
+        // Sorting Implementation
+        function sortFilteredData() {{
+            filteredSubmissions.sort((a, b) => {{
+                let valA = getFieldValue(a, sortColumn);
+                let valB = getFieldValue(b, sortColumn);
+
+                if (valA === null || valA === undefined) valA = '';
+                if (valB === null || valB === undefined) valB = '';
+
+                // Numeric comparison
+                const numA = parseFloat(String(valA).replace(/[^0-9.-]+/g, ''));
+                const numB = parseFloat(String(valB).replace(/[^0-9.-]+/g, ''));
+                if (!isNaN(numA) && !isNaN(numB) && typeof valA === 'number') {{
+                    return sortDirection === 'asc' ? numA - numB : numB - numA;
+                }}
+
+                // Date comparison
+                if (sortColumn === 'created_at' || sortColumn === 'submitted_at') {{
+                    const dA = new Date(valA).getTime() || 0;
+                    const dB = new Date(valB).getTime() || 0;
+                    return sortDirection === 'asc' ? dA - dB : dB - dA;
+                }}
+
+                // Vietnamese String Comparison
+                const strA = String(valA);
+                const strB = String(valB);
+                return sortDirection === 'asc' 
+                    ? strA.localeCompare(strB, 'vi', {{ sensitivity: 'base' }})
+                    : strB.localeCompare(strA, 'vi', {{ sensitivity: 'base' }});
+            }});
+        }}
+
+        function getFieldValue(record, colKey) {{
+            if (colKey in record) return record[colKey];
+            if (record.form_data && colKey in record.form_data) return record.form_data[colKey];
+            return '';
+        }}
+
+        function handleHeaderSort(colKey) {{
+            if (sortColumn === colKey) {{
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            }} else {{
+                sortColumn = colKey;
+                sortDirection = 'desc';
+            }}
+            sortFilteredData();
+            renderTableStructure();
+            renderTableRows();
+        }}
+
+        function updateKpis() {{
+            const total = filteredSubmissions.length;
+            const approved = filteredSubmissions.filter(s => s.status === 'APPROVED').length;
+            const rejected = filteredSubmissions.filter(s => s.status === 'REJECTED').length;
+            const review = filteredSubmissions.filter(s => ['MANUAL_REVIEW', 'APPEAL_PENDING'].includes(s.status)).length;
+
+            document.getElementById('kpiTotal').textContent = total.toLocaleString();
+            document.getElementById('kpiApproved').textContent = approved.toLocaleString();
+            document.getElementById('kpiReview').textContent = review.toLocaleString();
+            document.getElementById('kpiRejected').textContent = rejected.toLocaleString();
+        }}
+
+        // Determine Columns for Table based on active form
+        function getActiveColumns() {{
+            const baseCols = [
+                {{ key: 'submission_id', label: 'Mã Hồ Sơ' }},
+                {{ key: 'created_at', label: 'Thời Gian Nộp' }},
+                {{ key: 'status', label: 'Trạng Thái' }},
+                {{ key: 'driver_name', label: 'Tài Xế / Tên' }},
+                {{ key: 'driver_phone', label: 'Số Điện Thoại' }},
+                {{ key: 'ctv_code', label: 'Mã CTV' }},
+            ];
+
+            if (currentFormId === 'income_survey' || currentFormId === 'income_survey_test') {{
+                baseCols.push(
+                    {{ key: 'vehicle_type', label: 'Loại Xe' }},
+                    {{ key: 'car_model', label: 'Dòng Xe' }},
+                    {{ key: 'daily_trips', label: 'Cuốc/Ngày' }},
+                    {{ key: 'total_trips', label: 'Tổng Số Chuyến' }},
+                    {{ key: 'membership_type', label: 'Hạng Tài Xế' }}
+                );
+            }} else if (currentFormId !== 'all' && FORMS_REGISTRY[currentFormId]) {{
+                // Extract question columns from custom schema
+                const formDef = FORMS_REGISTRY[currentFormId];
+                if (formDef.questions) {{
+                    formDef.questions.slice(0, 5).forEach(q => {{
+                        if (q.type !== 'camera_webrtc' && q.type !== 'signature') {{
+                            baseCols.push({{ key: q.id, label: q.title }});
+                        }}
+                    }});
+                }}
+            }} else {{
+                baseCols.push(
+                    {{ key: 'vehicle_type', label: 'Phương Tiện' }},
+                    {{ key: 'total_gross_revenue', label: 'Doanh Thu' }}
+                );
+            }}
+
+            baseCols.push({{ key: '_actions', label: 'Thao Tác', noSort: true }});
+            return baseCols;
+        }}
+
+        function renderTableStructure() {{
+            const thead = document.getElementById('tableHead');
+            const cols = getActiveColumns();
             
-            if (item.gps_latitude && item.gps_longitude) {{
-                const gUrl = `https://www.google.com/maps?q=${{item.gps_latitude}},${{item.gps_longitude}}`;
-                document.getElementById("mGps").innerHTML = `<a href="${{gUrl}}" target="_blank" style="color:#60a5fa; text-decoration:underline;">${{item.gps_latitude.toFixed(4)}}, ${{item.gps_longitude.toFixed(4)}} (Bản đồ)</a>`;
+            let html = '<tr>';
+            cols.forEach(col => {{
+                if (col.noSort) {{
+                    html += `<th class="no-sort" style="text-align:right;">${{escapeHtml(col.label)}}</th>`;
+                }} else {{
+                    const sortClass = sortColumn === col.key ? (sortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc') : '';
+                    html += `<th class="${{sortClass}}" onclick="handleHeaderSort('${{col.key}}')">${{escapeHtml(col.label)}}</th>`;
+                }}
+            }});
+            html += '</tr>';
+            thead.innerHTML = html;
+        }}
+
+        function renderTableRows() {{
+            const tbody = document.getElementById('tableBody');
+            const emptyState = document.getElementById('emptyState');
+            tbody.innerHTML = '';
+
+            totalPages = Math.ceil(filteredSubmissions.length / pageSize) || 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            if (currentPage < 1) currentPage = 1;
+
+            const startIndex = (currentPage - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, filteredSubmissions.length);
+            const pageRecords = filteredSubmissions.slice(startIndex, endIndex);
+
+            if (pageRecords.length === 0) {{
+                emptyState.style.display = 'block';
+                document.getElementById('dataTable').style.display = 'none';
             }} else {{
-                document.getElementById("mGps").textContent = "Không có";
+                emptyState.style.display = 'none';
+                document.getElementById('dataTable').style.display = 'table';
+
+                const cols = getActiveColumns();
+                pageRecords.forEach(r => {{
+                    const tr = document.createElement('tr');
+                    let rowHtml = '';
+
+                    cols.forEach(col => {{
+                        const k = col.key;
+                        if (k === 'submission_id') {{
+                            rowHtml += `<td><span class="id-link" onclick="openInspectorModal('${{r.submission_id}}')">${{r.submission_id}}</span></td>`;
+                        }} else if (k === 'created_at') {{
+                            const tStr = formatTimestamp(r.created_at || r.submitted_at);
+                            rowHtml += `<td style="color:var(--muted); font-size:0.78rem;">${{tStr}}</td>`;
+                        }} else if (k === 'status') {{
+                            const st = (r.status || 'PENDING').toUpperCase();
+                            const cls = st === 'APPROVED' ? 'badge-approved' : (st === 'REJECTED' ? 'badge-rejected' : 'badge-review');
+                            rowHtml += `<td><span class="badge ${{cls}}">${{st}}</span></td>`;
+                        }} else if (k === 'driver_name') {{
+                            rowHtml += `<td style="font-weight:600;">${{escapeHtml(r.driver_name || r.persisted_name || '-')}}</td>`;
+                        }} else if (k === 'driver_phone') {{
+                            rowHtml += `<td><span style="font-family:monospace; color:#93c5fd;">${{escapeHtml(r.driver_phone || '-')}}</span></td>`;
+                        }} else if (k === 'ctv_code') {{
+                            const ctv = r.ctv_code || (r.form_data && r.form_data.ctv_code) || '';
+                            rowHtml += `<td>${{ctv ? `<span class="badge badge-ctv">${{escapeHtml(ctv)}}</span>` : '<span style="color:#64748b;">-</span>'}}</td>`;
+                        }} else if (k === 'total_trips') {{
+                            const trips = r.total_trips || (r.form_data && r.form_data.total_trips) || '-';
+                            rowHtml += `<td><span class="badge badge-pill">${{escapeHtml(String(trips))}}</span></td>`;
+                        }} else if (k === '_actions') {{
+                            rowHtml += `<td style="text-align:right;">
+                                <button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem;" onclick="openInspectorModal('${{r.submission_id}}')">Xem</button>
+                            </td>`;
+                        }} else {{
+                            const val = getFieldValue(r, k);
+                            rowHtml += `<td>${{escapeHtml(String(val || '-'))}}</td>`;
+                        }}
+                    }});
+
+                    tr.innerHTML = rowHtml;
+                    tbody.appendChild(tr);
+                }});
             }}
 
-            const isDev = item.mode === "TEST_DEV_MODE" || (item.submission_id || "").startsWith("DEV-");
-            document.getElementById("mSource").innerHTML = isDev ? '<span class="badge test">Dev Test Storage</span>' : '<span class="badge prod">PostgreSQL SSOT</span>';
+            // Update Pagination Bar UI
+            document.getElementById('pageSummary').textContent = `Hiển thị ${{filteredSubmissions.length ? startIndex + 1 : 0}} - ${{endIndex}} trên tổng ${{filteredSubmissions.length}} bản ghi`;
+            document.getElementById('pageCurrent').textContent = `Trang ${{currentPage}} / ${{totalPages}}`;
+            document.getElementById('btnFirst').disabled = currentPage <= 1;
+            document.getElementById('btnPrev').disabled = currentPage <= 1;
+            document.getElementById('btnNext').disabled = currentPage >= totalPages;
+            document.getElementById('btnLast').disabled = currentPage >= totalPages;
+        }}
 
-            const reason = item.rejection_reason || item.reason;
-            const rBox = document.getElementById("reasonBox");
-            if (item.status === "REJECTED" && reason) {{
-                rBox.style.display = "block";
-                document.getElementById("mReason").textContent = reason;
-            }} else {{
-                rBox.style.display = "none";
+        function changePageSize(size) {{
+            pageSize = parseInt(size) || 25;
+            currentPage = 1;
+            renderTableRows();
+        }}
+
+        function goToPage(page) {{
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            renderTableRows();
+        }}
+
+        function formatTimestamp(isoStr) {{
+            if (!isoStr) return '-';
+            try {{
+                const d = new Date(isoStr);
+                return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', {{ hour: '2-digit', minute: '2-digit' }});
+            }} catch(e) {{
+                return isoStr;
             }}
+        }}
 
-            const rawJson = item.ai_result || item.raw_extracted_facts || item;
-            document.getElementById("mJson").textContent = JSON.stringify(rawJson, null, 2);
+        // Inspection Modal Logic
+        function openInspectorModal(subId) {{
+            const rec = RAW_SUBMISSIONS.find(s => s.submission_id === subId);
+            if (!rec) return;
+            currentModalRecord = rec;
 
-            document.getElementById("detailModal").style.display = "flex";
+            document.getElementById('modalTitle').textContent = `Chi Tiết Hồ Sơ #${{rec.submission_id}}`;
+            switchModalTab('answers');
+            document.getElementById('detailModal').style.display = 'flex';
         }}
 
         function closeModal() {{
-            document.getElementById("detailModal").style.display = "none";
+            document.getElementById('detailModal').style.display = 'none';
         }}
 
         function closeModalOnBackdrop(e) {{
-            if (e.target.id === "detailModal") closeModal();
+            if (e.target.id === 'detailModal') closeModal();
         }}
 
-        function exportCSV() {{
-            if (!filteredItems.length) return alert("Không có dữ liệu để xuất!");
-            const headers = ["Mã Hồ Sơ", "Thời Gian", "Tài Xế", "SĐT", "Biển Số", "Trạng Thái", "Lý Do", "Nguồn"];
-            const rows = filteredItems.map(s => [
-                `"${{s.submission_id || ""}}"`,
-                `"${{formatDate(s.created_at || s.submitted_at)}}"`,
-                `"${{s.driver_name || ""}}"`,
-                `"${{s.driver_phone || ""}}"`,
-                `"${{s.license_plate || s.receipt_serial_no || ""}}"`,
-                `"${{s.status || ""}}"`,
-                `"${{(s.rejection_reason || s.reason || "").replace(/"/g, '""')}}"`,
-                `"${{s.mode === "TEST_DEV_MODE" ? "Dev Test" : "Postgres"}}"`
-            ]);
-            const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(r => r.join(","))].join("\\n");
-            const blob = new Blob([csvContent], {{ type: "text/csv;charset=utf-8;" }});
+        function switchModalTab(tabName) {{
+            document.querySelectorAll('.modal-tab-btn').forEach(b => b.classList.remove('active'));
+            const activeTabBtn = document.getElementById(`mtab_${{tabName}}`);
+            if (activeTabBtn) activeTabBtn.classList.add('active');
+
+            const mBody = document.getElementById('modalBody');
+            const r = currentModalRecord;
+            if (!r) return;
+
+            if (tabName === 'answers') {{
+                let qaRows = '';
+                const fData = r.form_data || {{}};
+                Object.keys(fData).forEach(k => {{
+                    if (k.startsWith('survey_photo') || k === 'signature_png') return;
+                    qaRows += `
+                        <div class="qa-item">
+                            <div class="q-title">${{escapeHtml(k)}}</div>
+                            <div class="q-ans">${{escapeHtml(String(fData[k]))}}</div>
+                        </div>
+                    `;
+                }});
+
+                mBody.innerHTML = `
+                    <div class="meta-grid">
+                        <div class="meta-item"><label>Mã Hồ Sơ</label><span>${{r.submission_id}}</span></div>
+                        <div class="meta-item"><label>Trạng Thái</label><span><b style="color:${{r.status==='APPROVED'?'#10b981':'#ef4444'}}">${{r.status}}</b></span></div>
+                        <div class="meta-item"><label>Tài Xế</label><span>${{r.driver_name || '-'}}</span></div>
+                        <div class="meta-item"><label>Số Điện Thoại</label><span>${{r.driver_phone || '-'}}</span></div>
+                        <div class="meta-item"><label>Mã CTV</label><span>${{r.ctv_code || '-'}}</span></div>
+                        <div class="meta-item"><label>Biển Số Xe</label><span>${{r.license_plate || '-'}}</span></div>
+                        <div class="meta-item"><label>Nguồn Dữ Liệu</label><span>${{r.mode || 'PROD_MODE'}}</span></div>
+                        <div class="meta-item"><label>Thời Gian Nộp</label><span>${{formatTimestamp(r.created_at || r.submitted_at)}}</span></div>
+                    </div>
+                    ${{r.rejection_reason ? `<div style="background:var(--danger-bg); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px; color:#fca5a5;"><b style="color:var(--danger);">Lý do từ chối:</b> ${{escapeHtml(r.rejection_reason)}}</div>` : ''}}
+                    <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Các Câu Trả Lời</h4>
+                    <div class="qa-list">${{qaRows || '<div style="color:#64748b;">Không có dữ liệu câu trả lời dạng văn bản.</div>'}}</div>
+                `;
+            }} else if (tabName === 'images') {{
+                const fData = r.form_data || {{}};
+                let imgCards = '';
+                Object.keys(fData).forEach(k => {{
+                    if (k.startsWith('survey_photo') || k === 'signature_png') {{
+                        const imgVal = fData[k];
+                        if (typeof imgVal === 'string' && (imgVal.startsWith('http') || imgVal.startsWith('data:image'))) {{
+                            imgCards += `
+                                <div class="img-card">
+                                    <img src="${{imgVal}}" alt="${{k}}" onclick="window.open(this.src, '_blank')">
+                                    <div class="img-title">${{escapeHtml(k)}}</div>
+                                </div>
+                            `;
+                        }}
+                    }}
+                }});
+                if (r.image_r2_url) {{
+                    imgCards += `
+                        <div class="img-card">
+                            <img src="${{r.image_r2_url}}" alt="Cloudflare R2" onclick="window.open(this.src, '_blank')">
+                            <div class="img-title">Ảnh R2 Storage</div>
+                        </div>
+                    `;
+                }}
+                mBody.innerHTML = `
+                    <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Thư Viện Ảnh Đã Nộp</h4>
+                    <div class="img-grid">${{imgCards || '<div style="color:#64748b;">Không có hình ảnh nào được lưu trữ trực tiếp dưới dạng Data URI.</div>'}}</div>
+                `;
+            }} else if (tabName === 'ai') {{
+                const ai = r.ai_result || {{}};
+                mBody.innerHTML = `
+                    <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Kết Quả OCR & Chống Gian Lận (Anti-Fraud)</h4>
+                    <div class="meta-grid">
+                        <div class="meta-item"><label>Mô Hình Phân Tích</label><span>${{ai.model || 'DEEPSEEK_V3_CHAT'}}</span></div>
+                        <div class="meta-item"><label>Độ Mờ (Blur Score)</label><span>${{r.blur_score ? r.blur_score.toFixed(1) : '-'}}</span></div>
+                        <div class="meta-item"><label>Biển Số Phát Hiện</label><span>${{ai.detected_plate || '-'}}</span></div>
+                        <div class="meta-item"><label>Trùng Lặp (Duplicate)</label><span>${{ai.duplicate_detected ? '<b style="color:var(--danger)">CÓ PHÁT HIỆN</b>' : 'Không trùng lặp'}}</span></div>
+                        <div class="meta-item"><label>Loại Trùng Lặp</label><span>${{ai.duplicate_type || '-'}}</span></div>
+                        <div class="meta-item"><label>Mã Hash Dữ Liệu</label><span>${{r.audit_seal_hash ? r.audit_seal_hash.slice(0, 16) + '...' : '-'}}</span></div>
+                    </div>
+                    <pre class="json-box">${{escapeHtml(JSON.stringify(ai, null, 2))}}</pre>
+                `;
+            }} else if (tabName === 'json') {{
+                mBody.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Dữ Liệu JSON Toàn Bộ Bản Ghi</h4>
+                        <button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.75rem;" onclick="navigator.clipboard.writeText(JSON.stringify(currentModalRecord, null, 2)); alert('Đã sao chép JSON vào clipboard!');"><svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor; margin-right:4px;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>Sao chép JSON</button>
+                    </div>
+                    <pre class="json-box">${{escapeHtml(JSON.stringify(r, null, 2))}}</pre>
+                `;
+            }}
+        }}
+
+        // Export Functionality
+        function exportFilteredCSV() {{
+            if (!filteredSubmissions.length) {{
+                alert('Không có dữ liệu phù hợp để xuất file!');
+                return;
+            }}
+
+            const cols = getActiveColumns().filter(c => c.key !== '_actions');
+            const headers = cols.map(c => `"${{c.label.replace(/"/g, '""')}}"`);
+            const rows = [headers.join(',')];
+
+            filteredSubmissions.forEach(r => {{
+                const rowVals = cols.map(c => {{
+                    let val = getFieldValue(r, c.key);
+                    if (c.key === 'created_at') val = formatTimestamp(val);
+                    const cleanStr = String(val === null || val === undefined ? '' : val).replace(/"/g, '""');
+                    return `"${{cleanStr}}"`;
+                }});
+                rows.push(rowVals.join(','));
+            }});
+
+            const csvContent = "\\uFEFF" + rows.join('\\r\\n');
+            const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
+            const a = document.createElement('a');
             a.href = url;
-            a.download = `submissions_${{new Date().toISOString().slice(0,10)}}.csv`;
+            a.download = `Survey_Data_Export_${{currentFormId}}_${{new Date().toISOString().slice(0,10)}}.csv`;
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }}
 
-        function exportJSON() {{
-            if (!filteredItems.length) return alert("Không có dữ liệu để xuất!");
-            const blob = new Blob([JSON.stringify(filteredItems, null, 2)], {{ type: "application/json" }});
+        function exportFilteredJSON() {{
+            if (!filteredSubmissions.length) {{
+                alert('Không có dữ liệu phù hợp để xuất file!');
+                return;
+            }}
+            const jsonStr = JSON.stringify(filteredSubmissions, null, 2);
+            const blob = new Blob([jsonStr], {{ type: 'application/json;charset=utf-8;' }});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
+            const a = document.createElement('a');
             a.href = url;
-            a.download = `submissions_${{new Date().toISOString().slice(0,10)}}.json`;
+            a.download = `Survey_Data_Export_${{currentFormId}}_${{new Date().toISOString().slice(0,10)}}.json`;
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }}
 
-        // Initial render
-        renderRows(filteredItems);
+        function escapeHtml(str) {{
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }}
     </script>
 </body>
 </html>

@@ -42,3 +42,20 @@ def test_audit_subdomain_routing():
     resp = client.get("/", headers={"Host": "audit.146.190.201.32.sslip.io"}, follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers.get("location") == "/admin/audit"
+
+def test_admin_data_viewer_page(auth_headers):
+    client = TestClient(app)
+    resp = client.get("/admin/data", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn" in resp.text
+    assert "formTabsBar" in resp.text
+    assert "dataTable" in resp.text
+    assert "RAW_SUBMISSIONS" in resp.text
+    assert "exportFilteredCSV" in resp.text
+
+def test_admin_data_per_form_page(auth_headers):
+    client = TestClient(app)
+    resp = client.get("/admin/data/income_survey", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "Trung Tâm Dữ Liệu Khảo Sát" in resp.text
+    assert "income_survey" in resp.text

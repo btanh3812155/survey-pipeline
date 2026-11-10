@@ -97,7 +97,15 @@ R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxx
 R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxx
 R2_BUCKET_NAME=surveys
 R2_PUBLIC_URL_PREFIX=https://cdn.yourdomain.com
+
+# Google Drive & Administrative Account
+GOOGLE_ADMIN_EMAIL=admin@trustbridgevn.com
+GOOGLE_DRIVE_ROOT_FOLDER_ID=
+GOOGLE_SERVICE_ACCOUNT_JSON=
 ```
+
+> **Authoritative Administrative Account Notice**:
+> `admin@trustbridgevn.com` is the authoritative administrative account to be used for this project, Google Drive deliverables, and all work regarding Trust Bridge. All deliverables synchronization, target shared drives, and project assets must be granted to or owned by `admin@trustbridgevn.com`.
 
 ---
 
@@ -106,3 +114,42 @@ R2_PUBLIC_URL_PREFIX=https://cdn.yourdomain.com
 - `POST /webhook/lark-survey`: Receives Bytedance Lark Base webhook events, verifies raw SHA256 signature, validates challenge, extracts facts via AI, and pushes instant verdict to Telegram.
 - `POST /webhook/telegram`: Handles collaborator commands (`/start`) and conversational follow-up questions via Redis context cache.
 - `GET /health`: Returns service health status.
+
+---
+
+## 6. Google Drive Synchronization (Autonomous Server-Side Architecture)
+
+Google Drive sync is an autonomous **server-side process** running continuously in the background on the production droplet (`146.190.201.32`) inside container `survey-pipeline-app-1`.
+
+- **No Individual Survey Uploads**: Individual survey submissions are recorded strictly into the local structured deliverables mirror (`Sheets/Master_Survey_Deliverables.csv` and `Images/{submission_id}/`) and never uploaded directly to Google Drive as loose per-survey folders.
+- **Clean Drive Deliverables**: Only two synchronized deliverables exist on Google Drive:
+  1. The master data sheet (`Master_Survey_Deliverables.csv`) in the root folder.
+  2. The organized photo archive (`Images/` folder containing approved subfolders).
+- **Autonomous Background Loop**: Managed by FastAPI lifespan (`run_periodic_drive_sync`) running on startup and repeating every 15 minutes (`interval_seconds: 900s`).
+- **Deliverables Directory**: Server-side structured deliverables and Master CSV are located at `/survey-pipeline/data/google_drive_deliverables/` on the server droplet.
+- **Local Workstation Policy**: **Never** run production data sync from your local machine. All sync operations and Google Drive credentials reside on the production server.
+
+### Manual Sync Execution
+
+#### Method 1: Via HTTP API (No SSH Required)
+Trigger an immediate background synchronization via authenticated curl:
+```bash
+curl -X POST https://survey.trustbridgevn.com/api/v1/admin/sync-drive \
+     -u admin:<ADMIN_PASSWORD>
+```
+
+#### Method 2: Via Server Terminal (Remote SSH)
+Run the standalone sync script inside the production Docker container:
+```bash
+ssh root@146.190.201.32 "docker exec -it survey-pipeline-app-1 python scripts/sync_to_drive.py"
+```
+
+To perform a dry-run preview (checks local deliverables without pushing files to Drive):
+```bash
+ssh root@146.190.201.32 "docker exec -it survey-pipeline-app-1 python scripts/sync_to_drive.py --dry-run"
+```
+
+#### Method 3: Local Development
+```bash
+python3 scripts/sync_to_drive.py [--dry-run]
+```

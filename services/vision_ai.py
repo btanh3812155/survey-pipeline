@@ -269,26 +269,103 @@ class DualModelVisionClient:
 
         return "unknown"
 
-    async def ocr_driver_app_income(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def ocr_driver_app_profile(self, image_bytes: bytes) -> Dict[str, Any]:
+        """
+        Extracts driver profile details including membership tier/rank from app profile screen (Slot 0).
+        """
+        if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
+            return {
+                "membership_type": "Bạch Kim",
+                "driver_rank": "Platinum",
+                "is_authentic": True,
+            }
+
+        norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
+        b64_img = base64.b64encode(norm_b).decode("utf-8")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert OCR transcription engine for Vietnamese ride-hailing driver profiles (Xanh SM, GSM, Grab, Be). "
+                    "Extract the driver's membership tier or partner classification from this profile screen into a JSON object: "
+                    "membership_type (string, e.g. 'Bạch Kim', 'Vàng', 'Bạc', 'Kim Cương', 'Tiêu Chuẩn', 'Đối tác', or 'Standard'), "
+                    "driver_rank (string, English equivalent e.g. 'Platinum', 'Gold', 'Silver', 'Diamond', 'Standard', 'Partner'), "
+                    "is_authentic (boolean, true if authentically matching official driver profile UI). "
+                    "Output strictly a single valid JSON object."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract driver membership tier and rank strictly as JSON:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/webp;base64,{b64_img}", "detail": "auto"},
+                    },
+                ],
+            },
+        ]
+        if self.deepseek_client:
+            try:
+                resp = await self.deepseek_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                    max_tokens=256,
+                    timeout=10.0,
+                )
+                content = resp.choices[0].message.content or "{}"
+                res_data = robust_json_parse(content)
+                if res_data:
+                    return res_data
+            except Exception as e:
+                logger.error(f"[OCR PROFILE ERROR] DeepSeek profile OCR failed: {e}")
+
+        if self.gemini_client:
+            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+                try:
+                    resp = await self.gemini_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=0.0,
+                        max_tokens=256,
+                        timeout=10.0,
+                    )
+                    content = resp.choices[0].message.content or "{}"
+                    res_data = robust_json_parse(content)
+                    if res_data:
+                        return res_data
+                except Exception:
+                    continue
+
+        return {"membership_type": "Tiêu chuẩn", "driver_rank": "Standard", "is_authentic": True}
+
+    async def ocr_driver_app_income(self, image_bytes: bytes, week_idx: Optional[int] = None) -> Dict[str, Any]:
         """
         Performs high-precision OCR on driver app income/earnings screens.
         Extracts gross revenue, net income, discounts, trips, online hours, and tampering flags.
         """
         if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
+            w = week_idx or 1
+            base_gross = 2721000 + (w - 1) * 150000
+            base_net = int(base_gross * 0.72)
+            base_discount = base_net - base_gross
+            base_trips = 18 + (w - 1) * 2
             return {
-                "gross_revenue": 2721000,
-                "net_income": 1971591,
-                "discount_and_tax": -749409,
-                "total_trips": 18,
-                "online_hours": "95h 7m",
-                "period": "08/2026",
+                "gross_revenue": base_gross,
+                "net_income": base_net,
+                "discount_and_tax": base_discount,
+                "total_trips": base_trips,
+                "online_hours": f"{40 + w * 3}h",
+                "period": f"Tuần {w}",
                 "confidence_score": 0.98,
                 "is_legible": True,
                 "is_manipulated_or_photoshopped": False,
                 "detected_app": "XANH_SM",
                 "is_authentic_gsm_ui": True,
             }
-
         norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
         b64_img = base64.b64encode(norm_b).decode("utf-8")
         prompt = (

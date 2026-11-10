@@ -19,6 +19,7 @@
       "enable_object_detection": false,
       "enable_vehicle_match": true,
       "enable_anti_fraud": true,
+      "require_unique": true,
       "enable_ai_generated_check": true,
       "enable_screen_photo_check": false
     }
@@ -35,6 +36,7 @@
       "sample_response": null,
       "sample_images": null,
       "options": null,
+      "group_compatibility": null,
       "validation": {
         "min_value": 1.0,
         "max_value": 5.0,
@@ -63,6 +65,7 @@
       "sample_response": null,
       "sample_images": null,
       "options": null,
+      "group_compatibility": null,
       "validation": null,
       "conditional": null,
       "image_checks": null,

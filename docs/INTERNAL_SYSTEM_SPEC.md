@@ -4,6 +4,7 @@
 **System Target:** 2,000 to 20,000+ submissions/day (~600,000/month)  
 **Nominal Latency SLA:** < 2,500 ms (p50), < 3,800 ms (p99 under complete AI failover)  
 **Target Operating Budget:** ~$83.00 - $93.00 / month (at 20k/day scale)
+**Authoritative Administrative Account:** `admin@trustbridgevn.com` (Designated for Google Drive deliverables and all Trust Bridge operations)
 
 ---
 

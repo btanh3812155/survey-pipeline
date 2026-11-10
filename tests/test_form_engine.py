@@ -20,9 +20,14 @@ def test_default_schema_valid_submission():
         "license_plate": "29E-123.45",
         "vehicle_type": "Ô tô điện VinFast (GSM)",
         "car_model": "VF 5 Plus",
+        "gsm_duration": "Từ 6 – 12 tháng",
+        "gsm_contract_type": "Xe Taxi xanh GSM",
+        "daily_trips": "18",
+        "monthly_income_range": "12 – 20 triệu VNĐ",
+        "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
         "gross_revenue": "1250000",
         "odometer_km": "15200",
-        "camera_receipt": ["mock_odometer.jpg", "mock_revenue.jpg"],
+        "camera_receipt": [f"mock_img_{i}.jpg" for i in range(7)],
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, valid_answers)
     assert is_valid is True
@@ -54,9 +59,14 @@ def test_conditional_question_branching():
         "license_plate": "29E-123.45",
         "vehicle_type": "Ô tô điện VinFast (GSM)",
         "car_model": "VF 8",
+        "gsm_duration": "Từ 6 – 12 tháng",
+        "gsm_contract_type": "Xe Taxi xanh GSM",
+        "daily_trips": "18",
+        "monthly_income_range": "12 – 20 triệu VNĐ",
+        "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
         "gross_revenue": "1200000",
         "odometer_km": "5000",
-        "camera_receipt": ["mock_odometer.jpg", "mock_revenue.jpg"],
+        "camera_receipt": [f"mock_img_{i}.jpg" for i in range(7)],
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_car)
     assert is_valid is True
@@ -69,9 +79,14 @@ def test_conditional_question_branching():
         "driver_name": "Trần Văn Bình",
         "license_plate": "29E-123.45",
         "vehicle_type": "Xe máy điện (GSM Bike)",
+        "gsm_duration": "Từ 6 – 12 tháng",
+        "gsm_contract_type": "Xe Taxi xanh GSM",
+        "daily_trips": "18",
+        "monthly_income_range": "12 – 20 triệu VNĐ",
+        "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
         "gross_revenue": "300000",
         "odometer_km": "2000",
-        "camera_receipt": ["mock_odometer.jpg", "mock_revenue.jpg"],
+        "camera_receipt": [f"mock_img_{i}.jpg" for i in range(7)],
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, answers_bike)
     assert is_valid is True
@@ -104,14 +119,14 @@ def test_conditional_requires_both_signature_and_consent():
     assert is_valid is False
     assert "Chữ ký xác nhận" in err
 
-    # Valid signature + consent, but missing required Q3 (driver_phone)
-    missing_q3_answers = {
+    # Valid signature + consent, but missing required vehicle_type (Câu 1)
+    missing_vehicle_answers = {
         "driver_signature": "data:image/png;base64,mock",
         "consent_choice": "Tôi đồng ý",
     }
-    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, missing_q3_answers)
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, missing_vehicle_answers)
     assert is_valid is False
-    assert "Số điện thoại tài xế" in err
+    assert "Hiện tại anh đang chạy dòng xe nào" in err
 
 def test_api_upload_and_render_arbitrary_form():
     client = TestClient(app)
@@ -282,9 +297,10 @@ async def test_idempotency_duplicate_submission(monkeypatch):
 
 def test_survey_history_public_access():
     client = TestClient(app)
-    # 1. Unauthenticated public request returns 401 Unauthorized (privacy protection against history scraping)
+    # 1. Unauthenticated public request succeeds without Basic Auth
     unauth_resp = client.get("/api/v1/surveys/history?phone=0988123456")
-    assert unauth_resp.status_code == 401
+    assert unauth_resp.status_code == 200
+    assert unauth_resp.json()["phone"] == "0988123456"
 
     admin_auth = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
 
@@ -392,18 +408,28 @@ def test_multi_image_order_enforcement_inverted_rejected(monkeypatch):
             "signature_png": "data:image/png;base64,mock",
             "vehicle_type": "Ô tô điện VinFast (GSM)",
             "car_model": "VF 5 Plus",
+            "gsm_duration": "Từ 6 – 12 tháng",
+            "gsm_contract_type": "Xe Taxi xanh GSM",
+            "daily_trips": "18",
+            "monthly_income_range": "12 – 20 triệu VNĐ",
+            "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
             "gross_revenue": "650000",
             "odometer_km": "50",
         },
         files={
             "survey_photo_0": ("revenue_screen.jpg", buf1, "image/jpeg"),
             "survey_photo_1": ("odometer.jpg", buf2, "image/jpeg"),
+            "survey_photo_2": ("slot2.jpg", buf2, "image/jpeg"),
+            "survey_photo_3": ("slot3.jpg", buf2, "image/jpeg"),
+            "survey_photo_4": ("slot4.jpg", buf2, "image/jpeg"),
+            "survey_photo_5": ("slot5.jpg", buf2, "image/jpeg"),
+            "survey_photo_6": ("slot6.jpg", buf2, "image/jpeg"),
         }
-    )
+)
     assert resp.status_code == 200
     res_json = resp.json()
     assert res_json["status"] == "REJECTED"
-    assert "Thứ tự ảnh không chính xác" in res_json["reason"]
+    assert "Ảnh 1" in res_json["reason"]
 
 def test_multi_image_order_enforcement_correct_approved(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
@@ -411,18 +437,30 @@ def test_multi_image_order_enforcement_correct_approved(monkeypatch):
     from PIL import Image, ImageDraw
     client = TestClient(app)
 
-    img = Image.new("RGB", (600, 800), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    for i in range(100, 700, 20):
-        draw.line([(50, i), (550, i)], fill=(0, 0, 0), width=4)
-    buf1 = io.BytesIO()
-    img.save(buf1, format="JPEG")
-    buf1.seek(0)
-    buf2 = io.BytesIO()
-    img.save(buf2, format="JPEG")
-    buf2.seek(0)
+    def make_buf(idx: int):
+        import random, time
+        im = Image.new("RGB", (600, 800), (255, 255, 255))
+        d = ImageDraw.Draw(im)
+        rng = random.Random(f"slot_test_{time.time()}_{idx}")
+        for _ in range(30):
+            x1 = rng.randint(0, 500)
+            y1 = rng.randint(0, 700)
+            d.rectangle([(x1, y1), (x1 + rng.randint(20, 80), y1 + rng.randint(20, 80))], fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
+        b = io.BytesIO()
+        im.save(b, format="JPEG")
+        b.seek(0)
+        return b
 
-    # Correct order: Slot 0 sent odometer.jpg, Slot 1 sent revenue_screen.jpg
+    # Correct order: Slot 0 sent app_profile, Slot 1 sent vehicle, Slots 2..6 sent distinct income screens
+    files_payload = {
+        "survey_photo_0": ("app_profile.jpg", make_buf(0), "image/jpeg"),
+        "survey_photo_1": ("vehicle.jpg", make_buf(1), "image/jpeg"),
+        "survey_photo_2": ("revenue_screen.jpg", make_buf(2), "image/jpeg"),
+        "survey_photo_3": ("slot3.jpg", make_buf(3), "image/jpeg"),
+        "survey_photo_4": ("slot4.jpg", make_buf(4), "image/jpeg"),
+        "survey_photo_5": ("slot5.jpg", make_buf(5), "image/jpeg"),
+        "survey_photo_6": ("slot6.jpg", make_buf(6), "image/jpeg"),
+    }
     resp = client.post(
         "/api/v1/survey/submit-webrtc",
         data={
@@ -435,15 +473,134 @@ def test_multi_image_order_enforcement_correct_approved(monkeypatch):
             "signature_png": "data:image/png;base64,mock",
             "vehicle_type": "Ô tô điện VinFast (GSM)",
             "car_model": "VF 5 Plus",
+            "gsm_duration": "Từ 6 – 12 tháng",
+            "gsm_contract_type": "Xe Taxi xanh GSM",
+            "daily_trips": "18",
+            "monthly_income_range": "12 – 20 triệu VNĐ",
+            "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
             "gross_revenue": "650000",
             "odometer_km": "50",
         },
-        files={
-            "survey_photo_0": ("odometer.jpg", buf1, "image/jpeg"),
-            "survey_photo_1": ("revenue_screen.jpg", buf2, "image/jpeg"),
-        }
+        files=files_payload,
     )
     assert resp.status_code == 200
     res_json = resp.json()
     assert res_json["status"] == "APPROVED"
 
+
+def test_dynamic_form_qr_code_and_camera_tooltip_and_floating_buttons():
+    """Verify QR code share URL generation, camera overlay styling, and floating buttons."""
+    client = TestClient(app)
+    # 1. Base form without ?ref= returns CTV selector landing page with dropdown using short ctv001 values
+    resp = client.get("/forms/income_survey")
+    assert resp.status_code == 200
+    assert "ctvSelect" in resp.text
+    assert 'value="ctv001"' in resp.text
+    assert "CTV001 - Dũng" in resp.text
+    assert "Mở Biểu Mẫu" in resp.text
+
+    # 2. Form with short ?ref=ctv001 opens individual form with resolved and locked CTV
+    ref_resp = client.get("/forms/income_survey?ref=ctv001")
+    assert ref_resp.status_code == 200
+    html_content = ref_resp.text
+    assert "getFormShareUrl" in html_content
+    assert 'LOCKED_CTV_CODE = "CTV001_Dũng_HN"' in html_content
+    assert 'ACTIVE_REF_CODE = "ctv001"' in html_content
+    # Verify clean text formatting without &amp; double escaping
+    assert "Xe tự mua &amp; chạy" not in html_content
+    assert "Xe tự mua & chạy" in html_content
+    assert "LINK TRUY CẬP BIỂU MẪU:" in html_content
+    assert ".camera-overlay-slot-badge" in html_content
+    assert "white-space: normal" in html_content
+    assert "word-break: break-word" in html_content
+    assert "font-size: 0.95rem" in html_content
+    assert "width: 170px" in html_content
+
+    # 3. CTV Slug form backwards compatibility
+    ctv_resp = client.get("/forms/income-survey-59443eedf25522")
+    assert ctv_resp.status_code == 200
+    ctv_html = ctv_resp.text
+    assert 'const ACTIVE_CTV_SLUG = "income-survey-59443eedf25522";' in ctv_html
+    assert "CTV001_Dũng_HN" in ctv_html
+    assert "getFormShareUrl" in ctv_html
+def test_multiple_choice_option_groups_and_mutual_exclusivity():
+    """Verify multiple choice question option groups, mutual exclusivity, and compatibility."""
+    # 1. Test using DEFAULT_TRUST_BRIDGE_SCHEMA for gsm_incentive_policy
+    base_answers = {
+        "driver_signature": "data:image/png;base64,mocksignature",
+        "consent_choice": "Tôi đồng ý",
+        "driver_phone": "0987654321",
+        "driver_name": "Nguyễn Văn An",
+        "license_plate": "29E-123.45",
+        "vehicle_type": "Ô tô điện VinFast (GSM)",
+        "car_model": "VF 5 Plus",
+        "gsm_duration": "Từ 6 – 12 tháng",
+        "gsm_contract_type": "Xe Taxi xanh GSM",
+        "daily_trips": "18",
+        "monthly_income_range": "12 – 20 triệu VNĐ",
+        "gross_revenue": "1250000",
+        "odometer_km": "15200",
+        "camera_receipt": [f"mock_img_{i}.jpg" for i in range(7)],
+    }
+
+    # Case 1: Selecting multiple options in the same group ("applicable") succeeds
+    valid_same_group_answers = dict(base_answers)
+    valid_same_group_answers["gsm_incentive_policy"] = [
+        "Có áp dụng chỉ tiêu",
+        "Có khung giờ vàng",
+        "Có chương trình thưởng",
+    ]
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, valid_same_group_answers)
+    assert is_valid is True
+    assert err is None
+
+    # Case 2: Selecting options from mutually exclusive groups ("applicable" vs "none_exclusive") fails
+    invalid_exclusive_answers = dict(base_answers)
+    invalid_exclusive_answers["gsm_incentive_policy"] = [
+        "Có áp dụng chỉ tiêu",
+        "Không có",
+    ]
+    is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_exclusive_answers)
+    assert is_valid is False
+    assert "Các lựa chọn thuộc nhóm đối lập không thể cùng được chọn!" in err
+
+    # Case 3: Declaring groups compatible allows them to coexist
+    custom_schema = FormSchema(
+        form_id="test_mc_groups",
+        title="Test Multi Choice Groups",
+        questions=[
+            FormQuestion(
+                id="mc_q1",
+                title="Câu hỏi khảo sát nhóm",
+                type=QuestionType.MULTIPLE_CHOICE,
+                required=True,
+                options=[
+                    {"label": "Opt A1", "group": "group_a"},
+                    {"label": "Opt A2", "group": "group_a"},
+                    {"label": "Opt B1", "group": "group_b"},
+                    {"label": "Opt C1", "group": "group_c"},
+                ],
+                group_compatibility={
+                    "group_a": ["group_b"],  # group_a and group_b are declared compatible
+                },
+            )
+        ],
+    )
+
+    # Sub-case 3a: Compatible groups group_a and group_b coexist -> valid
+    compat_answers = {"mc_q1": ["Opt A1", "Opt B1"]}
+    is_valid, err = validate_submission_against_schema(custom_schema, compat_answers)
+    assert is_valid is True
+    assert err is None
+
+    # Sub-case 3b: Incompatible groups group_b and group_c coexist -> invalid
+    incompat_answers = {"mc_q1": ["Opt B1", "Opt C1"]}
+    is_valid, err = validate_submission_against_schema(custom_schema, incompat_answers)
+    assert is_valid is False
+    assert "Các lựa chọn thuộc nhóm đối lập không thể cùng được chọn!" in err
+
+    # Sub-case 3c: group_a and group_c are incompatible -> invalid
+    incompat_answers_2 = {"mc_q1": ["Opt A1", "Opt C1"]}
+    is_valid, err = validate_submission_against_schema(custom_schema, incompat_answers_2)
+    assert is_valid is False
+    assert "Các lựa chọn thuộc nhóm đối lập không thể cùng được chọn!" in err

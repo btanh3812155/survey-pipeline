@@ -38,9 +38,12 @@ services:
     volumes:
       - ./data:/app/data
       - ./services:/app/services
+      - ./scripts:/app/scripts
       - ./main.py:/app/main.py
       - ./config.py:/app/config.py
       - ./static:/app/static
+      - ./service_account.json:/app/service_account.json:ro
+      - ./models:/app/models:ro
     depends_on:
       - postgres
       - redis

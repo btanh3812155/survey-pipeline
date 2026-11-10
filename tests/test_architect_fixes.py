@@ -22,10 +22,14 @@ from services.form_manager_html import render_form_editor_html
 
 
 def make_test_image(pattern: str = "lines") -> bytes:
+    import random
     img = Image.new("RGB", (600, 800), (255, 255, 255))
     draw = ImageDraw.Draw(img)
-    for i in range(100, 700, 20):
-        draw.line([(50, i), (550, i)], fill=(0, 0, 0), width=4)
+    rng = random.Random(pattern)
+    for _ in range(30):
+        x1 = rng.randint(0, 500)
+        y1 = rng.randint(0, 700)
+        draw.rectangle([(x1, y1), (x1 + rng.randint(20, 80), y1 + rng.randint(20, 80))], fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
@@ -61,8 +65,9 @@ class TestArchitectFixes:
         assert cfg.enable_screen_photo_check is False
 
     @pytest.mark.asyncio
-    async def test_parallel_image_checking_concurrency(self):
+    async def test_parallel_image_checking_concurrency(self, monkeypatch):
         """Verify role_0, role_1, and facts extraction are gathered concurrently in main.py."""
+        monkeypatch.setenv("MOCK_AI", "1")
         client = TestClient(app)
         img0 = make_test_image("lines")
         img1 = make_test_image("lines")
@@ -70,18 +75,16 @@ class TestArchitectFixes:
         concurrent_calls = 0
         max_concurrent_observed = 0
 
-        async def mock_classify_role(image_bytes, filename=None):
+        async def mock_classify_role(image_bytes, filename=None, *args, **kwargs):
             nonlocal concurrent_calls, max_concurrent_observed
             concurrent_calls += 1
             if concurrent_calls > max_concurrent_observed:
                 max_concurrent_observed = concurrent_calls
             await asyncio.sleep(0.08)
-            concurrent_calls -= 1
             fn = (filename or "").lower()
-            if "0" in fn or "odo" in fn:
-                return "odometer"
-            return "revenue_screen"
-
+            if "0" in fn or "odo" in fn or "profile" in fn:
+                return "app_profile"
+            return "app_income"
         async def mock_extract(norm_bytes):
             nonlocal concurrent_calls, max_concurrent_observed
             concurrent_calls += 1
@@ -102,10 +105,29 @@ class TestArchitectFixes:
                 is_screen_photo=True,
                 notes="revenue_screen",
             )
+        async def mock_ocr(b, week_idx=None):
+            nonlocal concurrent_calls, max_concurrent_observed
+            concurrent_calls += 1
+            if concurrent_calls > max_concurrent_observed:
+                max_concurrent_observed = concurrent_calls
+            await asyncio.sleep(0.08)
+            concurrent_calls -= 1
+            w = week_idx or 1
+            return {
+                "gross_revenue": 1000000 * w,
+                "net_income": 800000 * w,
+                "discount_and_tax": -200000 * w,
+                "total_trips": 10 * w,
+                "online_hours": f"{8 * w}h",
+                "period": f"Tuần {w}",
+                "confidence_score": 0.99,
+                "is_legible": True,
+                "is_authentic_gsm_ui": True,
+            }
 
         with patch("main.vision_client.classify_image_role", side_effect=mock_classify_role), \
-             patch("main.vision_client.extract_facts", side_effect=mock_extract):
-
+             patch("main.vision_client.extract_facts", side_effect=mock_extract), \
+             patch("main.vision_client.ocr_driver_app_income", side_effect=mock_ocr):
             resp = client.post(
                 "/api/v1/survey/submit-webrtc",
                 data={
@@ -115,14 +137,19 @@ class TestArchitectFixes:
                     "consent_choice": "Tôi đồng ý",
                     "signature_png": "data:image/png;base64,mock",
                     "vehicle_type": "Ô tô",
+                    "car_model": "VF 5 Plus",
+                    "gsm_duration": "Từ 6 – 12 tháng",
+                    "gsm_contract_type": "Xe Taxi xanh GSM",
+                    "daily_trips": "18",
+                    "monthly_income_range": "12 – 20 triệu VNĐ",
+                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
                     "gross_revenue": "165000",
-                    "odometer_km": "15200",
                     "is_test_mode": "true",
                     "bypass_img_check": "false",
                 },
                 files={
-                    "survey_photo_0": ("odometer_0.jpg", img0, "image/jpeg"),
-                    "survey_photo_1": ("revenue_1.jpg", img1, "image/jpeg"),
+                    f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"lines_{time.time()}_{i}"), "image/jpeg")
+                    for i in range(7)
                 },
             )
         assert resp.status_code == 200
@@ -191,3 +218,155 @@ class TestArchitectFixes:
         # Ensure INITIAL_SCHEMA JSON parses cleanly without escaping corruption
         assert 'const INITIAL_SCHEMA =' in html
         assert 'Tải lên ảnh \\"Màn hình chính\\" & \\"Doanh thu\\"' in html or 'Tải lên ảnh' in html
+
+    def test_slot_level_image_checks_override_hierarchy(self):
+        """Verify slot-level image checks override question-level and global checks."""
+        from services.form_engine import get_effective_image_checks, FormSettings
+        schema = FormSchema(
+            form_id="test_slot_overrides",
+            title="Test Overrides",
+            settings=FormSettings(
+                image_checks=ImageCheckConfig(
+                    enable_blur_check=True,
+                    blur_threshold=40.0,
+                    enable_vehicle_match=True,
+                )
+            ),
+            questions=[
+                FormQuestion(
+                    id="cam_q",
+                    title="Camera Question",
+                    type=QuestionType.CAMERA_WEBRTC,
+                    image_checks=ImageCheckConfig(
+                        enable_blur_check=True,
+                        blur_threshold=30.0,
+                        enable_vehicle_match=True,
+                    ),
+                    image_slots=[
+                        {
+                            "slot": 0,
+                            "title": "Slot 0",
+                            "image_checks": {
+                                "enable_blur_check": False,
+                                "blur_threshold": 15.0,
+                                "enable_vehicle_match": False,
+                            }
+                        },
+                        {
+                            "slot": 1,
+                            "title": "Slot 1",
+                        }
+                    ]
+                )
+            ]
+        )
+
+        # Slot 0 overrides: blur check disabled, vehicle match disabled, blur threshold 15.0
+        slot0_checks = get_effective_image_checks(schema, "cam_q", slot_index=0)
+        assert slot0_checks.enable_blur_check is False
+        assert slot0_checks.blur_threshold == 15.0
+        assert slot0_checks.enable_vehicle_match is False
+
+        # Slot 1 inherits from Question-level: blur check enabled, blur threshold 30.0
+        slot1_checks = get_effective_image_checks(schema, "cam_q", slot_index=1)
+        assert slot1_checks.enable_blur_check is True
+        assert slot1_checks.blur_threshold == 30.0
+        assert slot1_checks.enable_vehicle_match is True
+
+    def test_dynamic_form_rich_description_support(self):
+        """Verify dynamic_form_html includes formatRichDescription and renders rich text container."""
+        schema = FormSchema(
+            form_id="test_rich_desc",
+            title="Test Rich Description",
+            questions=[
+                FormQuestion(
+                    id="q_desc_test",
+                    title="Question with links and images",
+                    type=QuestionType.TEXT,
+                    description="Xem hướng dẫn [tại đây](https://example.com/guide) và ảnh ![Mẫu](https://example.com/sample.jpg)"
+                )
+            ]
+        )
+        html = render_dynamic_form_html(schema)
+        assert "formatRichDescription" in html
+        assert '<div class="q-desc">' in html
+        assert ".q-desc a" in html
+        assert ".q-desc img" in html
+
+    @pytest.mark.asyncio
+    async def test_inter_submission_detects_identical_financial_data(self, monkeypatch):
+        """Verify that submitting identical weekly financial numbers to a past approved survey is rejected."""
+        monkeypatch.setenv("MOCK_AI", "1")
+        client = TestClient(app)
+        import time, json, os
+
+        # Ensure clean dev test storage
+        dev_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+        os.makedirs(os.path.dirname(dev_file), exist_ok=True)
+        
+        ts = time.time()
+        prev_id = f"DEV-PAST-{int(ts)}"
+        seed_record = {
+            "submission_id": prev_id,
+            "status": "APPROVED",
+            "total_gross_revenue": 15000000,
+            "total_trips": 100,
+            "income_week_1_gross": 3000000,
+            "income_week_2_gross": 3000000,
+            "weekly_incomes": {
+                "week_1": {"gross_revenue": 3000000, "net_income": 2500000, "total_trips": 20, "period": "Tuần 1"},
+                "week_2": {"gross_revenue": 3000000, "net_income": 2500000, "total_trips": 20, "period": "Tuần 2"},
+            },
+            "image_dhash_int": 999999999999,  # distinct hash
+        }
+        records = [seed_record]
+        with open(dev_file, "w", encoding="utf-8") as f:
+            json.dump(records, f)
+
+        async def mock_role(img_bytes, filename=None, *args, **kwargs):
+            fn = (filename or "").lower()
+            if "0" in fn or "profile" in fn:
+                return "app_profile"
+            return "app_income"
+
+        async def mock_ocr_copied_numbers(img_bytes, week_idx=None, *args, **kwargs):
+            return {
+                "is_authentic_gsm_ui": True,
+                "detected_app": "XANH_SM",
+                "gross_revenue": 3000000,
+                "net_income": 2500000,
+                "total_trips": 20,
+                "period": f"Tuần {week_idx or 1}",
+                "confidence_score": 0.99,
+                "is_legible": True,
+            }
+
+        with patch("main.vision_client.classify_image_role", side_effect=mock_role), \
+             patch("main.vision_client.ocr_driver_app_income", side_effect=mock_ocr_copied_numbers):
+            resp = client.post(
+                "/api/v1/survey/submit-webrtc",
+                data={
+                    "driver_phone": "0988777888",
+                    "driver_name": "Tài xế Copy Số Liệu",
+                    "consent_choice": "Tôi đồng ý",
+                    "signature_png": "data:image/png;base64,mock",
+                    "vehicle_type": "Ô tô",
+                    "car_model": "VF 5 Plus",
+                    "gsm_duration": "Từ 6 – 12 tháng",
+                    "gsm_contract_type": "Xe Taxi xanh GSM",
+                    "daily_trips": "18",
+                    "monthly_income_range": "12 – 20 triệu VNĐ",
+                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                    "is_test_mode": "true",
+                    "bypass_img_check": "false",
+                },
+                files={
+                    f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"pattern_unique_{ts}_{i}"), "image/jpeg")
+                    for i in range(7)
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data.get("status") == "REJECTED"
+            assert "trùng" in data.get("reason", "").lower()
+            assert data.get("duplicate_detected") is True
