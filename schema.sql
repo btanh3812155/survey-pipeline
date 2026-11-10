@@ -155,12 +155,14 @@ WHERE status = 'PENDING';
 -- 4. Collaborator Financial Billing Ledger
 CREATE TABLE IF NOT EXISTS collaborator_billing_ledger (
     transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    collaborator_id BIGINT NOT NULL REFERENCES authorized_users(telegram_user_id),
+    collaborator_id BIGINT REFERENCES authorized_users(telegram_user_id),
     submission_id VARCHAR(64) UNIQUE NOT NULL REFERENCES survey_submissions(submission_id) ON DELETE RESTRICT,
-    payout_amount_vnd INT NOT NULL DEFAULT 25000,
-    payout_status VARCHAR(32) NOT NULL DEFAULT 'PENDING_PAYOUT' CHECK (payout_status IN ('PENDING_PAYOUT', 'PAID', 'CANCELLED')),
+    payout_amount_vnd INT NOT NULL DEFAULT 0,
+    payout_status VARCHAR(32) NOT NULL DEFAULT 'UNPAID' CHECK (payout_status IN ('PENDING_PAYOUT', 'PAID', 'CANCELLED', 'UNPAID')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE collaborator_billing_ledger ALTER COLUMN collaborator_id DROP NOT NULL;
+ALTER TABLE collaborator_billing_ledger ALTER COLUMN payout_amount_vnd SET DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_billing_collab_status 
 ON collaborator_billing_ledger (collaborator_id, payout_status);

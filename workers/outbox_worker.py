@@ -61,20 +61,26 @@ async def process_outbox_batch(
 
                                 target = ev.get("flow_target", "ALL")
 
-                                # FLOW A: Financial Ledger Payout
+                                # FLOW A: Financial Ledger Payout (Generalized Commission / Compensation)
                                 if target in ("BILLING", "ALL") and ev["event_type"] in ("SURVEY_APPROVED", "survey.validated"):
-                                    collab_id = payload.get("collaborator_id")
-                                    payout_amount = payload.get("payout_vnd", 25000)
-                                    await cur.execute(
-                                        """
-                                        INSERT INTO collaborator_billing_ledger (
-                                            collaborator_id, submission_id, payout_amount_vnd, payout_status
-                                        ) VALUES (%s, %s, %s, 'PENDING_PAYOUT')
-                                        ON CONFLICT (submission_id) DO NOTHING;
-                                    """,
-                                        (collab_id, submission_id, payout_amount),
-                                    )
-
+                                    collab_id = payload.get("collaborator_id") or payload.get("ctv_id")
+                                    # Generalized payout amount: reads from payload or defaults to 0 (no hardcoded amounts)
+                                    payout_amount = payload.get("payout_vnd") or payload.get("commission_amount") or payload.get("payout_amount") or 0
+                                    
+                                    # If a collaborator is linked, record in ledger; otherwise skip cleanly without throwing FK error
+                                    if collab_id is not None:
+                                        await cur.execute(
+                                            """
+                                            INSERT INTO collaborator_billing_ledger (
+                                                collaborator_id, submission_id, payout_amount_vnd, payout_status
+                                            ) VALUES (%s, %s, %s, 'UNPAID')
+                                            ON CONFLICT (submission_id) DO UPDATE SET
+                                                payout_amount_vnd = EXCLUDED.payout_amount_vnd;
+                                            """,
+                                            (collab_id, submission_id, payout_amount),
+                                        )
+                                    else:
+                                        logger.debug(f"[BILLING] No collaborator ID for #{submission_id}, skipping billing ledger entry.")
                                 # FLOW B: Cloudflare R2 Upload (simulated / dispatched)
                                 elif target == "R2_UPLOAD":
                                     logger.info(f"[R2_WORKER] uploaded image for #{submission_id}")
@@ -119,7 +125,7 @@ async def process_outbox_batch(
     return processed_count
 
 
-async def run_outbox_daemon(conn_str: str, poll_interval_sec: float = 1.0):
+async def run_outbox_daemon(conn_str: str, poll_interval_sec: float = 10.0):
     logger.info("outbox daemon started...")
     while True:
         count = await process_outbox_batch(conn_str)

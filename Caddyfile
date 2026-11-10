@@ -32,6 +32,16 @@ survey.trustbridgevn.com {
     }
 }
 
+dev.146.190.201.32.sslip.io, dev.survey.trustbridgevn.com, staging.survey.trustbridgevn.com {
+    tls {
+        on_demand
+    }
+    reverse_proxy app-dev:8000
+    request_body {
+        max_size 25MB
+    }
+}
+
 https:// {
     tls {
         on_demand

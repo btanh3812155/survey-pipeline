@@ -25,6 +25,7 @@ credentials.json
 
 # Local data & sqlite
 data/
+data_dev/
 *.db
 *.sqlite
 *.sqlite3
@@ -57,3 +58,6 @@ frontend/dist/
 # Large model weights
 models/
 *.onnx
+
+# Local test data dumps
+*(GSM)*
