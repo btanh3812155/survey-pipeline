@@ -7,7 +7,7 @@ from services.form_engine import FormSchema
 
 DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
     {
-        "filename": "sample_profile.jpg",
+        "filename": "sample_app_profile.jpg",
         "title": "Ảnh 1: Hồ Sơ Tài Xế Ứng Dụng",
         "slot_badge": "Slot 1: Hồ Sơ App",
         "dimensions": "1568 × 1568",
@@ -23,7 +23,7 @@ DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
         "desc": "Ảnh chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện Xanh SM (VinFast) phục vụ đối soát.",
     },
     {
-        "filename": "sample_income_week_1.jpg",
+        "filename": "sample_app_income.jpg",
         "title": "Ảnh 3: Doanh Thu Tuần 1 (28/09 - 04/10)",
         "slot_badge": "Slot 3: Tuần 1",
         "dimensions": "1080 × 1440",

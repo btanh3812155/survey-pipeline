@@ -2821,64 +2821,85 @@ async def lark_webhook_ingress(
     }
 
 
-@app.post("/webhook/telegram")
-async def telegram_webhook_ingress(
-    request: Request,
-    x_telegram_bot_api_secret_token: str = Header(None),
-):
-    if settings.ENVIRONMENT != "development":
-        if not secrets.compare_digest(
-            x_telegram_bot_api_secret_token or "", settings.TELEGRAM_WEBHOOK_SECRET
-        ):
+from services.telegram_polling import TelegramPollingRunner, DriverBotRunner
+
+admin_bot_runner: Optional[TelegramPollingRunner] = None
+driver_bot_runner: Optional[DriverBotRunner] = None
+
+def get_admin_bot_runner() -> Optional[TelegramPollingRunner]:
+    global admin_bot_runner
+    if admin_bot_runner is None:
+        token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+        if token and token != "mock_tg_token":
+            admin_bot_runner = TelegramPollingRunner(bot_token=token, db_pool=db_pool, role="admin")
+    return admin_bot_runner
+
+def get_driver_bot_runner() -> Optional[DriverBotRunner]:
+    global driver_bot_runner
+    if driver_bot_runner is None:
+        token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None)
+        if token and token != "mock_tg_token":
+            driver_bot_runner = DriverBotRunner(bot_token=token, db_pool=db_pool)
+    return driver_bot_runner
+
+def verify_telegram_webhook_secret(secret_token: Optional[str] = None):
+    if settings.ENVIRONMENT != "development" and getattr(settings, "TELEGRAM_WEBHOOK_SECRET", None):
+        if not secrets.compare_digest(secret_token or "", settings.TELEGRAM_WEBHOOK_SECRET):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
+@app.post("/webhook/telegram")
+@app.post("/webhook/telegram/admin")
+async def telegram_admin_webhook_ingress(
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+):
+    verify_telegram_webhook_secret(x_telegram_bot_api_secret_token)
     body = await request.json()
-    message = body.get("message") or {}
-    chat = message.get("chat") or {}
-    chat_id = chat.get("id")
-    text = message.get("text") or ""
-    if len(text) > 4096:
-        raise HTTPException(status_code=400, detail="Tin nhắn vượt quá độ dài cho phép")
-
-    # 1. Handle Admin 1-Click Database Query Callback
-    cq = body.get("callback_query") or {}
-    if cq:
-        data = cq.get("data", "")
-        cq_msg = cq.get("message") or {}
-        cq_chat = cq_msg.get("chat") or {}
-        cq_chat_id = cq_chat.get("id")
-        if data.startswith("admin_query:"):
-            if str(cq_chat_id) != str(settings.TELEGRAM_ADMIN_GROUP_ID):
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
-            sub_id = data.split(":", 1)[1]
-            if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
-                return {"status": "invalid_id"}
-            dossier = await query_submission_dossier(sub_id)
-            report_text = render_dossier_message(dossier)
-            await send_telegram_notification(cq_chat_id, report_text)
-            return {"status": "query_handled"}
-
-    # 2. Handle /query or /check slash command in Admin Group
-    if text.startswith("/query ") or text.startswith("/check "):
-        if str(chat_id) != str(settings.TELEGRAM_ADMIN_GROUP_ID):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="unauthorized chat")
-        parts = text.split(" ", 1)
-        sub_id = parts[1].strip().lstrip("#")
-        if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
-            await send_telegram_notification(
-                chat_id,
-                "⚠️ <b>Mã phiếu không đúng định dạng.</b> Chỉ chấp nhận a-z, 0-9, gạch ngang (tối đa 64 ký tự).",
-            )
-            return {"status": "invalid_id"}
-        dossier = await query_submission_dossier(sub_id)
-        report_text = render_dossier_message(dossier)
-        await send_telegram_notification(chat_id, report_text)
-        return {"status": "query_command_handled"}
-
-    if text == "/start" and chat_id:
-        welcome_msg = (
-            "👋 <b>Chào mừng bạn đến với hệ thống kiểm duyệt khảo sát!</b>\n\n"
-            "Mọi phiếu khảo sát nộp qua form sẽ được tự động kiểm tra và phản hồi kết quả trực tiếp tại đây trong vòng 3 giây."
-        )
-        await send_telegram_notification(chat_id, welcome_msg)
+    runner = get_admin_bot_runner()
+    if runner:
+        await runner.handle_update(body)
     return {"status": "ok"}
+
+@app.post("/webhook/telegram/driver")
+async def telegram_driver_webhook_ingress(
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+):
+    verify_telegram_webhook_secret(x_telegram_bot_api_secret_token)
+    body = await request.json()
+    runner = get_driver_bot_runner()
+    if runner:
+        await runner.handle_update(body)
+    return {"status": "ok"}
+
+@app.post("/api/v1/telegram/set-webhooks")
+async def set_telegram_webhooks(
+    domain: Optional[str] = None,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Registers production webhooks with Telegram Bot API for both Admin and Driver bots."""
+    base = (domain or "https://survey.trustbridgevn.com").rstrip("/")
+    sec = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or ""
+    results = {}
+
+    admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+    driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        if admin_token and admin_token != "mock_tg_token":
+            url = f"https://api.telegram.org/bot{admin_token}/setWebhook"
+            payload = {"url": f"{base}/webhook/telegram/admin"}
+            if sec:
+                payload["secret_token"] = sec
+            r = await client.post(url, json=payload)
+            results["admin_bot"] = r.json()
+
+        if driver_token and driver_token != "mock_tg_token":
+            url = f"https://api.telegram.org/bot{driver_token}/setWebhook"
+            payload = {"url": f"{base}/webhook/telegram/driver"}
+            if sec:
+                payload["secret_token"] = sec
+            r = await client.post(url, json=payload)
+            results["driver_bot"] = r.json()
+
+    return {"status": "success", "results": results}

@@ -58,21 +58,8 @@ services:
     depends_on:
       - postgres
 
-  telegram-bot:
-    build: .
-    restart: always
-    command: python -m services.telegram_polling
-    environment:
-      - ENVIRONMENT=production
-      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_BOT_TOKEN=${TELEGRAM_ADMIN_BOT_TOKEN}
-      - TELEGRAM_DRIVER_BOT_TOKEN=${TELEGRAM_DRIVER_BOT_TOKEN}
-      - TELEGRAM_ADMIN_GROUP_ID=${TELEGRAM_ADMIN_GROUP_ID}
-      - PYTHONPATH=/app
-    depends_on:
-      - postgres
-
+  # telegram-bot: Migrated to push webhooks (/webhook/telegram/admin & /webhook/telegram/driver)
+  # Reclaims ~150MB RAM on droplet and eliminates 30s long-polling overhead
   postgres:
     image: pgvector/pgvector:pg16
     restart: always

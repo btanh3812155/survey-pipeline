@@ -11,10 +11,7 @@ import httpx
 from PIL import Image
 
 from config import settings
-try:
-    from main import FORM_REGISTRY
-except Exception:
-    from services.form_engine import FORM_REGISTRY
+from services.form_engine import FORM_REGISTRY
 from services.admin_moderator import (
     query_submission_dossier,
     render_dossier_message,
@@ -257,11 +254,7 @@ class TelegramPollingRunner:
         elif cmd == "/forms":
             lines = ["📋 <b>Danh Sách Biểu Mẫu Khảo Sát Đang Hoạt Động (Forms):</b>\n"]
             reg = FORM_REGISTRY
-            try:
-                from main import FORM_REGISTRY as main_reg
-                reg = main_reg
-            except Exception:
-                pass
+            pass
             if reg:
                 for fid, schema in reg.items():
                     title = getattr(schema, "title", fid)
@@ -1250,11 +1243,7 @@ class DriverBotRunner(TelegramPollingRunner):
         elif cmd in ("/forms", "/form") or clean == "📝 Nộp Form Mới":
             lines = ["📝 <b>Biểu Mẫu Khảo Sát Đang Mở:</b>\n"]
             reg = FORM_REGISTRY
-            try:
-                from main import FORM_REGISTRY as main_reg
-                reg = main_reg
-            except Exception:
-                pass
+            pass
             if reg:
                 for fid, schema in reg.items():
                     title = getattr(schema, "title", fid)
