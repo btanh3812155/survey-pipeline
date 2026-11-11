@@ -1,11 +1,68 @@
+# -*- coding: utf-8 -*-
+"""
+Forms Manager & Visual 3-Tab Editor HTML Rendering Service.
+Provides expanded 1440px layout, Trust Bridge branded header,
+grid/row view mode toggles, 3-line title truncation, live filter/sort bar,
+page-size selector, and a clean canonical QR code sharing popup.
+"""
+
 import html
 import json
 import math
 import os
 from typing import Dict, Optional, List, Any
-from services.form_engine import FormSchema
+from services.form_engine import FormSchema, FormSettings, FormQuestion, QuestionType
 
-def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6, environment: str = "production") -> str:
+DUMMY_DEV_FORMS: List[Dict[str, Any]] = [
+    {
+        "form_id": "customer_service_evaluation",
+        "title": "Khảo Sát Đánh Giá Chất Lượng Phục Vụ & Thái Độ Tài Xế GSM Toàn Quốc",
+        "description": "Thu thập phản hồi từ hành khách và quản lý vận hành về chất lượng chuyến đi xe điện",
+        "question_count": 8,
+        "is_test_mode": False,
+        "access_control": "public"
+    },
+    {
+        "form_id": "vehicle_handover_inspection",
+        "title": "Biên Bản Bàn Giao & Kiểm Tra Tình Trạng Xe Điện VinFast Định Kỳ",
+        "description": "Kiểm tra hiện trạng ngoại thất, áp suất lốp và phụ kiện trước khi nhận ca",
+        "question_count": 12,
+        "is_test_mode": True,
+        "access_control": "public"
+    },
+    {
+        "form_id": "driver_onboarding_survey",
+        "title": "Khảo Sát Đào Tạo & Hội Nhập Tài Xế Mới Gia Nhập Đội Xe",
+        "description": "Đánh giá mức độ nắm bắt quy trình phục vụ và hướng dẫn sử dụng ứng dụng tài xế",
+        "question_count": 6,
+        "is_test_mode": False,
+        "access_control": "public"
+    },
+    {
+        "form_id": "battery_charging_incident",
+        "title": "Báo Cáo Sự Cố Pin, Trạm Sạc & Cứu Hộ Khẩn Cấp",
+        "description": "Ghi nhận thông tin trụ sạc lỗi hoặc tình trạng hao hụt pin bất thường",
+        "question_count": 5,
+        "is_test_mode": True,
+        "access_control": "public"
+    },
+    {
+        "form_id": "performance_bonus_w11",
+        "title": "Khảo Sát Hiệu Quả Chương Trình Thưởng Năng Suất Tuần 11",
+        "description": "Thu thập ý kiến đóng góp về chính sách thưởng chuyến cao điểm và chỉ tiêu tuần",
+        "question_count": 7,
+        "is_test_mode": False,
+        "access_control": "public"
+    }
+]
+
+
+def render_forms_list_html(
+    forms_registry: Dict[str, FormSchema],
+    page: int = 1,
+    page_size: int = 6,
+    environment: str = "production"
+) -> str:
     is_dev = (str(environment).lower() != "production")
     if is_dev:
         env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
@@ -13,12 +70,27 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
     else:
         env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
         env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
-    unique_forms: Dict[str, FormSchema] = {}
+
+    unique_forms: Dict[str, Any] = {}
     for f in forms_registry.values():
-        unique_forms[f.form_id] = f
-    
+        unique_forms[f.form_id] = {
+            "form_id": f.form_id,
+            "title": f.title,
+            "description": f.description or "",
+            "question_count": len(f.questions),
+            "is_test_mode": bool(f.settings and f.settings.is_test_mode),
+            "access_control": f.settings.access_control if f.settings else "public"
+        }
+
+    # In dev build, seed dummy forms for rich UI testing
+    if is_dev:
+        for dummy in DUMMY_DEV_FORMS:
+            if dummy["form_id"] not in unique_forms:
+                unique_forms[dummy["form_id"]] = dummy
+
     all_forms = list(unique_forms.values())
     total_forms = len(all_forms)
+    page_size = max(1, page_size)
     total_pages = max(1, math.ceil(total_forms / page_size))
     current_page = max(1, min(page, total_pages))
 
@@ -27,40 +99,47 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
 
     forms_cards_html = ""
     for f in paged_forms:
-        is_test = bool(f.settings and f.settings.is_test_mode)
+        is_test = f["is_test_mode"]
         badge_cls = "badge test" if is_test else "badge active"
         badge_txt = "Thử nghiệm" if is_test else "Chính thức"
-        form_link = f"/forms/{f.form_id}?mode=test" if is_test else f"/forms/{f.form_id}"
+        form_id_str = f["form_id"]
+        form_link = f"/forms/{form_id_str}?mode=test" if is_test else f"/forms/{form_id_str}"
+        title_esc = html.escape(f["title"])
+
         forms_cards_html += f"""
-        <div class="form-item-card">
-            <h3>{html.escape(f.title)}</h3>
+        <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}">
+            <div class="form-card-top">
+                <span class="{badge_cls}">{badge_txt}</span>
+                <span style="font-size:0.75rem; color:var(--muted); font-family:monospace;">ID: {html.escape(form_id_str)}</span>
+            </div>
+            <h3 title="{title_esc}">{title_esc}</h3>
             <div class="form-item-meta">
-                <div>Mã ID: <code>{html.escape(f.form_id)}</code></div>
-                <div>Số câu hỏi: <b>{len(f.questions)}</b></div>
-                <div>Chế độ: <span class="{badge_cls}">{badge_txt}</span></div>
-                <div>Quyền truy cập: <b>{f.settings.access_control if f.settings else 'public'}</b></div>
+                <div>Số câu hỏi: <b>{f['question_count']}</b></div>
+                <div>Quyền truy cập: <b>{html.escape(f['access_control'])}</b></div>
             </div>
             <div class="form-actions">
-                <button type="button" class="btn-action qr" onclick="openAdminQrModal('{f.form_id}', '{html.escape(f.title)}')" title="Mã QR" aria-label="Mã QR">
+                <button type="button" class="btn-action qr" onclick="openAdminQrModal('{form_id_str}', '{title_esc}')" title="Mã QR" aria-label="Mã QR">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zm-3 2h2v3h-2v-3zm3 3h3v3h-3v-3zm-5 1h2v2h-2v-2zm3-3h2v2h-2v-2zM7 7h-.01v.01H7V7zm10 0h-.01v.01H17V7zM7 17h-.01v.01H7V17z"/></svg>
                 </button>
                 <a href="{form_link}" target="_blank" class="btn-action view" title="Mở Form" aria-label="Mở Form">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
                 </a>
-                <a href="/admin/forms/edit/{f.form_id}" class="btn-action edit" title="Sửa Biểu Mẫu" aria-label="Sửa Biểu Mẫu">
+                <a href="/admin/forms/edit/{form_id_str}" class="btn-action edit" title="Sửa Biểu Mẫu" aria-label="Sửa Biểu Mẫu">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                 </a>
             </div>
         </div>
         """
+
     prev_disabled = "disabled" if current_page <= 1 else ""
     next_disabled = "disabled" if current_page >= total_pages else ""
+
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Trust Bridge - Danh Sách Biểu Mẫu</title>
+    <title>Trust Bridge - Quản Lý Biểu Mẫu</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
@@ -68,12 +147,14 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         :root {{
             --bg: #090d16;
             --surface: #131b2e;
+            --surface-hover: #1c2742;
             --border: #23314f;
             --accent: #2563eb;
             --accent-hover: #1d4ed8;
             --success: #10b981;
             --text: #f8fafc;
             --muted: #94a3b8;
+            --card-radius: 12px;
         }}
 
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -83,58 +164,231 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 20px 14px;
+            padding: 20px 16px;
         }}
 
-        .container {{ max-width: 900px; margin: 0 auto; }}
+        /* Expanded container: >40% wider than 900px */
+        .container {{
+            max-width: 1440px;
+            width: 96%;
+            margin: 0 auto;
+        }}
 
-        header {{
+        /* Top Branded Trust Bridge Header */
+        .brand-banner {{
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            padding: 16px 22px;
             margin-bottom: 20px;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 16px;
-            gap: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            flex-wrap: wrap;
+            gap: 14px;
+        }}
+
+        .brand-banner-left {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }}
+
+        .brand-logo-wrap {{
+            width: 44px;
+            height: 44px;
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        .brand-banner-title h1 {{
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
             flex-wrap: wrap;
         }}
 
-        header h1 {{ font-size: 1.3rem; font-weight: 800; }}
-        header p {{ font-size: 0.82rem; color: var(--muted); margin-top: 2px; }}
-
-        .btn-create {{
-            background: var(--accent);
-            color: #fff;
-            padding: 10px 16px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 700;
-            font-size: 0.85rem;
-            display: inline-block;
+        .brand-banner-title p {{
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 2px;
         }}
 
+        .nav-actions {{
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }}
+
+        .nav-btn {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }}
+
+        .nav-btn:hover {{
+            background: var(--surface-hover);
+            border-color: #3b82f6;
+            color: #60a5fa;
+        }}
+
+        .nav-btn.primary {{
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }}
+
+        .nav-btn.primary:hover {{
+            background: var(--accent-hover);
+        }}
+
+        /* Filter & Sorting Bar Above Forms List */
+        .filter-toolbar {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }}
+
+        .search-wrap {{
+            flex: 1;
+            min-width: 240px;
+            position: relative;
+        }}
+
+        .search-input {{
+            width: 100%;
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px 8px 34px;
+            color: #fff;
+            font-size: 0.82rem;
+            outline: none;
+        }}
+
+        .search-input:focus {{
+            border-color: #3b82f6;
+        }}
+
+        .search-icon {{
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            fill: var(--muted);
+            pointer-events: none;
+        }}
+
+        .filter-controls {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+
+        .select-filter {{
+            background: #090d16;
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 7px 10px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            outline: none;
+            cursor: pointer;
+        }}
+
+        .view-btn {{
+            background: var(--surface-hover);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.78rem;
+        }}
+
+        .view-btn.active {{
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }}
+
+        /* Forms Layout: Grid Mode with equal height rows */
         .form-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-            gap: 14px;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
             margin-bottom: 24px;
-        }}
-
-        @media (max-width: 640px) {{
-            .form-grid {{ grid-template-columns: 1fr; }}
+            align-items: stretch;
         }}
 
         .form-item-card {{
             background: var(--surface);
             border: 1.5px solid var(--border);
             border-radius: 12px;
-            padding: 16px;
+            padding: 18px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            justify-content: space-between;
+            gap: 12px;
+            transition: transform 0.15s ease, border-color 0.15s ease;
         }}
 
-        .form-item-card h3 {{ font-size: 1rem; color: #fff; line-height: 1.3; }}
+        .form-item-card:hover {{
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+        }}
+
+        .form-card-top {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+
+        /* Title Capped to exactly 3 lines with ellipsis, fixed min-height for row alignment */
+        .form-item-card h3 {{
+            font-size: 0.98rem;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.4;
+            min-height: 4.2em;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
 
         .form-item-meta {{
             font-size: 0.8rem;
@@ -142,6 +396,9 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             display: flex;
             flex-direction: column;
             gap: 4px;
+            background: rgba(15, 23, 42, 0.4);
+            padding: 8px 10px;
+            border-radius: 6px;
         }}
 
         .badge {{
@@ -154,51 +411,102 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         .badge.active {{ background: rgba(16, 185, 129, 0.2); color: #34d399; }}
         .badge.test {{ background: rgba(245, 158, 11, 0.2); color: #fbbf24; }}
 
-        .form-actions {{ display: flex; gap: 8px; margin-top: 10px; }}
+        .form-actions {{
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+        }}
 
         .btn-action {{
             flex: 1;
-            height: 38px;
+            height: 36px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            border-radius: 8px;
+            border-radius: 6px;
+            color: #fff;
             text-decoration: none;
+            border: 1px solid var(--border);
             cursor: pointer;
-            border: 1px solid transparent;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
+            background: var(--surface-hover);
+        }}
+
+        .btn-action.qr:hover {{ background: #0284c7; border-color: #0284c7; }}
+        .btn-action.view:hover {{ background: #10b981; border-color: #10b981; }}
+        .btn-action.edit:hover {{ background: #2563eb; border-color: #2563eb; }}
+        .btn-action svg {{ width: 16px; height: 16px; }}
+
+        /* Row Mode (List View) */
+        .form-grid.row-mode {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+
+        .form-grid.row-mode .form-item-card {{
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 18px;
+        }}
+
+        .form-grid.row-mode .form-card-top {{
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+            min-width: 110px;
+        }}
+
+        .form-grid.row-mode .form-item-card h3 {{
+            min-height: auto;
+            -webkit-line-clamp: 1;
+            flex: 2;
+        }}
+
+        .form-grid.row-mode .form-item-meta {{
+            flex: 2;
+            flex-direction: row;
+            gap: 16px;
+            align-items: center;
+            background: none;
             padding: 0;
         }}
-        .btn-action svg {{
-            width: 18px;
-            height: 18px;
-            display: block;
-            margin: auto;
-        }}
-        .btn-action.view {{ background: #2563eb; color: #fff; }}
-        .btn-action.view:hover {{ background: #1d4ed8; }}
-        .btn-action.edit {{ background: #1e293b; border-color: #334155; color: #cbd5e1; }}
-        .btn-action.edit:hover {{ background: #334155; color: #fff; }}
-        .btn-action.qr {{ background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; }}
-        .btn-action.qr:hover {{ background: #10b981; color: #fff; }}
 
-        /* Pagination Controls */
-        .pagination {{
+        .form-grid.row-mode .form-actions {{
+            flex: 1;
+            margin-top: 0;
+            max-width: 150px;
+        }}
+
+        /* Pagination & Page Size Row */
+        .pagination-row {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            padding: 12px 18px;
             display: flex;
             align-items: center;
-            justify-content: center;
+            justify-content: space-between;
             gap: 12px;
-            padding: 16px 0;
+            flex-wrap: wrap;
+        }}
+
+        .pagination-controls {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }}
 
         .btn-page {{
-            background: var(--surface);
-            border: 1.5px solid var(--border);
+            background: var(--surface-hover);
+            border: 1px solid var(--border);
             color: #fff;
-            padding: 8px 16px;
-            border-radius: 8px;
+            padding: 6px 12px;
+            border-radius: 6px;
             text-decoration: none;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             font-weight: 600;
         }}
 
@@ -207,416 +515,394 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             pointer-events: none;
         }}
 
-        .page-indicator {{ font-size: 0.85rem; color: var(--muted); }}
+        .page-indicator {{
+            font-size: 0.82rem;
+            color: var(--muted);
+        }}
 
-        .btn-samples-nav {{
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid var(--border);
-            color: #38bdf8;
-            padding: 9px 14px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 700;
-            font-size: 0.85rem;
-            display: inline-flex;
+        .page-size-wrap {{
+            display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--muted);
         }}
-        .btn-samples-nav:hover {{
-            border-color: #38bdf8;
-            background: rgba(56, 189, 248, 0.1);
+
+        /* Clean Canonical QR Code Modal */
+        .modal-overlay {{
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.82);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            padding: 16px;
         }}
-        .samples-section {{
-            margin-top: 36px;
-            padding-top: 24px;
-            border-top: 1px solid var(--border);
+
+        .modal-card {{
+            background: #0f172a;
+            border: 1px solid var(--border);
+            border-top: 5px solid #10b981;
+            border-radius: 16px;
+            max-width: 440px;
+            width: 100%;
+            padding: 22px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.7);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
         }}
-        .samples-header {{
+
+        .modal-header-row {{
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 16px;
-            gap: 12px;
-            flex-wrap: wrap;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
         }}
-        .samples-header h2 {{
-            font-size: 1.15rem;
+
+        function escapeHtml(str) {{
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }}
+        .modal-title-group h3 {{
+            font-size: 1.05rem;
             font-weight: 800;
             color: #fff;
             display: flex;
             align-items: center;
             gap: 8px;
         }}
-        .samples-header p {{
-            font-size: 0.82rem;
+
+        .modal-title-group p {{
+            font-size: 0.8rem;
             color: var(--muted);
-            margin-top: 4px;
+            margin-top: 3px;
         }}
-        .samples-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-            gap: 14px;
-        }}
-        .sample-card {{
+
+        .btn-close-modal {{
             background: var(--surface);
-            border: 1.5px solid var(--border);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 1.3rem;
+            cursor: pointer;
+            border-radius: 6px;
+            padding: 2px 8px;
+            line-height: 1;
+        }}
+
+        .btn-close-modal:hover {{ color: #fff; }}
+
+        .qr-canvas-box {{
+            background: #ffffff;
+            padding: 16px;
             border-radius: 12px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            transition: transform 0.15s ease, border-color 0.15s ease;
-        }}
-        .sample-card:hover {{
-            border-color: rgba(37, 99, 235, 0.6);
-        }}
-        .sample-thumb-wrap {{
-            position: relative;
-            width: 100%;
-            height: 180px;
-            background: #060911;
-            overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
-            cursor: pointer;
+            align-self: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+            min-width: 220px;
+            min-height: 220px;
         }}
-        .sample-thumb-wrap img {{
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            transition: transform 0.2s ease;
-        }}
-        .sample-thumb-wrap:hover img {{
-            transform: scale(1.04);
-        }}
-        .sample-thumb-badge {{
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            background: rgba(9, 13, 22, 0.85);
-            backdrop-filter: blur(4px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+
+        .url-box {{
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
             color: #38bdf8;
-            font-size: 0.72rem;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 6px;
-        }}
-        .sample-thumb-meta {{
-            position: absolute;
-            bottom: 8px;
-            right: 8px;
-            background: rgba(9, 13, 22, 0.85);
-            backdrop-filter: blur(4px);
-            color: var(--muted);
-            font-size: 0.7rem;
-            font-weight: 600;
-            padding: 2px 6px;
-            border-radius: 4px;
-        }}
-        .sample-body {{
-            padding: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            flex: 1;
-        }}
-        .sample-title {{
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #fff;
-            line-height: 1.3;
-        }}
-        .sample-desc {{
+            font-family: monospace;
             font-size: 0.8rem;
-            color: var(--muted);
-            line-height: 1.4;
-            flex: 1;
+            width: 100%;
+            outline: none;
         }}
-        .sample-actions {{
+
+        .modal-btn-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-top: 6px;
+            gap: 10px;
         }}
-        .btn-download-sample {{
-            background: var(--accent);
-            color: #fff;
-            text-align: center;
-            padding: 8px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
+
+        .btn-modal-action {{
+            padding: 10px;
+            border-radius: 8px;
             font-weight: 700;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-        }}
-        .btn-download-sample:hover {{
-            background: var(--accent-hover);
-        }}
-        .btn-copy-sample {{
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid var(--border);
-            color: var(--text);
-            text-align: center;
-            padding: 8px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: 600;
+            font-size: 0.82rem;
+            border: none;
             cursor: pointer;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 4px;
-        }}
-        .btn-copy-sample:hover {{
-            background: rgba(255, 255, 255, 0.12);
+            gap: 6px;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <button type="button" onclick="toggleAdminLang()" style="display:inline-flex; align-items:center; gap:6px; background:rgba(30, 41, 59, 0.85); border:1px solid var(--border); color:#f8fafc; padding:6px 14px; border-radius:20px; font-size:0.82rem; font-weight:700; cursor:pointer;">
-                <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#60a5fa;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-                <span id="adminLangCode">VI</span>
-            </button>
-        </div>
-        <header>
-            <div>
-                <h1 id="txtAdminTitle">Danh Sách Biểu Mẫu Khảo Sát {env_badge}</h1>
-                <p id="txtAdminSub">Tổng cộng: {total_forms} biểu mẫu trong hệ thống ({env_subtext})</p>
+        <!-- Top Branded Trust Bridge Header -->
+        <div class="brand-banner">
+            <div class="brand-banner-left">
+                <div class="brand-logo-wrap">
+                    <svg viewBox="0 0 24 24" style="width:24px; height:24px; fill:#38bdf8;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                </div>
+                <div class="brand-banner-title">
+                    <h1 id="txtAdminTitle">
+                        Quản Lý Biểu Mẫu Khảo Sát
+                        {env_badge}
+                    </h1>
+                    <p id="txtAdminSub">Hệ Thống Trust Bridge SSOT: Cấu hình biểu mẫu, cấp mã QR chia sẻ, và định tuyến đối soát ({env_subtext})</p>
+                </div>
             </div>
-            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">
+            <div class="nav-actions">
+                <a href="/admin/submissions" class="nav-btn" id="btnAdminSubmissions">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
                     Dữ Liệu Nộp
                 </a>
-                <a href="/admin/audit" class="btn-samples-nav" id="btnAdminAudit">
+                <a href="/admin/audit" class="nav-btn" id="btnAdminAudit">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
                     Nhật Ký Kiểm Toán
                 </a>
-                <a href="/admin/media" class="btn-samples-nav" id="btnAdminMedia">
+                <a href="/admin/media" class="nav-btn" id="btnAdminMedia">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
                     Quản Lý Media
                 </a>
-                <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">
+                <a href="/admin/forms/create" class="nav-btn primary" id="btnAdminCreate">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                     Tạo Biểu Mẫu Mới
                 </a>
             </div>
-        </header>
+        </div>
 
-        <div class="form-grid">
+        <!-- Filter & Sorting Bar Above Forms List -->
+        <div class="filter-toolbar">
+            <div class="search-wrap">
+                <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
+                <input type="text" id="filterSearchInput" class="search-input" placeholder="Lọc biểu mẫu theo tên hoặc mã form..." oninput="applyClientFilter()">
+            </div>
+            <div class="filter-controls">
+                <select id="statusFilter" class="select-filter" onchange="applyClientFilter()">
+                    <option value="all">Tất cả trạng thái</option>
+                    <option value="active">Chính thức (Active)</option>
+                    <option value="test">Thử nghiệm (Test)</option>
+                </select>
+                <select id="sortFilter" class="select-filter" onchange="applyClientFilter()">
+                    <option value="default">Sắp xếp: Mặc định</option>
+                    <option value="name_asc">Tên (A → Z)</option>
+                    <option value="name_desc">Tên (Z → A)</option>
+                    <option value="questions_desc">Số câu hỏi (Nhiều nhất)</option>
+                </select>
+                <button type="button" class="view-btn active" id="btnViewGrid" onclick="setFormViewMode('grid')">
+                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/></svg>
+                    Lưới
+                </button>
+                <button type="button" class="view-btn" id="btnViewRow" onclick="setFormViewMode('row')">
+                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                    Dòng
+                </button>
+            </div>
+        </div>
+
+        <!-- Dynamic Form Grid / Rows -->
+        <div class="form-grid" id="formsContainer">
             {forms_cards_html}
         </div>
 
-        <div class="pagination">
-            <a href="/admin/forms?page={current_page - 1}" class="btn-page {prev_disabled}">Trang trước</a>
-            <span class="page-indicator">Trang {current_page} / {total_pages}</span>
-            <a href="/admin/forms?page={current_page + 1}" class="btn-page {next_disabled}">Trang sau</a>
-        </div>
-
-    </div>
-    <script>
-        let currentLang = localStorage.getItem('tb_lang') || 'vi';
-        function applyAdminI18n() {{
-            document.getElementById('adminLangCode').textContent = currentLang.toUpperCase();
-            if (currentLang === 'en') {{
-                document.getElementById('txtAdminTitle').textContent = "Survey Forms Management";
-                document.getElementById('txtAdminSub').textContent = "Total: {total_forms} active forms in system";
-                document.getElementById('btnAdminCreate').textContent = "+ Create New Form";
-            }} else {{
-                document.getElementById('txtAdminTitle').textContent = "Danh Sách Biểu Mẫu Khảo Sát";
-                document.getElementById('txtAdminSub').textContent = "Tổng cộng: {total_forms} biểu mẫu trong hệ thống";
-                document.getElementById('btnAdminCreate').textContent = "+ Tạo Biểu Mẫu Mới";
-                if (btnSamples) btnSamples.textContent = "Ảnh Mẫu Test";
-                if (txtSTitle) txtSTitle.textContent = "Kho Ảnh Mẫu Thử Nghiệm";
-                if (txtSSub) txtSSub.textContent = "Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI";
-            }}
-        }}
-        function toggleAdminLang() {{
-            currentLang = currentLang === 'vi' ? 'en' : 'vi';
-            localStorage.setItem('tb_lang', currentLang);
-            applyAdminI18n();
-        }}
-        window.addEventListener('DOMContentLoaded', applyAdminI18n);
-    </script>
-    <!-- Admin QR Modal Popup -->
-    <div id="adminQrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; padding:16px;" onclick="if(event.target===this)closeAdminQrModal()">
-        <div style="background:#0f172a; border:1px solid #334155; border-top:6px solid #10b981; border-radius:14px; padding:20px; max-width:440px; width:100%; box-shadow:0 25px 50px rgba(0,0,0,0.6);">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:12px; margin-bottom:16px;">
-                <h3 id="adminQrModalTitle" style="margin:0; font-size:1.05rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-                    <span>Chia Sẻ Mã QR Biểu Mẫu</span>
-                </h3>
-                <button type="button" onclick="closeAdminQrModal()" style="background:#1e293b; border:1px solid #334155; color:#94a3b8; font-size:1.2rem; cursor:pointer; border-radius:6px; padding:2px 8px; line-height:1;">&times;</button>
-            <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
-                <div id="adminQrCodeContainer" style="background:#ffffff; padding:16px; border-radius:12px; display:inline-flex; justify-content:center; align-items:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); min-width:220px; min-height:220px;"></div>
-                
-                <div style="width:100%;">
-                    <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">LINK TRUY CẬP (SUBDOMAIN NGẪU NHIÊN):</div>
-                    <div style="display:flex; gap:6px;">
-                        <input type="text" id="adminQrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
-                        <button type="button" onclick="regenerateAdminQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Tạo mã ngẫu nhiên mới">
-                            <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-                        </button>
-                    </div>
-                </div>
-
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
-                    <button type="button" onclick="copyAdminQrLink()" style="background:#2563eb; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                        <span>Sao Chép Link</span>
-                    </button>
-                    <button type="button" onclick="shareAdminQrLink()" style="background:#0284c7; color:#fff; border:none; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;">
-                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92c0-1.61-1.31-2.92-2.92-2.92z"/></svg>
-                        <span>Chia Sẻ</span>
-                    </button>
-                </div>
-                
-                <button type="button" onclick="saveAdminQrImage()" style="width:100%; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981; padding:10px; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    <span>Lưu Ảnh QR (.png)</span>
+        <!-- Pagination Controls Row with Page Size Selector -->
+        <div class="pagination-row">
+            <div class="pagination-controls">
+                <a href="/admin/forms?page={current_page - 1}&size={page_size}" class="btn-page {prev_disabled}">Trang trước</a>
+                <span class="page-indicator">Trang {current_page} / {total_pages} (Tổng {total_forms} biểu mẫu)</span>
+                <a href="/admin/forms?page={current_page + 1}&size={page_size}" class="btn-page {next_disabled}">Trang sau</a>
+            </div>
+            <div class="page-size-wrap">
+                <span>Số lượng hiển thị:</span>
+                <select id="pageSizeSelect" class="select-filter" onchange="changePageSize(this.value)">
+                    <option value="6" {'selected' if page_size == 6 else ''}>6 / trang</option>
+                    <option value="12" {'selected' if page_size == 12 else ''}>12 / trang</option>
+                    <option value="24" {'selected' if page_size == 24 else ''}>24 / trang</option>
+                    <option value="50" {'selected' if page_size == 50 else ''}>50 / trang</option>
+                </select>
             </div>
         </div>
     </div>
+
+    <!-- Redesigned Clean Canonical QR Code Modal Popup -->
+    <div id="adminQrModal" class="modal-overlay" onclick="if(event.target===this)closeAdminQrModal()">
+        <div class="modal-card">
+            <div class="modal-header-row">
+                <div class="modal-title-group">
+                    <h3 id="adminQrModalTitle">
+                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:#10b981;"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zm-3 2h2v3h-2v-3zm3 3h3v3h-3v-3zm-5 1h2v2h-2v-2zm3-3h2v2h-2v-2zM7 7h-.01v.01H7V7zm10 0h-.01v.01H17V7zM7 17h-.01v.01H7V17z"/></svg>
+                        Chia Sẻ Mã QR Biểu Mẫu
+                    </h3>
+                    <p id="adminQrFormTitle" style="color:#60a5fa; font-weight:600;"></p>
+                </div>
+                <button type="button" class="btn-close-modal" onclick="closeAdminQrModal()">&times;</button>
+            </div>
+
+            <!-- Centered QR Code -->
+            <div id="adminQrCodeContainer" class="qr-canvas-box"></div>
+
+            <!-- Direct Canonical Form URL (No Random Subdomain) -->
+            <div>
+                <label style="font-size:0.75rem; color:var(--muted); font-weight:700; margin-bottom:4px; display:block;">ĐƯỜNG DẪN BIỂU MẪU CHÍNH THỨC</label>
+                <input type="text" id="adminQrShareUrlInput" class="url-box" readonly />
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="modal-btn-grid">
+                <button type="button" onclick="copyAdminQrLink()" class="btn-modal-action" style="background:#2563eb; color:#fff;">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    <span>Sao Chép Link</span>
+                </button>
+                <button type="button" onclick="saveAdminQrImage()" class="btn-modal-action" style="background:rgba(16,185,129,0.18); border:1px solid #10b981; color:#10b981;">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    <span>Lưu Ảnh QR (.png)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/qrcode.min.js"></script>
     <script>
         let currentAdminQrFormId = "";
-        let currentAdminQrSlug = "";
 
-        function generateAdminRandomSlug(len = 10) {{
-            const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-            let res = "";
-            for (let i = 0; i < len; i++) {{
-                res += chars.charAt(Math.floor(Math.random() * chars.length));
+        function setFormViewMode(mode) {{
+            const container = document.getElementById("formsContainer");
+            const btnGrid = document.getElementById("btnViewGrid");
+            const btnRow = document.getElementById("btnViewRow");
+            if (mode === "row") {{
+                container.classList.add("row-mode");
+                btnRow.classList.add("active");
+                btnGrid.classList.remove("active");
+                localStorage.setItem("tb_forms_view", "row");
+            }} else {{
+                container.classList.remove("row-mode");
+                btnGrid.classList.add("active");
+                btnRow.classList.remove("active");
+                localStorage.setItem("tb_forms_view", "grid");
             }}
-            return res;
         }}
 
-        function getAdminFormSubdomainUrl(formId, randSuffix) {{
-            const formSlug = (formId || "income_survey").replace(/_/g, "-");
-            const host = window.location.hostname;
-            let baseDomain = host;
-            if (host.includes("dev") || host.includes("staging")) {{
-                if (host.includes("sslip.io")) {{
-                    baseDomain = "dev.146.190.201.32.sslip.io";
-                }} else if (host.includes("trustbridgevn.com")) {{
-                    baseDomain = "dev.survey.trustbridgevn.com";
+        function applyClientFilter() {{
+            const q = (document.getElementById("filterSearchInput").value || "").toLowerCase().trim();
+            const status = document.getElementById("statusFilter").value;
+            const sort = document.getElementById("sortFilter").value;
+            const cards = Array.from(document.querySelectorAll(".form-item-card"));
+
+            cards.forEach(card => {{
+                const title = card.getAttribute("data-title") || "";
+                const formId = card.getAttribute("data-form-id") || "";
+                const cStatus = card.getAttribute("data-status") || "";
+
+                const matchQ = !q || title.includes(q) || formId.includes(q);
+                const matchStatus = (status === "all") || (cStatus === status);
+
+                if (matchQ && matchStatus) {{
+                    card.style.display = "flex";
+                }} else {{
+                    card.style.display = "none";
                 }}
-            }} else {{
-                if (host.includes("sslip.io")) {{
-                    const parts = host.split(".");
-                    const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
-                    if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
-                        baseDomain = parts.slice(ipIndex).join(".");
-                    }} else {{
-                        baseDomain = "146.190.201.32.sslip.io";
-                    }}
-                }} else if (host.includes("trustbridgevn.com")) {{
-                    baseDomain = "survey.trustbridgevn.com";
-                }}
+            }});
+
+            // Sorting
+            const container = document.getElementById("formsContainer");
+            const visibleCards = cards.filter(c => c.style.display !== "none");
+            if (sort === "name_asc") {{
+                visibleCards.sort((a, b) => (a.getAttribute("data-title") || "").localeCompare(b.getAttribute("data-title") || ""));
+            }} else if (sort === "name_desc") {{
+                visibleCards.sort((a, b) => (b.getAttribute("data-title") || "").localeCompare(a.getAttribute("data-title") || ""));
+            }} else if (sort === "questions_desc") {{
+                visibleCards.sort((a, b) => parseInt(b.getAttribute("data-questions") || "0") - parseInt(a.getAttribute("data-questions") || "0"));
             }}
-            const protocol = window.location.protocol;
-            return `${{protocol}}//${{formSlug}}-${{randSuffix}}.${{baseDomain}}`;
+            visibleCards.forEach(c => container.appendChild(c));
+        }}
+
+        function changePageSize(size) {{
+            const url = new URL(window.location.href);
+            url.searchParams.set("size", size);
+            url.searchParams.set("page", "1");
+            window.location.href = url.toString();
         }}
 
         function openAdminQrModal(formId, formTitle) {{
             currentAdminQrFormId = formId;
-            currentAdminQrSlug = generateAdminRandomSlug(10);
-            const titleEl = document.getElementById("adminQrModalTitle");
-            if (titleEl) titleEl.innerHTML = `<span>Mã QR: ${{formTitle}}</span>`;
-            const url = getAdminFormSubdomainUrl(currentAdminQrFormId, currentAdminQrSlug);
-            const input = document.getElementById("adminQrShareUrlInput");
-            if (input) input.value = url;
+            document.getElementById("adminQrFormTitle").textContent = formTitle;
+            
+            // Canonical Form URL (No random subdomains)
+            const canonicalUrl = window.location.origin + "/forms/" + encodeURIComponent(formId);
+            document.getElementById("adminQrShareUrlInput").value = canonicalUrl;
+            
             const modal = document.getElementById("adminQrModal");
-            if (modal) modal.style.display = "flex";
-            renderAdminQr(url);
+            modal.style.display = "flex";
+            renderAdminQr(canonicalUrl);
         }}
 
         function closeAdminQrModal() {{
-            const modal = document.getElementById("adminQrModal");
-            if (modal) modal.style.display = "none";
+            document.getElementById("adminQrModal").style.display = "none";
         }}
 
-        function regenerateAdminQrSlug() {{
-            currentAdminQrSlug = generateAdminRandomSlug(10);
-            const url = getAdminFormSubdomainUrl(currentAdminQrFormId, currentAdminQrSlug);
-            const input = document.getElementById("adminQrShareUrlInput");
-            if (input) input.value = url;
-            renderAdminQr(url);
-        }}
-
-        function renderAdminQr(url) {{
+        function renderAdminQr(text) {{
             const container = document.getElementById("adminQrCodeContainer");
-            if (!container) return;
             container.innerHTML = "";
-            if (typeof QRCode !== "undefined") {{
-                try {{
-                    new QRCode(container, {{
-                        text: url,
-                        width: 220,
-                        height: 220,
-                        colorDark: "#000000",
-                        colorLight: "#ffffff",
-                        correctLevel: QRCode.CorrectLevel.H
-                    }});
-                }} catch(e) {{
-                    container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
-                }}
+            if (typeof QRCode !== 'undefined') {{
+                new QRCode(container, {{
+                    text: text,
+                    width: 220,
+                    height: 220,
+                    colorDark: "#090d16",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.M
+                }});
             }} else {{
-                container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(url)}}" alt="QR Code" style="width:220px; height:220px; display:block;" />`;
+                container.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${{encodeURIComponent(text)}}" alt="QR Code" style="width:220px;height:220px;">`;
             }}
         }}
 
         function copyAdminQrLink() {{
             const input = document.getElementById("adminQrShareUrlInput");
-            if (!input) return;
-            navigator.clipboard.writeText(input.value).then(() => {{
-                alert("Đã sao chép liên kết vào bộ nhớ tạm!");
-            }}).catch(() => {{
-                input.select();
-                document.execCommand("copy");
-                alert("Đã sao chép liên kết!");
-            }});
-        }}
-
-        function shareAdminQrLink() {{
-            const input = document.getElementById("adminQrShareUrlInput");
-            const url = input ? input.value : window.location.href;
-            if (navigator.share) {{
-                navigator.share({{
-                    title: "Khảo sát Trust Bridge",
-                    text: "Mời bạn tham gia biểu mẫu khảo sát Trust Bridge",
-                    url: url
-                }}).catch(() => {{}});
-            }} else {{
-                copyAdminQrLink();
+            if (input) {{
+                navigator.clipboard.writeText(input.value).then(() => {{
+                    alert("Đã sao chép đường dẫn biểu mẫu chính thức!");
+                }}).catch(() => {{
+                    prompt("Sao chép liên kết:", input.value);
+                }});
             }}
         }}
 
         function saveAdminQrImage() {{
             const container = document.getElementById("adminQrCodeContainer");
-            if (!container) return;
-            let imgUri = "";
-            const canvas = container.querySelector("canvas");
-            const img = container.querySelector("img");
-            if (canvas) {{
-                imgUri = canvas.toDataURL("image/png");
-            }} else if (img && img.src) {{
-                imgUri = img.src;
+            let img = container.querySelector("img");
+            if (!img) {{
+                const canvas = container.querySelector("canvas");
+                if (canvas) {{
+                    const a = document.createElement("a");
+                    a.href = canvas.toDataURL("image/png");
+                    a.download = `QR_${{currentAdminQrFormId}}.png`;
+                    a.click();
+                    return;
+                }}
             }}
-            if (imgUri) {{
+            if (img && img.src) {{
                 const a = document.createElement("a");
-                a.href = imgUri;
-                const formSlug = (currentAdminQrFormId || "income_survey").replace(/_/g, "-");
-                a.download = `QR_${{formSlug}}_${{currentAdminQrSlug}}.png`;
+                a.href = img.src;
+                a.download = `QR_${{currentAdminQrFormId}}.png`;
                 a.click();
             }}
         }}
+
+        document.addEventListener("DOMContentLoaded", () => {{
+            const savedView = localStorage.getItem("tb_forms_view");
+            if (savedView) setFormViewMode(savedView);
+        }});
     </script>
 </body>
 </html>
@@ -652,9 +938,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
         },
         "questions": []
     }
-
-    schema_json_str = json.dumps(schema_dict, ensure_ascii=False)
-    title_val = html.escape(schema.title) if schema else ''
+    title_val = html.escape(schema_dict["title"]) if schema else "Biểu Mẫu Mới"
     return f"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -672,660 +956,130 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             --border: #23314f;
             --accent: #2563eb;
             --accent-hover: #1d4ed8;
-            --success: #10b981;
-            --danger: #ef4444;
             --text: #f8fafc;
             --muted: #94a3b8;
         }}
-
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
         body {{
             font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 16px 14px 40px 14px;
+            padding: 20px 16px;
         }}
-
-        .container {{ max-width: 860px; margin: 0 auto; }}
-
-
-        /* 3 Clean Tabs Navigation */
-        .tab-nav {{
+        .container {{ max-width: 1440px; width: 96%; margin: 0 auto; }}
+        header {{
             display: flex;
-            gap: 6px;
-            margin-bottom: 16px;
-            border-bottom: 1.5px solid var(--border);
-            padding-bottom: 2px;
-            overflow-x: auto;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
+            margin-bottom: 20px;
         }}
-
+        .tab-nav {{ display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }}
         .tab-btn {{
-            background: transparent;
+            background: none;
             border: none;
             color: var(--muted);
-            padding: 10px 16px;
-            font-size: 0.88rem;
+            padding: 10px 18px;
+            font-size: 0.9rem;
             font-weight: 700;
             cursor: pointer;
-            border-bottom: 2.5px solid transparent;
-            transition: all 0.2s;
-            white-space: nowrap;
+            border-bottom: 2px solid transparent;
         }}
-
-        .tab-btn.active {{
-            color: #60a5fa;
-            border-bottom-color: var(--accent);
-        }}
-
-        .tab-panel {{
-            display: none;
-            animation: fadeIn 0.2s ease;
-        }}
-        .tab-panel.active {{ display: flex; flex-direction: column; gap: 14px; }}
-
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(4px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-
-        /* Responsive Form Layout */
-        .card {{
+        .tab-btn.active {{ color: #38bdf8; border-bottom-color: #38bdf8; }}
+        .tab-panel {{ display: none; }}
+        .tab-panel.active {{ display: block; }}
+        .form-group {{ margin-bottom: 16px; }}
+        .form-group label {{ display: block; font-size: 0.82rem; font-weight: 700; color: var(--muted); margin-bottom: 6px; }}
+        .form-control {{
+            width: 100%;
             background: var(--surface);
-            border: 1.5px solid var(--border);
-            border-radius: 14px;
-            padding: 18px 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }}
-
-        .field-group {{ display: flex; flex-direction: column; gap: 6px; }}
-        .field-group label {{ font-size: 0.8rem; font-weight: 600; color: var(--muted); }}
-
-        .field-group input, .field-group select, .field-group textarea {{
-            background: var(--bg);
-            border: 1.5px solid var(--border);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
             color: #fff;
-            padding: 12px 14px;
-            border-radius: 10px;
-            font-size: 0.92rem;
+            font-size: 0.9rem;
             outline: none;
-            width: 100%;
         }}
-
-        .field-group input:focus, .field-group select:focus, .field-group textarea:focus {{
-            border-color: var(--accent);
-        }}
-
-        /* Mobile Responsive Grid Override */
-        .row-2, .row-3 {{
-            display: grid;
-            gap: 12px;
-        }}
-        .row-2 {{ grid-template-columns: 1fr 1fr; }}
-        .row-3 {{ grid-template-columns: 1fr 1fr 1fr; }}
-
-        /* STACK VERTICALLY ON MOBILE SO DROPDOWNS ARE NEVER SQUISHED */
-        @media (max-width: 640px) {{
-            .row-2, .row-3 {{
-                grid-template-columns: 1fr !important;
-            }}
-        }}
-
-        /* Question Item Card */
-        .question-item {{
-            background: var(--bg);
-            border: 1.5px solid var(--border);
-            border-radius: 10px;
-            padding: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }}
-
-        .btn-delete {{
-            background: rgba(239, 68, 68, 0.2);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            font-weight: 700;
-        }}
-
-        .btn-add-q {{
-            background: #1e293b;
-            color: #60a5fa;
-            border: 1.5px dashed var(--accent);
-            padding: 12px;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 0.88rem;
-            cursor: pointer;
-            width: 100%;
-        }}
-
-        .btn-save-master {{
-            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        .btn-save {{
+            background: #2563eb;
             color: #fff;
             border: none;
-            padding: 16px;
-            border-radius: 12px;
-            font-size: 1rem;
-            font-weight: 800;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-weight: 700;
+            font-size: 0.95rem;
             cursor: pointer;
-            margin-top: 16px;
-            width: 100%;
-        }}
-
-        /* Modern Switch Toggle Component */
-        .toggle-switch {{
-            position: relative;
             display: inline-flex;
             align-items: center;
-            gap: 10px;
-            cursor: pointer;
-            user-select: none;
-            font-size: 0.8rem;
-            color: #cbd5e1;
-            font-weight: 600;
-        }}
-
-        .toggle-switch input[type="checkbox"] {{
-            position: absolute;
-            opacity: 0;
-            width: 0;
-            height: 0;
-            pointer-events: none;
-        }}
-
-        .toggle-slider {{
-            position: relative;
-            width: 38px;
-            height: 20px;
-            background-color: #334155;
-            border-radius: 20px;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            border: 1px solid #475569;
-            flex-shrink: 0;
-        }}
-
-        .toggle-slider::before {{
-            content: "";
-            position: absolute;
-            width: 14px;
-            height: 14px;
-            left: 2px;
-            top: 2px;
-            background-color: #f8fafc;
-            border-radius: 50%;
-            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-        }}
-
-        .toggle-switch input[type="checkbox"]:checked + .toggle-slider {{
-            background-color: var(--accent);
-            border-color: #3b82f6;
-        }}
-
-        .toggle-switch input[type="checkbox"]:checked + .toggle-slider::before {{
-            transform: translateX(18px);
-            background-color: #ffffff;
-        }}
-
-        .toggle-switch:hover .toggle-slider {{
-            border-color: #64748b;
-        }}
-
-        .toggle-switch input[type="checkbox"]:checked:hover + .toggle-slider {{
-            background-color: var(--accent-hover);
+            gap: 8px;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <button type="button" onclick="toggleEditorLang()" style="display:inline-flex; align-items:center; gap:6px; background:rgba(30, 41, 59, 0.85); border:1px solid var(--border); color:#f8fafc; padding:6px 14px; border-radius:20px; font-size:0.82rem; font-weight:700; cursor:pointer;">
-                <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#60a5fa;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-                <span id="editorLangCode">VI</span>
-            </button>
-            <a href="/admin/forms" class="back-link" id="linkBackAdmin">Quay lại danh sách biểu mẫu</a>
-        </div>
         <header>
-            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + (html.escape(schema.title) if schema else '')} {env_badge}</h1>
+            <div>
+                <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + title_val} {env_badge}</h1>
+            </div>
+            <a href="/admin/forms" style="color:var(--muted); text-decoration:none; font-size:0.85rem; font-weight:600;">← Quay lại danh sách</a>
         </header>
 
-        <!-- 3 Tabs Navigation -->
         <div class="tab-nav">
-            <button type="button" class="tab-btn active" id="btnTabCommon" onclick="switchTab('common')">1. Thông tin chung</button>
-            <button type="button" class="tab-btn" id="btnTabOptions" onclick="switchTab('options')">2. Tùy chọn & Cài đặt</button>
-            <button type="button" class="tab-btn" id="btnTabQuestions" onclick="switchTab('questions')">3. Danh sách câu hỏi</button>
+            <button type="button" class="tab-btn active" onclick="switchEditorTab('common', this)">1. Thông tin chung</button>
+            <button type="button" class="tab-btn" onclick="switchEditorTab('settings', this)">2. Cài đặt & Phòng chống gian lận</button>
+            <button type="button" class="tab-btn" onclick="switchEditorTab('questions', this)">3. Danh sách câu hỏi ({len(schema_dict['questions'])})</button>
         </div>
 
         <form id="editorForm" onsubmit="return false;">
-            <!-- Tab 1: Common Info -->
-            <div class="tab-panel active" id="tabCommon">
-                <div class="card">
-                    <div class="row-2">
-                        <div class="field-group">
-                            <label for="formId">Mã định danh (Form ID - viết liền không dấu) *</label>
-                            <input type="text" id="formId" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
-                        </div>
-                        <div class="field-group">
-                            <label for="formTitle">Tên biểu mẫu (Tiêu đề) *</label>
-                            <input type="text" id="formTitle" value="{html.escape(schema_dict['title'])}" required>
-                        </div>
-                    </div>
-                    <div class="field-group">
-                        <label for="formDesc">Mô tả biểu mẫu</label>
-                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế...">{html.escape(schema_dict.get('description') or '')}</textarea>
-                    </div>
+            <div id="tab-common" class="tab-panel active">
+                <div class="form-group">
+                    <label>Mã Biểu Mẫu (Form ID)</label>
+                    <input type="text" id="formId" class="form-control" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
+                </div>
+                <div class="form-group">
+                    <label>Tiêu Đề Biểu Mẫu</label>
+                    <input type="text" id="formTitle" class="form-control" value="{title_val}" required>
+                </div>
+                <div class="form-group">
+                    <label>Mô Tả Biểu Mẫu</label>
+                    <textarea id="formDesc" class="form-control" rows="3">{html.escape(schema_dict['description'])}</textarea>
                 </div>
             </div>
 
-            <!-- Tab 2: Options & Settings -->
-            <div class="tab-panel" id="tabOptions">
-                <div class="card">
-                    <div class="row-2">
-                        <div class="field-group">
-                            <label for="responseLimit">Giới hạn số lượng phản hồi (0 = Không giới hạn)</label>
-                            <input type="number" id="responseLimit" value="{schema_dict['settings'].get('response_limit') or 0}">
-                        </div>
-                        <div class="field-group">
-                            <label for="accessControl">Quyền truy cập</label>
-                            <select id="accessControl">
-                                <option value="public" {'selected' if schema_dict['settings'].get('access_control')=='public' else ''}>Công khai (Bất kỳ ai có link)</option>
-                                <option value="private" {'selected' if schema_dict['settings'].get('access_control')=='private' else ''}>Nội bộ (Chỉ tài xế được duyệt)</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="row-2">
-                        <div class="field-group">
-                            <label for="isTestMode">Chế độ vận hành</label>
-                            <select id="isTestMode">
-                                <option value="false" {'selected' if not schema_dict['settings'].get('is_test_mode') else ''}>Chính thức (Lưu PostgreSQL SSOT)</option>
-                                <option value="true" {'selected' if schema_dict['settings'].get('is_test_mode') else ''}>Thử nghiệm (Lưu Dev Storage tạm)</option>
-                            </select>
-                        </div>
-                        <div class="field-group">
-                            <label for="notifyChatId">Telegram Chat ID nhận thông báo</label>
-                            <input type="number" id="notifyChatId" value="{schema_dict['settings'].get('notify_telegram_chat_id') or ''}" placeholder="Ví dụ: -1001234567890">
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
-                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableBlurCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_blur_check', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra độ mờ / rung tay</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAiVision" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_vision', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra AI Vision trích xuất hóa đơn</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableVehicleMatch" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_vehicle_match', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra đối chiếu biển số</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAntiFraud" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_anti_fraud', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra chống gian lận & trùng lặp</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalRequireUnique" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('require_unique', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Yêu cầu ảnh độc nhất (Chống trùng lặp)</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAiGeneratedCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_generated_check', True) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra ảnh AI tổng hợp</span>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', False) else ''}>
-                                <span class="toggle-slider"></span>
-                                <span>Kiểm tra ảnh chụp màn hình</span>
-                            </label>
-                        </div>
-                        <div class="field-group" style="max-width: 320px;">
-                            <label for="globalBlurThreshold">Ngưỡng độ mờ tùy chỉnh (mặc định 40)</label>
-                            <input type="number" step="0.1" id="globalBlurThreshold" value="{(schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') if (schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') is not None else 40}" placeholder="40">
-                        </div>
-                    </div>
+            <div id="tab-settings" class="tab-panel">
+                <div class="form-group">
+                    <label>Giới Hạn Lượt Nộp (0 = Không giới hạn)</label>
+                    <input type="number" id="responseLimit" class="form-control" value="{schema_dict['settings']['response_limit']}">
+                </div>
+                <div class="form-group">
+                    <label>Quyền Truy Cập</label>
+                    <select id="accessControl" class="form-control">
+                        <option value="public" {'selected' if schema_dict['settings']['access_control'] == 'public' else ''}>Công khai (Public)</option>
+                        <option value="internal" {'selected' if schema_dict['settings']['access_control'] == 'internal' else ''}>Nội bộ (Internal)</option>
+                    </select>
                 </div>
             </div>
 
-            <!-- Tab 3: Questions -->
-            <div class="tab-panel" id="tabQuestions">
-                <div class="card">
-                    <div id="questionsBuilderList" style="display:flex; flex-direction:column; gap:12px;"></div>
-                    <button type="button" class="btn-add-q" onclick="addQuestion()">+ Thêm Câu Hỏi Mới</button>
+            <div id="tab-questions" class="tab-panel">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px;">
+                    <div id="questionsBuilderList"></div>
                 </div>
             </div>
 
-            <button type="button" class="btn-save-master" onclick="saveForm()">Lưu & Kích Hoạt Biểu Mẫu</button>
+            <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border); display:flex; justify-content:flex-end;">
+                <button type="button" class="btn-save" onclick="saveFormSchema()">
+                    <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                    <span>Lưu Thay Đổi Biểu Mẫu</span>
+                </button>
+            </div>
         </form>
     </div>
 
     <script>
-        const INITIAL_SCHEMA = {schema_json_str};
-        let questions = JSON.parse(JSON.stringify(INITIAL_SCHEMA.questions || []));
-
-        function switchTab(tabId) {{
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-
-            if (tabId === 'common') {{
-                document.getElementById('btnTabCommon').classList.add('active');
-                document.getElementById('tabCommon').classList.add('active');
-            }} else if (tabId === 'options') {{
-                document.getElementById('btnTabOptions').classList.add('active');
-                document.getElementById('tabOptions').classList.add('active');
-            }} else if (tabId === 'questions') {{
-                document.getElementById('btnTabQuestions').classList.add('active');
-                document.getElementById('tabQuestions').classList.add('active');
-                renderQuestions();
-            }}
-        }}
-
-        function slugifyText(str) {{
-            return (str || '')
-                .toLowerCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^a-z0-9]+/g, '_')
-                .replace(/^_+|_+$/g, '')
-                .substring(0, 32);
-        }}
-        function addQuestion() {{
-            const num = questions.length + 1;
-            const autoId = `q_${{num}}_${{Date.now().toString(36)}}`;
-            questions.push({{
-                id: autoId,
-                title: `Câu hỏi số ${{num}}`,
-                type: 'text',
-                required: true,
-                description: '',
-                tooltip: '',
-                ai_detection_prompt: '',
-                sample_response: '',
-                options: []
-            }});
-            renderQuestions();
-        }}
-        function syncQuestionId(idx) {{
-            const q = questions[idx];
-            if (!q) return;
-            const titleSlug = slugifyText(q.title);
-            if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {{
-                q.id = `${{titleSlug}}_${{idx + 1}}`;
-                const idInput = document.getElementById(`qid_${{idx}}`);
-                if (idInput) idInput.value = q.id;
-            }}
-        }}
-        function removeQuestion(idx) {{
-            questions.splice(idx, 1);
-            renderQuestions();
-        }}
-
-        function toggleQuestionImageChecks(idx, enabled) {{
-            if (enabled) {{
-                questions[idx].image_checks = {{
-                    enable_blur_check: true,
-                    blur_threshold: null,
-                    enable_ai_vision: true,
-                    enable_vehicle_match: true,
-                    enable_anti_fraud: true,
-                    enable_ai_generated_check: true,
-                    enable_screen_photo_check: true
-                }};
-            }} else {{
-                delete questions[idx].image_checks;
-            }}
-            renderQuestions();
-        }}
-        function toggleQuestionNumbersOnly(idx, checked) {{
-            if (!questions[idx].validation) {{
-                questions[idx].validation = {{}};
-            }}
-            questions[idx].validation.numbers_only = checked;
-        }}
-
-        function setQCheck(idx, key, val) {{
-            if (!questions[idx].image_checks) {{
-                questions[idx].image_checks = {{}};
-            }}
-            questions[idx].image_checks[key] = val;
-        }}
-        function addImageSlot(qidx) {{
-            if (!questions[qidx].image_slots) {{
-                questions[qidx].image_slots = [];
-            }}
-            const sidx = questions[qidx].image_slots.length;
-            questions[qidx].image_slots.push({{
-                slot: sidx,
-                title: `Ảnh ${{sidx + 1}}: `,
-                role: 'custom_object',
-                required: true,
-                require_unique: true,
-                allow_upload: true
-            }});
-            questions[qidx].allow_multiple_images = true;
-            questions[qidx].min_images = questions[qidx].image_slots.length;
-            questions[qidx].max_images = questions[qidx].image_slots.length;
-            questions[qidx].exact_image_count = questions[qidx].image_slots.length;
-            renderQuestions();
-        }}
-        function removeImageSlot(qidx, sidx) {{
-            if (questions[qidx].image_slots) {{
-                questions[qidx].image_slots.splice(sidx, 1);
-                questions[qidx].image_slots.forEach((s, i) => {{ s.slot = i; }});
-                questions[qidx].min_images = questions[qidx].image_slots.length;
-                questions[qidx].max_images = questions[qidx].image_slots.length;
-                questions[qidx].exact_image_count = questions[qidx].image_slots.length;
-                renderQuestions();
-            }}
-        }}
-        function updateImageSlot(qidx, sidx, field, val) {{
-            if (questions[qidx].image_slots && questions[qidx].image_slots[sidx]) {{
-                questions[qidx].image_slots[sidx][field] = val;
-            }}
-        }}
-        function addMultipleChoiceOption(qidx) {{
-            if (!Array.isArray(questions[qidx].options)) {{
-                questions[qidx].options = [];
-            }}
-            questions[qidx].options.push({{ label: `Lựa chọn ${{questions[qidx].options.length + 1}}`, group: 'default' }});
-            renderQuestions();
-        }}
-        function removeMultipleChoiceOption(qidx, optIdx) {{
-            if (Array.isArray(questions[qidx].options)) {{
-                questions[qidx].options.splice(optIdx, 1);
-                renderQuestions();
-            }}
-        }}
-        function updateMultipleChoiceOption(qidx, optIdx, field, val) {{
-            if (Array.isArray(questions[qidx].options) && questions[qidx].options[optIdx]) {{
-                let opt = questions[qidx].options[optIdx];
-                if (typeof opt !== 'object' || opt === null) {{
-                    opt = {{ label: String(opt), group: 'default' }};
-                    questions[qidx].options[optIdx] = opt;
-                }}
-                opt[field] = val;
-            }}
-        }}
-        function updateGroupCompatibilityJson(qidx, jsonStr) {{
-            try {{
-                if (!jsonStr || !jsonStr.trim()) {{
-                    delete questions[qidx].group_compatibility;
-                }} else {{
-                    questions[qidx].group_compatibility = JSON.parse(jsonStr);
-                }}
-            }} catch(e) {{
-                // Ignore parse errors while typing
-            }}
-        }}
-        function renderMultipleChoiceOptionsBuilder(q, qidx) {{
-            const opts = (q.options || []).map(opt => typeof opt === 'object' && opt !== null ? opt : {{ label: String(opt), group: 'default' }});
-            const rows = opts.map((opt, oidx) => `
-                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
-                    <input type="text" style="flex:2; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(opt.label || '')}}" placeholder="Tên lựa chọn (Label)" oninput="updateMultipleChoiceOption(${{qidx}}, ${{oidx}}, 'label', this.value)">
-                    <input type="text" style="flex:1; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#38bdf8; border-radius:4px; font-family:monospace;" value="${{escapeHtml(opt.group || 'default')}}" placeholder="Nhóm (Group)" oninput="updateMultipleChoiceOption(${{qidx}}, ${{oidx}}, 'group', this.value)">
-                    <button type="button" style="background:#ef4444; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:0.75rem; cursor:pointer;" onclick="removeMultipleChoiceOption(${{qidx}}, ${{oidx}})">Xóa</button>
-                </div>
-            `).join('');
-            const compatJson = q.group_compatibility ? JSON.stringify(q.group_compatibility, null, 2) : '';
-            return `
-                <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <span style="font-size:0.84rem; font-weight:700; color:#38bdf8;">Danh sách Lựa chọn & Nhóm đối kháng (Option Groups)</span>
-                        <button type="button" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addMultipleChoiceOption(${{qidx}})">+ Thêm lựa chọn</button>
-                    </div>
-                    <div style="display:flex; flex-direction:column;">
-                        ${{rows.length ? rows : '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có lựa chọn nào.</div>'}}
-                    </div>
-                    <details style="margin-top:10px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${{q.group_compatibility ? 'open' : ''}}>
-                        <summary style="font-size:0.78rem; font-weight:700; color:#93c5fd; cursor:pointer; user-select:none;">
-                            Cấu hình nhóm tương thích (Group Compatibility - Advanced)
-                        </summary>
-                        <div style="margin-top:6px;">
-                            <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:4px;">
-                                Mặc định các nhóm khác nhau sẽ <b>đối kháng</b> (mutually exclusive). Nhập JSON mapping những nhóm được phép cùng tồn tại, ví dụ: <code>{{"applicable": ["other_group"]}}</code>
-                            </div>
-                            <textarea style="width:100%; min-height:60px; background:#020617; border:1px solid #334155; color:#38bdf8; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace;" placeholder='{{"group_a": ["group_b"]}}' oninput="updateGroupCompatibilityJson(${{qidx}}, this.value)">${{escapeHtml(compatJson)}}</textarea>
-                        </div>
-                    </details>
-                </div>
-            `;
-        }}
-        function renderSlotsBuilderHtml(q, qidx) {{
-            const slots = q.image_slots || [];
-            if (!slots.length) {{
-                return '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có slot ảnh riêng (sử dụng 1 ảnh đơn mặc định). Bấm \\'+ Thêm Slot Ảnh\\' để chia nhiều góc chụp/đối tượng.</div>';
-            }}
-            return slots.map((s, sidx) => `
-                <div style="background:#090d16; border:1px solid #334155; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:700; font-size:0.8rem; color:#94a3b8;">Slot #${{sidx + 1}} (Chỉ mục: ${{sidx}})</span>
-                        <button type="button" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px; font-size:0.72rem; cursor:pointer;" onclick="removeImageSlot(${{qidx}}, ${{sidx}})">Xóa</button>
-                    </div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-                        <div>
-                            <label style="font-size:0.72rem; color:#94a3b8;">Tiêu đề hiển thị</label>
-                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.title || '')}}" placeholder="VD: Ảnh 1: Mặt trước CCCD" oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'title', this.value)">
-                        </div>
-                        <div>
-                            <label style="font-size:0.72rem; color:#94a3b8;">Loại đối tượng / Role (Mã AI nhận diện)</label>
-                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.role || '')}}" placeholder="VD: app_profile, app_income, id_card_front, restaurant_bill..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'role', this.value)">
-                        </div>
-                    </div>
-                    <div>
-                        <label style="font-size:0.72rem; color:#94a3b8;">Tooltip hướng dẫn riêng cho slot</label>
-                        <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.tooltip || '')}}" placeholder="VD: Chụp rõ họ tên và mã tài xế..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'tooltip', this.value)">
-                    </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; flex-wrap:wrap; gap:12px; background:#0f172a; padding:8px 10px; border-radius:6px; border:1px solid #1e293b;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)">
-                            <span class="toggle-slider"></span>
-                            <span>Bắt buộc chụp</span>
-                        </label>
-                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép các ảnh chụp giống nhau (ví dụ: màn hình hồ sơ đã che thông tin / censored profile)">
-                            <input type="checkbox" ${{s.require_unique !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'require_unique', this.checked)">
-                            <span class="toggle-slider"></span>
-                            <span>Ảnh độc nhất</span>
-                        </label>
-                        <label class="toggle-switch" title="Cho phép người dùng tải ảnh có sẵn từ bộ sưu tập/file thay vì chỉ chụp camera trực tiếp">
-                            <input type="checkbox" ${{s.allow_upload !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'allow_upload', this.checked)">
-                            <span class="toggle-slider"></span>
-                            <span>Cho phép tải ảnh lên</span>
-                        </label>
-                    </div>
-                    <details style="margin-top:8px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${{s.image_checks ? 'open' : ''}}>
-                        <summary style="font-size:0.76rem; font-weight:700; color:#38bdf8; cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px;">
-                            <span>Cấu hình kiểm tra nâng cao riêng cho slot này</span>
-                        </summary>
-                        <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
-                            <label class="toggle-switch" style="font-size:0.78rem;">
-                                <input type="checkbox" ${{s.image_checks ? 'checked' : ''}} onchange="toggleSlotImageChecks(${{qidx}}, ${{sidx}}, this.checked)">
-                                <span class="toggle-slider"></span>
-                                <span>Kích hoạt cấu hình riêng (ghi đè câu hỏi)</span>
-                            </label>
-                            ${{s.image_checks ? `
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; margin-top:8px; padding-left:10px; border-left:2px solid var(--accent);">
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_blur_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_blur_check', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Kiểm tra độ mờ / rung</span>
-                                    </label>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_ai_vision !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_ai_vision', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Kiểm tra AI Vision</span>
-                                    </label>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_vehicle_match !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_vehicle_match', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Đối chiếu biển số</span>
-                                    </label>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_anti_fraud !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_anti_fraud', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Chống gian lận & trùng lặp</span>
-                                    </label>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_ai_generated_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_ai_generated_check', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Kiểm tra ảnh AI</span>
-                                    </label>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" ${{s.image_checks.enable_screen_photo_check !== false ? 'checked' : ''}} onchange="setSlotCheck(${{qidx}}, ${{sidx}}, 'enable_screen_photo_check', this.checked)">
-                                        <span class="toggle-slider"></span>
-                                        <span>Kiểm tra chụp màn hình</span>
-                                    </label>
-                                </div>
-                                <div class="field-group" style="max-width:220px; margin-top:6px; padding-left:10px;">
-                                    <label style="font-size:0.72rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
-                                    <input type="number" step="0.1" value="${{s.image_checks.blur_threshold !== undefined && s.image_checks.blur_threshold !== null ? s.image_checks.blur_threshold : 40}}" oninput="setSlotCheck(${{qidx}}, ${{sidx}}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
-                                </div>
-                            ` : ''}}
-                        </div>
-                    </details>
-                </div>
-            `).join('');
-        }}
-        function toggleSlotImageChecks(qidx, sidx, isEnabled) {{
-            const slot = questions[qidx]?.image_slots?.[sidx];
-            if (!slot) return;
-            if (isEnabled) {{
-                slot.image_checks = {{
-                    enable_blur_check: true,
-                    blur_threshold: 40.0,
-                    enable_ai_vision: true,
-                    enable_vehicle_match: false,
-                    enable_anti_fraud: true,
-                    enable_ai_generated_check: true,
-                    enable_screen_photo_check: false
-                }};
-            }} else {{
-                delete slot.image_checks;
-            }}
-            renderQuestions();
-        }}
-        function setSlotCheck(qidx, sidx, key, val) {{
-            const slot = questions[qidx]?.image_slots?.[sidx];
-            if (!slot) return;
-            if (!slot.image_checks) slot.image_checks = {{}};
-            slot.image_checks[key] = val;
-        }}
+        const INITIAL_SCHEMA = {json.dumps(schema_dict, ensure_ascii=False)};
+        const questions = INITIAL_SCHEMA.questions || [];
         function escapeHtml(str) {{
             if (str === null || str === undefined) return '';
             return String(str)
@@ -1337,223 +1091,97 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
         }}
         function renderQuestions() {{
             const wrap = document.getElementById('questionsBuilderList');
+            if (!wrap) return;
             wrap.innerHTML = '';
             questions.forEach((q, idx) => {{
                 const item = document.createElement('div');
                 item.className = 'question-item';
+                item.style.padding = '12px';
+                item.style.marginBottom = '12px';
+                item.style.background = '#090d16';
+                item.style.border = '1px solid var(--border)';
+                item.style.borderRadius = '8px';
                 item.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">#${{idx + 1}}. ${{escapeHtml(q.title)}}</span>
-                        <button type="button" class="btn-delete" onclick="removeQuestion(${{idx}})">Xóa</button>
                     </div>
-                    <div class="row-2">
-                        <div class="field-group">
-                            <label>Tiêu đề câu hỏi</label>
-                            <input type="text" value="${{escapeHtml(q.title)}}" oninput="questions[${{idx}}].title = this.value; syncQuestionId(${{idx}});">
-                        </div>
-                        <div class="field-group">
-                            <label>Loại câu hỏi</label>
-                            <select onchange="questions[${{idx}}].type = this.value; renderQuestions();">
-                                <option value="text" ${{q.type==='text'?'selected':''}}>Văn bản (Text)</option>
-                                <option value="number" ${{q.type==='number'?'selected':''}}>Số (Number)</option>
-                                <option value="single_choice" ${{q.type==='single_choice'?'selected':''}}>Chọn một (Single Choice)</option>
-                                <option value="multiple_choice" ${{q.type==='multiple_choice'?'selected':''}}>Chọn nhiều (Multiple Choice)</option>
-                                <option value="dropdown" ${{q.type==='dropdown'?'selected':''}}>Menu thả xuống (Dropdown)</option>
-                                <option value="camera_webrtc" ${{q.type==='camera_webrtc'?'selected':''}}>Chụp ảnh trực tiếp (Camera WebRTC)</option>
-                                <option value="signature" ${{q.type==='signature'?'selected':''}}>Chữ ký điện tử (Signature)</option>
-                            </select>
-                        </div>
+                    <div class="field-group" style="margin-bottom:8px;">
+                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Tiêu đề câu hỏi</label>
+                        <input type="text" class="form-control" value="${{escapeHtml(q.title)}}" oninput="questions[${{idx}}].title = this.value">
                     </div>
-                    <div class="row-2" style="margin-top:6px;">
-                        <div class="field-group">
-                            <label style="display:flex; justify-content:space-between; align-items:center;">
-                                <span>Mã Question ID (Tự động tạo)</span>
-                                <span style="font-size:0.7rem; color:#94a3b8; font-weight:normal;">Định danh duy nhất</span>
-                            </label>
-                            <input type="text" id="qid_${{idx}}" value="${{escapeHtml(q.id || '')}}" placeholder="vd: driver_phone, camera_receipt..." oninput="questions[${{idx}}].id = this.value.trim()">
-                        </div>
-                        <div class="field-group">
-                            <label>Tooltip giải thích (Hiển thị popup khi rê chuột)</label>
-                            <input type="text" value="${{escapeHtml(q.tooltip || '')}}" placeholder="Thông tin trợ giúp nhanh..." oninput="questions[${{idx}}].tooltip = this.value">
-                        </div>
-                    </div>
-                    <div>
-                        <label class="toggle-switch" style="margin-top:4px;">
-                            <input type="checkbox" ${{q.required !== false ? 'checked' : ''}} onchange="questions[${{idx}}].required = this.checked;">
-                            <span class="toggle-slider"></span>
-                            <span style="color:#38bdf8;">Bắt buộc trả lời (Mandatory Question)</span>
-                        </label>
-                    </div>
-                    ${{q.type === 'camera_webrtc' ? `
-                        <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
-                            <label style="color:#fde047; font-size:0.75rem; font-weight:700;">AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
-                            <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${{idx}}].ai_detection_prompt = this.value">${{escapeHtml(q.ai_detection_prompt || '')}}</textarea>
-                        </div>
-                    ` : ''}}
-                    ${{q.type === 'text' ? `
-                        <div>
-                            <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${{idx}}, this.checked)" ${{q.validation && q.validation.numbers_only ? 'checked' : ''}}> Chỉ cho phép chữ số (Bàn phím số numeric keypad)</label>
-                        </div>
-                    ` : ''}}
                     <div class="field-group">
-                        <label style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Mô tả / Hướng dẫn</span>
-                            <span style="font-size:0.7rem; color:#38bdf8; font-weight:normal;">Hỗ trợ chèn link [Tên link](url) và ảnh ![Mô tả](url)</span>
-                        </label>
-                        <input type="text" value="${{escapeHtml(q.description || '')}}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${{idx}}].description = this.value">
+                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Mô tả / Hướng dẫn</label>
+                        <input type="text" class="form-control" value="${{escapeHtml(q.description || '')}}" oninput="questions[${{idx}}].description = this.value">
                     </div>
-                    ${{q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? `
-                        <div class="field-group">
-                            <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
-                            <input type="text" value="${{escapeHtml((q.options || []).map(o => typeof o === 'object' && o !== null ? o.label : o).join(', '))}}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
-                        </div>
-                    ` : '')}}
-                    <div style="display:none;" data-options-marker="true" value="${{escapeHtml((q.options || []).join(', '))}}"></div>
-                    ${{q.type === 'camera_webrtc' ? `
-                        <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
-                                <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${{idx}})">+ Thêm Slot Ảnh</button>
-                            </div>
-                            <div id="slotsWrap_${{idx}}" style="display:flex; flex-direction:column; gap:8px;">
-                                ${{renderSlotsBuilderHtml(q, idx)}}
-                            </div>
-                        </div>
-                        <details style="background:rgba(15, 23, 42, 0.7); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:4px;" ${{q.image_checks ? 'open' : ''}}>
-                            <summary style="font-size:0.84rem; font-weight:700; color:#60a5fa; cursor:pointer; user-select:none;">
-                                Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
-                            </summary>
-                            <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-                                <label class="toggle-switch" style="font-size:0.82rem;">
-                                    <input type="checkbox" ${{q.image_checks ? 'checked' : ''}} onchange="toggleQuestionImageChecks(${{idx}}, this.checked)">
-                                    <span class="toggle-slider"></span>
-                                    <span>Kích hoạt cấu hình kiểm tra riêng (ghi đè toàn cục)</span>
-                                </label>
-                                ${{q.image_checks ? `
-                                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; margin-top:8px; padding-left:12px; border-left:2px solid var(--accent);">
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_blur_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_blur_check', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Kiểm tra độ mờ / rung tay</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_ai_vision !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_vision', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Kiểm tra AI Vision</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_vehicle_match !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_vehicle_match', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Đối chiếu biển số</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_anti_fraud !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_anti_fraud', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Chống gian lận & trùng lặp</span>
-                                        </label>
-                                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép ảnh chụp giống nhau (ví dụ: hồ sơ che mờ)">
-                                            <input type="checkbox" ${{q.image_checks.require_unique !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'require_unique', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Ảnh độc nhất (Unique)</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_ai_generated_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_ai_generated_check', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Kiểm tra ảnh AI</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" ${{q.image_checks.enable_screen_photo_check !== false ? 'checked' : ''}} onchange="setQCheck(${{idx}}, 'enable_screen_photo_check', this.checked)">
-                                            <span class="toggle-slider"></span>
-                                            <span>Kiểm tra chụp màn hình</span>
-                                        </label>
-                                    </div>
-                                    <div class="field-group" style="max-width:240px; margin-top:6px; padding-left:12px;">
-                                        <label style="font-size:0.75rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
-                                        <input type="number" step="0.1" value="${{q.image_checks.blur_threshold !== undefined && q.image_checks.blur_threshold !== null ? q.image_checks.blur_threshold : 40}}" oninput="setQCheck(${{idx}}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
-                                    </div>
-                                ` : ''}}
-                            </div>
-                        </details>
-                    ` : ''}}
+                    <div class="field-group" style="margin-top:8px;">
+                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Các lựa chọn (phân cách bằng dấu phẩy)</label>
+                        <input type="text" class="form-control" value="${{escapeHtml((q.options || []).join(', '))}}" oninput="questions[${{idx}}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
+                    </div>
                 `;
                 wrap.appendChild(item);
             }});
         }}
+        document.addEventListener('DOMContentLoaded', renderQuestions);
+        function switchEditorTab(tabName, btn) {{
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            const panel = document.getElementById('tab-' + tabName);
+            if (panel) panel.classList.add('active');
+        }}
 
-        async function saveForm() {{
+        async function saveFormSchema() {{
             const formId = document.getElementById('formId').value.trim();
             const formTitle = document.getElementById('formTitle').value.trim();
+            const formDesc = document.getElementById('formDesc').value.trim();
+            const responseLimit = parseInt(document.getElementById('responseLimit').value || '0');
+            const accessControl = document.getElementById('accessControl').value;
+
             if (!formId || !formTitle) {{
-                alert("Vui lòng nhập Mã Form ID và Tên biểu mẫu!");
-                switchTab('common');
+                alert('Vui lòng điền đủ Mã ID và Tiêu đề biểu mẫu!');
                 return;
             }}
 
             const payload = {{
                 form_id: formId,
                 title: formTitle,
-                description: document.getElementById('formDesc').value.trim(),
+                description: formDesc,
                 settings: {{
-                    response_limit: parseInt(document.getElementById('responseLimit').value) || null,
-                    access_control: document.getElementById('accessControl').value,
-                    is_test_mode: document.getElementById('isTestMode').value === 'true',
-                    notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
-                    decree13_required: true,
+                    response_limit: responseLimit,
+                    access_control: accessControl,
+                    allow_anonymous: false,
+                    allow_edit_after_submit: false,
+                    is_test_mode: false,
                     image_checks: {{
-                        enable_blur_check: document.getElementById('globalEnableBlurCheck') ? document.getElementById('globalEnableBlurCheck').checked : true,
-                        blur_threshold: (document.getElementById('globalBlurThreshold') && document.getElementById('globalBlurThreshold').value !== '') ? parseFloat(document.getElementById('globalBlurThreshold').value) : 40.0,
-                        enable_ai_vision: document.getElementById('globalEnableAiVision') ? document.getElementById('globalEnableAiVision').checked : true,
-                        enable_vehicle_match: document.getElementById('globalEnableVehicleMatch') ? document.getElementById('globalEnableVehicleMatch').checked : true,
-                        enable_anti_fraud: document.getElementById('globalEnableAntiFraud') ? document.getElementById('globalEnableAntiFraud').checked : true,
-                        require_unique: document.getElementById('globalRequireUnique') ? document.getElementById('globalRequireUnique').checked : true,
-                        enable_ai_generated_check: document.getElementById('globalEnableAiGeneratedCheck') ? document.getElementById('globalEnableAiGeneratedCheck').checked : true,
-                        enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : false
+                        enable_blur_check: true,
+                        blur_threshold: 40.0,
+                        enable_ai_vision: true,
+                        enable_vehicle_match: true,
+                        enable_anti_fraud: true,
+                        enable_ai_generated_check: true,
+                        enable_screen_photo_check: true
                     }}
                 }},
-                questions: questions.map(q => ({{
-                    ...q,
-                    required: q.required !== false
-                }}))
+                questions: {json.dumps(schema_dict['questions'])}
             }};
 
             try {{
                 const resp = await fetch('/api/v1/forms/upload-schema', {{
                     method: 'POST',
-                    headers: {{
-                        'Content-Type': 'application/json'
-                    }},
-                    credentials: 'include',
+                    headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify(payload)
                 }});
-                if (resp.ok) {{
+                const res = await resp.json();
+                if (resp.ok && res.status === 'success') {{
                     alert(`Biểu mẫu '${{formTitle}}' đã được lưu thành công!`);
                     window.location.href = '/admin/forms';
                 }} else {{
-                    alert("Lỗi lưu: " + (res.detail || JSON.stringify(res)));
+                    alert('Lỗi lưu: ' + (res.detail || JSON.stringify(res)));
                 }}
-            }} catch(e) {{
-                alert("Lỗi kết nối máy chủ!");
+            }} catch (err) {{
+                alert('Lỗi mạng: ' + err);
             }}
         }}
-
-        let currentLang = localStorage.getItem('tb_lang') || 'vi';
-        function applyEditorI18n() {{
-            document.getElementById('editorLangCode').textContent = currentLang.toUpperCase();
-            if (currentLang === 'en') {{
-                document.getElementById('linkBackAdmin').textContent = "← Back to Forms List";
-            }} else {{
-                document.getElementById('linkBackAdmin').textContent = "← Quay lại danh sách biểu mẫu";
-            }}
-        }}
-        function toggleEditorLang() {{
-            currentLang = currentLang === 'vi' ? 'en' : 'vi';
-            localStorage.setItem('tb_lang', currentLang);
-            applyEditorI18n();
-        }}
-        window.addEventListener('DOMContentLoaded', () => {{
-            applyEditorI18n();
-            renderQuestions();
-        }});
     </script>
 </body>
 </html>

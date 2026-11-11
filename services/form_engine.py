@@ -259,7 +259,7 @@ def get_effective_image_checks(
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
     form_id="income_survey",
-    title="Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM",
+    title="Khảo Sát Thu Nhập Tài Xế GSM",
     description="Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM",
     settings=FormSettings(
         response_limit=20000,
@@ -475,7 +475,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
 # Test mode clone with test banner enabled
 TEST_TRUST_BRIDGE_SCHEMA = DEFAULT_TRUST_BRIDGE_SCHEMA.model_copy(deep=True)
 TEST_TRUST_BRIDGE_SCHEMA.form_id = "income_survey_test"
-TEST_TRUST_BRIDGE_SCHEMA.title = "Trust Bridge - Khảo Sát Thu Nhập (Thử Nghiệm / Test Mode)"
+TEST_TRUST_BRIDGE_SCHEMA.title = "Khảo Sát Thu Nhập (Thử Nghiệm / Test Mode)"
 TEST_TRUST_BRIDGE_SCHEMA.settings.is_test_mode = True
 
 FORM_REGISTRY: Dict[str, FormSchema] = {

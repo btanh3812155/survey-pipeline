@@ -44,10 +44,10 @@ async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
 
 
 @router.get("/admin/forms", response_class=HTMLResponse)
-async def get_forms_list(page: int = 1, admin_user: str = Depends(verify_admin_auth)):
+async def get_forms_list(page: int = 1, size: int = 6, admin_user: str = Depends(verify_admin_auth)):
     """Admin Web UI with pagination to view and manage forms."""
     return HTMLResponse(
-        content=render_forms_list_html(FORM_REGISTRY, page=page, environment=settings.ENVIRONMENT),
+        content=render_forms_list_html(FORM_REGISTRY, page=page, page_size=size, environment=settings.ENVIRONMENT),
         status_code=200,
     )
 

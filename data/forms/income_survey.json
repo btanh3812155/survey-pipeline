@@ -1,6 +1,6 @@
 {
   "form_id": "income_survey",
-  "title": "Trust Bridge - Khảo Sát Thu Nhập Tài Xế GSM",
+  "title": "Khảo Sát Thu Nhập Tài Xế GSM",
   "description": "Biểu mẫu khảo sát và xác thực thu nhập tài xế taxi / xe máy GSM",
   "settings": {
     "response_limit": 20000,
