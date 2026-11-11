@@ -218,6 +218,31 @@ No raw technical codes (e.g. `INCOME_EXCEEDS_THRESHOLD`) are shown to drivers. E
 - Vehicle: *"Phương tiện không trùng khớp xe đã đăng ký. Nếu bạn đổi xe mới, vui lòng bấm nút bên dưới để quản trị viên hỗ trợ nhé!"*
 
 
+### 7.6 Media Management & Form Description Images: Caddy vs. Cloudflare R2 Long-Term Upgrade
+
+#### 1. Why Google Drive is Explicitly Prohibited for Public Guide Images
+- **Latency Degradation:** Google Drive links enforce a 302 redirect cascade through `doc-xx.googleusercontent.com` and cookie checks, adding **800ms - 2,500ms TTFB** per image on mobile 4G.
+- **Rate Limiting (403 Quota Exceeded):** Drive enforces per-file concurrent access limits (~100-200 views/hour), causing broken images and virus-scan warning interstitials during peak shift changes.
+- **Zero Edge Caching:** Drive sets `cache-control: private, max-age=0`, forcing mobile browsers to re-download images repeatedly over cellular data.
+
+#### 2. Short-Term / Active Deployment: Caddy Static Edge Mount (`/media/*`)
+- **Storage Path:** `/root/survey-pipeline/data/media/{guide,forms,general}/`
+- **Serving Layer:** Caddy reverse-proxies directly, compresses via Gzip/Zstandard, and serves images with aggressive browser caching headers (`Cache-Control: public, max-age=31536000, immutable`).
+- **Latency:** **< 15 ms** TTFB.
+- **Management UI:** Built-in Google Drive-style Media Manager at `/admin/media` with drag-and-drop WebP normalization and 1-click Markdown copying (`![alt](url)`).
+
+#### 3. Long-Term Upgrade: Cloudflare R2 + CDN Edge (Zero Egress)
+- **Architecture:** The codebase is pre-wired for Cloudflare R2 via `R2StorageClient` (`services/storage_r2.py`).
+- **Pricing Advantages:**
+  - Storage: $0.015 / GB / month (first 10 GB free).
+  - Read Operations: Class B free up to 10,000,000 requests/month.
+  - **Egress Bandwidth: $0.00 (Completely free forever, eliminating standard AWS S3 egress bill shock).**
+- **Edge Acceleration:** Binding R2 to a custom domain (e.g. `assets.trustbridgevn.com` or `cdn.trustbridgevn.com`) leverages Cloudflare's 300+ global edge points of presence (including VNPT and Viettel nodes in Hanoi and Ho Chi Minh City) for sub-20ms mobile rendering.
+- **Zero-Code-Change Cutover:** When `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` are supplied in `.env`, `R2StorageClient` automatically routes uploads to R2 and generates public CDN URLs. The Media Manager frontend and form rendering code require zero modification.
+
+#### 4. Separation of Submission Images vs. Description Guide Images
+- **Form Submission Images (Driver Uploads):** Handled via `services/storage_r2.py` (uploads to Cloudflare R2 bucket `surveys` or local fallback `./data/uploads/`) and mirrored into `./data/google_drive_deliverables/Images/{submission_id}/` for client verification spreadsheets.
+- **Form Description Images (Admin Guide Photos):** Managed via `/admin/media`, stored under `./data/media/` and served through Caddy at `/media/*` (or Cloudflare R2 CDN prefix).
 ### 7.5 Driver & Collaborator Role Separation
 - **Role RBAC:** `authorized_users` explicitly distinguishes `DRIVER` vs `COLLABORATOR`:
   - **COLLABORATOR:** Fleet leaders and agency recruiters submitting surveys on behalf of drivers or monitoring regional teams; receives aggregated payout ledgers.

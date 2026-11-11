@@ -506,6 +506,10 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
                     Nhật Ký Kiểm Toán
                 </a>
+                <a href="/admin/media" class="btn-samples-nav" id="btnAdminMedia">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
+                    Quản Lý Media
+                </a>
                 <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
                     Ảnh Mẫu Test

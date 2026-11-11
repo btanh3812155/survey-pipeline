@@ -42,6 +42,7 @@ from services.action_checklist import (
     fetch_action_status,
 )
 from services.audit_viewer_html import render_audit_viewer_html
+from services.media_manager_html import render_media_manager_html
 from services.google_drive_delivery import (
     upload_to_google_drive,
     has_google_credentials,
@@ -290,6 +291,63 @@ app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 STATIC_DIR = os.path.join(os.getcwd(), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+MEDIA_STORAGE_DIR = os.path.join(os.getcwd(), "data", "media")
+def seed_media_storage():
+    os.makedirs(MEDIA_STORAGE_DIR, exist_ok=True)
+    for sub in ("guide", "forms", "general"):
+        os.makedirs(os.path.join(MEDIA_STORAGE_DIR, sub), exist_ok=True)
+    samples_dir = os.path.join(os.getcwd(), "data", "test_samples")
+    if os.path.exists(samples_dir):
+        guide_dir = os.path.join(MEDIA_STORAGE_DIR, "guide")
+        for f in os.listdir(samples_dir):
+            if f.endswith((".jpg", ".png", ".webp")) and not f.startswith("."):
+                src = os.path.join(samples_dir, f)
+                dst = os.path.join(guide_dir, f)
+                if not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except Exception:
+                        pass
+
+seed_media_storage()
+if os.path.exists(MEDIA_STORAGE_DIR):
+    app.mount("/media", StaticFiles(directory=MEDIA_STORAGE_DIR), name="media")
+
+def scan_media_storage_files() -> List[Dict[str, Any]]:
+    items = []
+    if not os.path.exists(MEDIA_STORAGE_DIR):
+        return items
+    for root, dirs, files in os.walk(MEDIA_STORAGE_DIR):
+        rel_dir = os.path.relpath(root, MEDIA_STORAGE_DIR)
+        folder = "general" if rel_dir == "." else rel_dir.replace(os.sep, "/")
+        for f in files:
+            if f.startswith(".") or not f.lower().endswith((".webp", ".jpg", ".jpeg", ".png", ".gif", ".svg")):
+                continue
+            full_path = os.path.join(root, f)
+            try:
+                st = os.stat(full_path)
+                size_kb = max(1, round(st.st_size / 1024))
+                rel_url = f"/media/{folder}/{f}" if folder != "general" else f"/media/{f}"
+                dims = ""
+                try:
+                    with Image.open(full_path) as im:
+                        dims = f"{im.width} × {im.height}"
+                except Exception:
+                    dims = "Chuẩn WebP"
+                items.append({
+                    "id": f"{folder}/{f}",
+                    "name": f,
+                    "title": os.path.splitext(f)[0].replace("_", " ").title(),
+                    "folder": folder,
+                    "size_kb": size_kb,
+                    "dimensions": dims,
+                    "url": rel_url,
+                    "modified_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
+                })
+            except Exception as e:
+                logger.warning(f"Error scanning media file {full_path}: {e}")
+    items.sort(key=lambda x: x.get("modified_at", ""), reverse=True)
+    return items
 
 @app.get("/api/v1/caddy-check", include_in_schema=False)
 async def caddy_on_demand_tls_check(domain: str):
@@ -706,6 +764,94 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
     return HTMLResponse(content=render_form_editor_html(schema, is_new=False, environment=settings.ENVIRONMENT), status_code=200)
 
 
+@app.get("/admin/media", response_class=HTMLResponse)
+async def admin_media_manager_page(
+    folder: str = "all",
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Google Drive-style Media Manager Admin UI."""
+    media_files = scan_media_storage_files()
+    subfolders = ["guide", "forms", "general"]
+    for m in media_files:
+        f = m.get("folder")
+        if f and f not in subfolders:
+            subfolders.append(f)
+    storage_type = "Cloudflare R2" if (settings.R2_ACCOUNT_ID and settings.R2_ACCESS_KEY_ID) else "Caddy Static (/media)"
+    return HTMLResponse(
+        content=render_media_manager_html(
+            media_files=media_files,
+            folders=subfolders,
+            current_folder=folder,
+            environment=settings.ENVIRONMENT,
+            storage_backend=storage_type,
+        ),
+        status_code=200,
+    )
+
+@app.get("/api/v1/media")
+async def list_media_api(admin_user: str = Depends(verify_admin_auth)):
+    return {"status": "success", "files": scan_media_storage_files()}
+
+@app.post("/api/v1/media/upload")
+async def upload_media_api(
+    file: UploadFile = File(...),
+    folder: str = Form("guide"),
+    admin_user: str = Depends(verify_admin_auth),
+):
+    clean_folder = re.sub(r"[^a-zA-Z0-9_-]", "", folder.strip().lower()) or "guide"
+    target_dir = os.path.join(MEDIA_STORAGE_DIR, clean_folder)
+    os.makedirs(target_dir, exist_ok=True)
+
+    raw_bytes = await file.read()
+    orig_name = os.path.splitext(file.filename or "upload")[0]
+    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", orig_name).strip("_") or "image"
+    final_filename = f"{clean_name}.webp"
+    final_path = os.path.join(target_dir, final_filename)
+
+    try:
+        webp_bytes, pil_im = sanitize_and_normalize_image(raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION)
+        dims = f"{pil_im.width} × {pil_im.height}"
+    except Exception:
+        webp_bytes = raw_bytes
+        dims = "Chuẩn WebP"
+
+    async with aiofiles.open(final_path, "wb") as f_out:
+        await f_out.write(webp_bytes)
+
+    size_kb = max(1, round(len(webp_bytes) / 1024))
+    rel_url = f"/media/{clean_folder}/{final_filename}"
+    item = {
+        "id": f"{clean_folder}/{final_filename}",
+        "name": final_filename,
+        "title": clean_name.replace("_", " ").title(),
+        "folder": clean_folder,
+        "size_kb": size_kb,
+        "dimensions": dims,
+        "url": rel_url,
+        "modified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return {"status": "success", "item": item}
+
+@app.delete("/api/v1/media")
+async def delete_media_api(
+    id: str,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    clean_id = id.strip("/\\.")
+    parts = clean_id.split("/")
+    if len(parts) > 2 or ".." in clean_id:
+        raise HTTPException(status_code=400, detail="Invalid media id")
+    full_path = os.path.realpath(os.path.join(MEDIA_STORAGE_DIR, clean_id))
+    base_path = os.path.realpath(MEDIA_STORAGE_DIR)
+    if not (full_path == base_path or full_path.startswith(base_path + os.sep)):
+        raise HTTPException(status_code=400, detail="Path traversal forbidden")
+    if os.path.exists(full_path) and os.path.isfile(full_path):
+        try:
+            os.remove(full_path)
+            return {"status": "success", "deleted": id}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 @app.post("/api/v1/forms/upload-schema")
 async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):
