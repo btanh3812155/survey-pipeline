@@ -4,6 +4,16 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps, ImageFile
 from typing import Tuple, Optional
+import logging
+
+logger = logging.getLogger("normalizer")
+
+try:
+    import pyvips
+    _HAS_PYVIPS = True
+except Exception:
+    pyvips = None
+    _HAS_PYVIPS = False
 
 # prevent decompression bombs while allowing normal high-res phone captures
 Image.MAX_IMAGE_PIXELS = 35_000_000
@@ -17,6 +27,35 @@ try:
 except ImportError:
     pass
 
+
+def _normalize_with_libvips(
+    raw_bytes: bytes,
+    target_dimension: int = 1024,
+    webp_quality: int = 82,
+    max_aspect_ratio: float = 6.0,
+) -> Tuple[bytes, Image.Image]:
+    """
+    High-performance, low-memory libvips streaming normalizer.
+    Decodes directly with libjpeg-turbo shrink-on-load, autorotates via EXIF,
+    flattens alpha transparency over pure white, and encodes to WebP in C.
+    """
+    vips_im = pyvips.Image.thumbnail_buffer(raw_bytes, target_dimension, auto_rotate=True)
+    
+    w, h = vips_im.width, vips_im.height
+    short_edge = min(w, h)
+    long_edge = max(w, h)
+    if short_edge > 0 and (long_edge / short_edge) > max_aspect_ratio:
+        raise ValueError(f"tỷ lệ khung hình bất thường ({long_edge / short_edge:.1f}:1), vượt quá ngưỡng cho phép")
+
+    if vips_im.hasalpha():
+        vips_im = vips_im.flatten(background=[255, 255, 255])
+    elif vips_im.bands > 3:
+        vips_im = vips_im.extract_band(0, n=3)
+
+    webp_bytes = vips_im.webpsave_buffer(Q=webp_quality, strip=True)
+    pil_im = Image.open(io.BytesIO(webp_bytes))
+    pil_im.load()
+    return webp_bytes, pil_im
 
 def sanitize_and_normalize_image(
     raw_bytes: bytes,
@@ -38,8 +77,22 @@ def sanitize_and_normalize_image(
     if max_dimension is not None:
         max_short_edge = min(max_short_edge, max_dimension)
         max_long_edge = min(max_long_edge, max_dimension)
+
+    target_dim = max_dimension or max_long_edge
+    if _HAS_PYVIPS:
+        try:
+            return _normalize_with_libvips(
+                raw_bytes,
+                target_dimension=target_dim,
+                webp_quality=webp_quality,
+                max_aspect_ratio=max_aspect_ratio,
+            )
+        except ValueError:
+            raise
+        except Exception as vips_err:
+            logger.debug(f"libvips normalization fallback to Pillow: {vips_err}")
+
     stream = io.BytesIO(raw_bytes)
-    
     try:
         im = Image.open(stream)
         raw_exif = im.info.get("exif")

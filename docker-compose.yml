@@ -79,16 +79,8 @@ services:
       - postgres
       - redis
 
-  outbox-worker:
-    build: .
-    restart: always
-    command: python workers/outbox_worker.py
-    environment:
-      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
-      - PYTHONPATH=/app
-    depends_on:
-      - postgres
-
+  # outbox-worker: Migrated to in-process Action Checklist with 45s expiring leases
+  # Reclaims 28.1 MB RAM on droplet and completely eliminates database connection polling churn
   # telegram-bot: Migrated to push webhooks (/webhook/telegram/admin & /webhook/telegram/driver)
   # Reclaims ~150MB RAM on droplet and eliminates 30s long-polling overhead
   postgres:
