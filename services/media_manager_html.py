@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Google Drive-style Media Manager Admin Frontend.
-Provides visual folder/file management, drag-and-drop upload, image inspection,
-and 1-click Markdown snippet copying (![alt](url)) for survey descriptions.
-Decoupled from storage backend: serves directly via Caddy/FastAPI /media mount
-with seamless zero-code-change cutover to Cloudflare R2.
+Provides hierarchical directory tree navigation, drag-and-drop upload with folder selection,
+in-place filename renaming, dropdown folder moving, and 1-click Markdown snippet copying.
+Purged of all emojis; utilizes standardized inline SVG vector icons.
 """
 
 import html
@@ -19,14 +18,14 @@ def render_media_manager_html(
     environment: str = "production",
     storage_backend: str = "Caddy Static (/media)",
 ) -> str:
-    folders = folders or ["guide", "forms", "general"]
+    folders = folders or ["general", "guide", "forms"]
     is_dev = str(environment).lower() != "production"
     
     if is_dev:
-        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg> DEV REPLICA (surveydb_dev)</span>'
         env_subtext = "Môi trường Thử Nghiệm / Staging độc lập"
     else:
-        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> PRODUCTION</span>'
         env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
 
     files_json = json.dumps(media_files, ensure_ascii=False)
@@ -37,7 +36,7 @@ def render_media_manager_html(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Trust Bridge - Quản Lý Media & Ảnh Biểu Mẫu</title>
+    <title>Trust Bridge - Quản Lý Media</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
@@ -75,7 +74,7 @@ def render_media_manager_html(
         }}
 
         .container {{
-            max-width: 1500px;
+            max-width: 1540px;
             margin: 0 auto;
         }}
 
@@ -134,16 +133,6 @@ def render_media_manager_html(
             color: #60a5fa;
         }}
 
-        .nav-btn.primary {{
-            background: var(--accent);
-            border-color: var(--accent);
-            color: #fff;
-        }}
-
-        .nav-btn.primary:hover {{
-            background: var(--accent-hover);
-        }}
-
         .nav-btn.active {{
             background: var(--accent-soft);
             border-color: var(--accent);
@@ -153,7 +142,7 @@ def render_media_manager_html(
         /* Drive Layout */
         .drive-layout {{
             display: grid;
-            grid-template-columns: 240px 1fr;
+            grid-template-columns: 260px 1fr;
             gap: 16px;
             margin-top: 14px;
         }}
@@ -164,7 +153,7 @@ def render_media_manager_html(
             }}
         }}
 
-        /* Sidebar Folders */
+        /* Sidebar Directory Tree */
         .drive-sidebar {{
             background: var(--surface);
             border: 1px solid var(--border);
@@ -185,29 +174,40 @@ def render_media_manager_html(
             justify-content: space-between;
         }}
 
-        .folder-item {{
+        .tree-root {{
             display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            border-radius: 8px;
-            color: var(--text);
-            cursor: pointer;
-            font-size: 0.82rem;
-            font-weight: 600;
-            margin-bottom: 4px;
-            transition: all 0.15s ease;
+            flex-direction: column;
+            gap: 2px;
         }}
 
-        .folder-item:hover {{
+        .tree-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-radius: 6px;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: all 0.15s ease;
+            user-select: none;
+        }}
+
+        .tree-item:hover {{
             background: var(--surface-hover);
             color: #60a5fa;
         }}
 
-        .folder-item.active {{
+        .tree-item.active {{
             background: var(--accent-soft);
             color: #60a5fa;
             border: 1px solid rgba(37, 99, 235, 0.35);
+        }}
+
+        .tree-indent {{
+            display: inline-block;
+            width: 14px;
         }}
 
         .folder-count {{
@@ -240,19 +240,102 @@ def render_media_manager_html(
             line-height: 1.4;
         }}
 
-        /* Drive Main Area */
+        /* Main Content */
         .drive-main {{
             display: flex;
             flex-direction: column;
             gap: 14px;
         }}
 
-        /* Top Action / Search Bar */
+        /* Clean Upload Dropzone */
+        .upload-panel {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            padding: 14px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }}
+
+        .dropzone-inline {{
+            flex: 1;
+            min-width: 260px;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            color: var(--muted);
+        }}
+
+        .dropzone-inline:hover, .dropzone-inline.dragover {{
+            border-color: #3b82f6;
+            background: var(--surface-hover);
+            color: #60a5fa;
+        }}
+
+        .upload-controls {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+
+        .folder-select {{
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: #fff;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            outline: none;
+            cursor: pointer;
+        }}
+
+        /* Breadcrumb Bar */
+        .breadcrumb-bar {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.82rem;
+            color: var(--muted);
+            flex-wrap: wrap;
+        }}
+
+        .breadcrumb-node {{
+            color: #60a5fa;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }}
+
+        .breadcrumb-node:hover {{
+            text-decoration: underline;
+        }}
+
+        .breadcrumb-sep {{
+            color: var(--border);
+            display: inline-block;
+        }}
+
+        /* Toolbar */
         .drive-toolbar {{
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--card-radius);
-            padding: 12px 14px;
+            padding: 10px 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -275,7 +358,6 @@ def render_media_manager_html(
             color: #fff;
             font-size: 0.82rem;
             outline: none;
-            transition: border-color 0.15s ease;
         }}
 
         .search-input:focus {{
@@ -299,7 +381,7 @@ def render_media_manager_html(
             gap: 8px;
         }}
 
-        .view-toggle-btn {{
+        .view-btn {{
             background: var(--surface-hover);
             border: 1px solid var(--border);
             color: var(--text);
@@ -312,42 +394,13 @@ def render_media_manager_html(
             font-size: 0.78rem;
         }}
 
-        .view-toggle-btn.active {{
+        .view-btn.active {{
             background: var(--accent);
             border-color: var(--accent);
             color: #fff;
         }}
 
-        /* Drag & Drop Upload Zone */
-        .upload-dropzone {{
-            background: rgba(30, 41, 59, 0.4);
-            border: 2px dashed #23314f;
-            border-radius: var(--card-radius);
-            padding: 24px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            position: relative;
-        }}
-
-        .upload-dropzone:hover, .upload-dropzone.dragover {{
-            background: rgba(37, 99, 235, 0.08);
-            border-color: #3b82f6;
-        }}
-
-        .upload-dropzone p {{
-            font-size: 0.85rem;
-            color: var(--text);
-            margin-top: 8px;
-            font-weight: 600;
-        }}
-
-        .upload-dropzone span {{
-            font-size: 0.75rem;
-            color: var(--muted);
-        }}
-
-        /* Files Grid View */
+        /* Grid */
         .media-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -405,7 +458,6 @@ def render_media_manager_html(
             font-weight: 700;
             padding: 2px 6px;
             border-radius: 4px;
-            text-transform: uppercase;
         }}
 
         .badge-format {{
@@ -456,12 +508,12 @@ def render_media_manager_html(
             border-top: 1px solid var(--border);
         }}
 
-        .btn-card-action {{
+        .btn-action-icon {{
             flex: 1;
             background: var(--surface-hover);
             border: 1px solid var(--border);
             color: var(--text);
-            padding: 5px 6px;
+            padding: 6px 8px;
             border-radius: 6px;
             font-size: 0.72rem;
             font-weight: 600;
@@ -473,19 +525,19 @@ def render_media_manager_html(
             transition: all 0.15s ease;
         }}
 
-        .btn-card-action:hover {{
+        .btn-action-icon:hover {{
             background: #2563eb;
             color: #fff;
             border-color: #2563eb;
         }}
 
-        .btn-card-action.danger:hover {{
+        .btn-action-icon.danger:hover {{
             background: #ef4444;
             color: #fff;
             border-color: #ef4444;
         }}
 
-        /* Toast notification */
+        /* Toast */
         #toast {{
             position: fixed;
             bottom: 24px;
@@ -499,15 +551,9 @@ def render_media_manager_html(
             box-shadow: 0 10px 25px rgba(0,0,0,0.5);
             display: none;
             z-index: 9999;
-            animation: fadeIn 0.2s ease;
         }}
 
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-
-        /* Preview Modal */
+        /* Modal */
         .modal-overlay {{
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -524,7 +570,7 @@ def render_media_manager_html(
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 14px;
-            max-width: 900px;
+            max-width: 920px;
             width: 100%;
             max-height: 90vh;
             display: flex;
@@ -553,7 +599,6 @@ def render_media_manager_html(
             color: var(--muted);
             font-size: 1.4rem;
             cursor: pointer;
-            line-height: 1;
         }}
 
         .btn-modal-close:hover {{
@@ -564,7 +609,7 @@ def render_media_manager_html(
             padding: 18px;
             overflow: auto;
             display: grid;
-            grid-template-columns: 1fr 320px;
+            grid-template-columns: 1fr 340px;
             gap: 18px;
         }}
 
@@ -607,36 +652,41 @@ def render_media_manager_html(
             display: block;
         }}
 
-        .prop-item input, .prop-item textarea {{
+        .prop-item input, .prop-item select, .prop-item textarea {{
             width: 100%;
             background: #090d16;
             border: 1px solid var(--border);
             border-radius: 6px;
-            padding: 7px 10px;
+            padding: 8px 10px;
             color: #fff;
             font-size: 0.78rem;
             font-family: monospace;
             outline: none;
         }}
 
-        .btn-copy-input {{
-            margin-top: 4px;
-            background: var(--surface-hover);
-            border: 1px solid var(--border);
-            color: #60a5fa;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.72rem;
-            font-weight: 600;
+        .prop-item select {{
+            font-family: inherit;
+            cursor: pointer;
+        }}
+
+        .btn-modal-action {{
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 0.78rem;
+            font-weight: 700;
             cursor: pointer;
             display: inline-flex;
             align-items: center;
-            gap: 4px;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 4px;
         }}
 
-        .btn-copy-input:hover {{
-            background: #2563eb;
-            color: #fff;
+        .btn-modal-action:hover {{
+            background: #1d4ed8;
         }}
     </style>
 </head>
@@ -647,10 +697,10 @@ def render_media_manager_html(
             <div class="header-brand">
                 <h1>
                     <svg viewBox="0 0 24 24" style="width:24px; height:24px; fill:#3b82f6;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
-                    Quản Lý Media & Ảnh Biểu Mẫu (Drive Interface)
+                    Quản Lý Media
                     {env_badge}
                 </h1>
-                <p>Kho lưu trữ ảnh tĩnh, ảnh minh họa câu hỏi & hỗ trợ sao chép Markdown 1-chạm ({env_subtext})</p>
+                <p>Kho lưu trữ ảnh biểu mẫu & tài sản trực quan ({env_subtext})</p>
             </div>
             <div class="header-actions">
                 <a href="/admin/forms" class="nav-btn">
@@ -658,7 +708,7 @@ def render_media_manager_html(
                     Quản Lý Form
                 </a>
                 <a href="/admin/submissions" class="nav-btn">
-                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
                     Dữ Liệu Nộp
                 </a>
                 <a href="/admin/audit" class="nav-btn">
@@ -674,68 +724,88 @@ def render_media_manager_html(
 
         <!-- Drive Layout -->
         <div class="drive-layout">
-            <!-- Left Sidebar -->
+            <!-- Sidebar: Directory Tree -->
             <aside class="drive-sidebar">
                 <div class="sidebar-section-title">
-                    <span>Thư Mục (Folders)</span>
-                    <button type="button" onclick="createNewFolder()" style="background:none; border:none; color:#60a5fa; cursor:pointer; font-size:0.75rem; font-weight:700;">+ Thêm</button>
+                    <span>Cây Thư Mục</span>
+                    <button type="button" onclick="promptNewFolder()" style="background:none; border:none; color:#60a5fa; cursor:pointer; font-size:0.75rem; font-weight:700; display:inline-flex; align-items:center; gap:2px;">
+                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Thêm
+                    </button>
                 </div>
-                <div id="foldersList">
+                <div class="tree-root" id="dirTreeRoot">
                     <!-- Rendered by JS -->
                 </div>
 
                 <div class="storage-status-card">
                     <div class="title">
                         <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#10b981;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
-                        <span>Cơ Chế Phục Vụ</span>
+                        <span>Trạng Thái Lưu Trữ</span>
                     </div>
                     <div class="desc">
-                        Backend hiện tại: <b style="color:#60a5fa;">{storage_backend}</b>.<br>
-                        Tự động nén WebP, lưu tại Caddy và phục vụ tức thì &lt;15ms.<br>
-                        <span style="color:#f59e0b; display:inline-block; margin-top:4px;">☁ Sẵn sàng hoán chuyển sang Cloudflare R2 khi quy mô tăng trưởng.</span>
+                        Lưu trữ: <b style="color:#60a5fa;">{storage_backend}</b>.<br>
+                        Tự động nén WebP và phục vụ tĩnh trực tiếp.<br>
+                        <span style="color:#f59e0b; display:inline-block; margin-top:4px;">Chuẩn bị sẵn sàng cutover Cloudflare R2 khi mở rộng quy mô.</span>
                     </div>
                 </div>
             </aside>
 
-            <!-- Main Files Area -->
+            <!-- Main Area -->
             <main class="drive-main">
-                <!-- Dropzone for uploads -->
-                <div class="upload-dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
-                    <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" onchange="handleFileSelect(event)">
-                    <svg viewBox="0 0 24 24" style="width:36px; height:36px; fill:#3b82f6;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-                    <p>Kéo thả ảnh vào đây hoặc nhấp để tải lên</p>
-                    <span>Tự động tối ưu hóa sang WebP chuẩn, chống méo tỉ lệ & strip EXIF an toàn</span>
+                <!-- Clean Upload Bar -->
+                <div class="upload-panel">
+                    <div class="dropzone-inline" id="dropzone" onclick="document.getElementById('fileInput').click()">
+                        <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" onchange="handleFileSelect(event)">
+                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                        <span>Kéo thả tệp vào đây hoặc nhấp để chọn tệp</span>
+                    </div>
+                    <div class="upload-controls">
+                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Thư mục tải:</label>
+                        <select id="uploadFolderSelect" class="folder-select" onchange="currentFolder = this.value; selectFolder(this.value)">
+                            <!-- Populated by JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Breadcrumb Bar -->
+                <div class="breadcrumb-bar" id="breadcrumbBar">
+                    <!-- Populated by JS -->
                 </div>
 
                 <!-- Toolbar -->
                 <div class="drive-toolbar">
                     <div class="search-box-wrap">
                         <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-                        <input type="text" id="searchInput" class="search-input" placeholder="Tìm kiếm ảnh theo tên file, định dạng hoặc kích thước..." oninput="filterMedia()">
+                        <input type="text" id="searchInput" class="search-input" placeholder="Tìm kiếm tệp theo tên hoặc định dạng..." oninput="filterMedia()">
                     </div>
                     <div class="toolbar-controls">
                         <span id="filesCountBadge" style="font-size:0.75rem; color:var(--muted); margin-right:8px;">0 tệp</span>
-                        <button type="button" class="view-toggle-btn active" id="btnGrid" onclick="setViewMode('grid')">⊞ Lưới</button>
-                        <button type="button" class="view-toggle-btn" id="btnList" onclick="setViewMode('list')">☰ Danh sách</button>
+                        <button type="button" class="view-btn active" id="btnGrid" onclick="setViewMode('grid')">
+                            <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/></svg>
+                            Lưới
+                        </button>
+                        <button type="button" class="view-btn" id="btnList" onclick="setViewMode('list')">
+                            <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                            Danh sách
+                        </button>
                     </div>
                 </div>
 
-                <!-- Media Grid Container -->
+                <!-- Grid -->
                 <div class="media-grid" id="mediaGrid">
-                    <!-- Rendered by JS -->
+                    <!-- Populated by JS -->
                 </div>
             </main>
         </div>
     </div>
 
     <!-- Toast Notification -->
-    <div id="toast">Đã sao chép vào bộ nhớ tạm!</div>
+    <div id="toast">Đã sao chép!</div>
 
-    <!-- Preview Modal -->
+    <!-- Inspector Modal -->
     <div class="modal-overlay" id="previewModal" onclick="closePreviewModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <h3 id="modalFileTitle">Chi Tiết Tệp Media</h3>
+                <h3 id="modalFileTitle">Thông Tin Tệp</h3>
                 <button type="button" class="btn-modal-close" onclick="closePreviewModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -744,26 +814,39 @@ def render_media_manager_html(
                 </div>
                 <div class="modal-props">
                     <div class="prop-item">
-                        <label>Tên Tệp (Filename)</label>
-                        <input type="text" id="propFilename" readonly>
+                        <label>Tên Tệp (Có Thể Chỉnh Sửa)</label>
+                        <input type="text" id="propFilename">
                     </div>
                     <div class="prop-item">
-                        <label>Thư Mục (Folder)</label>
-                        <input type="text" id="propFolder" readonly>
+                        <label>Thư Mục Lưu Trữ (Dropdown Di Chuyển)</label>
+                        <select id="propFolderSelect">
+                            <!-- Populated by JS -->
+                        </select>
                     </div>
-                    <div class="prop-item">
-                        <label>Độ Phân Giải & Dung Lượng</label>
+                    <button type="button" class="btn-modal-action" onclick="saveFileChanges()">
+                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                        Lưu Thay Đổi (Đổi Tên / Di Chuyển)
+                    </button>
+
+                    <div class="prop-item" style="margin-top:8px;">
+                        <label>Kích Thước & Dung Lượng</label>
                         <input type="text" id="propResolution" readonly>
                     </div>
                     <div class="prop-item">
                         <label>Đường Dẫn URL Trực Tiếp</label>
                         <input type="text" id="propUrl" readonly>
-                        <button type="button" class="btn-copy-input" onclick="copyModalField('propUrl')">🔗 Sao chép URL</button>
+                        <button type="button" class="btn-modal-action" style="background:var(--surface-hover); color:#60a5fa;" onclick="copyModalField('propUrl')">
+                            <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                            Sao chép Link URL
+                        </button>
                     </div>
                     <div class="prop-item">
                         <label>Cú Pháp Markdown Mô Tả Form</label>
                         <textarea id="propMarkdown" rows="2" readonly></textarea>
-                        <button type="button" class="btn-copy-input" onclick="copyModalField('propMarkdown')">📋 Sao chép Markdown</button>
+                        <button type="button" class="btn-modal-action" style="background:var(--surface-hover); color:#60a5fa;" onclick="copyModalField('propMarkdown')">
+                            <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                            Sao chép Markdown
+                        </button>
                     </div>
                 </div>
             </div>
@@ -772,13 +855,16 @@ def render_media_manager_html(
 
     <script>
         const RAW_MEDIA = {files_json};
-        const ALL_FOLDERS = {folders_json};
+        let ALL_FOLDERS = {folders_json};
         let currentFolder = "{current_folder}";
         let currentView = "grid";
         let filteredMedia = [...RAW_MEDIA];
+        let currentEditingId = null;
 
         function init() {{
-            renderFolders();
+            renderDirTree();
+            populateFolderDropdowns();
+            renderBreadcrumbs();
             filterMedia();
             setupDropzone();
         }}
@@ -790,53 +876,106 @@ def render_media_manager_html(
             setTimeout(() => {{ t.style.display = "none"; }}, 2500);
         }}
 
-        function copyToClipboard(text, successMsg = "Đã sao chép vào bộ nhớ tạm!") {{
+        function copyToClipboard(text, msg = "Đã sao chép!") {{
             navigator.clipboard.writeText(text).then(() => {{
-                showToast(successMsg);
-            }}).catch(err => {{
-                prompt("Sao chép liên kết thủ công:", text);
+                showToast(msg);
+            }}).catch(() => {{
+                prompt("Sao chép:", text);
             }});
         }}
 
-        function renderFolders() {{
-            const list = document.getElementById("foldersList");
+        function renderDirTree() {{
+            const root = document.getElementById("dirTreeRoot");
             const counts = {{ "all": RAW_MEDIA.length }};
             ALL_FOLDERS.forEach(f => {{
-                counts[f] = RAW_MEDIA.filter(m => m.folder === f).length;
+                counts[f] = RAW_MEDIA.filter(m => m.folder === f || m.folder.startsWith(f + "/")).length;
             }});
 
             let html = `
-                <div class="folder-item ${{currentFolder === 'all' ? 'active' : ''}}" onclick="selectFolder('all')">
+                <div class="tree-item ${{currentFolder === 'all' ? 'active' : ''}}" onclick="selectFolder('all')">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
                     <span>Tất Cả Tệp</span>
                     <span class="folder-count">${{counts['all']}}</span>
                 </div>
             `;
 
-            ALL_FOLDERS.forEach(f => {{
-                const label = f === 'guide' ? 'Hướng Dẫn (guide)' : (f === 'forms' ? 'Biểu Mẫu (forms)' : (f === 'general' ? 'Chung (general)' : f));
+            const sorted = [...ALL_FOLDERS].sort();
+            sorted.forEach(f => {{
+                const depth = (f.match(/\\//g) || []).length;
+                const displayName = f.split('/').pop();
+                const indentHtml = depth > 0 ? `<span class="tree-indent" style="width:${{depth * 14}}px;"></span>` : '';
                 html += `
-                    <div class="folder-item ${{currentFolder === f ? 'active' : ''}}" onclick="selectFolder('${{f}}')">
+                    <div class="tree-item ${{currentFolder === f ? 'active' : ''}}" onclick="selectFolder('${{f}}')">
+                        ${{indentHtml}}
                         <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-                        <span>${{label}}</span>
+                        <span>${{displayName}}</span>
                         <span class="folder-count">${{counts[f] || 0}}</span>
                     </div>
                 `;
             }});
 
-            list.innerHTML = html;
+            root.innerHTML = html;
+        }}
+
+        function populateFolderDropdowns() {{
+            const uploadSel = document.getElementById("uploadFolderSelect");
+            const propSel = document.getElementById("propFolderSelect");
+
+            let opts = "";
+            ALL_FOLDERS.forEach(f => {{
+                opts += `<option value="${{f}}">${{f}}</option>`;
+            }});
+
+            if (uploadSel) {{
+                uploadSel.innerHTML = opts;
+                if (currentFolder !== "all" && ALL_FOLDERS.includes(currentFolder)) {{
+                    uploadSel.value = currentFolder;
+                }}
+            }}
+            if (propSel) {{
+                propSel.innerHTML = opts;
+            }}
         }}
 
         function selectFolder(folder) {{
             currentFolder = folder;
-            renderFolders();
+            const uploadSel = document.getElementById("uploadFolderSelect");
+            if (uploadSel && folder !== "all" && ALL_FOLDERS.includes(folder)) {{
+                uploadSel.value = folder;
+            }}
+            renderDirTree();
+            renderBreadcrumbs();
             filterMedia();
+        }}
+
+        function renderBreadcrumbs() {{
+            const bar = document.getElementById("breadcrumbBar");
+            let html = `
+                <span class="breadcrumb-node" onclick="selectFolder('all')">
+                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    media
+                </span>
+            `;
+
+            if (currentFolder !== "all") {{
+                const parts = currentFolder.split('/');
+                let cumulative = "";
+                parts.forEach((p, idx) => {{
+                    cumulative = cumulative ? cumulative + "/" + p : p;
+                    html += `
+                        <span class="breadcrumb-sep">/</span>
+                        <span class="breadcrumb-node" onclick="selectFolder('${{cumulative}}')">${{p}}</span>
+                    `;
+                }});
+            }}
+
+            bar.innerHTML = html;
         }}
 
         function filterMedia() {{
             const q = (document.getElementById("searchInput").value || "").toLowerCase().trim();
             filteredMedia = RAW_MEDIA.filter(m => {{
-                const matchFolder = (currentFolder === 'all') || (m.folder === currentFolder);
+                const matchFolder = (currentFolder === 'all') || (m.folder === currentFolder) || (m.folder.startsWith(currentFolder + "/"));
                 const matchQuery = !q || m.name.toLowerCase().includes(q) || (m.folder && m.folder.toLowerCase().includes(q));
                 return matchFolder && matchQuery;
             }});
@@ -850,9 +989,8 @@ def render_media_manager_html(
             if (filteredMedia.length === 0) {{
                 grid.innerHTML = `
                     <div style="grid-column: 1/-1; padding: 40px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: 12px;">
-                        <svg viewBox="0 0 24 24" style="width:40px; height:40px; fill:currentColor; margin-bottom:8px;"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4.86 8.86l-3 3.87L9 13.14 6 17h12l-3.86-5.14z"/></svg>
-                        <p style="font-weight:600;">Không có tệp media nào trong thư mục này</p>
-                        <span style="font-size:0.75rem;">Kéo thả ảnh lên khu vực tải lên ở trên để thêm tệp mới</span>
+                        <svg viewBox="0 0 24 24" style="width:36px; height:36px; fill:currentColor; margin-bottom:8px;"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4.86 8.86l-3 3.87L9 13.14 6 17h12l-3.86-5.14z"/></svg>
+                        <p style="font-weight:600;">Không có tệp nào trong thư mục này</p>
                     </div>
                 `;
                 return;
@@ -863,7 +1001,7 @@ def render_media_manager_html(
                 const fullUrl = window.location.origin + m.url;
                 const mdSnippet = `![${{m.title || m.name}}](${{fullUrl}})`;
                 const ext = m.name.split('.').pop().toUpperCase();
-                const res = m.dimensions || "Chuẩn WebP";
+                const res = m.dimensions || "WebP";
 
                 html += `
                     <div class="media-card">
@@ -873,20 +1011,25 @@ def render_media_manager_html(
                             <img src="${{m.url}}" alt="${{m.name}}" class="media-thumb" loading="lazy">
                         </div>
                         <div class="media-info">
-                            <div class="media-title" title="${{m.name}}">${{m.title || m.name}}</div>
+                            <div class="media-title" title="${{m.name}}">${{m.name}}</div>
                             <div class="media-meta">
                                 <span>${{res}}</span>
                                 <span>${{m.size_kb}} KB</span>
                             </div>
                             <div class="media-actions">
-                                <button type="button" class="btn-card-action" onclick="copyToClipboard('${{mdSnippet.replace(/'/g, "\\\\'") }}', 'Đã sao chép Markdown mô tả form!')" title="Sao chép cú pháp Markdown">
-                                    📋 Markdown
+                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${{mdSnippet.replace(/'/g, "\\\\'") }}', 'Đã chép Markdown!')" title="Sao chép Markdown">
+                                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                                    MD
                                 </button>
-                                <button type="button" class="btn-card-action" onclick="copyToClipboard('${{fullUrl}}', 'Đã sao chép link ảnh trực tiếp!')" title="Sao chép Link URL">
-                                    🔗 Link
+                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${{fullUrl}}', 'Đã chép link URL!')" title="Sao chép URL">
+                                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                                    Link
                                 </button>
-                                <button type="button" class="btn-card-action danger" onclick="deleteMedia('${{m.id}}', '${{m.name}}')" title="Xóa tệp">
-                                    🗑
+                                <button type="button" class="btn-action-icon" onclick="openPreviewModal('${{m.id}}')" title="Sửa tên / đổi thư mục">
+                                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                                </button>
+                                <button type="button" class="btn-action-icon danger" onclick="deleteMedia('${{m.id}}', '${{m.name}}')" title="Xóa tệp">
+                                    <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                                 </button>
                             </div>
                         </div>
@@ -901,13 +1044,17 @@ def render_media_manager_html(
             const item = RAW_MEDIA.find(m => m.id === id);
             if (!item) return;
 
+            currentEditingId = id;
             const fullUrl = window.location.origin + item.url;
             const mdSnippet = `![${{item.title || item.name}}](${{fullUrl}})`;
 
-            document.getElementById("modalFileTitle").textContent = item.title || item.name;
+            document.getElementById("modalFileTitle").textContent = item.name;
             document.getElementById("modalPreviewImg").src = item.url;
             document.getElementById("propFilename").value = item.name;
-            document.getElementById("propFolder").value = item.folder || "general";
+
+            const folderSel = document.getElementById("propFolderSelect");
+            folderSel.value = item.folder || "general";
+
             document.getElementById("propResolution").value = `${{item.dimensions || 'N/A'}} (${{item.size_kb}} KB)`;
             document.getElementById("propUrl").value = fullUrl;
             document.getElementById("propMarkdown").value = mdSnippet;
@@ -921,10 +1068,50 @@ def render_media_manager_html(
             }}
         }}
 
+        async function saveFileChanges() {{
+            if (!currentEditingId) return;
+            const newName = document.getElementById("propFilename").value.trim();
+            const newFolder = document.getElementById("propFolderSelect").value;
+
+            if (!newName) {{
+                alert("Tên tệp không được để trống!");
+                return;
+            }}
+
+            try {{
+                showToast("Đang lưu thay đổi...");
+                const resp = await fetch("/api/v1/media/rename", {{
+                    method: "PATCH",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{
+                        id: currentEditingId,
+                        new_name: newName,
+                        new_folder: newFolder
+                    }})
+                }});
+                const data = await resp.json();
+                if (resp.ok && data.status === "success") {{
+                    const idx = RAW_MEDIA.findIndex(m => m.id === currentEditingId);
+                    if (idx !== -1) {{
+                        RAW_MEDIA[idx] = data.item;
+                    }}
+                    showToast("Đã cập nhật tệp thành công!");
+                    closePreviewModal();
+                    renderDirTree();
+                    populateFolderDropdowns();
+                    filterMedia();
+                }} else {{
+                    alert("Lỗi đổi tên: " + (data.detail || JSON.stringify(data)));
+                }}
+            }} catch (err) {{
+                alert("Lỗi mạng: " + err);
+            }}
+        }}
+
         function copyModalField(elementId) {{
             const el = document.getElementById(elementId);
             if (el) {{
-                copyToClipboard(el.value, "Đã sao chép thông tin!");
+                copyToClipboard(el.value, "Đã sao chép!");
             }}
         }}
 
@@ -962,8 +1149,7 @@ def render_media_manager_html(
 
             dz.addEventListener('drop', (e) => {{
                 const dt = e.dataTransfer;
-                const files = dt.files;
-                handleFilesUpload(files);
+                handleFilesUpload(dt.files);
             }}, false);
         }}
 
@@ -973,7 +1159,7 @@ def render_media_manager_html(
 
         async function handleFilesUpload(files) {{
             if (!files || files.length === 0) return;
-            const targetFolder = (currentFolder === 'all') ? 'guide' : currentFolder;
+            const targetFolder = document.getElementById("uploadFolderSelect").value || "guide";
 
             for (let i = 0; i < files.length; i++) {{
                 const file = files[i];
@@ -982,7 +1168,7 @@ def render_media_manager_html(
                 formData.append("folder", targetFolder);
 
                 try {{
-                    showToast(`Đang nén & tải lên ${{file.name}}...`);
+                    showToast(`Đang tải lên ${{file.name}}...`);
                     const resp = await fetch("/api/v1/media/upload", {{
                         method: "POST",
                         body: formData
@@ -990,16 +1176,17 @@ def render_media_manager_html(
                     const data = await resp.json();
                     if (resp.ok && data.status === "success") {{
                         RAW_MEDIA.unshift(data.item);
-                        showToast(`Đã tải lên ${{file.name}} thành công!`);
+                        showToast(`Đã tải lên ${{file.name}}!`);
                     }} else {{
                         alert("Lỗi tải lên: " + (data.detail || JSON.stringify(data)));
                     }}
                 }} catch (err) {{
-                    alert("Lỗi mạng tải lên: " + err);
+                    alert("Lỗi mạng: " + err);
                 }}
             }}
 
-            renderFolders();
+            renderDirTree();
+            populateFolderDropdowns();
             filterMedia();
         }}
 
@@ -1017,23 +1204,26 @@ def render_media_manager_html(
                     const idx = RAW_MEDIA.findIndex(m => m.id === id);
                     if (idx !== -1) RAW_MEDIA.splice(idx, 1);
                     showToast(`Đã xóa tệp ${{filename}}!`);
-                    renderFolders();
+                    renderDirTree();
+                    populateFolderDropdowns();
                     filterMedia();
                 }} else {{
                     alert("Lỗi xóa: " + (res.detail || JSON.stringify(res)));
                 }}
             }} catch (err) {{
-                alert("Lỗi mạng khi xóa: " + err);
+                alert("Lỗi mạng: " + err);
             }}
         }}
 
-        function createNewFolder() {{
-            const name = prompt("Nhập tên thư mục mới (không dấu, viết thường, ví dụ: banners, tutorials):");
+        function promptNewFolder() {{
+            const currentPrefix = (currentFolder !== 'all' && currentFolder) ? currentFolder + "/" : "";
+            const name = prompt(`Nhập tên thư mục mới (ví dụ: ${{currentPrefix}}subfolder):`, currentPrefix);
             if (name && name.trim()) {{
-                const clean = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                const clean = name.trim().toLowerCase().replace(/[^a-z0-9_/\\-]/g, "").replace(/^\\/+|\\/+$/g, "");
                 if (clean && !ALL_FOLDERS.includes(clean)) {{
                     ALL_FOLDERS.push(clean);
                     selectFolder(clean);
+                    populateFolderDropdowns();
                 }}
             }}
         }}

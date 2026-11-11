@@ -280,24 +280,19 @@ def test_admin_root_redirect_and_sample_images_gallery():
     assert resp_auth.status_code == 302
     assert resp_auth.headers["location"] == "/admin/forms"
 
-    # 3. Authenticated /admin/samples must redirect to #test-samples-section
+    # 3. Authenticated /admin/samples must redirect to /admin/media
     resp_samples = client.get("/admin/samples", headers=auth_header, follow_redirects=False)
     assert resp_samples.status_code == 302
-    assert resp_samples.headers["location"] == "/admin/forms#test-samples-section"
+    assert resp_samples.headers["location"] == "/admin/media"
 
-    # 4. /admin/forms HTML must contain sample images gallery cards and buttons
+    # 4. /admin/forms HTML is clean (samples retired to /admin/media)
     resp_forms = client.get("/admin/forms", headers=auth_header)
     assert resp_forms.status_code == 200
     html_content = resp_forms.text
-    assert "test-samples-section" in html_content
-    assert "sample_app_profile.jpg" in html_content
-    assert "sample_app_income.jpg" in html_content
-    assert "sample_income_report.jpg" not in html_content
-    assert "gsm_sample_car_crop.jpg" not in html_content
-    assert "gsm_sample_car_photo.jpg" not in html_content
-    assert "gsm_sample_bike.jpg" not in html_content
-    assert "official_passing_survey_receipt.jpg" not in html_content
-    assert "btn-download-sample" in html_content
-    assert "btn-copy-sample" in html_content
-    assert "copySampleUrl" in html_content
-    assert 'download="sample_app_income.jpg"' in html_content
+    assert "test-samples-section" not in html_content
+    assert "btnAdminCreate" in html_content
+
+    # 5. /admin/media contains the media manager
+    resp_media = client.get("/admin/media", headers=auth_header)
+    assert resp_media.status_code == 200
+    assert "Quản Lý Media" in resp_media.text

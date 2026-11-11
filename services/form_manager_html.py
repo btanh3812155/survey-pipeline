@@ -5,79 +5,6 @@ import os
 from typing import Dict, Optional, List, Any
 from services.form_engine import FormSchema
 
-DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
-    {
-        "filename": "sample_app_profile.jpg",
-        "title": "Ảnh 1: Hồ Sơ Tài Xế Ứng Dụng",
-        "slot_badge": "Slot 1: Hồ Sơ App",
-        "dimensions": "1568 × 1568",
-        "size_kb": "2.1 MB",
-        "desc": "Màn hình hồ sơ ứng dụng tài xế Xanh SM: Thông tin tài xế, Ví tài xế, Hạng Bạch Kim, Chương trình thưởng hiệu suất.",
-    },
-    {
-        "filename": "sample_vehicle.jpg",
-        "title": "Ảnh 2: Phương Tiện Vận Hành",
-        "slot_badge": "Slot 2: Phương Tiện",
-        "dimensions": "1164 × 1169",
-        "size_kb": "116 KB",
-        "desc": "Ảnh chụp thân xe, đầu xe hoặc vô lăng khoang lái phương tiện Xanh SM (VinFast) phục vụ đối soát.",
-    },
-    {
-        "filename": "sample_app_income.jpg",
-        "title": "Ảnh 3: Doanh Thu Tuần 1 (28/09 - 04/10)",
-        "slot_badge": "Slot 3: Tuần 1",
-        "dimensions": "1080 × 1440",
-        "size_kb": "108 KB",
-        "desc": "Báo cáo thu nhập Tuần 1 Tháng 10: Doanh số 2.721.000 đ, Thu nhập ròng 1.971.591 đ, 18 chuyến hoàn thành.",
-    },
-    {
-        "filename": "sample_income_week_2.jpg",
-        "title": "Ảnh 4: Doanh Thu Tuần 2 (05/10 - 11/10)",
-        "slot_badge": "Slot 4: Tuần 2",
-        "dimensions": "1080 × 1440",
-        "size_kb": "108 KB",
-        "desc": "Báo cáo thu nhập Tuần 2 Tháng 10: Doanh số 3.150.000 đ, Thu nhập ròng 2.450.000 đ, 22 chuyến hoàn thành.",
-    },
-    {
-        "filename": "sample_income_week_3.jpg",
-        "title": "Ảnh 5: Doanh Thu Tuần 3 (12/10 - 18/10)",
-        "slot_badge": "Slot 5: Tuần 3",
-        "dimensions": "1080 × 1440",
-        "size_kb": "108 KB",
-        "desc": "Báo cáo thu nhập Tuần 3 Tháng 10: Doanh số 2.890.000 đ, Thu nhập ròng 2.150.000 đ, 19 chuyến hoàn thành.",
-    },
-    {
-        "filename": "sample_income_week_4.jpg",
-        "title": "Ảnh 6: Doanh Thu Tuần 4 (19/10 - 25/10)",
-        "slot_badge": "Slot 6: Tuần 4",
-        "dimensions": "1080 × 1440",
-        "size_kb": "109 KB",
-        "desc": "Báo cáo thu nhập Tuần 4 Tháng 10: Doanh số 3.420.000 đ, Thu nhập ròng 2.700.000 đ, 25 chuyến hoàn thành.",
-    },
-    {
-        "filename": "sample_income_week_5.jpg",
-        "title": "Ảnh 7: Doanh Thu Tuần 5 (26/10 - 01/11)",
-        "slot_badge": "Slot 7: Tuần 5",
-        "dimensions": "1080 × 1440",
-        "size_kb": "108 KB",
-        "desc": "Báo cáo thu nhập Tuần 5 Tháng 10: Doanh số 2.950.000 đ, Thu nhập ròng 2.280.000 đ, 20 chuyến hoàn thành.",
-    },
-]
-
-def get_sample_images_list() -> List[Dict[str, Any]]:
-    samples_dir = os.path.join(os.getcwd(), "data", "test_samples")
-    result = []
-
-    for item in DEFAULT_SAMPLE_IMAGES:
-        fname = item["filename"]
-        fpath = os.path.join(samples_dir, fname)
-        entry = dict(item)
-        if os.path.isfile(fpath):
-            sz = os.path.getsize(fpath)
-            entry["size_kb"] = f"{sz / 1024:.1f} KB" if sz < 1024 * 1024 else f"{sz / (1024 * 1024):.1f} MB"
-        result.append(entry)
-
-    return result
 def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6, environment: str = "production") -> str:
     is_dev = (str(environment).lower() != "production")
     if is_dev:
@@ -126,41 +53,6 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             </div>
         </div>
         """
-    sample_images = get_sample_images_list()
-    samples_cards_html = ""
-    for s in sample_images:
-        fname = s["filename"]
-        title_esc = html.escape(s["title"])
-        badge_esc = html.escape(s["slot_badge"])
-        dim_esc = html.escape(s["dimensions"])
-        size_esc = html.escape(s["size_kb"])
-        desc_esc = html.escape(s["desc"])
-        url = f"/samples/{fname}"
-
-        samples_cards_html += f"""
-        <div class="sample-card">
-            <div class="sample-thumb-wrap" onclick="window.open('{url}', '_blank')">
-                <img src="{url}" alt="{title_esc}" loading="lazy">
-                <span class="sample-thumb-badge">{badge_esc}</span>
-                <span class="sample-thumb-meta">{dim_esc} • {size_esc}</span>
-            </div>
-            <div class="sample-body">
-                <div class="sample-title">{title_esc}</div>
-                <div class="sample-desc">{desc_esc}</div>
-                <div class="sample-actions">
-                    <a href="{url}" download="{fname}" class="btn-download-sample">
-                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
-                        Tải Về
-                    </a>
-                    <button type="button" onclick="copySampleUrl('{url}', this)" class="btn-copy-sample">
-                        <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                        Copy Link
-                    </button>
-                </div>
-            </div>
-        </div>
-        """
-
     prev_disabled = "disabled" if current_page <= 1 else ""
     next_disabled = "disabled" if current_page >= total_pages else ""
     return f"""<!DOCTYPE html>
@@ -510,10 +402,6 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
                     Quản Lý Media
                 </a>
-                <a href="#test-samples-section" class="btn-samples-nav" id="btnAdminSamples">
-                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-                    Ảnh Mẫu Test
-                </a>
                 <a href="/admin/forms/create" class="btn-create" id="btnAdminCreate">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                     Tạo Biểu Mẫu Mới
@@ -531,51 +419,15 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             <a href="/admin/forms?page={current_page + 1}" class="btn-page {next_disabled}">Trang sau</a>
         </div>
 
-        <section id="test-samples-section" class="samples-section">
-            <div class="samples-header">
-                <div>
-                    <h2 id="txtSamplesTitle" style="display:flex; align-items:center; gap:8px;">
-                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:#38bdf8;"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-                        Kho Ảnh Mẫu Thử Nghiệm
-                    </h2>
-                    <p id="txtSamplesSub">Tải về máy điện thoại hoặc copy link ảnh chuẩn để kiểm thử các slot camera WebRTC & AI</p>
-                </div>
-                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <a href="/samples/TrustBridge_Test_Image_Set_7Slots.zip" download class="btn-create" style="background:#0284c7; padding:8px 14px; font-size:0.82rem; text-decoration:none;">
-                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
-                        Tải Trọn Bộ 7 Ảnh Test (.zip)
-                    </a>
-                    <span class="badge active">{len(sample_images)} Ảnh Có Sẵn</span>
-                </div>
-            </div>
-            <div class="samples-grid">
-                {samples_cards_html}
-            </div>
-        </section>
     </div>
     <script>
         let currentLang = localStorage.getItem('tb_lang') || 'vi';
-        function copySampleUrl(path, btn) {{
-            const fullUrl = window.location.origin + path;
-            navigator.clipboard.writeText(fullUrl).then(() => {{
-                const orig = btn.innerHTML;
-                btn.innerHTML = "Đã sao chép link!";
-            }}).catch(() => {{
-                prompt("Sao chép link ảnh:", fullUrl);
-            }});
-        }}
         function applyAdminI18n() {{
             document.getElementById('adminLangCode').textContent = currentLang.toUpperCase();
-            const btnSamples = document.getElementById('btnAdminSamples');
-            const txtSTitle = document.getElementById('txtSamplesTitle');
-            const txtSSub = document.getElementById('txtSamplesSub');
             if (currentLang === 'en') {{
                 document.getElementById('txtAdminTitle').textContent = "Survey Forms Management";
                 document.getElementById('txtAdminSub').textContent = "Total: {total_forms} active forms in system";
                 document.getElementById('btnAdminCreate').textContent = "+ Create New Form";
-                if (btnSamples) btnSamples.textContent = "Test Samples";
-                if (txtSTitle) txtSTitle.textContent = "Test Sample Images Gallery";
-                if (txtSSub) txtSSub.textContent = "Download to phone camera roll or copy links to test WebRTC camera slots & AI verification";
             }} else {{
                 document.getElementById('txtAdminTitle').textContent = "Danh Sách Biểu Mẫu Khảo Sát";
                 document.getElementById('txtAdminSub').textContent = "Tổng cộng: {total_forms} biểu mẫu trong hệ thống";

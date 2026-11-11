@@ -1,4 +1,5 @@
 import os
+import shutil
 import html
 import re
 import secrets
@@ -313,13 +314,20 @@ seed_media_storage()
 if os.path.exists(MEDIA_STORAGE_DIR):
     app.mount("/media", StaticFiles(directory=MEDIA_STORAGE_DIR), name="media")
 
-def scan_media_storage_files() -> List[Dict[str, Any]]:
+def scan_media_storage_files() -> Tuple[List[Dict[str, Any]], List[str]]:
     items = []
+    folders_set = set(["general", "guide", "forms"])
     if not os.path.exists(MEDIA_STORAGE_DIR):
-        return items
+        return items, sorted(list(folders_set))
     for root, dirs, files in os.walk(MEDIA_STORAGE_DIR):
         rel_dir = os.path.relpath(root, MEDIA_STORAGE_DIR)
         folder = "general" if rel_dir == "." else rel_dir.replace(os.sep, "/")
+        if folder != "general":
+            folders_set.add(folder)
+        for d in dirs:
+            sub = os.path.relpath(os.path.join(root, d), MEDIA_STORAGE_DIR).replace(os.sep, "/")
+            if sub != ".":
+                folders_set.add(sub)
         for f in files:
             if f.startswith(".") or not f.lower().endswith((".webp", ".jpg", ".jpeg", ".png", ".gif", ".svg")):
                 continue
@@ -334,8 +342,9 @@ def scan_media_storage_files() -> List[Dict[str, Any]]:
                         dims = f"{im.width} × {im.height}"
                 except Exception:
                     dims = "Chuẩn WebP"
+                file_id = f"{folder}/{f}" if folder != "general" else f
                 items.append({
-                    "id": f"{folder}/{f}",
+                    "id": file_id,
                     "name": f,
                     "title": os.path.splitext(f)[0].replace("_", " ").title(),
                     "folder": folder,
@@ -347,7 +356,7 @@ def scan_media_storage_files() -> List[Dict[str, Any]]:
             except Exception as e:
                 logger.warning(f"Error scanning media file {full_path}: {e}")
     items.sort(key=lambda x: x.get("modified_at", ""), reverse=True)
-    return items
+    return items, sorted(list(folders_set))
 
 @app.get("/api/v1/caddy-check", include_in_schema=False)
 async def caddy_on_demand_tls_check(domain: str):
@@ -743,7 +752,7 @@ async def admin_root(admin_user: str = Depends(verify_admin_auth)):
 @app.get("/admin/samples", include_in_schema=False)
 async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
     """Direct alias to the test sample images gallery in admin."""
-    return RedirectResponse(url="/admin/forms#test-samples-section", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(url="/admin/media", status_code=status.HTTP_302_FOUND)
 
 @app.get("/admin/forms", response_class=HTMLResponse)
 async def get_forms_list(page: int = 1, admin_user: str = Depends(verify_admin_auth)):
@@ -770,12 +779,7 @@ async def admin_media_manager_page(
     admin_user: str = Depends(verify_admin_auth),
 ):
     """Google Drive-style Media Manager Admin UI."""
-    media_files = scan_media_storage_files()
-    subfolders = ["guide", "forms", "general"]
-    for m in media_files:
-        f = m.get("folder")
-        if f and f not in subfolders:
-            subfolders.append(f)
+    media_files, subfolders = scan_media_storage_files()
     storage_type = "Cloudflare R2" if (settings.R2_ACCOUNT_ID and settings.R2_ACCESS_KEY_ID) else "Caddy Static (/media)"
     return HTMLResponse(
         content=render_media_manager_html(
@@ -790,7 +794,8 @@ async def admin_media_manager_page(
 
 @app.get("/api/v1/media")
 async def list_media_api(admin_user: str = Depends(verify_admin_auth)):
-    return {"status": "success", "files": scan_media_storage_files()}
+    media_files, subfolders = scan_media_storage_files()
+    return {"status": "success", "files": media_files, "folders": subfolders}
 
 @app.post("/api/v1/media/upload")
 async def upload_media_api(
@@ -798,7 +803,9 @@ async def upload_media_api(
     folder: str = Form("guide"),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    clean_folder = re.sub(r"[^a-zA-Z0-9_-]", "", folder.strip().lower()) or "guide"
+    clean_folder = folder.strip("/\\.").replace("\\", "/")
+    if ".." in clean_folder or not clean_folder:
+        clean_folder = "guide"
     target_dir = os.path.join(MEDIA_STORAGE_DIR, clean_folder)
     os.makedirs(target_dir, exist_ok=True)
 
@@ -815,8 +822,8 @@ async def upload_media_api(
         webp_bytes = raw_bytes
         dims = "Chuẩn WebP"
 
-    async with aiofiles.open(final_path, "wb") as f_out:
-        await f_out.write(webp_bytes)
+    with open(final_path, "wb") as f_out:
+        f_out.write(webp_bytes)
 
     size_kb = max(1, round(len(webp_bytes) / 1024))
     rel_url = f"/media/{clean_folder}/{final_filename}"
@@ -837,10 +844,9 @@ async def delete_media_api(
     id: str,
     admin_user: str = Depends(verify_admin_auth),
 ):
-    clean_id = id.strip("/\\.")
-    parts = clean_id.split("/")
-    if len(parts) > 2 or ".." in clean_id:
+    if ".." in id:
         raise HTTPException(status_code=400, detail="Invalid media id")
+    clean_id = id.strip("/\\")
     full_path = os.path.realpath(os.path.join(MEDIA_STORAGE_DIR, clean_id))
     base_path = os.path.realpath(MEDIA_STORAGE_DIR)
     if not (full_path == base_path or full_path.startswith(base_path + os.sep)):
@@ -852,6 +858,78 @@ async def delete_media_api(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     raise HTTPException(status_code=404, detail="Media file not found")
+class MediaRenamePayload(BaseModel):
+    id: str
+    new_name: str
+    new_folder: Optional[str] = None
+
+@app.patch("/api/v1/media/rename")
+async def rename_media_api(
+    payload: MediaRenamePayload,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    clean_id = payload.id.strip("/\\.")
+    if ".." in clean_id:
+        raise HTTPException(status_code=400, detail="Invalid media id")
+    old_full_path = os.path.realpath(os.path.join(MEDIA_STORAGE_DIR, clean_id))
+    base_path = os.path.realpath(MEDIA_STORAGE_DIR)
+    if not (old_full_path == base_path or old_full_path.startswith(base_path + os.sep)):
+        raise HTTPException(status_code=400, detail="Path traversal forbidden")
+    if not (os.path.exists(old_full_path) and os.path.isfile(old_full_path)):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    raw_name = payload.new_name.strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="Filename cannot be empty")
+    name_root, ext = os.path.splitext(raw_name)
+    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name_root).strip("_")
+    clean_ext = ext.lower() if ext.lower() in (".webp", ".jpg", ".jpeg", ".png", ".gif", ".svg") else ".webp"
+    final_name = f"{clean_name}{clean_ext}"
+
+    if payload.new_folder is not None:
+        target_folder = payload.new_folder.strip("/\\.").replace("\\", "/")
+        if ".." in target_folder:
+            raise HTTPException(status_code=400, detail="Invalid folder")
+    else:
+        target_folder = os.path.dirname(clean_id).replace("\\", "/")
+
+    dest_dir = os.path.realpath(os.path.join(MEDIA_STORAGE_DIR, target_folder)) if target_folder and target_folder != "general" else base_path
+    if not (dest_dir == base_path or dest_dir.startswith(base_path + os.sep)):
+        raise HTTPException(status_code=400, detail="Path traversal forbidden")
+    os.makedirs(dest_dir, exist_ok=True)
+    new_full_path = os.path.join(dest_dir, final_name)
+
+    try:
+        shutil.move(old_full_path, new_full_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rename/move file: {e}")
+
+    new_folder_str = "general" if dest_dir == base_path else os.path.relpath(dest_dir, base_path).replace(os.sep, "/")
+    new_id = f"{new_folder_str}/{final_name}" if new_folder_str != "general" else final_name
+    rel_url = f"/media/{new_folder_str}/{final_name}" if new_folder_str != "general" else f"/media/{final_name}"
+
+    dims = "WebP"
+    try:
+        with Image.open(new_full_path) as im:
+            dims = f"{im.width} × {im.height}"
+    except Exception:
+        pass
+    st = os.stat(new_full_path)
+    size_kb = max(1, round(st.st_size / 1024))
+
+    return {
+        "status": "success",
+        "item": {
+            "id": new_id,
+            "name": final_name,
+            "title": clean_name.replace("_", " ").title(),
+            "folder": new_folder_str,
+            "size_kb": size_kb,
+            "dimensions": dims,
+            "url": rel_url,
+            "modified_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
+        }
+    }
 
 @app.post("/api/v1/forms/upload-schema")
 async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):
