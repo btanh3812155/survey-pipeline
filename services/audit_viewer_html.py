@@ -11,8 +11,16 @@ from typing import List, Dict, Any, Optional
 
 def render_audit_viewer_html(
     audit_logs: List[Dict[str, Any]],
-    stats: Optional[Dict[str, int]] = None
+    stats: Optional[Dict[str, int]] = None,
+    environment: str = "production",
 ) -> str:
+    is_dev = (str(environment).lower() != "production")
+    if is_dev:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
+        env_subtext = "Môi trường Thử Nghiệm / Staging độc lập"
+    else:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
+        env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
     stats = stats or {
         "total": len(audit_logs),
         "ingress_normalizer": sum(1 for log in audit_logs if log.get("hop_number") in (1, 2) or log.get("component_name") in ("INGRESS", "NORMALIZER")),
@@ -474,8 +482,9 @@ def render_audit_viewer_html(
                 <h1>
                     <svg viewBox="0 0 24 24" style="width:22px; height:22px; fill:#38bdf8; display:inline-block; vertical-align:middle; margin-right:8px;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
                     Nhật Ký Kiểm Toán Toàn Hệ Thống
+                    {env_badge}
                 </h1>
-                <p>Immutable Audit Trail & Cryptographic Hop Chains (Decree 13 / GDPR Legal Compliance)</p>
+                <p>Immutable Audit Trail & Cryptographic Hop Chains ({env_subtext})</p>
             </div>
             <div class="header-actions">
                 <a href="/admin/forms" class="nav-btn">

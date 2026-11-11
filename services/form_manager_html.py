@@ -78,8 +78,14 @@ def get_sample_images_list() -> List[Dict[str, Any]]:
         result.append(entry)
 
     return result
-def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6) -> str:
-    # Deduplicate forms by form_id to prevent phantom duplicates
+def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1, page_size: int = 6, environment: str = "production") -> str:
+    is_dev = (str(environment).lower() != "production")
+    if is_dev:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
+        env_subtext = "Môi trường Thử Nghiệm / Staging độc lập"
+    else:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
+        env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
     unique_forms: Dict[str, FormSchema] = {}
     for f in forms_registry.values():
         unique_forms[f.form_id] = f
@@ -488,8 +494,8 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
         </div>
         <header>
             <div>
-                <h1 id="txtAdminTitle">Danh Sách Biểu Mẫu Khảo Sát</h1>
-                <p id="txtAdminSub">Tổng cộng: {total_forms} biểu mẫu trong hệ thống</p>
+                <h1 id="txtAdminTitle">Danh Sách Biểu Mẫu Khảo Sát {env_badge}</h1>
+                <p id="txtAdminSub">Tổng cộng: {total_forms} biểu mẫu trong hệ thống ({env_subtext})</p>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <a href="/admin/submissions" class="btn-samples-nav" id="btnAdminSubmissions">
@@ -639,16 +645,24 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
             const formSlug = (formId || "income_survey").replace(/_/g, "-");
             const host = window.location.hostname;
             let baseDomain = host;
-            if (host.includes("sslip.io")) {{
-                const parts = host.split(".");
-                const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
-                if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
-                    baseDomain = parts.slice(ipIndex).join(".");
-                }} else {{
-                    baseDomain = "146.190.201.32.sslip.io";
+            if (host.includes("dev") || host.includes("staging")) {{
+                if (host.includes("sslip.io")) {{
+                    baseDomain = "dev.146.190.201.32.sslip.io";
+                }} else if (host.includes("trustbridgevn.com")) {{
+                    baseDomain = "dev.survey.trustbridgevn.com";
                 }}
-            }} else if (host.includes("trustbridgevn.com")) {{
-                baseDomain = "survey.trustbridgevn.com";
+            }} else {{
+                if (host.includes("sslip.io")) {{
+                    const parts = host.split(".");
+                    const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
+                    if (ipIndex !== -1 && ipIndex + 3 < parts.length) {{
+                        baseDomain = parts.slice(ipIndex).join(".");
+                    }} else {{
+                        baseDomain = "146.190.201.32.sslip.io";
+                    }}
+                }} else if (host.includes("trustbridgevn.com")) {{
+                    baseDomain = "survey.trustbridgevn.com";
+                }}
             }}
             const protocol = window.location.protocol;
             return `${{protocol}}//${{formSlug}}-${{randSuffix}}.${{baseDomain}}`;
@@ -752,7 +766,12 @@ def render_forms_list_html(forms_registry: Dict[str, FormSchema], page: int = 1,
 </html>
 """
 
-def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = False) -> str:
+def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = False, environment: str = "production") -> str:
+    is_dev = (str(environment).lower() != "production")
+    if is_dev:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
+    else:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
     schema_dict = schema.model_dump() if schema else {
         "form_id": "",
         "title": "",
@@ -1020,7 +1039,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
             <a href="/admin/forms" class="back-link" id="linkBackAdmin">Quay lại danh sách biểu mẫu</a>
         </div>
         <header>
-            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + (html.escape(schema.title) if schema else '')}</h1>
+            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + (html.escape(schema.title) if schema else '')} {env_badge}</h1>
         </header>
 
         <!-- 3 Tabs Navigation -->

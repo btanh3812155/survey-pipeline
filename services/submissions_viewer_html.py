@@ -16,8 +16,16 @@ def render_submissions_viewer_html(
     selected_form_id: Optional[str] = None,
     stats: Optional[Dict[str, int]] = None,
     current_mode: str = "all",
+    environment: str = "production",
 ) -> str:
     forms = forms or {}
+    is_dev = (str(environment).lower() != "production")
+    if is_dev:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ DEV REPLICA (surveydb_dev)</span>'
+        env_subtext = "Môi trường Thử Nghiệm / Staging độc lập"
+    else:
+        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ PRODUCTION</span>'
+        env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
     stats = stats or {
         "total": len(submissions),
         "approved": sum(1 for s in submissions if s.get("status") == "APPROVED"),
@@ -623,8 +631,9 @@ def render_submissions_viewer_html(
                 <h1>
                     <svg viewBox="0 0 24 24" style="width:22px; height:22px; fill:#60a5fa; display:inline-block; vertical-align:middle; margin-right:8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
                     Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn
+                    {env_badge}
                 </h1>
-                <p>Tra cứu, lọc câu hỏi, sắp xếp cột & xuất dữ liệu phân tách theo từng biểu mẫu</p>
+                <p>Tra cứu, lọc câu hỏi, sắp xếp cột & xuất dữ liệu phân tách theo từng biểu mẫu ({env_subtext})</p>
             </div>
             <div class="header-actions">
                 <a href="/admin/forms" class="nav-btn">

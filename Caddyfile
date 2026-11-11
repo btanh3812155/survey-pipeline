@@ -32,7 +32,7 @@ survey.trustbridgevn.com {
     }
 }
 
-dev.146.190.201.32.sslip.io, dev.survey.trustbridgevn.com, staging.survey.trustbridgevn.com {
+dev.146.190.201.32.sslip.io, admin.dev.146.190.201.32.sslip.io, dev-admin.146.190.201.32.sslip.io, dev-submissions.146.190.201.32.sslip.io, dev-data.146.190.201.32.sslip.io, dev-audit.146.190.201.32.sslip.io, submissions.dev.146.190.201.32.sslip.io, data.dev.146.190.201.32.sslip.io, audit.dev.146.190.201.32.sslip.io, dev.survey.trustbridgevn.com, staging.survey.trustbridgevn.com, dev-admin.trustbridgevn.com, admin-dev.trustbridgevn.com, dev-data.trustbridgevn.com, data-dev.trustbridgevn.com, dev-submissions.trustbridgevn.com, submissions-dev.trustbridgevn.com, dev-audit.trustbridgevn.com, audit-dev.trustbridgevn.com {
     tls {
         on_demand
     }

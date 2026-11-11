@@ -491,11 +491,10 @@ FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 async def root_redirect(request: Request):
     """Auto-redirects root URL to /forms/income_survey or matches form from subdomain."""
     host = (request.headers.get("host") or "").lower()
-    if host.startswith("audit.") or host.startswith("logs."):
+    if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
-    if host.startswith("submissions.") or host.startswith("view.") or host.startswith("data."):
+    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "dev-admin.", "admin-dev.", "submissions-dev.", "data-dev.", "admin.dev.", "data.dev.", "submissions.dev.")):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
-
     # Check if host is a form-specific subdomain with random suffix, e.g. income-survey-dfjhgkshgksd.domain.com
     sub_label = host.split(":")[0].split(".")[0]
     parts = sub_label.split("-")
@@ -578,11 +577,10 @@ def get_ctv_options_for_form(schema: FormSchema) -> List[str]:
 async def get_dynamic_form(request: Request, form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
     host = (request.headers.get("host") or "").lower()
-    if (host.startswith("audit.") or host.startswith("logs.")) and form_id in ("default", "camera-form"):
+    if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
-    if (host.startswith("submissions.") or host.startswith("view.") or host.startswith("data.")) and form_id in ("default", "camera-form"):
+    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "dev-admin.", "admin-dev.", "submissions-dev.", "data-dev.", "admin.dev.", "data.dev.", "submissions.dev.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
-    
     # 1. Primary: Check ?ref= query parameter (also supports ?ctv=, ?collaborator_id=)
     ref_param = (
         request.query_params.get("ref")
@@ -692,12 +690,12 @@ async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
 @app.get("/admin/forms", response_class=HTMLResponse)
 async def get_forms_list(page: int = 1, admin_user: str = Depends(verify_admin_auth)):
     """Admin Web UI with pagination to view and manage forms."""
-    return HTMLResponse(content=render_forms_list_html(FORM_REGISTRY, page=page), status_code=200)
+    return HTMLResponse(content=render_forms_list_html(FORM_REGISTRY, page=page, environment=settings.ENVIRONMENT), status_code=200)
 
 @app.get("/admin/forms/create", response_class=HTMLResponse)
 async def create_new_form_page(admin_user: str = Depends(verify_admin_auth)):
     """Dedicated 3-tab creation page."""
-    return HTMLResponse(content=render_form_editor_html(None, is_new=True), status_code=200)
+    return HTMLResponse(content=render_form_editor_html(None, is_new=True, environment=settings.ENVIRONMENT), status_code=200)
 
 @app.get("/admin/forms/edit/{form_id}", response_class=HTMLResponse)
 async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_auth)):
@@ -705,7 +703,7 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
-    return HTMLResponse(content=render_form_editor_html(schema, is_new=False), status_code=200)
+    return HTMLResponse(content=render_form_editor_html(schema, is_new=False, environment=settings.ENVIRONMENT), status_code=200)
 
 
 
@@ -930,7 +928,7 @@ async def admin_submissions_dashboard(
     subs = await fetch_aggregated_submissions(form_id=form_id, status_filter=status, search=search, limit=2000)
     forms_dict = {fid: f.model_dump() for fid, f in FORM_REGISTRY.items()}
     return HTMLResponse(
-        content=render_submissions_viewer_html(subs, forms=forms_dict, selected_form_id=form_id),
+        content=render_submissions_viewer_html(subs, forms=forms_dict, selected_form_id=form_id, environment=settings.ENVIRONMENT),
         status_code=200,
     )
 
@@ -1182,7 +1180,7 @@ async def admin_audit_dashboard(
 ):
     """Web UI dashboard to view all immutable audit logs and cryptographic hop chains."""
     logs = await fetch_aggregated_audit_logs()
-    return HTMLResponse(content=render_audit_viewer_html(logs), status_code=200)
+    return HTMLResponse(content=render_audit_viewer_html(logs, environment=settings.ENVIRONMENT), status_code=200)
 
 
 @app.get("/api/v1/audit/logs")
