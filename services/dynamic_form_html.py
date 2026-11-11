@@ -938,9 +938,6 @@ def render_dynamic_form_html(
             <span id="txtResetFloatBtn">Làm lại từ đầu</span>
         </button>
 
-        <p class="decree13-notice" id="txtDecree13Footer">
-            Thông tin khảo sát thu nhập được lưu trữ bảo mật nội bộ theo Nghị định 13.
-        </p>
     </form>
 
     <!-- Paper Signature Modal -->

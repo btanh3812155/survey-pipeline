@@ -608,7 +608,7 @@ def render_audit_viewer_html(
                             <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
                             Chữ Ký Mật Mã Học Hợp Lệ (Tamper-Evident SHA-256)
                         </b>
-                        <div class="seal-verification-text">Bảo đảm tính toàn vẹn dữ liệu chuỗi chặng theo Nghị định 13/2023/NĐ-CP & Luật An ninh mạng.</div>
+                        <div class="seal-verification-text">Bảo đảm tính toàn vẹn và xác thực mật mã dữ liệu chuỗi chặng.</div>
                     </div>
                     <span class="badge action-ok">VERIFIED</span>
                 </div>
