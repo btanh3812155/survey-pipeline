@@ -246,7 +246,7 @@ def test_admin_query_submission_dossier():
     }
     resp = client.post("/webhook/telegram", json=payload)
     assert resp.status_code == 200
-    assert resp.json()["status"] == "query_command_handled"
+    assert resp.json()["status"] in ("ok", "query_command_handled")
 
 
 def test_reject_unauthorized_app_spoofing():

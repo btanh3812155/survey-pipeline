@@ -1036,6 +1036,7 @@ def render_submissions_viewer_html(
                 );
             }}
 
+            baseCols.push({{ key: 'action_status', label: 'Tác Vụ (Checklist)' }});
             baseCols.push({{ key: '_actions', label: 'Thao Tác', noSort: true }});
             return baseCols;
         }}
@@ -1103,7 +1104,27 @@ def render_submissions_viewer_html(
                         }} else if (k === 'total_trips') {{
                             const trips = r.total_trips || (r.form_data && r.form_data.total_trips) || '-';
                             rowHtml += `<td><span class="badge badge-pill">${{escapeHtml(String(trips))}}</span></td>`;
-                        }} else if (k === '_actions') {{
+                        }} else if (k === 'action_status') {{
+                            const acts = r.action_status || {{}};
+                            let chips = '';
+                            const defs = [
+                                {{ id: 'r2_upload', label: 'R2' }},
+                                {{ id: 'telegram_notify', label: 'TG' }},
+                                {{ id: 'lark_sync', label: 'Lark' }},
+                                {{ id: 'gdrive_sync', label: 'Drive' }},
+                                {{ id: 'billing_ledger', label: 'Ví' }}
+                            ];
+                            defs.forEach(d => {{
+                                const st = (acts[d.id] && acts[d.id].status) || 'PENDING';
+                                let cls = 'badge-pill';
+                                let icon = '⏳';
+                                if (st === 'COMPLETED') {{ cls = 'badge-approved'; icon = '✓'; }}
+                                else if (st === 'FAILED') {{ cls = 'badge-rejected'; icon = '✕'; }}
+                                else if (st === 'RUNNING') {{ cls = 'badge-review'; icon = '⚡'; }}
+                                else if (st === 'SKIPPED') {{ cls = 'badge-pill'; icon = '-'; }}
+                                chips += `<span class="badge ${{cls}}" style="padding:1px 5px; font-size:0.68rem; margin-right:3px;" title="${{d.label}}: ${{st}}">${{d.label}} ${{icon}}</span>`;
+                            }});
+                            rowHtml += `<td>${{chips}}</td>`;
                             rowHtml += `<td style="text-align:right;">
                                 <button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem;" onclick="openInspectorModal('${{r.submission_id}}')">Xem</button>
                             </td>`;
@@ -1200,6 +1221,37 @@ def render_submissions_viewer_html(
                         <div class="meta-item"><label>Biển Số Xe</label><span>${{r.license_plate || '-'}}</span></div>
                         <div class="meta-item"><label>Nguồn Dữ Liệu</label><span>${{r.mode || 'PROD_MODE'}}</span></div>
                         <div class="meta-item"><label>Thời Gian Nộp</label><span>${{formatTimestamp(r.created_at || r.submitted_at)}}</span></div>
+                    </div>
+                    <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; font-weight:700; color:#38bdf8; text-transform:uppercase;">Tiến Độ Tác Vụ (Action Checklist)</span>
+                            <button type="button" class="btn-toolbar" style="padding:3px 8px; font-size:0.72rem;" onclick="retrySubmissionActions('${{r.submission_id}}')">↺ Thử lại tác vụ</button>
+                        </div>
+                        <div id="modalActionChecklistRows">
+                            ${{(() => {{
+                                const acts = r.action_status || {{}};
+                                const defs = [
+                                    {{ id: 'r2_upload', name: 'Lưu trữ ảnh Cloudflare R2' }},
+                                    {{ id: 'telegram_notify', name: 'Thông báo Telegram Admin' }},
+                                    {{ id: 'lark_sync', name: 'Đồng bộ bảng Lark Base' }},
+                                    {{ id: 'gdrive_sync', name: 'Đồng bộ Google Drive Deliverables' }},
+                                    {{ id: 'billing_ledger', name: 'Sổ cái thù lao đối soát' }}
+                                ];
+                                return defs.map(d => {{
+                                    const a = acts[d.id] || {{}};
+                                    const st = a.status || 'PENDING';
+                                    let cls = 'badge-pill';
+                                    if (st === 'COMPLETED') cls = 'badge-approved';
+                                    else if (st === 'FAILED') cls = 'badge-rejected';
+                                    else if (st === 'RUNNING') cls = 'badge-review';
+                                    const err = a.error ? `<div style="font-size:0.7rem; color:#f87171; margin-top:2px;">${{escapeHtml(a.error)}}</div>` : '';
+                                    return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #1e293b; font-size:0.8rem;">
+                                        <span>${{d.name}}</span>
+                                        <div style="text-align:right;"><span class="badge ${{cls}}">${{st}}</span>${{err}}</div>
+                                    </div>`;
+                                }}).join('');
+                            }})()}}
+                        </div>
                     </div>
                     ${{r.rejection_reason ? `<div style="background:var(--danger-bg); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px; color:#fca5a5;"><b style="color:var(--danger);">Lý do từ chối:</b> ${{escapeHtml(r.rejection_reason)}}</div>` : ''}}
                     <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Các Câu Trả Lời</h4>
@@ -1316,6 +1368,18 @@ def render_submissions_viewer_html(
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
+        }}
+        async function retrySubmissionActions(subId) {{
+            try {{
+                const resp = await fetch(`/api/v1/submissions/${{encodeURIComponent(subId)}}/retry-actions`, {{ method: 'POST' }});
+                if (resp.ok) {{
+                    alert('Đã kích hoạt thử lại các tác vụ cho #' + subId + ' thành công!');
+                }} else {{
+                    alert('Lỗi kích hoạt thử lại tác vụ.');
+                }}
+            }} catch(e) {{
+                alert('Lỗi kết nối: ' + e);
+            }}
         }}
     </script>
 </body>

@@ -370,3 +370,43 @@ class TestArchitectFixes:
             assert data.get("status") == "REJECTED"
             assert "trùng" in data.get("reason", "").lower()
             assert data.get("duplicate_detected") is True
+
+    @pytest.mark.asyncio
+    async def test_action_checklist_lease_and_fault_isolation(self):
+        """Verify action checklist initial states, lease acquisition, and idempotent completion."""
+        from services.action_checklist import (
+            init_action_checklist,
+            acquire_action_lease,
+            update_action_record,
+            fetch_action_status,
+        )
+        # 1. Approved without collaborator skips billing ledger
+        chk = init_action_checklist(is_approved=True, has_collaborator=False)
+        assert chk["r2_upload"]["status"] == "PENDING"
+        assert chk["telegram_notify"]["status"] == "PENDING"
+        assert chk["lark_sync"]["status"] == "PENDING"
+        assert chk["gdrive_sync"]["status"] == "PENDING"
+        assert chk["billing_ledger"]["status"] == "SKIPPED"
+
+        # 2. Rejected submission skips external deliverables
+        rej_chk = init_action_checklist(is_approved=False, has_collaborator=True)
+        assert rej_chk["gdrive_sync"]["status"] == "SKIPPED"
+        assert rej_chk["lark_sync"]["status"] == "SKIPPED"
+        assert rej_chk["billing_ledger"]["status"] == "SKIPPED"
+
+        # 3. Lease acquisition guard (test mode)
+        sub_id = "DEV-CHK-TEST-001"
+        # Acquire lease on r2_upload
+        lease1 = await acquire_action_lease(db_pool=None, submission_id=sub_id, action="r2_upload", lease_seconds=30, is_test_mode=True)
+        assert lease1 is True
+
+        # Mark as completed
+        await update_action_record(db_pool=None, submission_id=sub_id, action="r2_upload", status="COMPLETED", meta={"url": "https://r2/test.webp"}, is_test_mode=True)
+
+        # Re-acquiring lease on COMPLETED action must return False (idempotency guard)
+        lease2 = await acquire_action_lease(db_pool=None, submission_id=sub_id, action="r2_upload", lease_seconds=30, is_test_mode=True)
+        assert lease2 is False
+
+        status_map = await fetch_action_status(db_pool=None, submission_id=sub_id, is_test_mode=True)
+        assert status_map["r2_upload"]["status"] == "COMPLETED"
+        assert status_map["r2_upload"]["url"] == "https://r2/test.webp"

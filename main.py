@@ -36,8 +36,12 @@ from services.duplicate_detector import (
 from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
 from services.submissions_viewer_html import render_submissions_viewer_html
+from services.action_checklist import (
+    init_action_checklist,
+    dispatch_action_checklist,
+    fetch_action_status,
+)
 from services.audit_viewer_html import render_audit_viewer_html
-from services.lark_base_sync import sync_submission_to_lark_base
 from services.google_drive_delivery import (
     upload_to_google_drive,
     has_google_credentials,
@@ -823,7 +827,7 @@ async def fetch_aggregated_submissions(
                             consent_choice, vehicle_type, car_model, gsm_duration, gsm_contract_type,
                             daily_trips, monthly_income_range, gsm_incentive_policy, membership_type,
                             total_gross_revenue, total_net_income, total_trips,
-                            audit_seal_hash, created_at
+                            audit_seal_hash, action_status, created_at
                         FROM survey_submissions
                     """
                     params = []
@@ -879,7 +883,8 @@ async def fetch_aggregated_submissions(
                             "total_net_income": row[26],
                             "total_trips": row[27],
                             "audit_seal_hash": row[28],
-                            "created_at": row[29].isoformat() if row[29] else None,
+                            "action_status": (json.loads(row[29]) if isinstance(row[29], str) else row[29]) or {},
+                            "created_at": row[30].isoformat() if row[30] else None,
                             "mode": "PROD_MODE",
                         })
         except Exception as e:
@@ -1958,11 +1963,13 @@ async def submit_webrtc_survey(
         if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")
     }
 
+    action_checklist_init = init_action_checklist(is_approved, bool(collab_param))
     if is_test_mode:
         dev_record = {
             "submission_id": submission_id,
             "mode": "TEST_DEV_MODE",
             "status": status_str,
+            "action_status": action_checklist_init,
             "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
             "form_data": clean_form_data,
             "weekly_incomes": w_incomes,
@@ -2052,12 +2059,8 @@ async def submit_webrtc_survey(
                         monthly_income_range_val,
                         gsm_policy_val,
                         membership_type_val,
-                        w1_g, w1_n, w1_t,
-                        w2_g, w2_n, w2_t,
-                        w3_g, w3_n, w3_t,
-                        w4_g, w4_n, w4_t,
-                        w5_g, w5_n, w5_t,
                         tot_gross_val, tot_net_val, tot_trips_val,
+                        json.dumps(action_checklist_init),
                     )
                     try:
                         await cur.execute(
@@ -2068,20 +2071,18 @@ async def submit_webrtc_survey(
                                 image_dhash, embedding,
                                 consent_choice, vehicle_type, car_model, gsm_duration, gsm_contract_type, daily_trips,
                                 monthly_income_range, gsm_incentive_policy, membership_type,
-                                income_week_1_gross, income_week_1_net, income_week_1_trips,
-                                income_week_2_gross, income_week_2_net, income_week_2_trips,
-                                income_week_3_gross, income_week_3_net, income_week_3_trips,
-                                income_week_4_gross, income_week_4_net, income_week_4_trips,
-                                income_week_5_gross, income_week_5_net, income_week_5_trips,
-                                total_gross_revenue, total_net_income, total_trips
+                                total_gross_revenue, total_net_income, total_trips,
+                                action_status
                             ) VALUES (
                                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                                 %s, %s,
                                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
                                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s
+                                %s, %s, %s,
+                                %s
                             )
                             ON CONFLICT (submission_id) DO UPDATE SET
+                                action_status = EXCLUDED.action_status,
                                 image_dhash = EXCLUDED.image_dhash,
                                 embedding = EXCLUDED.embedding,
                                 consent_choice = EXCLUDED.consent_choice,
@@ -2184,20 +2185,32 @@ async def submit_webrtc_survey(
         except Exception as e:
             logger.error(f"failed to persist survey to DB: {e}")
 
-    # 4. Telegram dispatch to admin group
-    status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
-    verdict_text = (
-        f"{status_emoji} <b>KẾT QUẢ KHẢO SÁT #{submission_id}</b>\n\n"
-        f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
-        f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>\n"
-        f"• <b>Biển số xe:</b> <code>{license_plate or ai_res.get('detected_plate') or 'N/A'}</code>\n"
-        f"• <b>Lý do / Ghi chú:</b> {html.escape(reason_str) if reason_str else 'Hợp lệ'}"
-    )
-    if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
-        try:
-            background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
-        except Exception as tg_err:
-            logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
+    # 4. Dispatch Idempotent Downstream Action Checklist
+    try:
+        background_tasks.add_task(
+            dispatch_action_checklist,
+            submission_id=submission_id,
+            db_pool=db_pool if not is_test_mode else None,
+            is_approved=is_approved,
+            raw_bytes=raw_bytes,
+            driver_phone=persisted_phone or driver_phone,
+            driver_name=persisted_name or driver_name,
+            license_plate=license_plate or ai_res.get("detected_plate"),
+            collab_param=collab_param,
+            answers=clean_form_data,
+            ai_res=ai_res,
+            tot_gross=tot_gross_val,
+            tot_net=tot_net_val,
+            tot_trips=tot_trips_val,
+            reason_str=reason_str,
+            blur_var=blur_var,
+            is_test_mode=is_test_mode,
+            raw_bytes_list=raw_bytes_list,
+        )
+    except Exception as act_err:
+        logger.error(f"Failed to dispatch action checklist task: {act_err}")
+
+    # 5. Direct Telegram DMs to Driver / Collaborator if linked
     try:
         background_tasks.add_task(
             dispatch_submission_telegram_notifications,
@@ -2211,71 +2224,6 @@ async def submit_webrtc_survey(
         )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
-    try:
-        background_tasks.add_task(
-            sync_submission_to_lark_base,
-            submission_id=submission_id,
-            status_str=status_str,
-            driver_phone=driver_phone,
-            driver_name=driver_name,
-            license_plate=license_plate or ai_res.get("detected_plate"),
-            gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
-            net_income=ai_res.get("net_income"),
-            total_trips=ai_res.get("total_trips") or trip_count,
-            online_hours=ai_res.get("online_hours"),
-            vehicle_model=str(form_data.get("car_model") or form_data.get("vehicle_model") or vehicle_type or "Xe điện GSM"),
-            reason_str=reason_str,
-        )
-    except Exception as lark_err:
-        logger.error(f"Failed to dispatch Lark Base sync task: {lark_err}")
-    try:
-        effective_ctv_drive = str(collab_param or answers.get("ctv_code") or "").strip() or None
-        effective_vehicle = str(form_data.get("car_model") or form_data.get("vehicle_model") or vehicle_type or "Xe điện GSM")
-        drive_rec = {
-            "submission_id": submission_id,
-            "status": status_str,
-            "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
-            "form_data": clean_form_data,
-            "membership_type": membership_type_val,
-            "weekly_incomes": w_incomes,
-            "total_gross_revenue": tot_gross_val,
-            "total_net_income": tot_net_val,
-            "total_trips": tot_trips_val,
-            "income_week_1_gross": w1_g,
-            "income_week_1_net": w1_n,
-            "income_week_1_trips": w1_t,
-            "income_week_2_gross": w2_g,
-            "income_week_2_net": w2_n,
-            "income_week_2_trips": w2_t,
-            "income_week_3_gross": w3_g,
-            "income_week_3_net": w3_n,
-            "income_week_3_trips": w3_t,
-            "income_week_4_gross": w4_g,
-            "income_week_4_net": w4_n,
-            "income_week_4_trips": w4_t,
-            "income_week_5_gross": w5_g,
-            "income_week_5_net": w5_n,
-            "income_week_5_trips": w5_t,
-            "ocr_data": ai_res.get("ocr_data") or {},
-            "gross_revenue": tot_gross_val,
-            "net_income": tot_net_val,
-            "trip_count": tot_trips_val,
-            "gps_latitude": getattr(request.state, "gps_lat", None) or form_data.get("gps_latitude"),
-            "gps_longitude": getattr(request.state, "gps_lon", None) or form_data.get("gps_longitude"),
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "vehicle_type": effective_vehicle,
-        }
-        drive_imgs = []
-        for i_idx, r_b in enumerate(raw_bytes_list):
-            drive_imgs.append({"filename": f"slot_{i_idx}.webp", "bytes": r_b})
-        background_tasks.add_task(
-            upload_to_google_drive,
-            submission_id=submission_id,
-            record=drive_rec,
-            images=drive_imgs,
-        )
-    except Exception as drive_err:
-        logger.error(f"Failed to dispatch Drive delivery: {drive_err}")
     resp_data = {
         "status": status_str,
         "submission_id": submission_id,
@@ -2903,3 +2851,47 @@ async def set_telegram_webhooks(
             results["driver_bot"] = r.json()
 
     return {"status": "success", "results": results}
+
+@app.get("/api/v1/submissions/{submission_id}/actions")
+async def get_submission_actions_endpoint(
+    submission_id: str,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Retrieves current action checklist status for a submission."""
+    status = await fetch_action_status(db_pool, submission_id)
+    return {"submission_id": submission_id, "actions": status}
+
+
+@app.post("/api/v1/submissions/{submission_id}/retry-actions")
+async def retry_submission_actions_endpoint(
+    submission_id: str,
+    background_tasks: BackgroundTasks,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Triggers asynchronous idempotent retry of any uncompleted downstream actions."""
+    subs = await fetch_aggregated_submissions(search=submission_id, limit=5)
+    rec = next((s for s in subs if s.get("submission_id") == submission_id), None)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ khảo sát")
+
+    is_appr = rec.get("status") == "APPROVED"
+    background_tasks.add_task(
+        dispatch_action_checklist,
+        submission_id=submission_id,
+        db_pool=db_pool,
+        is_approved=is_appr,
+        raw_bytes=b"",
+        driver_phone=rec.get("driver_phone"),
+        driver_name=rec.get("driver_name"),
+        license_plate=rec.get("license_plate"),
+        collab_param=rec.get("ctv_code"),
+        answers=rec.get("form_data") or {},
+        ai_res=rec.get("ai_result") or {},
+        tot_gross=int(rec.get("total_gross_revenue") or 0),
+        tot_net=int(rec.get("total_net_income") or 0),
+        tot_trips=int(rec.get("total_trips") or 0),
+        reason_str=rec.get("rejection_reason"),
+        is_test_mode=rec.get("mode") == "TEST_DEV_MODE",
+        raw_bytes_list=[],
+    )
+    return {"status": "retry_dispatched", "submission_id": submission_id}

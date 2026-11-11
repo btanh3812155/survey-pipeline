@@ -85,9 +85,11 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     moderated_by_admin_id BIGINT,
     moderated_at TIMESTAMPTZ,
     moderation_notes TEXT,
+    action_status JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 -- Auto-migration: ensure columns exist for existing databases
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS action_status JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32);
 ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS consent_choice TEXT;
 ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS car_model VARCHAR(64);
