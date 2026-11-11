@@ -99,12 +99,16 @@ async def trigger_manual_drive_sync(
     Triggers an immediate Google Drive deliverables synchronization in the background.
     Syncs the Master_Survey_Deliverables.csv data sheet and the Images folder.
     """
-    if not has_google_credentials():
+    import sys
+    main_mod = sys.modules.get("main")
+    _has_creds = getattr(main_mod, "has_google_credentials", has_google_credentials) if main_mod else has_google_credentials
+    _sync_all = getattr(main_mod, "sync_all_approved_to_drive", sync_all_approved_to_drive) if main_mod else sync_all_approved_to_drive
+    if not _has_creds():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google Drive credentials (OAuth2 / Service Account) are not configured.",
         )
-    background_tasks.add_task(sync_all_approved_to_drive, db_pool=get_db_pool())
+    background_tasks.add_task(_sync_all, db_pool=get_db_pool())
     return {
         "status": "QUEUED",
         "message": "Đã kích hoạt đồng bộ Google Drive thành công trong nền.",

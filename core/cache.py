@@ -61,6 +61,9 @@ class BoundedTTLCache:
             elif len(self._cache) >= self.max_size:
                 self._cache.popitem(last=False)
             self._cache[key] = (value, now + self.ttl_seconds)
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
 
     def __contains__(self, key: str) -> bool:
         return self.get(key) is not None
