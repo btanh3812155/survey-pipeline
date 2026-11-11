@@ -378,24 +378,36 @@ def test_multi_image_validation_count_enforcement():
     assert ok is True
     assert err is None
 
-def test_multi_image_order_enforcement_inverted_rejected(monkeypatch):
+def test_multi_image_order_agnostic_matching_success(monkeypatch):
+    """Verifies that uploading images in mixed/inverted order matches slots dynamically after classification."""
     monkeypatch.setenv("MOCK_AI", "1")
-    import io
+    import io, random, time
     from PIL import Image, ImageDraw
     client = TestClient(app)
 
-    img = Image.new("RGB", (600, 800), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    for i in range(100, 700, 20):
-        draw.line([(50, i), (550, i)], fill=(0, 0, 0), width=4)
-    buf1 = io.BytesIO()
-    img.save(buf1, format="JPEG")
-    buf1.seek(0)
-    buf2 = io.BytesIO()
-    img.save(buf2, format="JPEG")
-    buf2.seek(0)
+    def make_buf(idx: int):
+        im = Image.new("RGB", (600, 800), (255, 255, 255))
+        d = ImageDraw.Draw(im)
+        rng = random.Random(f"agnostic_{time.time()}_{idx}")
+        for _ in range(30):
+            x1 = rng.randint(0, 500)
+            y1 = rng.randint(0, 700)
+            d.rectangle([(x1, y1), (x1 + rng.randint(20, 80), y1 + rng.randint(20, 80))], fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
+        b = io.BytesIO()
+        im.save(b, format="JPEG")
+        b.seek(0)
+        return b
 
-    # Inverted order: Slot 0 sent revenue_screen.jpg, Slot 1 sent odometer.jpg
+    # Swapped order: Slot 0 sent vehicle, Slot 1 sent revenue, Slot 2 sent app_profile!
+    files_payload = {
+        "survey_photo_0": ("vehicle.jpg", make_buf(0), "image/jpeg"),
+        "survey_photo_1": ("revenue_screen.jpg", make_buf(1), "image/jpeg"),
+        "survey_photo_2": ("app_profile.jpg", make_buf(2), "image/jpeg"),
+        "survey_photo_3": ("slot3.jpg", make_buf(3), "image/jpeg"),
+        "survey_photo_4": ("slot4.jpg", make_buf(4), "image/jpeg"),
+        "survey_photo_5": ("slot5.jpg", make_buf(5), "image/jpeg"),
+        "survey_photo_6": ("slot6.jpg", make_buf(6), "image/jpeg"),
+    }
     resp = client.post(
         "/api/v1/survey/submit-webrtc",
         data={
@@ -416,21 +428,11 @@ def test_multi_image_order_enforcement_inverted_rejected(monkeypatch):
             "gross_revenue": "650000",
             "odometer_km": "50",
         },
-        files={
-            "survey_photo_0": ("revenue_screen.jpg", buf1, "image/jpeg"),
-            "survey_photo_1": ("odometer.jpg", buf2, "image/jpeg"),
-            "survey_photo_2": ("slot2.jpg", buf2, "image/jpeg"),
-            "survey_photo_3": ("slot3.jpg", buf2, "image/jpeg"),
-            "survey_photo_4": ("slot4.jpg", buf2, "image/jpeg"),
-            "survey_photo_5": ("slot5.jpg", buf2, "image/jpeg"),
-            "survey_photo_6": ("slot6.jpg", buf2, "image/jpeg"),
-        }
-)
+        files=files_payload,
+    )
     assert resp.status_code == 200
     res_json = resp.json()
-    assert res_json["status"] == "REJECTED"
-    assert "Ảnh 1" in res_json["reason"]
-
+    assert res_json["status"] == "APPROVED"
 def test_multi_image_order_enforcement_correct_approved(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
     import io

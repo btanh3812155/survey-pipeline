@@ -532,44 +532,66 @@ async def submit_webrtc_survey(
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
                     if target_q and target_q.image_slots and len(images_list) >= 2:
-                        # Slot 0: App Profile (AI Check & Membership Type extraction)
-                        fn_0 = getattr(images_list[0], "filename", "") or ""
-                        norm_0_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[0], max_dimension=settings.IMAGE_MAX_DIMENSION)
-                        task_role_0 = vision_client.classify_image_role(norm_0_bytes, filename=fn_0, expected_slots=target_q.image_slots)
-                        task_profile_ocr = vision_client.ocr_driver_app_profile(norm_0_bytes)
-                        
-                        # Identify income slots (e.g. slots 2..6 for 7-slot schema or slot 1 for 2-slot schema)
-                        income_indices = []
-                        for s_idx, slot in enumerate(target_q.image_slots):
-                            if "income" in str(slot.get("role", "")).lower() and s_idx < len(raw_bytes_list):
-                                income_indices.append(s_idx)
-                        if not income_indices:
-                            income_indices = [1] if len(raw_bytes_list) > 1 else [0]
+                        # 1. Order-agnostic role classification across all uploaded images
+                        classify_tasks = []
+                        for s_idx, img_b in enumerate(raw_bytes_list):
+                            fn = getattr(images_list[s_idx], "filename", "") or ""
+                            n_b, _ = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                            classify_tasks.append(vision_client.classify_image_role(n_b, filename=fn, expected_slots=target_q.image_slots))
+                        classified_roles = await asyncio.gather(*classify_tasks, return_exceptions=True)
+                        classified_roles = [r if isinstance(r, str) else "unknown" for r in classified_roles]
 
-                        # Spawn parallel OCR tasks for all income weeks
+                        # 2. Dynamic slot matching: match slots strictly AFTER classification!
+                        matched_profile_idx = None
+                        matched_vehicle_idx = None
+                        matched_income_indices = []
+
+                        for idx, role in enumerate(classified_roles):
+                            if role in ("app_profile", "odometer", "profile_screen") and matched_profile_idx is None:
+                                matched_profile_idx = idx
+                            elif role in ("vehicle_exterior", "car_exterior", "car_photo", "steering_wheel", "auto_passed_vehicle") and matched_vehicle_idx is None:
+                                matched_vehicle_idx = idx
+                            elif role in ("app_income", "revenue_screen", "weekly_income"):
+                                matched_income_indices.append(idx)
+
+                        assigned = set(filter(lambda x: x is not None, [matched_profile_idx, matched_vehicle_idx] + matched_income_indices))
+                        unassigned = [i for i in range(len(raw_bytes_list)) if i not in assigned]
+
+                        if matched_profile_idx is None and unassigned:
+                            matched_profile_idx = unassigned.pop(0)
+                        elif matched_profile_idx is None:
+                            matched_profile_idx = 0
+
+                        if matched_vehicle_idx is None and unassigned:
+                            matched_vehicle_idx = unassigned.pop(0)
+
+                        matched_income_indices.extend(unassigned)
+                        if not matched_income_indices:
+                            matched_income_indices = [1] if len(raw_bytes_list) > 1 else [0]
+
+                        # 3. Process matched profile slot
+                        norm_profile_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[matched_profile_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
+                        task_profile_ocr = vision_client.ocr_driver_app_profile(norm_profile_bytes)
+
+                        # 4. Process matched income slots
                         income_tasks = []
-                        for i_pos, s_idx in enumerate(income_indices):
-                            img_raw = raw_bytes_list[s_idx]
-                            n_bytes, _ = sanitize_and_normalize_image(img_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                            income_tasks.append(vision_client.ocr_driver_app_income(n_bytes, week_idx=i_pos + 1))
+                        for i_pos, s_idx in enumerate(matched_income_indices):
+                            n_b, _ = sanitize_and_normalize_image(raw_bytes_list[s_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
+                            income_tasks.append(vision_client.ocr_driver_app_income(n_b, week_idx=i_pos + 1))
 
-                        primary_income_idx = income_indices[0]
-                        income_raw = raw_bytes_list[primary_income_idx] if primary_income_idx < len(raw_bytes_list) else raw_bytes
-                        norm_income_bytes, _ = sanitize_and_normalize_image(income_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
+                        primary_income_idx = matched_income_indices[0]
+                        norm_income_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[primary_income_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
                         task_facts = vision_client.extract_facts(norm_income_bytes)
 
-                        all_results = await asyncio.gather(task_role_0, task_profile_ocr, task_facts, *income_tasks, return_exceptions=True)
-                        role_0_res = all_results[0]
-                        profile_res = all_results[1]
-                        facts_res = all_results[2]
-                        income_res_list = all_results[3:]
+                        all_results = await asyncio.gather(task_profile_ocr, task_facts, *income_tasks, return_exceptions=True)
+                        profile_res = all_results[0]
+                        facts_res = all_results[1]
+                        income_res_list = all_results[2:]
 
-                        role_0 = "unknown" if isinstance(role_0_res, Exception) else role_0_res
+                        role_0 = classified_roles[matched_profile_idx]
                         membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else "Tiêu chuẩn"
-                        
                         primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
                         ocr_data = primary_ocr
-
                         weekly_incomes = {}
                         tot_gross = 0
                         tot_net = 0

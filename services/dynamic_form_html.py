@@ -2027,52 +2027,72 @@ def render_dynamic_form_html(
             }}
         }}
 
+        function applyFileToSlot(qid, slotIdx, file) {{
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
+            if (hasSlots) {{
+                answers[`${{qid}}_${{slotIdx}}`] = file;
+                syncAnswersImageList(qid);
+                updateSlotPillCapturedState(qid, slotIdx, true);
+            }} else {{
+                answers[qid] = file;
+            }}
+            if (!hasSlots || slotIdx === (activeSlotByQId[qid] !== undefined ? activeSlotByQId[qid] : 0)) {{
+                const img = document.getElementById(`img_${{qid}}`);
+                const vid = document.getElementById(`vid_${{qid}}`);
+                const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
+                const snapBtn = document.getElementById(`snap_${{qid}}`);
+                const retakeBtn = document.getElementById(`retake_${{qid}}`);
+                const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
+                if (vid) vid.style.display = 'none';
+                if (screenOff) screenOff.style.display = 'none';
+                if (img) {{
+                    img.src = URL.createObjectURL(file);
+                    img.style.display = 'block';
+                }}
+                if (snapBtn) snapBtn.style.display = 'none';
+                if (uploadLabel) uploadLabel.style.display = 'none';
+                if (retakeBtn) retakeBtn.style.display = 'inline-block';
+            }}
+        }}
+
         function handleSlotFileUpload(qid, input) {{
-            if (!input.files || !input.files[0]) return;
-            const file = input.files[0];
+            if (!input.files || input.files.length === 0) return;
             const q = SCHEMA.questions.find(item => item.id === qid);
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
             const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
 
-            const img = document.getElementById(`img_${{qid}}`);
-            const vid = document.getElementById(`vid_${{qid}}`);
-            const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
-            const snapBtn = document.getElementById(`snap_${{qid}}`);
-            const retakeBtn = document.getElementById(`retake_${{qid}}`);
-            const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
-
-            if (vid) vid.style.display = 'none';
-            if (screenOff) screenOff.style.display = 'none';
-            if (img) {{
-                img.src = URL.createObjectURL(file);
-                img.style.display = 'block';
-            }}
-            if (snapBtn) snapBtn.style.display = 'none';
-            const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
-            if (uploadLabel) uploadLabel.style.display = 'none';
-            if (retakeBtn) retakeBtn.style.display = 'inline-block';
-            if (btnCamOff) btnCamOff.style.display = 'inline-block';
-
-            if (hasSlots) {{
-                answers[`${{qid}}_${{currentSlotIdx}}`] = file;
-                syncAnswersImageList(qid);
-                updateSlotPillCapturedState(qid, currentSlotIdx, true);
-
-                let nextUncapturedIdx = -1;
-                for (let i = 0; i < q.image_slots.length; i++) {{
-                    const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
-                    if (!answers[`${{qid}}_${{checkIdx}}`]) {{
-                        nextUncapturedIdx = checkIdx;
-                        break;
+            if (input.files.length === 1) {{
+                const file = input.files[0];
+                applyFileToSlot(qid, currentSlotIdx, file);
+                if (hasSlots) {{
+                    let nextUncapturedIdx = -1;
+                    for (let i = 0; i < q.image_slots.length; i++) {{
+                        const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
+                        if (!answers[`${{qid}}_${{checkIdx}}`]) {{
+                            nextUncapturedIdx = checkIdx;
+                            break;
+                        }}
+                    }}
+                    if (nextUncapturedIdx !== -1) {{
+                        selectCameraSlot(qid, nextUncapturedIdx);
                     }}
                 }}
-                if (nextUncapturedIdx !== -1) {{
-                    selectCameraSlot(qid, nextUncapturedIdx);
-                }}
             }} else {{
-                answers[qid] = file;
+                // Batch multi-file upload at once
+                const files = Array.from(input.files);
+                const totalSlots = hasSlots ? q.image_slots.length : 1;
+                let startSlot = (files.length >= totalSlots || currentSlotIdx === 0) ? 0 : currentSlotIdx;
+                for (let i = 0; i < files.length && (startSlot + i) < totalSlots; i++) {{
+                    applyFileToSlot(qid, startSlot + i, files[i]);
+                }}
+                if (hasSlots) {{
+                    let nextEmpty = q.image_slots.findIndex((_, idx) => !answers[`${{qid}}_${{idx}}`]);
+                    if (nextEmpty === -1) nextEmpty = q.image_slots.length - 1;
+                    selectCameraSlot(qid, nextEmpty);
+                }}
             }}
-
+            input.value = "";
             evaluateConditionals();
             scheduleDraftSave();
         }}
@@ -2707,23 +2727,25 @@ def render_dynamic_form_html(
                 }}
 
                 // Check multi-slot camera requirements
+                // Check multi-slot camera requirements: exact count check on submit
                 if (q.type === 'camera_webrtc') {{
-                    if (Array.isArray(q.image_slots) && q.image_slots.length > 0) {{
+                    const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+                    const allowedCount = hasSlots ? q.image_slots.length : (q.exact_image_count || q.min_images || 1);
+                    let uploadedCount = 0;
+                    if (hasSlots) {{
                         for (let sIdx = 0; sIdx < q.image_slots.length; sIdx++) {{
-                            const slot = q.image_slots[sIdx];
                             const slotBlob = answers[`${{q.id}}_${{sIdx}}`];
-                            if (slot.required && (!slotBlob || slotBlob.size === 0)) {{
-                                alert(`Vui lòng chụp đủ ảnh cho: ${{slot.title || ('Ảnh ' + (sIdx + 1))}}!`);
-                                return;
+                            if (slotBlob && (slotBlob instanceof Blob || typeof slotBlob === 'object')) {{
+                                uploadedCount++;
                             }}
                         }}
+                    }} else if (answers[q.id]) {{
+                        uploadedCount = Array.isArray(answers[q.id]) ? answers[q.id].length : 1;
                     }}
-                    if (q.min_images && q.min_images > 1) {{
-                        const imgList = Array.isArray(answers[q.id]) ? answers[q.id] : (answers[q.id] ? [answers[q.id]] : []);
-                        if (imgList.length < q.min_images) {{
-                            alert(`Vui lòng chụp đủ tối thiểu ${{q.min_images}} ảnh cho: ${{q.title}}!`);
-                            return;
-                        }}
+
+                    if (uploadedCount !== allowedCount) {{
+                        alert(`Vui lòng tải lên đủ ${{allowedCount}} ảnh theo yêu cầu (hiện tại đã tải ${{uploadedCount}}/${{allowedCount}} ảnh)!`);
+                        return;
                     }}
                 }}
 
@@ -3221,6 +3243,10 @@ def render_ctv_selector_landing_html(
                 {options_html}
             </select>
         </div>
+        <div id="ctvGpsPill" style="display:inline-flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; background:rgba(30,41,59,0.8); border:1px solid #334155; padding:6px 12px; border-radius:8px; margin: 12px 0 16px 0;">
+            <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5 2.5-2.5 2.5z"/></svg>
+            <span id="txtCtvGps">Đang tự động xác thực vị trí đối soát...</span>
+        </div>
         
         <button type="button" class="btn-open" id="btnOpenForm" onclick="openSelectedCtvForm()">
             <span>Mở Biểu Mẫu Khảo Sát</span>
@@ -3230,6 +3256,40 @@ def render_ctv_selector_landing_html(
     </div>
 
     <script>
+        let earlyGps = null;
+        function resolveEarlyLocation() {{
+            if ("geolocation" in navigator) {{
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {{
+                        earlyGps = {{
+                            lat: pos.coords.latitude,
+                            lon: pos.coords.longitude,
+                            acc: pos.coords.accuracy || 15
+                        }};
+                        try {{
+                            sessionStorage.setItem("survey_gps_lat", earlyGps.lat);
+                            sessionStorage.setItem("survey_gps_lon", earlyGps.lon);
+                            sessionStorage.setItem("survey_gps_acc", earlyGps.acc);
+                        }} catch (e) {{}}
+                        const el = document.getElementById("txtCtvGps");
+                        const pill = document.getElementById("ctvGpsPill");
+                        if (el) el.textContent = `Đã xác thực vị trí GPS (${{earlyGps.lat.toFixed(4)}}, ${{earlyGps.lon.toFixed(4)}})`;
+                        if (pill) {{
+                            pill.style.borderColor = "#10b981";
+                            pill.style.color = "#10b981";
+                            pill.style.background = "rgba(16, 185, 129, 0.15)";
+                        }}
+                    }},
+                    (err) => {{
+                        const el = document.getElementById("txtCtvGps");
+                        if (el) el.textContent = "Không thể lấy vị trí GPS (Hệ thống sẽ dùng IP dự phòng)";
+                    }},
+                    {{ enableHighAccuracy: true, timeout: 7000, maximumAge: 60000 }}
+                );
+            }}
+        }}
+        document.addEventListener("DOMContentLoaded", resolveEarlyLocation);
+
         function openSelectedCtvForm() {{
             const sel = document.getElementById("ctvSelect");
             const ctv = sel ? sel.value.trim() : "";
@@ -3240,12 +3300,16 @@ def render_ctv_selector_landing_html(
             }}
             const params = new URLSearchParams(window.location.search);
             params.set("ref", ctv);
+            if (earlyGps) {{
+                params.set("lat", earlyGps.lat);
+                params.set("lon", earlyGps.lon);
+                params.set("acc", earlyGps.acc);
+            }}
             const targetPath = window.location.pathname.startsWith("/forms/")
                 ? window.location.pathname
                 : "/forms/" + encodeURIComponent("{form_id}");
             window.location.href = targetPath + "?" + params.toString();
         }}
-    </script>
 </body>
 </html>
 """
