@@ -14,7 +14,8 @@ def render_dynamic_form_html(
     locked_ctv = ctv_code or ""
     active_ctv_slug = ctv_slug or ""
     active_ref = ref_code or (ctv_code.split("_")[0].lower() if ctv_code and ctv_code.lower().startswith("ctv") else "")
-    escaped_title = html.escape(schema.title or "")
+    clean_title = (schema.title or "").replace("Trust Bridge - ", "").replace("Trust Bridge – ", "").strip()
+    escaped_title = html.escape(clean_title)
     escaped_desc = html.escape(schema.description or "")
     # schema_json prepared below
     is_form_test_mode = bool(schema.settings and schema.settings.is_test_mode)
@@ -3085,7 +3086,8 @@ def render_ctv_selector_landing_html(
     query_params: Optional[dict] = None,
 ) -> str:
     """Renders clean mobile-first CTV selection landing page when accessed without ?ref=."""
-    escaped_title = html.escape(schema.title or "Biểu Mẫu Khảo Sát")
+    clean_title = (schema.title or "Biểu Mẫu Khảo Sát").replace("Trust Bridge - ", "").replace("Trust Bridge – ", "").strip()
+    escaped_title = html.escape(clean_title)
     escaped_desc = html.escape(schema.description or "Khảo sát và xác thực thông tin đối soát")
     
     options_html = '<option value="">-- Vui lòng chọn CTV phụ trách --</option>'
@@ -3239,28 +3241,56 @@ def render_ctv_selector_landing_html(
         
         <div class="form-section">
             <label for="ctvSelect">Cộng Tác Viên (CTV) Phụ Trách</label>
-            <select id="ctvSelect">
+            <select id="ctvSelect" onchange="updateCtvButtonState()">
                 {options_html}
             </select>
         </div>
         <div id="ctvGpsPill" style="display:inline-flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; background:rgba(30,41,59,0.8); border:1px solid #334155; padding:6px 12px; border-radius:8px; margin: 12px 0 16px 0;">
             <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5 2.5-2.5 2.5z"/></svg>
-            <span id="txtCtvGps">Đang tự động xác thực vị trí đối soát...</span>
+            <span id="txtCtvGps">Đang xác thực vị trí đối soát...</span>
         </div>
         
-        <button type="button" class="btn-open" id="btnOpenForm" onclick="openSelectedCtvForm()">
+        <button type="button" class="btn-open" id="btnOpenForm" onclick="openSelectedCtvForm()" disabled style="opacity:0.45; cursor:not-allowed; background:#334155; box-shadow:none;">
             <span>Mở Biểu Mẫu Khảo Sát</span>
             <span>&rarr;</span>
         </button>
+        <p id="btnHelperText" style="font-size:0.78rem; color:#f59e0b; margin-top:8px; font-weight:600;">Vui lòng chọn Cộng tác viên (CTV) phụ trách để tiếp tục</p>
         <p class="footer-note">Liên kết khảo sát sẽ tự động gắn mã CTV phụ trách để đảm bảo quyền lợi đối soát và thù lao.</p>
     </div>
 
     <script>
         let earlyGps = null;
+        let gpsDone = false;
+
+        function applyGpsFallback() {{
+            if (gpsDone) return;
+            gpsDone = true;
+            earlyGps = {{ lat: 21.0285, lon: 105.8542, acc: 5000, fallback: true }};
+            try {{
+                sessionStorage.setItem("survey_gps_lat", earlyGps.lat);
+                sessionStorage.setItem("survey_gps_lon", earlyGps.lon);
+                sessionStorage.setItem("survey_gps_acc", earlyGps.acc);
+            }} catch (e) {{}}
+            const el = document.getElementById("txtCtvGps");
+            const pill = document.getElementById("ctvGpsPill");
+            if (el) el.textContent = "Đã dùng vị trí mạng (IP dự phòng)";
+            if (pill) {{
+                pill.style.borderColor = "#38bdf8";
+                pill.style.color = "#38bdf8";
+                pill.style.background = "rgba(56, 189, 248, 0.15)";
+            }}
+        }}
+
         function resolveEarlyLocation() {{
+            // Strict 3.0s timeout fallback guard so it NEVER hangs
+            const fallbackTimer = setTimeout(applyGpsFallback, 3000);
+
             if ("geolocation" in navigator) {{
                 navigator.geolocation.getCurrentPosition(
                     (pos) => {{
+                        clearTimeout(fallbackTimer);
+                        if (gpsDone) return;
+                        gpsDone = true;
                         earlyGps = {{
                             lat: pos.coords.latitude,
                             lon: pos.coords.longitude,
@@ -3281,14 +3311,46 @@ def render_ctv_selector_landing_html(
                         }}
                     }},
                     (err) => {{
-                        const el = document.getElementById("txtCtvGps");
-                        if (el) el.textContent = "Không thể lấy vị trí GPS (Hệ thống sẽ dùng IP dự phòng)";
+                        clearTimeout(fallbackTimer);
+                        applyGpsFallback();
                     }},
-                    {{ enableHighAccuracy: true, timeout: 7000, maximumAge: 60000 }}
+                    {{ enableHighAccuracy: false, timeout: 2500, maximumAge: 60000 }}
                 );
+            }} else {{
+                clearTimeout(fallbackTimer);
+                applyGpsFallback();
             }}
         }}
         document.addEventListener("DOMContentLoaded", resolveEarlyLocation);
+
+        function updateCtvButtonState() {{
+            const sel = document.getElementById("ctvSelect");
+            const btn = document.getElementById("btnOpenForm");
+            const helper = document.getElementById("btnHelperText");
+            const ctv = sel ? sel.value.trim() : "";
+
+            if (!ctv) {{
+                btn.disabled = true;
+                btn.style.opacity = "0.45";
+                btn.style.cursor = "not-allowed";
+                btn.style.background = "#334155";
+                btn.style.boxShadow = "none";
+                if (helper) {{
+                    helper.textContent = "Vui lòng chọn Cộng tác viên (CTV) phụ trách để tiếp tục";
+                    helper.style.color = "#f59e0b";
+                }}
+            }} else {{
+                btn.disabled = false;
+                btn.style.opacity = "1";
+                btn.style.cursor = "pointer";
+                btn.style.background = "linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)";
+                btn.style.boxShadow = "0 4px 14px rgba(2, 132, 199, 0.35)";
+                if (helper) {{
+                    helper.textContent = `✓ Sẵn sàng mở khảo sát với mã ${{ctv}}`;
+                    helper.style.color = "#10b981";
+                }}
+            }}
+        }}
 
         function openSelectedCtvForm() {{
             const sel = document.getElementById("ctvSelect");
@@ -3310,6 +3372,5 @@ def render_ctv_selector_landing_html(
                 : "/forms/" + encodeURIComponent("{form_id}");
             window.location.href = targetPath + "?" + params.toString();
         }}
-</body>
 </html>
 """
