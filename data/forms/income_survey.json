@@ -344,6 +344,7 @@
           "required": true,
           "require_unique": false,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình hồ sơ ứng dụng tài xế Xanh SM / GSM. Trích xuất mã đối tác, tên tài xế, và hạng thành viên.",
           "tooltip": ""
         },
         {
@@ -353,6 +354,7 @@
           "required": true,
           "require_unique": false,
           "ai_check": false,
+          "ai_detection_prompt": "Ảnh chụp phương tiện thực tế: thân xe, đầu xe hoặc vô lăng khoang lái xe điện GSM.",
           "tooltip": ""
         },
         {
@@ -362,6 +364,7 @@
           "required": true,
           "require_unique": true,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình thu nhập TUẦN 1 Tháng 10 (28/09 - 04/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
           "tooltip": ""
         },
         {
@@ -371,6 +374,7 @@
           "required": true,
           "require_unique": true,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình thu nhập TUẦN 2 Tháng 10 (05/10 - 11/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
           "tooltip": ""
         },
         {
@@ -380,6 +384,7 @@
           "required": true,
           "require_unique": true,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình thu nhập TUẦN 3 Tháng 10 (12/10 - 18/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
           "tooltip": ""
         },
         {
@@ -389,6 +394,7 @@
           "required": true,
           "require_unique": true,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình thu nhập TUẦN 4 Tháng 10 (19/10 - 25/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
           "tooltip": ""
         },
         {
@@ -398,6 +404,7 @@
           "required": true,
           "require_unique": true,
           "ai_check": true,
+          "ai_detection_prompt": "Màn hình thu nhập TUẦN 5 Tháng 10 (26/10 - 01/11). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
           "tooltip": ""
         }
       ]

@@ -41,11 +41,11 @@ def compute_dinov2_embedding(pil_img: Image.Image) -> Optional[List[float]]:
     Computes 384-dimensional dense visual feature vector using Meta DINOv2 ViT-S/14.
     Returns L2-normalized 384-dim float list.
     """
-    if os.environ.get("MOCK_AI") == "1":
+    if os.environ.get("MOCK_AI") == "1" or os.environ.get("ENVIRONMENT") == "test":
         import hashlib
         b = pil_img.tobytes()
         h = hashlib.sha512(b).digest()
-        arr = (np.frombuffer(h * 8, dtype=np.uint8).astype(np.float32) / 255.0)[:384]
+        arr = ((np.frombuffer(h * 8, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0)[:384]
         norm = np.linalg.norm(arr)
         return (arr / norm).tolist() if norm > 0 else None
 

@@ -1357,7 +1357,10 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                         <label style="font-size:0.72rem; color:#94a3b8;">Tooltip hướng dẫn riêng cho slot</label>
                         <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${{escapeHtml(s.tooltip || '')}}" placeholder="VD: Chụp rõ họ tên và mã tài xế..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'tooltip', this.value)">
                     </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; flex-wrap:wrap; gap:12px; background:#0f172a; padding:8px 10px; border-radius:6px; border:1px solid #1e293b;">
+                    <div style="margin-top:4px;">
+                        <label style="font-size:0.72rem; color:#fde047; font-weight:700;">AI Detection Prompt riêng cho Slot này (Ẩn khỏi giao diện khảo sát):</label>
+                        <textarea style="width:100%; min-height:44px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì ở ảnh này, kiểm tra tuần hay tháng..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'ai_detection_prompt', this.value)">${{escapeHtml(s.ai_detection_prompt || '')}}</textarea>
+                    </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)">
                             <span class="toggle-slider"></span>

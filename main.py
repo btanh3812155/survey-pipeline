@@ -1642,7 +1642,22 @@ async def submit_webrtc_survey(
                         for i_pos, s_idx in enumerate(income_indices):
                             img_raw = raw_bytes_list[s_idx]
                             n_bytes, _ = sanitize_and_normalize_image(img_raw, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                            income_tasks.append(vision_client.ocr_driver_app_income(n_bytes, week_idx=i_pos + 1))
+                            slot_def = target_q.image_slots[s_idx] if (target_q and getattr(target_q, "image_slots", None) and s_idx < len(target_q.image_slots)) else {}
+                            slot_prompt = slot_def.get("ai_detection_prompt")
+                            
+                            target_fn = getattr(vision_client.ocr_driver_app_income, "side_effect", None) or vision_client.ocr_driver_app_income
+                            try:
+                                import inspect
+                                sig = inspect.signature(target_fn)
+                                supports_slot_prompt = "slot_prompt" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                            except Exception:
+                                supports_slot_prompt = True
+
+                            if supports_slot_prompt and slot_prompt:
+                                coro = vision_client.ocr_driver_app_income(n_bytes, week_idx=i_pos + 1, slot_prompt=slot_prompt)
+                            else:
+                                coro = vision_client.ocr_driver_app_income(n_bytes, week_idx=i_pos + 1)
+                            income_tasks.append(coro)
 
                         primary_income_idx = income_indices[0]
                         income_raw = raw_bytes_list[primary_income_idx] if primary_income_idx < len(raw_bytes_list) else raw_bytes
@@ -1665,6 +1680,7 @@ async def submit_webrtc_survey(
                         tot_gross = 0
                         tot_net = 0
                         tot_trips = 0
+                        monthly_violation = None
                         for w_i in range(5):
                             w_num = w_i + 1
                             if w_i < len(income_res_list) and isinstance(income_res_list[w_i], dict) and not isinstance(income_res_list[w_i], Exception):
@@ -1688,11 +1704,38 @@ async def submit_webrtc_survey(
                             tot_net += n_val
                             tot_trips += t_val
 
+                            # Guard against uploading monthly income report into weekly slot
+                            p_type = str(ocr_w.get("period_type", "")).upper()
+                            p_str = str(ocr_w.get("period", "")).lower()
+                            is_wk = ocr_w.get("is_weekly_report")
+                            if p_type == "MONTHLY" or (is_wk is False and ("tháng" in p_str or "month" in p_str)):
+                                s_num = income_indices[w_i] + 1 if w_i < len(income_indices) else w_num + 2
+                                monthly_violation = {
+                                    "failed_slot": income_indices[w_i] if w_i < len(income_indices) else w_num,
+                                    "reason": (
+                                        f"Ảnh {s_num} (Tuần {w_num}): Phát hiện ảnh chụp báo cáo doanh thu theo THÁNG "
+                                        f"(kỳ ghi nhận: '{ocr_w.get('period', 'Tháng')}') thay vì theo TUẦN. "
+                                        f"Vui lòng chụp đúng màn hình thu nhập chi tiết từng tuần!"
+                                    ),
+                                    "ocr_data": ocr_w,
+                                }
+                                break
+
                         slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
 
                         # 1. Profile Verification (Slot 0)
-                        if role_0 in ("app_income", "revenue_screen"):
+                        if monthly_violation:
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = monthly_violation["reason"]
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": monthly_violation["failed_slot"],
+                                "reason": reason_str,
+                                "ocr_data": monthly_violation["ocr_data"],
+                            }
+                        elif role_0 in ("app_income", "revenue_screen"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
@@ -1913,6 +1956,17 @@ async def submit_webrtc_survey(
     persisted_phone = None if is_dissent else driver_phone
     persisted_name = None if is_dissent else (driver_name or "Tài xế")
 
+    # Record automated verification findings
+    auto_verdict = status_str
+    auto_reason = reason_str
+    if isinstance(ai_res, dict):
+        ai_res["auto_verdict"] = auto_verdict
+        ai_res["auto_reason"] = auto_reason
+
+    # Route live submissions to Telegram bot for manual checking and vetting
+    if is_approved and not is_bypassed and not is_dissent and not is_test_mode:
+        status_str = "MANUAL_REVIEW"
+        reason_str = "Phiếu khảo sát của bạn đã được ghi nhận. Ban Quản Trị đang tiến hành đối soát thủ công. Vui lòng mở Telegram @TrustBridgeVN_bot để nhận kết quả!"
     # Form specific metrics and 5-week income extractions
     vehicle_type_val = str(form_data.get("vehicle_type") or vehicle_type or "Xe điện GSM")
     car_model_val = str(form_data.get("car_model") or "")
@@ -2185,13 +2239,16 @@ async def submit_webrtc_survey(
             logger.error(f"failed to persist survey to DB: {e}")
 
     # 4. Telegram dispatch to admin group
-    status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
+    status_emoji = "⏳" if status_str == "MANUAL_REVIEW" else ("✅" if status_str == "APPROVED" else "❌")
+    auto_emoji = "✅" if auto_verdict == "APPROVED" else "❌"
     verdict_text = (
-        f"{status_emoji} <b>KẾT QUẢ KHẢO SÁT #{submission_id}</b>\n\n"
-        f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
-        f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>\n"
+        f"{status_emoji} <b>PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #{submission_id}</b>\n\n"
+        f"• <b>Tài xế:</b> <b>{html.escape(driver_name or 'N/A')}</b> (<code>{driver_phone or 'N/A'}</code>)\n"
         f"• <b>Biển số xe:</b> <code>{license_plate or ai_res.get('detected_plate') or 'N/A'}</code>\n"
-        f"• <b>Lý do / Ghi chú:</b> {html.escape(reason_str) if reason_str else 'Hợp lệ'}"
+        f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({html.escape(auto_reason) if auto_reason else 'Đạt chuẩn'})\n"
+        f"• <b>Doanh thu ghi nhận:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
+        f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
+        f"• <b>Ghi chú:</b> {html.escape(reason_str) if reason_str else 'Chờ duyệt'}"
     )
     if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
         try:

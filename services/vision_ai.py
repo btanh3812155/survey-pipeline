@@ -342,10 +342,16 @@ class DualModelVisionClient:
 
         return {"membership_type": "Tiêu chuẩn", "driver_rank": "Standard", "is_authentic": True}
 
-    async def ocr_driver_app_income(self, image_bytes: bytes, week_idx: Optional[int] = None) -> Dict[str, Any]:
+    async def ocr_driver_app_income(
+        self,
+        image_bytes: bytes,
+        week_idx: Optional[int] = None,
+        slot_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Performs high-precision OCR on driver app income/earnings screens.
-        Extracts gross revenue, net income, discounts, trips, online hours, and tampering flags.
+        Extracts gross revenue, net income, discounts, trips, online hours, period_type, and tampering flags.
+        Supports per-image slot AI detection prompts.
         """
         if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
             w = week_idx or 1
@@ -360,6 +366,8 @@ class DualModelVisionClient:
                 "total_trips": base_trips,
                 "online_hours": f"{40 + w * 3}h",
                 "period": f"Tuần {w}",
+                "period_type": "WEEKLY",
+                "is_weekly_report": True,
                 "confidence_score": 0.98,
                 "is_legible": True,
                 "is_manipulated_or_photoshopped": False,
@@ -382,6 +390,8 @@ class DualModelVisionClient:
             "- is_authentic_gsm_ui (bool, true if official Xanh SM / GSM interface and teal/cyan theme, false for other apps/mockups)\n"
             "Output strictly valid JSON with these keys."
         )
+        slot_extra_instructions = f"\nSpecific Slot Requirements:\n{slot_prompt.strip()}\n" if slot_prompt and slot_prompt.strip() else ""
+
         messages = [
             {
                 "role": "system",
@@ -393,12 +403,15 @@ class DualModelVisionClient:
                     "discount_and_tax (integer, Chiet khau + thue, can be negative, or 0 if unreadable), "
                     "total_trips (integer, Tong so chuyen, or 0 if unreadable), "
                     "online_hours (string, e.g. 95h 7m, or '' if unreadable), "
-                    "period (string, e.g. 08/2026, or '' if unreadable), "
+                    "period (string, e.g. 'Tuần 1' or '28/09 - 04/10' or 'Tháng 10', or '' if unreadable), "
+                    "period_type (string, exactly one of 'WEEKLY' if screen shows a specific week or 7-day range, 'MONTHLY' if screen shows a full calendar month or monthly total e.g. 'Tháng 1', 'Tháng 10', 'Doanh thu tháng', 'DAILY' if single day, or 'UNKNOWN'), "
+                    "is_weekly_report (boolean, true only if the screen explicitly represents a single weekly earnings period; false if it represents an entire month, multiple months, or a single day), "
                     "confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately), "
                     "is_legible (boolean, true if numbers are legible, false if too blurry/corrupted), "
                     "is_manipulated_or_photoshopped (boolean, true if digits or text appear digitally edited/spliced), "
                     "detected_app (string, exactly one of 'XANH_SM', 'GRAB', 'BE', 'GOJEK', 'OTHER_MOCKUP'), "
                     "is_authentic_gsm_ui (boolean, true only if authentically matching the official Xanh SM / GSM driver application layout, branding, and teal/cyan color scheme; false for competitors or custom fake mockups). "
+                    f"{slot_extra_instructions}"
                     "Do NOT output markdown commentary or extra text."
                 ),
             },

@@ -955,10 +955,10 @@ def render_dynamic_form_html(
                 <div class="sig-baseline"></div>
                 <div class="sig-baseline-text" id="txtSigBaselineHint">Ký tên phía trên đường kẻ</div>
             </div>
-            <div class="paper-footer" style="touch-action: manipulation;">
-                <button type="button" class="btn-modal cancel" onclick="closeSigModal()" ontouchend="closeSigModal()" id="btnSigClose">Đóng</button>
-                <button type="button" class="btn-modal clear" onclick="clearModalSig()" ontouchend="clearModalSig()" id="btnSigClear">Ký lại</button>
-                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()" ontouchend="confirmModalSig()" id="btnSigConfirm">Hoàn tất chữ ký</button>
+            <div class="paper-footer" style="touch-action: auto !important; pointer-events: auto !important; z-index: 10;">
+                <button type="button" class="btn-modal cancel" onclick="closeSigModal(event)" id="btnSigClose">Đóng</button>
+                <button type="button" class="btn-modal clear" onclick="clearModalSig(event)" id="btnSigClear">Ký lại</button>
+                <button type="button" class="btn-modal confirm" onclick="confirmModalSig(event)" id="btnSigConfirm">Hoàn tất chữ ký</button>
             </div>
         </div>
     </div>
@@ -2244,9 +2244,12 @@ def render_dynamic_form_html(
             e.preventDefault();
         }}
 
+        let sigModalCooldown = false;
         function openSigModal(qid) {{
+            if (sigModalCooldown) return;
             activeSignatureTargetQId = qid;
-            modal.style.display = 'flex';
+            const paperModal = document.getElementById('paperModal') || modal;
+            if (paperModal) paperModal.style.display = 'flex';
             document.body.style.overflow = 'hidden';
 
             // Global unconditional window touchmove cancellation: address bar physically CANNOT collapse!
@@ -2263,12 +2266,16 @@ def render_dynamic_form_html(
             clearModalSig();
         }}
 
-        function closeSigModal() {{
-            modal.style.display = 'none';
+        function closeSigModal(e) {{
+            if (e && e.preventDefault) e.preventDefault();
+            if (e && e.stopPropagation) e.stopPropagation();
+            const paperModal = document.getElementById('paperModal') || modal;
+            if (paperModal) paperModal.style.display = 'none';
             document.body.style.overflow = '';
             window.removeEventListener('touchmove', preventWindowScroll);
+            sigModalCooldown = true;
+            setTimeout(() => {{ sigModalCooldown = false; }}, 400);
         }}
-
         function clearModalSig() {{
             sigCtx.fillStyle = "#ffffff";
             sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
@@ -2288,7 +2295,9 @@ def render_dynamic_form_html(
             return false;
         }}
 
-        function confirmModalSig() {{
+        function confirmModalSig(e) {{
+            if (e && e.preventDefault) e.preventDefault();
+            if (e && e.stopPropagation) e.stopPropagation();
             const targetQId = activeSignatureTargetQId || 'driver_signature';
             const hasDrawn = hasModalSignature || hasCanvasContent(sigCanvas);
             if (!hasDrawn) {{
@@ -2315,7 +2324,7 @@ def render_dynamic_form_html(
             }} catch(err) {{
                 console.error("Signature save error:", err);
             }}
-            closeSigModal();
+            closeSigModal(e);
             evaluateConditionals();
             if (typeof scheduleDraftSave === 'function') scheduleDraftSave();
         }}
@@ -2508,13 +2517,13 @@ def render_dynamic_form_html(
                 titleEl.textContent = t.modal_approved_title;
                 reasonEl.textContent = (res && res.reason) || t.modal_approved_desc;
             }} else if (status === 'MANUAL_REVIEW' || status === 'NEEDS_REVIEW' || status === 'APPEAL_PENDING') {{
-                badge.textContent = t.status_manual_review;
+                badge.textContent = "Chờ Ban Quản Trị Duyệt";
                 badge.style.background = 'rgba(245, 158, 11, 0.2)';
                 badge.style.color = '#fbbf24';
                 badge.style.border = '1px solid #f59e0b';
                 box.style.borderTopColor = '#f59e0b';
-                titleEl.textContent = t.modal_review_title;
-                reasonEl.textContent = (res && res.reason) || t.modal_review_desc;
+                titleEl.textContent = "Đang Chờ Ban Quản Trị Xét Duyệt";
+                reasonEl.textContent = (res && res.reason) || "Phiếu khảo sát của bạn đã được ghi nhận. Ban Quản Trị đang tiến hành đối soát thủ công. Vui lòng mở Telegram để nhận kết quả!";
             }} else {{
                 badge.textContent = t.status_rejected;
                 badge.style.background = 'rgba(239, 68, 68, 0.2)';
@@ -2533,7 +2542,7 @@ def render_dynamic_form_html(
                 tgBtn.style.display = 'flex';
                 const tgTxt = document.getElementById('txtSubResultTelegram');
                 if (tgTxt) {{
-                    tgTxt.textContent = status === 'APPROVED' ? 'Xem trên Telegram' : 'Yêu Cầu Hỗ Trợ Qua Telegram';
+                    tgTxt.textContent = (status === 'MANUAL_REVIEW' || status === 'APPROVED') ? 'Mở Telegram Chờ Kết Quả' : 'Yêu Cầu Hỗ Trợ Qua Telegram';
                 }}
             }}
 

@@ -154,7 +154,7 @@ class TestArchitectFixes:
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert data.get("status") == "APPROVED"
+        assert data.get("status") == "APPROVED", f"FAILED REASON: {data.get('reason')}"
         assert max_concurrent_observed >= 2, f"Expected concurrency >= 2, got {max_concurrent_observed}"
 
     def test_execute_reset_form_clears_all_slots_and_camera_state(self):
