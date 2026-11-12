@@ -14,25 +14,26 @@ class IncomeAnalysisResult(BaseModel):
 # Empirically calibrated against 648 vehicle inspection records from GSM dataset & 2026 market policies
 INCOME_BENCHMARKS = {
     "BIKE": {  # Xanh SM Bike (VinFast Feliz / Evo 200 / Klara)
+        # removing money min, ppl can just do this very rarely
         # Daily Bounds
-        "daily_gross_min": 150_000,          # 150k VND min daily
+        # "daily_gross_min": 150_000,          # 150k VND min daily
         "daily_gross_max": 1_200_000,        # 1.2M VND max realistic daily
         "daily_hours_max": 16.0,             # Max 16 hours/day
         # Weekly Bounds (Empirical GSM Data: Mean = 3.0M, Std = 1.59M)
-        "weekly_gross_min": 800_000,         # 800k VND min active week
+        # "weekly_gross_min": 800_000,         # 800k VND min active week
         "weekly_gross_max": 6_200_000,       # 2-sigma bound (~6.18M VND)
         "weekly_hard_reject": 8_000_000,     # > 3-sigma bound (~7.77M VND) -> Auto Reject
-        "weekly_hours_min": 20.0,            # Min 20 hours/week
+        # "weekly_hours_min": 20.0,            # Min 20 hours/week
         "weekly_hours_max": 85.0,            # Normal active week cap
         "weekly_hours_hard_reject": 115.0,   # Physical exhaustion limit
         # Monthly Bounds
-        "monthly_gross_min": 4_000_000,      # 4M VND
+        # "monthly_gross_min": 4_000_000,      # 4M VND
         "monthly_gross_max": 25_000_000,     # 25M VND realistic cap
         "monthly_hard_reject": 45_000_000,   # > 45M VND (~$1,800 USD) for bike driver is impossible -> AUTO REJECT
         # Unit Ratios by Vehicle Type
         "ride_fare_min": 12_000,             # 12k VND min trip (short hops)
-        "ride_fare_max": 150_000,            # 150k VND max trip (long cross-city)
-        "rev_per_hour_min": 30_000,          # 30k VND / online hour
+        "ride_fare_max": 300_000,            # 150k VND max trip (long cross-city) # bumped to 300, rush hour prices/cross-town rides can be expensive
+        # "rev_per_hour_min": 30_000,          # 30k VND / online hour
         "rev_per_hour_max": 110_000,         # 110k VND / online hour (peak surge)
         "platform_fee_ratio": 0.20,          # ~20% discount/app fee (0% if under 2026 incentive, up to 35% with tax/fines)
         "platform_fee_ratio_min": 0.00,
@@ -48,24 +49,24 @@ INCOME_BENCHMARKS = {
     },
     "CAR": {  # General Xanh SM Taxi / Fleet Baseline
         # Daily Bounds
-        "daily_gross_min": 400_000,          # 400k VND min daily
+        # "daily_gross_min": 400_000,          # 400k VND min daily
         "daily_gross_max": 2_800_000,        # 2.8M VND max realistic daily
         "daily_hours_max": 18.0,             # Max 18 hours/day (shared ca or extreme)
         # Weekly Bounds (Empirical GSM Data: Mean = 5.38M, Std = 2.82M)
-        "weekly_gross_min": 1_200_000,       # 1.2M VND min active week
+        # "weekly_gross_min": 1_200_000,       # 1.2M VND min active week
         "weekly_gross_max": 11_000_000,      # 2-sigma bound (~11.03M VND)
         "weekly_hard_reject": 14_000_000,    # > 3-sigma bound (~13.85M VND) -> Auto Reject
-        "weekly_hours_min": 25.0,            # Min 25 hours/week
+        # "weekly_hours_min": 25.0,            # Min 25 hours/week
         "weekly_hours_max": 105.0,           # Normal active week cap
         "weekly_hours_hard_reject": 135.0,   # Physical driver limit
         # Monthly Bounds
-        "monthly_gross_min": 10_000_000,     # 10M VND
+        # "monthly_gross_min": 10_000_000,     # 10M VND
         "monthly_gross_max": 55_000_000,     # 55M VND realistic cap
         "monthly_hard_reject": 100_000_000,  # > 100M VND (~$4,000 USD) -> AUTO REJECT
         # Unit Ratios by Vehicle Type
         "ride_fare_min": 30_000,             # 30k VND min trip (short ride)
-        "ride_fare_max": 600_000,            # 600k VND max trip (airport / interprovincial)
-        "rev_per_hour_min": 50_000,          # 50k VND / online hour
+        "ride_fare_max": 1200_000,            # 600k VND max trip (airport / interprovincial) # same reason as bike
+        # "rev_per_hour_min": 50_000,          # 50k VND / online hour # ppl can be afk
         "rev_per_hour_max": 210_000,         # 210k VND / online hour (airport/peak)
         "platform_fee_ratio": 0.55,          # ~55% average deduction (bimodal: 20-25% partner vs 60-76% RTO rental fleet)
         "platform_fee_ratio_min": 0.00,
@@ -80,21 +81,21 @@ INCOME_BENCHMARKS = {
         }
     },
     "CAR_VF_MINI": {  # Xanh Mini (VinFast VF 3)
-        "daily_gross_min": 300_000,
+        # "daily_gross_min": 300_000,
         "daily_gross_max": 1_800_000,
         "daily_hours_max": 16.0,
-        "weekly_gross_min": 1_000_000,
+        # "weekly_gross_min": 1_000_000,
         "weekly_gross_max": 6_500_000,
         "weekly_hard_reject": 8_500_000,
-        "weekly_hours_min": 25.0,
+        # "weekly_hours_min": 25.0,
         "weekly_hours_max": 95.0,
         "weekly_hours_hard_reject": 120.0,
-        "monthly_gross_min": 8_000_000,
+        # "monthly_gross_min": 8_000_000,
         "monthly_gross_max": 35_000_000,
         "monthly_hard_reject": 55_000_000,
         "ride_fare_min": 20_000,             # Lower city hop fare
-        "ride_fare_max": 200_000,            # Lower battery range limits extreme long trips
-        "rev_per_hour_min": 40_000,
+        "ride_fare_max": 600_000,            # Lower battery range limits extreme long trips
+        # "rev_per_hour_min": 40_000,
         "rev_per_hour_max": 120_000,
         "platform_fee_ratio": 0.45,
         "platform_fee_ratio_min": 0.00,
@@ -107,21 +108,21 @@ INCOME_BENCHMARKS = {
         }
     },
     "CAR_VF_STANDARD": {  # GreenCar Standard (VinFast VF 5 Plus, VF e34, VF 6, VF 7)
-        "daily_gross_min": 400_000,
+        # "daily_gross_min": 400_000,
         "daily_gross_max": 2_800_000,
         "daily_hours_max": 18.0,
-        "weekly_gross_min": 1_500_000,
+        # "weekly_gross_min": 1_500_000,
         "weekly_gross_max": 10_500_000,
         "weekly_hard_reject": 13_500_000,
-        "weekly_hours_min": 30.0,
+        # "weekly_hours_min": 30.0,
         "weekly_hours_max": 105.0,
         "weekly_hours_hard_reject": 135.0,
-        "monthly_gross_min": 12_000_000,
+        # "monthly_gross_min": 12_000_000,
         "monthly_gross_max": 50_000_000,
         "monthly_hard_reject": 90_000_000,
         "ride_fare_min": 30_000,
-        "ride_fare_max": 500_000,
-        "rev_per_hour_min": 50_000,
+        "ride_fare_max": 1200_000,
+        # "rev_per_hour_min": 50_000,
         "rev_per_hour_max": 180_000,
         "platform_fee_ratio": 0.65,          # Typical RTO rental deductions
         "platform_fee_ratio_min": 0.00,
@@ -134,21 +135,21 @@ INCOME_BENCHMARKS = {
         }
     },
     "CAR_VF_LUXURY": {  # LuxuryCar (VinFast VF 8, VF 9)
-        "daily_gross_min": 600_000,
+        # "daily_gross_min": 600_000,
         "daily_gross_max": 3_800_000,
         "daily_hours_max": 18.0,
-        "weekly_gross_min": 2_500_000,
+        # "weekly_gross_min": 2_500_000,
         "weekly_gross_max": 14_000_000,
         "weekly_hard_reject": 18_000_000,
-        "weekly_hours_min": 25.0,
+        # "weekly_hours_min": 25.0,
         "weekly_hours_max": 95.0,
         "weekly_hours_hard_reject": 120.0,
-        "monthly_gross_min": 18_000_000,
+        # "monthly_gross_min": 18_000_000,
         "monthly_gross_max": 75_000_000,
         "monthly_hard_reject": 140_000_000,
         "ride_fare_min": 50_000,
-        "ride_fare_max": 1_200_000,          # High-end inter-city / VIP airport transfers
-        "rev_per_hour_min": 70_000,
+        "ride_fare_max": 2_800_000,          # High-end inter-city / VIP airport transfers
+        # "rev_per_hour_min": 70_000,
         "rev_per_hour_max": 280_000,
         "platform_fee_ratio": 0.70,          # Higher battery lease fee
         "platform_fee_ratio_min": 0.00,
