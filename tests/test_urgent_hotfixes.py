@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 from main import app, vision_client
-from tests.test_architect_fixes import make_test_image
+from tests.real_test_samples import get_real_distinct_test_photos
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_engine import DEFAULT_TRUST_BRIDGE_SCHEMA, FormSchema, FormQuestion, QuestionType
 
@@ -62,6 +62,7 @@ async def test_monthly_income_upload_rejected_in_weekly_slot(monkeypatch):
             "is_authentic_gsm_ui": True,
         }
 
+    real_photos = get_real_distinct_test_photos(7)
     with patch.object(vision_client, "classify_image_role", side_effect=mock_role), \
          patch.object(vision_client, "ocr_driver_app_income", side_effect=mock_ocr_monthly):
         resp = client.post(
@@ -82,8 +83,8 @@ async def test_monthly_income_upload_rejected_in_weekly_slot(monkeypatch):
                 "bypass_img_check": "false",
             },
             files={
-                f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"month_test_{i}"), "image/jpeg")
-                for i in range(7)
+                f"survey_photo_{i}": (real_photos[i][0], real_photos[i][1], "image/jpeg")
+                for i in range(min(7, len(real_photos)))
             },
         )
 
@@ -120,6 +121,7 @@ async def test_live_submissions_routed_to_manual_review_and_tg(monkeypatch):
             "is_authentic_gsm_ui": True,
         }
 
+    real_photos = get_real_distinct_test_photos(7)
     with patch.object(vision_client, "classify_image_role", side_effect=mock_role), \
          patch.object(vision_client, "ocr_driver_app_income", side_effect=mock_ocr_valid_week):
         resp = client.post(
@@ -140,12 +142,12 @@ async def test_live_submissions_routed_to_manual_review_and_tg(monkeypatch):
                 "bypass_img_check": "false",
             },
             files={
-                f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"live_vet_{i}"), "image/jpeg")
-                for i in range(7)
+                f"survey_photo_{i}": (real_photos[i][0], real_photos[i][1], "image/jpeg")
+                for i in range(min(7, len(real_photos)))
             },
         )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data.get("status") == "MANUAL_REVIEW"
+    assert data.get("status") == "MANUAL_REVIEW", f"FAILED REASON: {data.get('reason')}"
     assert "Telegram" in data.get("reason")

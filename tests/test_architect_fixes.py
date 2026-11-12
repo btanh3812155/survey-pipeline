@@ -19,7 +19,7 @@ from services.form_engine import (
 )
 from services.dynamic_form_html import render_dynamic_form_html
 from services.form_manager_html import render_form_editor_html
-
+from tests.real_test_samples import get_real_distinct_test_photos
 
 def make_test_image(pattern: str = "lines") -> bytes:
     import random
@@ -124,7 +124,7 @@ class TestArchitectFixes:
                 "is_legible": True,
                 "is_authentic_gsm_ui": True,
             }
-
+        real_photos = get_real_distinct_test_photos(7)
         with patch("main.vision_client.classify_image_role", side_effect=mock_classify_role), \
              patch("main.vision_client.extract_facts", side_effect=mock_extract), \
              patch("main.vision_client.ocr_driver_app_income", side_effect=mock_ocr):
@@ -148,8 +148,8 @@ class TestArchitectFixes:
                     "bypass_img_check": "false",
                 },
                 files={
-                    f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"lines_{time.time()}_{i}"), "image/jpeg")
-                    for i in range(7)
+                    f"survey_photo_{i}": (real_photos[i][0], real_photos[i][1], "image/jpeg")
+                    for i in range(min(7, len(real_photos)))
                 },
             )
         assert resp.status_code == 200

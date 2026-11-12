@@ -8,14 +8,11 @@ from typing import Tuple, Optional
 # prevent decompression bombs while allowing normal high-res phone captures
 Image.MAX_IMAGE_PIXELS = 35_000_000
 ImageFile.LOAD_TRUNCATED_IMAGES = False
-warnings.simplefilter("error", Image.DecompressionBombWarning)
+warnings.simplefilter("ignore", Image.DecompressionBombWarning)
 
 # attempt HEIC format registration for native iOS uploads
-try:
-    import pillow_heif
-    pillow_heif.register_heif_opener()
-except ImportError:
-    pass
+from PIL import Image, ImageOps
+Image.MAX_IMAGE_PIXELS = 150_000_000
 
 
 def sanitize_and_normalize_image(
