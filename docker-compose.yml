@@ -1,25 +1,13 @@
 services:
-  caddy:
-    image: caddy:alpine
+  app-dev:
+    container_name: survey-dev-app-1
+    image: survey-pipeline-app-dev:latest
     restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - app
-
-  app:
-    build: .
-    restart: always
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
     environment:
-      - ENVIRONMENT=production
-      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
-      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
+      - REDIS_URL=redis://redis:6379/1
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - LARK_APP_ID=${LARK_APP_ID}
@@ -44,69 +32,11 @@ services:
       - ./main.py:/app/main.py
       - ./config.py:/app/config.py
       - ./static:/app/static
-      - ./service_account.json:/app/service_account.json:ro
       - ./models:/app/models:ro
-    depends_on:
-      - postgres
-      - redis
+    networks:
+      - default
 
-  app-dev:
-    build: .
-    profiles: ["dev"]
-    restart: unless-stopped
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-    environment:
-      - ENVIRONMENT=development
-      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
-      - REDIS_URL=redis://redis:6379/1
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_BOT_TOKEN=${TELEGRAM_ADMIN_BOT_TOKEN}
-      - TELEGRAM_DRIVER_BOT_TOKEN=${TELEGRAM_DRIVER_BOT_TOKEN}
-      - TELEGRAM_ADMIN_GROUP_ID=${TELEGRAM_ADMIN_GROUP_ID}
-      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
-    volumes:
-      - ./data_dev:/app/data
-      - ./core:/app/core
-      - ./routers:/app/routers
-      - ./services:/app/services
-      - ./scripts:/app/scripts
-      - ./main.py:/app/main.py
-      - ./config.py:/app/config.py
-      - ./static:/app/static
-      - ./service_account.json:/app/service_account.json:ro
-      - ./models:/app/models:ro
-    depends_on:
-      - postgres
-      - redis
-
-  # outbox-worker: Migrated to in-process Action Checklist with 45s expiring leases
-  # Reclaims 28.1 MB RAM on droplet and completely eliminates database connection polling churn
-  # telegram-bot: Migrated to push webhooks (/webhook/telegram/admin & /webhook/telegram/driver)
-  # Reclaims ~150MB RAM on droplet and eliminates 30s long-polling overhead
-  postgres:
-    image: pgvector/pgvector:pg16
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: secret_password
-      POSTGRES_DB: surveydb
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
-
-  redis:
-    image: redis:7-alpine
-    restart: always
-    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru
-    volumes:
-      - redisdata:/data
-
-volumes:
-  pgdata:
-  redisdata:
-  caddy_data:
-  caddy_config:
+networks:
+  default:
+    name: survey-pipeline_default
+    external: true
