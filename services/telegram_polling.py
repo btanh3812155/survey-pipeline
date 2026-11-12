@@ -193,36 +193,45 @@ class TelegramPollingRunner:
             f"<i>Cập nhật thời gian thực từ cơ sở dữ liệu SSOT.</i>"
         )
 
-    async def handle_command(self, chat_id: Union[int, str], text: str) -> None:
+    async def handle_command(
+        self,
+        chat_id: Union[int, str],
+        text: str,
+        reply_to_message: Optional[dict] = None,
+    ) -> None:
         """Routes and executes admin slash commands."""
         clean_text = text.strip()
         cmd = clean_text.split()[0].lower() if clean_text else ""
 
-        if cmd == "/start" or cmd == "/id":
-            welcome_msg = (
-                "👋 <b>Chào mừng Ban Quản Trị đến với Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)!</b>\n\n"
-                "Hệ thống tự động đồng bộ hóa với pipeline kiểm định AI và cơ sở dữ liệu khảo sát.\n\n"
-                f"📌 <b>ID Cuộc Trò Chuyện Hiện Tại:</b> <code>{chat_id}</code>\n\n"
-                "🛠️ <b>Lệnh điều hành nhanh:</b>\n"
-                "• <code>/check &lt;mã_phiếu&gt;</code> - Tra cứu hồ sơ & 1-click duyệt/từ chối\n"
-                "• <code>/audit &lt;mã_phiếu&gt;</code> - Kiểm toán niêm phong mật mã SHA-256\n"
-                "• <code>/stats</code> - Báo cáo số liệu thời gian thực\n"
-                "• <code>/forms</code> - Quản lý danh mục biểu mẫu đang mở"
-            )
-            await self.send_message(chat_id, welcome_msg)
-
-        elif cmd in ("/check", "/query", "/audit"):
+        if cmd in ("/check", "/query", "/audit"):
             parts = clean_text.split(" ", 1)
-            if len(parts) < 2 or not parts[1].strip():
-                action_name = "kiểm toán" if cmd == "/audit" else "tra cứu"
+            sub_id = None
+            if len(parts) >= 2 and parts[1].strip():
+                sub_id = parts[1].strip().lstrip("#")
+            elif reply_to_message:
+                reply_text = reply_to_message.get("text") or reply_to_message.get("caption") or ""
+                m = re.search(r"#?((?:VN|DEV)-[A-Za-z0-9_-]+)", reply_text)
+                if m:
+                    sub_id = m.group(1).lstrip("#")
+
+            if not sub_id:
+                action_name = "kiểm toán (/audit)" if cmd == "/audit" else "kiểm tra (/check)"
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": f"✍️ Điền {cmd} <mã_phiếu>", "switch_inline_query_current_chat": f"{cmd} "}
+                        ]
+                    ]
+                }
                 await self.send_message(
                     chat_id,
-                    f"⚠️ <b>Vui lòng cung cấp mã phiếu cần {action_name}.</b>\n"
-                    f"Ví dụ: <code>{cmd} VN-123456</code> hoặc <code>{cmd} DEV-ABCD</code>",
+                    f"⚠️ <b>Vui lòng cung cấp mã phiếu cần {action_name}.</b>\n\n"
+                    f"• Bấm nút bên dưới để tự động điền: <code>{cmd} &lt;mã_phiếu&gt;</code>\n"
+                    f"• Hoặc <b>reply (trả lời)</b> trực tiếp vào tin nhắn thông báo phiếu bằng lệnh <code>{cmd}</code>!",
+                    reply_markup=reply_markup,
                 )
                 return
 
-            sub_id = parts[1].strip().lstrip("#")
             if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
                 await self.send_message(
                     chat_id,
@@ -233,47 +242,28 @@ class TelegramPollingRunner:
 
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
             report_text = render_dossier_message(dossier)
-            audit_buttons = {
+            review_buttons = {
                 "inline_keyboard": [
                     [
-                        {"text": "🔍 Xem hồ sơ", "callback_data": f"admin_query:{sub_id}"},
-                        {"text": "🛡️ Kiểm toán", "callback_data": f"admin_audit:{sub_id}"},
+                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
+                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
                     ],
                     [
-                        {"text": "✅ Duyệt", "callback_data": f"admin_approve:{sub_id}"},
-                        {"text": "❌ Từ chối", "callback_data": f"admin_reject:{sub_id}"},
+                        {"text": "🛡️ Kiểm toán (/audit)", "callback_data": f"admin_audit:{sub_id}"},
                     ],
                 ]
             }
-            await self.send_message(chat_id, report_text, reply_markup=audit_buttons)
-
-        elif cmd == "/stats":
-            stats_msg = await self.get_stats_message()
-            await self.send_message(chat_id, stats_msg)
-
-        elif cmd == "/forms":
-            lines = ["📋 <b>Danh Sách Biểu Mẫu Khảo Sát Đang Hoạt Động (Forms):</b>\n"]
-            reg = FORM_REGISTRY
-            pass
-            if reg:
-                for fid, schema in reg.items():
-                    title = getattr(schema, "title", fid)
-                    lines.append(f"• <b>{fid}</b>: {title}\n  🔗 https://survey.trustbridgevn.com/forms/{fid}")
-            else:
-                lines.append("• <b>income_survey</b>: Khảo Sát Thu Nhập Tài Xế GSM\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
-            await self.send_message(chat_id, "\n".join(lines))
+            await self.send_message(chat_id, report_text, reply_markup=review_buttons)
 
         else:
             help_msg = (
-                "❓ <b>Lệnh không được nhận diện.</b>\n\n"
-                "Các lệnh dành cho Quản Trị Viên:\n"
-                "• <code>/check &lt;id&gt;</code> - Tra cứu hồ sơ chi tiết\n"
-                "• <code>/audit &lt;id&gt;</code> - Kiểm toán niêm phong SHA-256\n"
-                "• <code>/stats</code> - Thống kê tiến độ toàn hệ thống\n"
-                "• <code>/forms</code> - Xem danh sách link biểu mẫu"
+                "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
+                "Danh sách lệnh được hỗ trợ:\n"
+                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ phiếu để xét duyệt\n"
+                "• <code>/audit &lt;mã_phiếu&gt;</code> - Kiểm toán niêm phong mật mã SHA-256\n\n"
+                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code> hoặc <code>/audit</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
-
     async def handle_callback_query(self, cq: dict) -> None:
         """Processes inline keyboard button interactions for admin audits."""
         cq_id = cq.get("id", "")
@@ -286,13 +276,23 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id)
             return
 
-        if data.startswith("admin_query:"):
+        if data.startswith("admin_review:") or data.startswith("admin_query:"):
             sub_id = data.split(":", 1)[1]
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
             report_text = render_dossier_message(dossier)
-            await self.send_message(cq_chat_id, report_text)
-            await self.answer_callback_query(cq_id, f"Đã tra cứu #{sub_id}")
-
+            review_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
+                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
+                    ],
+                    [
+                        {"text": "🛡️ Kiểm toán (/audit)", "callback_data": f"admin_audit:{sub_id}"},
+                    ],
+                ]
+            }
+            await self.send_message(cq_chat_id, report_text, reply_markup=review_buttons)
+            await self.answer_callback_query(cq_id, f"Đã mở phiếu #{sub_id}")
         elif data.startswith("admin_approve:"):
             sub_id = data.split(":", 1)[1]
             await self._update_submission_status(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
@@ -514,7 +514,7 @@ class TelegramPollingRunner:
                             logger.error(f"Failed to relay message to user: {e}")
                     return
                 if len(text) <= 4096 and text.startswith("/"):
-                    await self.handle_command(chat_id, text)
+                    await self.handle_command(chat_id, text, reply_to_message=msg.get("reply_to_message"))
         elif "callback_query" in update and update["callback_query"]:
             await self.handle_callback_query(update["callback_query"])
     async def poll_once(self) -> int:

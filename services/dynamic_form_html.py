@@ -2817,6 +2817,7 @@ def render_dynamic_form_html(
                 const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
                 try {{ localStorage.removeItem(storageKey); }} catch(e) {{}}
                 showSubmissionResultModal(res);
+            }} catch(e) {{
                 showSubmissionResultModal({{
                     status: 'REJECTED',
                     submission_id: 'NET-ERR',

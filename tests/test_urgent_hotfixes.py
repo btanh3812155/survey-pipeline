@@ -170,3 +170,103 @@ def test_ocr_override_on_visually_similar_same_phone_screenshots():
 
     is_dup, reason = check_intra_submission_duplicates(raw_bytes, target_q, weekly_incomes)
     assert is_dup is False, f"Expected duplicate check to pass via OCR override, but got: {reason}"
+@pytest.mark.asyncio
+async def test_telegram_admin_notification_no_license_plate_and_has_review_button(monkeypatch):
+    """Admin TG message has NO license plate and includes a button to bring up the review form."""
+    monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    client = TestClient(app)
+
+    dispatched_messages = []
+    async def mock_send_tg(chat_id, text, reply_markup=None):
+        dispatched_messages.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+
+    with patch("main.send_telegram_notification", side_effect=mock_send_tg), \
+         patch("main.settings.TELEGRAM_ADMIN_GROUP_ID", "-1001234567890"):
+        real_photos = get_real_distinct_test_photos(7)
+        resp = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "driver_phone": "0988999888",
+                "license_plate": "29E-999.88",
+                "driver_name": "Tài xế Bí Mật",
+                "consent_choice": "Tôi đồng ý",
+                "signature_png": "data:image/png;base64,mock",
+                "vehicle_type": "Ô tô",
+                "car_model": "VF 5 Plus",
+                "gsm_duration": "Từ 6 – 12 tháng",
+                "gsm_contract_type": "Xe Taxi xanh GSM",
+                "daily_trips": "18",
+                "monthly_income_range": "12 – 20 triệu VNĐ",
+                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                "is_test_mode": "false",
+                "bypass_img_check": "false",
+            },
+            files={
+                f"survey_photo_{i}": (real_photos[i][0], real_photos[i][1], "image/jpeg")
+                for i in range(min(7, len(real_photos)))
+            },
+        )
+        assert resp.status_code == 200
+
+    admin_msg = next((m for m in dispatched_messages if str(m["chat_id"]) == "-1001234567890"), None)
+    assert admin_msg is not None
+    # 1. MUST NOT send license plate
+    assert "Biển số xe" not in admin_msg["text"]
+    assert "29E-999.88" not in admin_msg["text"]
+    # 2. MUST have button to bring up review form
+    assert admin_msg["reply_markup"] is not None
+    buttons = admin_msg["reply_markup"]["inline_keyboard"]
+    assert any("admin_review:" in b["callback_data"] for row in buttons for b in row)
+
+
+@pytest.mark.asyncio
+async def test_telegram_reply_with_check_runs_command_for_replied_submission():
+    """Replying to a form notification with /check or /audit without sub_id extracts ID and runs."""
+    from services.telegram_polling import TelegramPollingRunner
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    sent_messages = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_messages.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+
+    # 1. User replies to notification with /check
+    replied_notification = {
+        "text": "⏳ PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #VN-ABCDEF1234\n• Tài xế: Nguyễn Văn A (0988111222)\n• Doanh thu: 15,000,000 VNĐ"
+    }
+    await runner.handle_command(
+        chat_id=123456,
+        text="/check",
+        reply_to_message=replied_notification,
+    )
+
+    assert len(sent_messages) == 1
+    resp_msg = sent_messages[0]
+    assert "VN-ABCDEF1234" in resp_msg["text"]
+    # The brought up form MUST have buttons to approve or reject
+    assert resp_msg["reply_markup"] is not None
+    btns = resp_msg["reply_markup"]["inline_keyboard"]
+    assert any("admin_approve:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
+    assert any("admin_reject:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
+
+
+@pytest.mark.asyncio
+async def test_telegram_menu_check_alone_prompts_with_fill_button():
+    """Tapping /check alone without replying prompts with switch_inline_query_current_chat button to fill in ID."""
+    from services.telegram_polling import TelegramPollingRunner
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    sent_messages = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_messages.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+
+    await runner.handle_command(chat_id=123456, text="/check", reply_to_message=None)
+    assert len(sent_messages) == 1
+    msg = sent_messages[0]
+    assert "Vui lòng cung cấp mã phiếu" in msg["text"]
+    assert msg["reply_markup"] is not None
+    btns = msg["reply_markup"]["inline_keyboard"]
+    # Must have switch_inline_query_current_chat to prefill /check in input box
+    assert any(b.get("switch_inline_query_current_chat") == "/check " for row in btns for b in row)

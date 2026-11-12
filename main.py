@@ -2056,8 +2056,8 @@ async def submit_webrtc_survey(
                     if pil_im is not None:
                         try:
                             raw_dh = compute_image_dhash_str(pil_im)
-                            if raw_dh:
-                                calc_dhash = f"{int(raw_dh, 16):064b}"
+                            if raw_dh and len(raw_dh) == 64:
+                                calc_dhash = raw_dh
                         except Exception:
                             calc_dhash = None
                     calc_emb = compute_dinov2_embedding(pil_im) if pil_im is not None else None
@@ -2227,16 +2227,27 @@ async def submit_webrtc_survey(
     auto_emoji = "✅" if auto_verdict == "APPROVED" else "❌"
     verdict_text = (
         f"{status_emoji} <b>PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #{submission_id}</b>\n\n"
-        f"• <b>Tài xế:</b> <b>{html.escape(driver_name or 'N/A')}</b> (<code>{driver_phone or 'N/A'}</code>)\n"
-        f"• <b>Biển số xe:</b> <code>{license_plate or ai_res.get('detected_plate') or 'N/A'}</code>\n"
+        f"• <b>Tài xế:</b> <b>{html.escape(driver_name or 'Tài xế')}</b> (<code>{driver_phone or 'N/A'}</code>)\n"
+        f"• <b>Loại xe:</b> <code>{vehicle_type_val}</code>\n"
         f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({html.escape(auto_reason) if auto_reason else 'Đạt chuẩn'})\n"
-        f"• <b>Doanh thu ghi nhận:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
-        f"• <b>Trạng thái:</b> <code>{status_str}</code>\n"
-        f"• <b>Ghi chú:</b> {html.escape(reason_str) if reason_str else 'Chờ duyệt'}"
+        f"• <b>Doanh thu:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
+        f"• <b>Trạng thái:</b> <code>{status_str}</code>"
     )
+    admin_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "📋 Mở Phiếu Xét Duyệt", "callback_data": f"admin_review:{submission_id}"}
+            ]
+        ]
+    }
     if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
         try:
-            background_tasks.add_task(send_telegram_notification, settings.TELEGRAM_ADMIN_GROUP_ID, verdict_text)
+            background_tasks.add_task(
+                send_telegram_notification,
+                settings.TELEGRAM_ADMIN_GROUP_ID,
+                verdict_text,
+                admin_markup,
+            )
         except Exception as tg_err:
             logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
     try:
@@ -2521,7 +2532,7 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         "message": f"Đã hủy yêu cầu kiểm tra lại cho phiếu #{sub_id} thành công!"
     })
 
-async def send_telegram_notification(chat_id: Union[int, str], text: str):
+async def send_telegram_notification(chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None):
     """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram."""
     bot_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
     if not bot_token or bot_token == "mock_tg_token":
@@ -2534,6 +2545,8 @@ async def send_telegram_notification(chat_id: Union[int, str], text: str):
         "text": text,
         "parse_mode": "HTML",
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         resp = await http_client.post(url, json=payload)
         if resp.status_code == 429:
