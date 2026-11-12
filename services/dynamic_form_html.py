@@ -2820,8 +2820,9 @@ def render_dynamic_form_html(
                     return;
                 }}
                 const res = await resp.json();
+                const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
+                try {{ localStorage.removeItem(storageKey); }} catch(e) {{}}
                 showSubmissionResultModal(res);
-            }} catch(e) {{
                 showSubmissionResultModal({{
                     status: 'REJECTED',
                     submission_id: 'NET-ERR',
@@ -2993,8 +2994,13 @@ def render_dynamic_form_html(
                     localStorage.setItem(storageKey, JSON.stringify(textAnswers));
                 }} catch(e) {{}}
 
-                // Optional server backup if running on a dedicated CTV link
+                // Optional server backup for shared form options only (never sync private phone/name across shared CTV links!)
                 if (ACTIVE_CTV_SLUG) {{
+                    const serverDraft = Object.assign({{}}, textAnswers);
+                    delete serverDraft['driver_phone'];
+                    delete serverDraft['driver_name'];
+                    delete serverDraft['driver_signature'];
+                    delete serverDraft['consent_choice'];
                     fetch('/api/v1/forms/draft', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
@@ -3002,7 +3008,7 @@ def render_dynamic_form_html(
                             ctv_slug: ACTIVE_CTV_SLUG,
                             ctv_id: LOCKED_CTV_CODE || null,
                             form_id: SCHEMA.form_id || 'income_survey',
-                            draft_data: textAnswers
+                            draft_data: serverDraft
                         }})
                     }}).catch(() => {{}});
                 }}
@@ -3044,6 +3050,7 @@ def render_dynamic_form_html(
                         const data = await resp.json();
                         if (data.status === 'success' && data.draft) {{
                             for (let k in data.draft) {{
+                                if (k === 'driver_signature' || k === 'consent_choice' || k === 'driver_phone' || k === 'driver_name') continue;
                                 answers[k] = data.draft[k];
                                 const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
                                 if (input && input.id !== 'ctv_code') {{
