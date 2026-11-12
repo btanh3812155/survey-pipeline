@@ -1897,7 +1897,7 @@
             if (screenOff) screenOff.style.display = 'flex';
         }
 
-        function selectCameraSlot(qid, slotIdx) {
+        function selectCameraSlot(qid, slotIdx, shouldActivateCamera = false) {
             activeSlotByQId[qid] = slotIdx;
             const q = SCHEMA.questions.find(item => item.id === qid);
             if (!q) return;
@@ -1954,9 +1954,13 @@
                     if (vid) vid.style.display = 'block';
                     if (snapBtn) snapBtn.style.display = 'flex';
                     if (btnCamOff) btnCamOff.style.display = 'inline-block';
-                } else {
-                    // Camera not active, automatically activate camera so user gets live feed immediately
+                } else if (shouldActivateCamera) {
                     activateCamera(qid);
+                } else {
+                    if (screenOff) screenOff.style.display = 'flex';
+                    if (vid) vid.style.display = 'none';
+                    if (snapBtn) snapBtn.style.display = 'none';
+                    if (btnCamOff) btnCamOff.style.display = 'none';
                 }
             }
         }
@@ -2029,21 +2033,9 @@
             if (input.files.length === 1) {
                 const file = input.files[0];
                 applyFileToSlot(qid, currentSlotIdx, file);
-                if (hasSlots) {
-                    let nextUncapturedIdx = -1;
-                    for (let i = 0; i < q.image_slots.length; i++) {
-                        const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
-                        if (!answers[`${qid}_${checkIdx}`]) {
-                            nextUncapturedIdx = checkIdx;
-                            break;
-                        }
-                    }
-                    if (nextUncapturedIdx !== -1) {
-                        selectCameraSlot(qid, nextUncapturedIdx);
-                    }
-                }
+                // Stay on current slot, show preview, and do not advance or turn on camera!
             } else {
-                // Batch multi-file upload at once
+                // Batch multi-file upload at once across available slots
                 const files = Array.from(input.files);
                 const totalSlots = hasSlots ? q.image_slots.length : 1;
                 let startSlot = (files.length >= totalSlots || currentSlotIdx === 0) ? 0 : currentSlotIdx;
@@ -2051,9 +2043,7 @@
                     applyFileToSlot(qid, startSlot + i, files[i]);
                 }
                 if (hasSlots) {
-                    let nextEmpty = q.image_slots.findIndex((_, idx) => !answers[`${qid}_${idx}`]);
-                    if (nextEmpty === -1) nextEmpty = q.image_slots.length - 1;
-                    selectCameraSlot(qid, nextEmpty);
+                    selectCameraSlot(qid, startSlot, false);
                 }
             }
             input.value = "";
