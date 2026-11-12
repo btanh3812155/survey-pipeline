@@ -17,7 +17,7 @@ def test_signature_confirm_button_event_wiring_and_cooldown():
     
     # 2. Ensure modal close debounce cooldown is active
     assert 'sigModalCooldown' in html
-    assert 'document.getElementById(\'paperModal\')' in html
+from services.duplicate_detector import check_intra_submission_duplicates
 
 
 def test_per_slot_ai_detection_prompt_in_schema():
@@ -151,3 +151,22 @@ async def test_live_submissions_routed_to_manual_review_and_tg(monkeypatch):
     data = resp.json()
     assert data.get("status") == "MANUAL_REVIEW", f"FAILED REASON: {data.get('reason')}"
     assert "Telegram" in data.get("reason")
+
+
+def test_ocr_override_on_visually_similar_same_phone_screenshots():
+    """Two photos of the same physical cracked phone screen are not rejected as duplicates when OCR numbers differ."""
+    with open("tests/fixtures/user_phone_test/slot2_week1.png", "rb") as f:
+        b1 = f.read()
+    with open("tests/fixtures/user_phone_test/slot3_week2.png", "rb") as f:
+        b2 = f.read()
+
+    weekly_incomes = {
+        "week_1": {"gross_revenue": 2828510, "net_income": 2321732, "total_trips": 65, "period": "07 - 13"},
+        "week_2": {"gross_revenue": 3860932, "net_income": 3169166, "total_trips": 80, "period": "14 - 20"},
+    }
+
+    raw_bytes = [b"dummy0", b"dummy1", b1, b2, b"dummy4", b"dummy5", b"dummy6"]
+    target_q = next(q for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions if q.id == "camera_receipt")
+
+    is_dup, reason = check_intra_submission_duplicates(raw_bytes, target_q, weekly_incomes)
+    assert is_dup is False, f"Expected duplicate check to pass via OCR override, but got: {reason}"

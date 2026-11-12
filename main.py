@@ -1904,16 +1904,19 @@ async def submit_webrtc_survey(
                                                         # 2. Image hash check
                                                         if prev.get("image_dhash_int") is not None:
                                                             prev_dh = int(prev["image_dhash_int"])
-                                                            if hamming_distance(target_dhash, prev_dh) <= 6:
-                                                                is_approved = False
-                                                                status_str = "REJECTED"
-                                                                reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{prev.get('submission_id')})! Phát hiện trùng lặp hình ảnh."
-                                                                ai_res["status"] = "REJECTED"
-                                                                ai_res["reason"] = reason_str
-                                                                ai_res["duplicate_detected"] = True
-                                                                ai_res["matched_submission_id"] = prev.get('submission_id')
-                                                                ai_res["duplicate_type"] = "INTER_SUBMISSION"
-                                                                break
+                                                            if hamming_distance(target_dhash, prev_dh) <= 4:
+                                                                if prev_g > 0 and tot_gross > 0 and abs(prev_g - tot_gross) > 50_000:
+                                                                    logger.info(f"✅ [OCR OVERRIDE] Hash similarity <= 4 overridden by distinct financial numbers ({prev_g:,} vs {tot_gross:,}).")
+                                                                else:
+                                                                    is_approved = False
+                                                                    status_str = "REJECTED"
+                                                                    reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{prev.get('submission_id')})! Phát hiện trùng lặp hình ảnh."
+                                                                    ai_res["status"] = "REJECTED"
+                                                                    ai_res["reason"] = reason_str
+                                                                    ai_res["duplicate_detected"] = True
+                                                                    ai_res["matched_submission_id"] = prev.get('submission_id')
+                                                                    ai_res["duplicate_type"] = "INTER_SUBMISSION"
+                                                                    break
                                             except Exception:
                                                 pass
                     else:
