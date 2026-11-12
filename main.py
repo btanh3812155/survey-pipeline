@@ -434,7 +434,8 @@ async def geo_ip_fallback(request: Request):
         return DEFAULT_GEO_FALLBACK
 
 SAMPLE_IMAGES_DIR = os.path.join(os.getcwd(), "data", "test_samples")
-
+SUBMISSION_PHOTOS_DIR = os.path.join(os.getcwd(), "data", "submission_photos")
+os.makedirs(SUBMISSION_PHOTOS_DIR, exist_ok=True)
 @app.get("/samples/{filename}")
 async def get_sample_image(filename: str):
     """Serves public sample testing images with path traversal protection."""
@@ -1462,6 +1463,15 @@ async def submit_webrtc_survey(
         raw_bytes_list.append(b)
         await img.seek(0)
 
+    # Save photos locally so admin Telegram bot can send them in /check response
+    sub_photo_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
+    os.makedirs(sub_photo_dir, exist_ok=True)
+    for i_idx, r_b in enumerate(raw_bytes_list):
+        try:
+            with open(os.path.join(sub_photo_dir, f"slot_{i_idx}.jpg"), "wb") as fp:
+                fp.write(r_b)
+        except Exception:
+            pass
     if not is_schema_valid:
         status_str = "REJECTED"
         is_approved = False

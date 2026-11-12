@@ -116,6 +116,51 @@ class TelegramPollingRunner:
             logger.error(f"Failed to answer callback query {callback_query_id}: {e}")
             return False
 
+    async def send_media_group(
+        self,
+        chat_id: Union[int, str],
+        photo_paths: List[str],
+    ) -> bool:
+        """Sends an album of photo images to Telegram chat using sendMediaGroup."""
+        if not photo_paths:
+            return False
+        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            return True
+
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup"
+        selected_paths = [p for p in photo_paths[:10] if os.path.exists(p) and os.path.getsize(p) > 0]
+        if not selected_paths:
+            return False
+
+        files = {}
+        media = []
+        open_fps = []
+        try:
+            for idx, p in enumerate(selected_paths):
+                key = f"photo_{idx}"
+                fp = open(p, "rb")
+                open_fps.append(fp)
+                files[key] = (os.path.basename(p), fp, "image/jpeg")
+                media.append({"type": "photo", "media": f"attach://{key}"})
+
+            client = await self.get_client()
+            resp = await client.post(
+                url,
+                data={"chat_id": str(chat_id), "media": json.dumps(media)},
+                files=files,
+                timeout=30.0,
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error(f"Failed to send media group: {e}")
+            return False
+        finally:
+            for fp in open_fps:
+                try:
+                    fp.close()
+                except Exception:
+                    pass
+
     async def log_chat_history(
         self,
         telegram_user_id: int,
@@ -203,7 +248,7 @@ class TelegramPollingRunner:
         clean_text = text.strip()
         cmd = clean_text.split()[0].lower() if clean_text else ""
 
-        if cmd in ("/check", "/query", "/audit"):
+        if cmd in ("/check", "/query"):
             parts = clean_text.split(" ", 1)
             sub_id = None
             if len(parts) >= 2 and parts[1].strip():
@@ -215,19 +260,18 @@ class TelegramPollingRunner:
                     sub_id = m.group(1).lstrip("#")
 
             if not sub_id:
-                action_name = "kiểm toán (/audit)" if cmd == "/audit" else "kiểm tra (/check)"
                 reply_markup = {
                     "inline_keyboard": [
                         [
-                            {"text": f"✍️ Điền {cmd} <mã_phiếu>", "switch_inline_query_current_chat": f"{cmd} "}
+                            {"text": "✍️ Điền /check <mã_phiếu>", "switch_inline_query_current_chat": "/check "}
                         ]
                     ]
                 }
                 await self.send_message(
                     chat_id,
-                    f"⚠️ <b>Vui lòng cung cấp mã phiếu cần {action_name}.</b>\n\n"
-                    f"• Bấm nút bên dưới để tự động điền: <code>{cmd} &lt;mã_phiếu&gt;</code>\n"
-                    f"• Hoặc <b>reply (trả lời)</b> trực tiếp vào tin nhắn thông báo phiếu bằng lệnh <code>{cmd}</code>!",
+                    "⚠️ <b>Vui lòng cung cấp mã phiếu cần kiểm tra (/check).</b>\n\n"
+                    "• Bấm nút bên dưới để tự động điền: <code>/check &lt;mã_phiếu&gt;</code>\n"
+                    "• Hoặc <b>reply (trả lời)</b> trực tiếp vào tin nhắn thông báo phiếu bằng lệnh <code>/check</code>!",
                     reply_markup=reply_markup,
                 )
                 return
@@ -241,15 +285,17 @@ class TelegramPollingRunner:
                 return
 
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
+
+            # Send photo album if photos exist on disk
+            if dossier.get("photo_paths"):
+                await self.send_media_group(chat_id, dossier["photo_paths"])
+
             report_text = render_dossier_message(dossier)
             review_buttons = {
                 "inline_keyboard": [
                     [
                         {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
                         {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
-                    ],
-                    [
-                        {"text": "🛡️ Kiểm toán (/audit)", "callback_data": f"admin_audit:{sub_id}"},
                     ],
                 ]
             }
@@ -258,10 +304,9 @@ class TelegramPollingRunner:
         else:
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
-                "Danh sách lệnh được hỗ trợ:\n"
-                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ phiếu để xét duyệt\n"
-                "• <code>/audit &lt;mã_phiếu&gt;</code> - Kiểm toán niêm phong mật mã SHA-256\n\n"
-                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code> hoặc <code>/audit</code>!</i>"
+                "Lệnh điều hành:\n"
+                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu để xét duyệt\n\n"
+                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
     async def handle_callback_query(self, cq: dict) -> None:
@@ -279,15 +324,17 @@ class TelegramPollingRunner:
         if data.startswith("admin_review:") or data.startswith("admin_query:"):
             sub_id = data.split(":", 1)[1]
             dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
+
+            # Send photo album if photos exist on disk
+            if dossier.get("photo_paths"):
+                await self.send_media_group(cq_chat_id, dossier["photo_paths"])
+
             report_text = render_dossier_message(dossier)
             review_buttons = {
                 "inline_keyboard": [
                     [
                         {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
                         {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
-                    ],
-                    [
-                        {"text": "🛡️ Kiểm toán (/audit)", "callback_data": f"admin_audit:{sub_id}"},
                     ],
                 ]
             }
