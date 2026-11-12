@@ -5,12 +5,13 @@ Decouples compliance reporting, Decree 13/GDPR audit hop inspection,
 and cryptographic hash verification.
 """
 
+import os
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from config import settings
-from core.state import verify_admin_auth
+from core.state import verify_admin_auth, STATIC_DIR
 from core.repositories import fetch_aggregated_audit_logs
 from services.audit_viewer_html import render_audit_viewer_html
 
@@ -24,7 +25,10 @@ async def admin_audit_dashboard(
     request: Request,
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Web UI dashboard to view all immutable audit logs and cryptographic hop chains."""
+    """Serves pure static Immutable Audit Trail client."""
+    html_file = os.path.join(STATIC_DIR, "ui", "audit_viewer.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     logs = await fetch_aggregated_audit_logs()
     return HTMLResponse(
         content=render_audit_viewer_html(logs, environment=settings.ENVIRONMENT),

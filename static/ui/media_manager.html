@@ -1,37 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-Google Drive-style Media Manager Admin Frontend.
-Provides hierarchical directory tree navigation, drag-and-drop upload with folder selection,
-in-place filename renaming, dropdown folder moving, and 1-click Markdown snippet copying.
-Purged of all emojis; utilizes standardized inline SVG vector icons.
-"""
-
-import html
-import json
-from typing import List, Dict, Any, Optional
-
-
-def render_media_manager_html(
-    media_files: List[Dict[str, Any]],
-    folders: Optional[List[str]] = None,
-    current_folder: str = "all",
-    environment: str = "production",
-    storage_backend: str = "Caddy Static (/media)",
-) -> str:
-    folders = folders or ["general", "guide", "forms"]
-    is_dev = str(environment).lower() != "production"
-    
-    if is_dev:
-        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg> DEV REPLICA (surveydb_dev)</span>'
-        env_subtext = "Môi trường Thử Nghiệm / Staging độc lập"
-    else:
-        env_badge = '<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> PRODUCTION</span>'
-        env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
-
-    files_json = json.dumps(media_files, ensure_ascii=False)
-    folders_json = json.dumps(folders, ensure_ascii=False)
-
-    return f"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -41,7 +8,7 @@ def render_media_manager_html(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
     <style>
-        :root {{
+        :root {
             --bg: #090d16;
             --surface: #131b2e;
             --surface-hover: #1a253e;
@@ -61,24 +28,24 @@ def render_media_manager_html(
             --text: #f8fafc;
             --muted: #94a3b8;
             --card-radius: 12px;
-        }}
+        }
 
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-        body {{
+        body {
             font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
             padding: 20px 14px;
-        }}
+        }
 
-        .container {{
+        .container {
             max-width: 1540px;
             margin: 0 auto;
-        }}
+        }
 
-        header {{
+        header {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -87,31 +54,31 @@ def render_media_manager_html(
             margin-bottom: 20px;
             padding-bottom: 16px;
             border-bottom: 1px solid var(--border);
-        }}
+        }
 
-        .header-brand h1 {{
+        .header-brand h1 {
             font-size: 1.35rem;
             font-weight: 800;
             display: flex;
             align-items: center;
             gap: 8px;
             color: #fff;
-        }}
+        }
 
-        .header-brand p {{
+        .header-brand p {
             font-size: 0.82rem;
             color: var(--muted);
             margin-top: 4px;
-        }}
+        }
 
-        .header-actions {{
+        .header-actions {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
             align-items: center;
-        }}
+        }
 
-        .nav-btn {{
+        .nav-btn {
             display: inline-flex;
             align-items: center;
             gap: 6px;
@@ -125,44 +92,44 @@ def render_media_manager_html(
             font-weight: 600;
             cursor: pointer;
             transition: all 0.15s ease;
-        }}
+        }
 
-        .nav-btn:hover {{
+        .nav-btn:hover {
             background: var(--surface-hover);
             border-color: #3b82f6;
             color: #60a5fa;
-        }}
+        }
 
-        .nav-btn.active {{
+        .nav-btn.active {
             background: var(--accent-soft);
             border-color: var(--accent);
             color: #60a5fa;
-        }}
+        }
 
         /* Drive Layout */
-        .drive-layout {{
+        .drive-layout {
             display: grid;
             grid-template-columns: 260px 1fr;
             gap: 16px;
             margin-top: 14px;
-        }}
+        }
 
-        @media (max-width: 860px) {{
-            .drive-layout {{
+        @media (max-width: 860px) {
+            .drive-layout {
                 grid-template-columns: 1fr;
-            }}
-        }}
+            }
+        }
 
         /* Sidebar Directory Tree */
-        .drive-sidebar {{
+        .drive-sidebar {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--card-radius);
             padding: 14px;
             height: fit-content;
-        }}
+        }
 
-        .sidebar-section-title {{
+        .sidebar-section-title {
             font-size: 0.72rem;
             text-transform: uppercase;
             letter-spacing: 0.6px;
@@ -172,15 +139,15 @@ def render_media_manager_html(
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }}
+        }
 
-        .tree-root {{
+        .tree-root {
             display: flex;
             flex-direction: column;
             gap: 2px;
-        }}
+        }
 
-        .tree-item {{
+        .tree-item {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -192,63 +159,63 @@ def render_media_manager_html(
             font-weight: 600;
             transition: all 0.15s ease;
             user-select: none;
-        }}
+        }
 
-        .tree-item:hover {{
+        .tree-item:hover {
             background: var(--surface-hover);
             color: #60a5fa;
-        }}
+        }
 
-        .tree-item.active {{
+        .tree-item.active {
             background: var(--accent-soft);
             color: #60a5fa;
             border: 1px solid rgba(37, 99, 235, 0.35);
-        }}
+        }
 
-        .tree-indent {{
+        .tree-indent {
             display: inline-block;
             width: 14px;
-        }}
+        }
 
-        .folder-count {{
+        .folder-count {
             margin-left: auto;
             font-size: 0.7rem;
             background: rgba(255, 255, 255, 0.08);
             padding: 2px 6px;
             border-radius: 10px;
             color: var(--muted);
-        }}
+        }
 
-        .storage-status-card {{
+        .storage-status-card {
             margin-top: 20px;
             padding-top: 14px;
             border-top: 1px solid var(--border);
             font-size: 0.75rem;
-        }}
+        }
 
-        .storage-status-card .title {{
+        .storage-status-card .title {
             font-weight: 700;
             color: var(--text);
             margin-bottom: 6px;
             display: flex;
             align-items: center;
             gap: 6px;
-        }}
+        }
 
-        .storage-status-card .desc {{
+        .storage-status-card .desc {
             color: var(--muted);
             line-height: 1.4;
-        }}
+        }
 
         /* Main Content */
-        .drive-main {{
+        .drive-main {
             display: flex;
             flex-direction: column;
             gap: 14px;
-        }}
+        }
 
         /* Clean Upload Dropzone */
-        .upload-panel {{
+        .upload-panel {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--card-radius);
@@ -258,9 +225,9 @@ def render_media_manager_html(
             justify-content: space-between;
             gap: 16px;
             flex-wrap: wrap;
-        }}
+        }
 
-        .dropzone-inline {{
+        .dropzone-inline {
             flex: 1;
             min-width: 260px;
             border: 1px dashed var(--border);
@@ -274,21 +241,21 @@ def render_media_manager_html(
             justify-content: center;
             gap: 10px;
             color: var(--muted);
-        }}
+        }
 
-        .dropzone-inline:hover, .dropzone-inline.dragover {{
+        .dropzone-inline:hover, .dropzone-inline.dragover {
             border-color: #3b82f6;
             background: var(--surface-hover);
             color: #60a5fa;
-        }}
+        }
 
-        .upload-controls {{
+        .upload-controls {
             display: flex;
             align-items: center;
             gap: 10px;
-        }}
+        }
 
-        .folder-select {{
+        .folder-select {
             background: #090d16;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -297,10 +264,10 @@ def render_media_manager_html(
             font-size: 0.8rem;
             outline: none;
             cursor: pointer;
-        }}
+        }
 
         /* Breadcrumb Bar */
-        .breadcrumb-bar {{
+        .breadcrumb-bar {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -311,27 +278,27 @@ def render_media_manager_html(
             font-size: 0.82rem;
             color: var(--muted);
             flex-wrap: wrap;
-        }}
+        }
 
-        .breadcrumb-node {{
+        .breadcrumb-node {
             color: #60a5fa;
             cursor: pointer;
             display: inline-flex;
             align-items: center;
             gap: 4px;
-        }}
+        }
 
-        .breadcrumb-node:hover {{
+        .breadcrumb-node:hover {
             text-decoration: underline;
-        }}
+        }
 
-        .breadcrumb-sep {{
+        .breadcrumb-sep {
             color: var(--border);
             display: inline-block;
-        }}
+        }
 
         /* Toolbar */
-        .drive-toolbar {{
+        .drive-toolbar {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--card-radius);
@@ -341,15 +308,15 @@ def render_media_manager_html(
             justify-content: space-between;
             gap: 12px;
             flex-wrap: wrap;
-        }}
+        }
 
-        .search-box-wrap {{
+        .search-box-wrap {
             flex: 1;
             min-width: 240px;
             position: relative;
-        }}
+        }
 
-        .search-input {{
+        .search-input {
             width: 100%;
             background: #090d16;
             border: 1px solid var(--border);
@@ -358,13 +325,13 @@ def render_media_manager_html(
             color: #fff;
             font-size: 0.82rem;
             outline: none;
-        }}
+        }
 
-        .search-input:focus {{
+        .search-input:focus {
             border-color: #3b82f6;
-        }}
+        }
 
-        .search-icon {{
+        .search-icon {
             position: absolute;
             left: 10px;
             top: 50%;
@@ -373,15 +340,15 @@ def render_media_manager_html(
             height: 16px;
             fill: var(--muted);
             pointer-events: none;
-        }}
+        }
 
-        .toolbar-controls {{
+        .toolbar-controls {
             display: flex;
             align-items: center;
             gap: 8px;
-        }}
+        }
 
-        .view-btn {{
+        .view-btn {
             background: var(--surface-hover);
             border: 1px solid var(--border);
             color: var(--text);
@@ -392,22 +359,22 @@ def render_media_manager_html(
             align-items: center;
             gap: 4px;
             font-size: 0.78rem;
-        }}
+        }
 
-        .view-btn.active {{
+        .view-btn.active {
             background: var(--accent);
             border-color: var(--accent);
             color: #fff;
-        }}
+        }
 
         /* Grid */
-        .media-grid {{
+        .media-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
             gap: 14px;
-        }}
+        }
 
-        .media-card {{
+        .media-card {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--card-radius);
@@ -416,14 +383,14 @@ def render_media_manager_html(
             flex-direction: column;
             transition: transform 0.15s ease, border-color 0.15s ease;
             position: relative;
-        }}
+        }
 
-        .media-card:hover {{
+        .media-card:hover {
             transform: translateY(-2px);
             border-color: #3b82f6;
-        }}
+        }
 
-        .media-thumb-wrap {{
+        .media-thumb-wrap {
             width: 100%;
             height: 140px;
             background: #090d16;
@@ -433,20 +400,20 @@ def render_media_manager_html(
             overflow: hidden;
             position: relative;
             cursor: pointer;
-        }}
+        }
 
-        .media-thumb {{
+        .media-thumb {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
             transition: transform 0.2s ease;
-        }}
+        }
 
-        .media-card:hover .media-thumb {{
+        .media-card:hover .media-thumb {
             transform: scale(1.05);
-        }}
+        }
 
-        .badge-folder {{
+        .badge-folder {
             position: absolute;
             top: 8px;
             left: 8px;
@@ -458,9 +425,9 @@ def render_media_manager_html(
             font-weight: 700;
             padding: 2px 6px;
             border-radius: 4px;
-        }}
+        }
 
-        .badge-format {{
+        .badge-format {
             position: absolute;
             top: 8px;
             right: 8px;
@@ -473,42 +440,42 @@ def render_media_manager_html(
             padding: 2px 6px;
             border-radius: 4px;
             text-transform: uppercase;
-        }}
+        }
 
-        .media-info {{
+        .media-info {
             padding: 10px 12px;
             display: flex;
             flex-direction: column;
             gap: 4px;
             flex: 1;
-        }}
+        }
 
-        .media-title {{
+        .media-title {
             font-size: 0.82rem;
             font-weight: 700;
             color: #fff;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-        }}
+        }
 
-        .media-meta {{
+        .media-meta {
             font-size: 0.7rem;
             color: var(--muted);
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }}
+        }
 
-        .media-actions {{
+        .media-actions {
             display: flex;
             gap: 6px;
             margin-top: 8px;
             padding-top: 8px;
             border-top: 1px solid var(--border);
-        }}
+        }
 
-        .btn-action-icon {{
+        .btn-action-icon {
             flex: 1;
             background: var(--surface-hover);
             border: 1px solid var(--border);
@@ -523,22 +490,22 @@ def render_media_manager_html(
             justify-content: center;
             gap: 4px;
             transition: all 0.15s ease;
-        }}
+        }
 
-        .btn-action-icon:hover {{
+        .btn-action-icon:hover {
             background: #2563eb;
             color: #fff;
             border-color: #2563eb;
-        }}
+        }
 
-        .btn-action-icon.danger:hover {{
+        .btn-action-icon.danger:hover {
             background: #ef4444;
             color: #fff;
             border-color: #ef4444;
-        }}
+        }
 
         /* Toast */
-        #toast {{
+        #toast {
             position: fixed;
             bottom: 24px;
             right: 24px;
@@ -551,10 +518,10 @@ def render_media_manager_html(
             box-shadow: 0 10px 25px rgba(0,0,0,0.5);
             display: none;
             z-index: 9999;
-        }}
+        }
 
         /* Modal */
-        .modal-overlay {{
+        .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0, 0, 0, 0.85);
@@ -564,9 +531,9 @@ def render_media_manager_html(
             justify-content: center;
             z-index: 10000;
             padding: 20px;
-        }}
+        }
 
-        .modal-content {{
+        .modal-content {
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 14px;
@@ -577,49 +544,49 @@ def render_media_manager_html(
             flex-direction: column;
             overflow: hidden;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-        }}
+        }
 
-        .modal-header {{
+        .modal-header {
             padding: 14px 18px;
             border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }}
+        }
 
-        .modal-header h3 {{
+        .modal-header h3 {
             font-size: 1rem;
             font-weight: 700;
             color: #fff;
-        }}
+        }
 
-        .btn-modal-close {{
+        .btn-modal-close {
             background: transparent;
             border: none;
             color: var(--muted);
             font-size: 1.4rem;
             cursor: pointer;
-        }}
+        }
 
-        .btn-modal-close:hover {{
+        .btn-modal-close:hover {
             color: #fff;
-        }}
+        }
 
-        .modal-body {{
+        .modal-body {
             padding: 18px;
             overflow: auto;
             display: grid;
             grid-template-columns: 1fr 340px;
             gap: 18px;
-        }}
+        }
 
-        @media (max-width: 768px) {{
-            .modal-body {{
+        @media (max-width: 768px) {
+            .modal-body {
                 grid-template-columns: 1fr;
-            }}
-        }}
+            }
+        }
 
-        .modal-preview-img-wrap {{
+        .modal-preview-img-wrap {
             background: #090d16;
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -628,31 +595,31 @@ def render_media_manager_html(
             justify-content: center;
             padding: 10px;
             min-height: 250px;
-        }}
+        }
 
-        .modal-preview-img {{
+        .modal-preview-img {
             max-width: 100%;
             max-height: 380px;
             object-fit: contain;
             border-radius: 4px;
-        }}
+        }
 
-        .modal-props {{
+        .modal-props {
             display: flex;
             flex-direction: column;
             gap: 12px;
-        }}
+        }
 
-        .prop-item label {{
+        .prop-item label {
             font-size: 0.72rem;
             text-transform: uppercase;
             color: var(--muted);
             font-weight: 700;
             margin-bottom: 4px;
             display: block;
-        }}
+        }
 
-        .prop-item input, .prop-item select, .prop-item textarea {{
+        .prop-item input, .prop-item select, .prop-item textarea {
             width: 100%;
             background: #090d16;
             border: 1px solid var(--border);
@@ -662,14 +629,14 @@ def render_media_manager_html(
             font-size: 0.78rem;
             font-family: monospace;
             outline: none;
-        }}
+        }
 
-        .prop-item select {{
+        .prop-item select {
             font-family: inherit;
             cursor: pointer;
-        }}
+        }
 
-        .btn-modal-action {{
+        .btn-modal-action {
             background: #2563eb;
             color: #fff;
             border: none;
@@ -683,11 +650,11 @@ def render_media_manager_html(
             justify-content: center;
             gap: 6px;
             margin-top: 4px;
-        }}
+        }
 
-        .btn-modal-action:hover {{
+        .btn-modal-action:hover {
             background: #1d4ed8;
-        }}
+        }
     </style>
 </head>
 <body>
@@ -698,9 +665,9 @@ def render_media_manager_html(
                 <h1>
                     <svg viewBox="0 0 24 24" style="width:24px; height:24px; fill:#3b82f6;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/></svg>
                     Quản Lý Media
-                    {env_badge}
+                    <span id="envBadge"></span>
                 </h1>
-                <p>Kho lưu trữ ảnh biểu mẫu & tài sản trực quan ({env_subtext})</p>
+                <p>Kho lưu trữ ảnh biểu mẫu & tài sản trực quan <span id="envSubtext"></span></p>
             </div>
             <div class="header-actions">
                 <a href="/admin/forms" class="nav-btn">
@@ -742,7 +709,7 @@ def render_media_manager_html(
                         <span>Trạng Thái Lưu Trữ</span>
                     </div>
                     <div class="desc">
-                        Lưu trữ: <b style="color:#60a5fa;">{storage_backend}</b>.<br>
+                        Lưu trữ: <b style="color:#60a5fa;"><span id="storageBackend">Caddy Static (/media)</span></b>.<br>
                         Tự động nén WebP và phục vụ tĩnh trực tiếp.<br>
                         <span style="color:#f59e0b; display:inline-block; margin-top:4px;">Chuẩn bị sẵn sàng cutover Cloudflare R2 khi mở rộng quy mô.</span>
                     </div>
@@ -854,101 +821,129 @@ def render_media_manager_html(
     </div>
 
     <script>
-        const RAW_MEDIA = {files_json};
-        let ALL_FOLDERS = {folders_json};
-        let currentFolder = "{current_folder}";
+        let RAW_MEDIA = [];
+        let ALL_FOLDERS = ["general", "guide", "forms"];
+        let currentFolder = "all";
         let currentView = "grid";
         let filteredMedia = [...RAW_MEDIA];
         let currentEditingId = null;
 
-        function init() {{
+        
+        async function loadMediaData() {
+            try {
+                const resp = await fetch("/api/v1/media");
+                if (resp.ok) {
+                    const data = await resp.json();
+                    RAW_MEDIA = data.files || [];
+                    if (data.folders) ALL_FOLDERS = data.folders;
+                }
+            } catch (e) {
+                console.error("Failed to load media list:", e);
+            }
             renderDirTree();
             populateFolderDropdowns();
             renderBreadcrumbs();
             filterMedia();
-            setupDropzone();
-        }}
+        }
 
-        function showToast(msg) {{
+        async function init() {
+            // Environment badge detection
+            const isDev = window.location.hostname.includes("dev") || window.location.hostname.includes("staging");
+            const badgeEl = document.getElementById("envBadge");
+            const subtextEl = document.getElementById("envSubtext");
+            if (badgeEl) {
+                badgeEl.innerHTML = isDev 
+                    ? `<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg> DEV REPLICA (surveydb_dev)</span>`
+                    : `<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;"><svg viewBox="0 0 24 24" style="width:12px; height:12px; fill:currentColor;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> PRODUCTION</span>`;
+            }
+            if (subtextEl) {
+                subtextEl.textContent = isDev ? "Môi trường Thử Nghiệm / Staging độc lập" : "Hệ thống Cơ sở dữ liệu chính thức";
+            }
+            setupDropzone();
+            await loadMediaData();
+        }
+
+
+        function showToast(msg) {
             const t = document.getElementById("toast");
             t.textContent = msg;
             t.style.display = "block";
-            setTimeout(() => {{ t.style.display = "none"; }}, 2500);
-        }}
+            setTimeout(() => { t.style.display = "none"; }, 2500);
+        }
 
-        function copyToClipboard(text, msg = "Đã sao chép!") {{
-            navigator.clipboard.writeText(text).then(() => {{
+        function copyToClipboard(text, msg = "Đã sao chép!") {
+            navigator.clipboard.writeText(text).then(() => {
                 showToast(msg);
-            }}).catch(() => {{
+            }).catch(() => {
                 prompt("Sao chép:", text);
-            }});
-        }}
+            });
+        }
 
-        function renderDirTree() {{
+        function renderDirTree() {
             const root = document.getElementById("dirTreeRoot");
-            const counts = {{ "all": RAW_MEDIA.length }};
-            ALL_FOLDERS.forEach(f => {{
+            const counts = { "all": RAW_MEDIA.length };
+            ALL_FOLDERS.forEach(f => {
                 counts[f] = RAW_MEDIA.filter(m => m.folder === f || m.folder.startsWith(f + "/")).length;
-            }});
+            });
 
             let html = `
-                <div class="tree-item ${{currentFolder === 'all' ? 'active' : ''}}" onclick="selectFolder('all')">
+                <div class="tree-item ${currentFolder === 'all' ? 'active' : ''}" onclick="selectFolder('all')">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
                     <span>Tất Cả Tệp</span>
-                    <span class="folder-count">${{counts['all']}}</span>
+                    <span class="folder-count">${counts['all']}</span>
                 </div>
             `;
 
             const sorted = [...ALL_FOLDERS].sort();
-            sorted.forEach(f => {{
+            sorted.forEach(f => {
                 const depth = (f.match(/\\//g) || []).length;
                 const displayName = f.split('/').pop();
-                const indentHtml = depth > 0 ? `<span class="tree-indent" style="width:${{depth * 14}}px;"></span>` : '';
+                const indentHtml = depth > 0 ? `<span class="tree-indent" style="width:${depth * 14}px;"></span>` : '';
                 html += `
-                    <div class="tree-item ${{currentFolder === f ? 'active' : ''}}" onclick="selectFolder('${{f}}')">
-                        ${{indentHtml}}
+                    <div class="tree-item ${currentFolder === f ? 'active' : ''}" onclick="selectFolder('${f}')">
+                        ${indentHtml}
                         <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-                        <span>${{displayName}}</span>
-                        <span class="folder-count">${{counts[f] || 0}}</span>
+                        <span>${displayName}</span>
+                        <span class="folder-count">${counts[f] || 0}</span>
                     </div>
                 `;
-            }});
+            });
 
             root.innerHTML = html;
-        }}
+        }
 
-        function populateFolderDropdowns() {{
+        function populateFolderDropdowns() {
             const uploadSel = document.getElementById("uploadFolderSelect");
             const propSel = document.getElementById("propFolderSelect");
 
             let opts = "";
-            ALL_FOLDERS.forEach(f => {{
-                opts += `<option value="${{f}}">${{f}}</option>`;
-            }});
+            ALL_FOLDERS.forEach(f => {
+                opts += `<option value="${f}">${f}</option>`;
+            });
 
-            if (uploadSel) {{
+            if (uploadSel) {
                 uploadSel.innerHTML = opts;
-                if (currentFolder !== "all" && ALL_FOLDERS.includes(currentFolder)) {{
+                if (currentFolder !== "all" && ALL_FOLDERS.includes(currentFolder)) {
                     uploadSel.value = currentFolder;
-                }}
-            }}
-            if (propSel) {{
+                }
+            }
+            if (propSel) {
                 propSel.innerHTML = opts;
-            }}
-        }}
+            }
+        }
 
-        function selectFolder(folder) {{
+        function selectFolder(folder) {
             currentFolder = folder;
             const uploadSel = document.getElementById("uploadFolderSelect");
-            if (uploadSel && folder !== "all" && ALL_FOLDERS.includes(folder)) {{
+            if (uploadSel && folder !== "all" && ALL_FOLDERS.includes(folder)) {
                 uploadSel.value = folder;
-            }}
+            }
             renderDirTree();
             renderBreadcrumbs();
             filterMedia();
-        }}
+        }
 
-        function renderBreadcrumbs() {{
+        function renderBreadcrumbs() {
             const bar = document.getElementById("breadcrumbBar");
             let html = `
                 <span class="breadcrumb-node" onclick="selectFolder('all')">
@@ -957,36 +952,36 @@ def render_media_manager_html(
                 </span>
             `;
 
-            if (currentFolder !== "all") {{
+            if (currentFolder !== "all") {
                 const parts = currentFolder.split('/');
                 let cumulative = "";
-                parts.forEach((p, idx) => {{
+                parts.forEach((p, idx) => {
                     cumulative = cumulative ? cumulative + "/" + p : p;
                     html += `
                         <span class="breadcrumb-sep">/</span>
-                        <span class="breadcrumb-node" onclick="selectFolder('${{cumulative}}')">${{p}}</span>
+                        <span class="breadcrumb-node" onclick="selectFolder('${cumulative}')">${p}</span>
                     `;
-                }});
-            }}
+                });
+            }
 
             bar.innerHTML = html;
-        }}
+        }
 
-        function filterMedia() {{
+        function filterMedia() {
             const q = (document.getElementById("searchInput").value || "").toLowerCase().trim();
-            filteredMedia = RAW_MEDIA.filter(m => {{
+            filteredMedia = RAW_MEDIA.filter(m => {
                 const matchFolder = (currentFolder === 'all') || (m.folder === currentFolder) || (m.folder.startsWith(currentFolder + "/"));
                 const matchQuery = !q || m.name.toLowerCase().includes(q) || (m.folder && m.folder.toLowerCase().includes(q));
                 return matchFolder && matchQuery;
-            }});
+            });
             renderMediaGrid();
-        }}
+        }
 
-        function renderMediaGrid() {{
+        function renderMediaGrid() {
             const grid = document.getElementById("mediaGrid");
-            document.getElementById("filesCountBadge").textContent = `${{filteredMedia.length}} tệp`;
+            document.getElementById("filesCountBadge").textContent = `${filteredMedia.length} tệp`;
 
-            if (filteredMedia.length === 0) {{
+            if (filteredMedia.length === 0) {
                 grid.innerHTML = `
                     <div style="grid-column: 1/-1; padding: 40px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: 12px;">
                         <svg viewBox="0 0 24 24" style="width:36px; height:36px; fill:currentColor; margin-bottom:8px;"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4.86 8.86l-3 3.87L9 13.14 6 17h12l-3.86-5.14z"/></svg>
@@ -994,59 +989,59 @@ def render_media_manager_html(
                     </div>
                 `;
                 return;
-            }}
+            }
 
             let html = "";
-            filteredMedia.forEach(m => {{
+            filteredMedia.forEach(m => {
                 const fullUrl = window.location.origin + m.url;
-                const mdSnippet = `![${{m.title || m.name}}](${{fullUrl}})`;
+                const mdSnippet = `![${m.title || m.name}](${fullUrl})`;
                 const ext = m.name.split('.').pop().toUpperCase();
                 const res = m.dimensions || "WebP";
 
                 html += `
                     <div class="media-card">
-                        <div class="media-thumb-wrap" onclick="openPreviewModal('${{m.id}}')">
-                            <span class="badge-folder">${{m.folder}}</span>
-                            <span class="badge-format">${{ext}}</span>
-                            <img src="${{m.url}}" alt="${{m.name}}" class="media-thumb" loading="lazy">
+                        <div class="media-thumb-wrap" onclick="openPreviewModal('${m.id}')">
+                            <span class="badge-folder">${m.folder}</span>
+                            <span class="badge-format">${ext}</span>
+                            <img src="${m.url}" alt="${m.name}" class="media-thumb" loading="lazy">
                         </div>
                         <div class="media-info">
-                            <div class="media-title" title="${{m.name}}">${{m.name}}</div>
+                            <div class="media-title" title="${m.name}">${m.name}</div>
                             <div class="media-meta">
-                                <span>${{res}}</span>
-                                <span>${{m.size_kb}} KB</span>
+                                <span>${res}</span>
+                                <span>${m.size_kb} KB</span>
                             </div>
                             <div class="media-actions">
-                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${{mdSnippet.replace(/'/g, "\\\\'") }}', 'Đã chép Markdown!')" title="Sao chép Markdown">
+                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${mdSnippet.replace(/'/g, "\\\\'") }', 'Đã chép Markdown!')" title="Sao chép Markdown">
                                     <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
                                     MD
                                 </button>
-                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${{fullUrl}}', 'Đã chép link URL!')" title="Sao chép URL">
+                                <button type="button" class="btn-action-icon" onclick="copyToClipboard('${fullUrl}', 'Đã chép link URL!')" title="Sao chép URL">
                                     <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
                                     Link
                                 </button>
-                                <button type="button" class="btn-action-icon" onclick="openPreviewModal('${{m.id}}')" title="Sửa tên / đổi thư mục">
+                                <button type="button" class="btn-action-icon" onclick="openPreviewModal('${m.id}')" title="Sửa tên / đổi thư mục">
                                     <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                                 </button>
-                                <button type="button" class="btn-action-icon danger" onclick="deleteMedia('${{m.id}}', '${{m.name}}')" title="Xóa tệp">
+                                <button type="button" class="btn-action-icon danger" onclick="deleteMedia('${m.id}', '${m.name}')" title="Xóa tệp">
                                     <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                                 </button>
                             </div>
                         </div>
                     </div>
                 `;
-            }});
+            });
 
             grid.innerHTML = html;
-        }}
+        }
 
-        function openPreviewModal(id) {{
+        function openPreviewModal(id) {
             const item = RAW_MEDIA.find(m => m.id === id);
             if (!item) return;
 
             currentEditingId = id;
             const fullUrl = window.location.origin + item.url;
-            const mdSnippet = `![${{item.title || item.name}}](${{fullUrl}})`;
+            const mdSnippet = `![${item.title || item.name}](${fullUrl})`;
 
             document.getElementById("modalFileTitle").textContent = item.name;
             document.getElementById("modalPreviewImg").src = item.url;
@@ -1055,181 +1050,180 @@ def render_media_manager_html(
             const folderSel = document.getElementById("propFolderSelect");
             folderSel.value = item.folder || "general";
 
-            document.getElementById("propResolution").value = `${{item.dimensions || 'N/A'}} (${{item.size_kb}} KB)`;
+            document.getElementById("propResolution").value = `${item.dimensions || 'N/A'} (${item.size_kb} KB)`;
             document.getElementById("propUrl").value = fullUrl;
             document.getElementById("propMarkdown").value = mdSnippet;
 
             document.getElementById("previewModal").style.display = "flex";
-        }}
+        }
 
-        function closePreviewModal(e) {{
-            if (!e || e.target.id === "previewModal" || e.target.classList.contains("btn-modal-close")) {{
+        function closePreviewModal(e) {
+            if (!e || e.target.id === "previewModal" || e.target.classList.contains("btn-modal-close")) {
                 document.getElementById("previewModal").style.display = "none";
-            }}
-        }}
+            }
+        }
 
-        async function saveFileChanges() {{
+        async function saveFileChanges() {
             if (!currentEditingId) return;
             const newName = document.getElementById("propFilename").value.trim();
             const newFolder = document.getElementById("propFolderSelect").value;
 
-            if (!newName) {{
+            if (!newName) {
                 alert("Tên tệp không được để trống!");
                 return;
-            }}
+            }
 
-            try {{
+            try {
                 showToast("Đang lưu thay đổi...");
-                const resp = await fetch("/api/v1/media/rename", {{
+                const resp = await fetch("/api/v1/media/rename", {
                     method: "PATCH",
-                    headers: {{ "Content-Type": "application/json" }},
-                    body: JSON.stringify({{
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
                         id: currentEditingId,
                         new_name: newName,
                         new_folder: newFolder
-                    }})
-                }});
+                    })
+                });
                 const data = await resp.json();
-                if (resp.ok && data.status === "success") {{
+                if (resp.ok && data.status === "success") {
                     const idx = RAW_MEDIA.findIndex(m => m.id === currentEditingId);
-                    if (idx !== -1) {{
+                    if (idx !== -1) {
                         RAW_MEDIA[idx] = data.item;
-                    }}
+                    }
                     showToast("Đã cập nhật tệp thành công!");
                     closePreviewModal();
                     renderDirTree();
                     populateFolderDropdowns();
                     filterMedia();
-                }} else {{
+                } else {
                     alert("Lỗi đổi tên: " + (data.detail || JSON.stringify(data)));
-                }}
-            }} catch (err) {{
+                }
+            } catch (err) {
                 alert("Lỗi mạng: " + err);
-            }}
-        }}
+            }
+        }
 
-        function copyModalField(elementId) {{
+        function copyModalField(elementId) {
             const el = document.getElementById(elementId);
-            if (el) {{
+            if (el) {
                 copyToClipboard(el.value, "Đã sao chép!");
-            }}
-        }}
+            }
+        }
 
-        function setViewMode(mode) {{
+        function setViewMode(mode) {
             currentView = mode;
             document.getElementById("btnGrid").classList.toggle("active", mode === "grid");
             document.getElementById("btnList").classList.toggle("active", mode === "list");
             const grid = document.getElementById("mediaGrid");
-            if (mode === "list") {{
+            if (mode === "list") {
                 grid.style.display = "flex";
                 grid.style.flexDirection = "column";
-            }} else {{
+            } else {
                 grid.style.display = "grid";
                 grid.style.flexDirection = "initial";
-            }}
-        }}
+            }
+        }
 
-        function setupDropzone() {{
+        function setupDropzone() {
             const dz = document.getElementById("dropzone");
-            ['dragenter', 'dragover'].forEach(eventName => {{
-                dz.addEventListener(eventName, (e) => {{
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dz.addEventListener(eventName, (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     dz.classList.add('dragover');
-                }}, false);
-            }});
+                }, false);
+            });
 
-            ['dragleave', 'drop'].forEach(eventName => {{
-                dz.addEventListener(eventName, (e) => {{
+            ['dragleave', 'drop'].forEach(eventName => {
+                dz.addEventListener(eventName, (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     dz.classList.remove('dragover');
-                }}, false);
-            }});
+                }, false);
+            });
 
-            dz.addEventListener('drop', (e) => {{
+            dz.addEventListener('drop', (e) => {
                 const dt = e.dataTransfer;
                 handleFilesUpload(dt.files);
-            }}, false);
-        }}
+            }, false);
+        }
 
-        function handleFileSelect(e) {{
+        function handleFileSelect(e) {
             handleFilesUpload(e.target.files);
-        }}
+        }
 
-        async function handleFilesUpload(files) {{
+        async function handleFilesUpload(files) {
             if (!files || files.length === 0) return;
             const targetFolder = document.getElementById("uploadFolderSelect").value || "guide";
 
-            for (let i = 0; i < files.length; i++) {{
+            for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 const formData = new FormData();
                 formData.append("file", file);
                 formData.append("folder", targetFolder);
 
-                try {{
-                    showToast(`Đang tải lên ${{file.name}}...`);
-                    const resp = await fetch("/api/v1/media/upload", {{
+                try {
+                    showToast(`Đang tải lên ${file.name}...`);
+                    const resp = await fetch("/api/v1/media/upload", {
                         method: "POST",
                         body: formData
-                    }});
+                    });
                     const data = await resp.json();
-                    if (resp.ok && data.status === "success") {{
+                    if (resp.ok && data.status === "success") {
                         RAW_MEDIA.unshift(data.item);
-                        showToast(`Đã tải lên ${{file.name}}!`);
-                    }} else {{
+                        showToast(`Đã tải lên ${file.name}!`);
+                    } else {
                         alert("Lỗi tải lên: " + (data.detail || JSON.stringify(data)));
-                    }}
-                }} catch (err) {{
+                    }
+                } catch (err) {
                     alert("Lỗi mạng: " + err);
-                }}
-            }}
+                }
+            }
 
             renderDirTree();
             populateFolderDropdowns();
             filterMedia();
-        }}
+        }
 
-        async function deleteMedia(id, filename) {{
-            if (!confirm(`Bạn có chắc muốn xóa tệp '${{filename}}'? Thao tác này không thể hoàn tác.`)) {{
+        async function deleteMedia(id, filename) {
+            if (!confirm(`Bạn có chắc muốn xóa tệp '${filename}'? Thao tác này không thể hoàn tác.`)) {
                 return;
-            }}
+            }
 
-            try {{
-                const resp = await fetch(`/api/v1/media?id=${{encodeURIComponent(id)}}`, {{
+            try {
+                const resp = await fetch(`/api/v1/media?id=${encodeURIComponent(id)}`, {
                     method: "DELETE"
-                }});
+                });
                 const res = await resp.json();
-                if (resp.ok && res.status === "success") {{
+                if (resp.ok && res.status === "success") {
                     const idx = RAW_MEDIA.findIndex(m => m.id === id);
                     if (idx !== -1) RAW_MEDIA.splice(idx, 1);
-                    showToast(`Đã xóa tệp ${{filename}}!`);
+                    showToast(`Đã xóa tệp ${filename}!`);
                     renderDirTree();
                     populateFolderDropdowns();
                     filterMedia();
-                }} else {{
+                } else {
                     alert("Lỗi xóa: " + (res.detail || JSON.stringify(res)));
-                }}
-            }} catch (err) {{
+                }
+            } catch (err) {
                 alert("Lỗi mạng: " + err);
-            }}
-        }}
+            }
+        }
 
-        function promptNewFolder() {{
+        function promptNewFolder() {
             const currentPrefix = (currentFolder !== 'all' && currentFolder) ? currentFolder + "/" : "";
-            const name = prompt(`Nhập tên thư mục mới (ví dụ: ${{currentPrefix}}subfolder):`, currentPrefix);
-            if (name && name.trim()) {{
+            const name = prompt(`Nhập tên thư mục mới (ví dụ: ${currentPrefix}subfolder):`, currentPrefix);
+            if (name && name.trim()) {
                 const clean = name.trim().toLowerCase().replace(/[^a-z0-9_/\\-]/g, "").replace(/^\\/+|\\/+$/g, "");
-                if (clean && !ALL_FOLDERS.includes(clean)) {{
+                if (clean && !ALL_FOLDERS.includes(clean)) {
                     ALL_FOLDERS.push(clean);
                     selectFolder(clean);
                     populateFolderDropdowns();
-                }}
-            }}
-        }}
+                }
+            }
+        }
 
         document.addEventListener("DOMContentLoaded", init);
     </script>
 </body>
 </html>
-"""

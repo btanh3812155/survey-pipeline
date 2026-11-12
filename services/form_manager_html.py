@@ -13,54 +13,6 @@ import os
 from typing import Dict, Optional, List, Any
 from services.form_engine import FormSchema, FormSettings, FormQuestion, QuestionType
 
-# =========================================================================================
-# NOTE / IMPORTANT RELEASE GATE:
-# DUMMY_DEV_FORMS below are STRICTLY for development staging UI layout & pagination testing.
-# They MUST be removed or stripped before promoting the dev branch to production master!
-# =========================================================================================
-DUMMY_DEV_FORMS: List[Dict[str, Any]] = [
-    {
-        "form_id": "placeholder_1",
-        "title": "Placeholder 1",
-        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
-        "question_count": 8,
-        "is_test_mode": False,
-        "access_control": "public"
-    },
-    {
-        "form_id": "placeholder_2",
-        "title": "Placeholder 2",
-        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
-        "question_count": 12,
-        "is_test_mode": True,
-        "access_control": "public"
-    },
-    {
-        "form_id": "placeholder_3",
-        "title": "Placeholder 3",
-        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
-        "question_count": 6,
-        "is_test_mode": False,
-        "access_control": "public"
-    },
-    {
-        "form_id": "placeholder_4",
-        "title": "Placeholder 4",
-        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
-        "question_count": 5,
-        "is_test_mode": True,
-        "access_control": "public"
-    },
-    {
-        "form_id": "placeholder_5",
-        "title": "Placeholder 5",
-        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
-        "question_count": 7,
-        "is_test_mode": False,
-        "access_control": "public"
-    }
-]
-
 
 def render_forms_list_html(
     forms_registry: Dict[str, FormSchema],
@@ -87,11 +39,6 @@ def render_forms_list_html(
             "access_control": f.settings.access_control if f.settings else "public"
         }
 
-    # In dev build, seed dummy forms for rich UI testing
-    if is_dev:
-        for dummy in DUMMY_DEV_FORMS:
-            if dummy["form_id"] not in unique_forms:
-                unique_forms[dummy["form_id"]] = dummy
 
     all_forms = list(unique_forms.values())
     total_forms = len(all_forms)

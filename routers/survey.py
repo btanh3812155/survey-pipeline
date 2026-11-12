@@ -102,9 +102,29 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
         status_code=200
     )
 
-@router.get("/api/v1/forms/draft/{slug}")
+@router.get("/api/v1/forms")
+async def list_public_forms_api():
+    """Lists all active public survey forms for the catalog."""
+    items = []
+    for fid, s in FORM_REGISTRY.items():
+        if not s.settings or s.settings.access_control == "public":
+            items.append({
+                "form_id": fid,
+                "title": s.title,
+                "description": s.description or "",
+                "question_count": len(s.questions),
+                "is_test_mode": bool(s.settings and s.settings.is_test_mode),
+            })
+    return {"status": "success", "count": len(items), "forms": items}
 
 
+@router.get("/api/v1/forms/{form_id}")
+async def get_form_schema_api(form_id: str):
+    """Public schema endpoint for dynamic form rendering."""
+    schema = FORM_REGISTRY.get(form_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Biểu mẫu không tồn tại")
+    return schema.model_dump()
 @router.get("/api/v1/surveys/history")
 async def get_survey_history(
     phone: str,

@@ -14,11 +14,10 @@ from typing import List, Dict, Any, Tuple, Optional
 from PIL import Image
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from config import settings
-from core.state import verify_admin_auth, MEDIA_STORAGE_DIR
+from core.state import verify_admin_auth, MEDIA_STORAGE_DIR, STATIC_DIR
 from services.normalizer import sanitize_and_normalize_image
-from services.media_manager_html import render_media_manager_html
 
 logger = logging.getLogger("routers.admin_media")
 router = APIRouter(tags=["Media Management"])
@@ -97,19 +96,11 @@ async def admin_media_manager_page(
     folder: str = "all",
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Google Drive-style Media Manager Admin UI."""
-    media_files, subfolders = scan_media_storage_files()
-    storage_type = "Cloudflare R2" if (settings.R2_ACCOUNT_ID and settings.R2_ACCESS_KEY_ID) else "Caddy Static (/media)"
-    return HTMLResponse(
-        content=render_media_manager_html(
-            media_files=media_files,
-            folders=subfolders,
-            current_folder=folder,
-            environment=settings.ENVIRONMENT,
-            storage_backend=storage_type,
-        ),
-        status_code=200,
-    )
+    """Serves pure static Google Drive-style Media Manager client."""
+    html_file = os.path.join(STATIC_DIR, "ui", "media_manager.html")
+    if not os.path.exists(html_file):
+        raise HTTPException(status_code=404, detail="Media Manager static client not found")
+    return FileResponse(html_file, media_type="text/html")
 
 
 @router.get("/api/v1/media")

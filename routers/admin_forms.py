@@ -10,12 +10,13 @@ import logging
 from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from config import settings
 from core.state import (
     verify_admin_auth,
     FORM_REGISTRY,
     FORMS_STORAGE_DIR,
+    STATIC_DIR,
     get_db_pool,
 )
 from services.form_engine import FormSchema
@@ -43,35 +44,43 @@ async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
     return RedirectResponse(url="/admin/media", status_code=status.HTTP_302_FOUND)
 
 
-@router.get("/admin/forms", response_class=HTMLResponse)
+@router.get("/admin/forms", response_class=FileResponse)
 async def get_forms_list(page: int = 1, size: int = 6, admin_user: str = Depends(verify_admin_auth)):
-    """Admin Web UI with pagination to view and manage forms."""
+    """Serves pure static Forms Manager client."""
+    html_file = os.path.join(STATIC_DIR, "ui", "forms_manager.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     return HTMLResponse(
         content=render_forms_list_html(FORM_REGISTRY, page=page, page_size=size, environment=settings.ENVIRONMENT),
         status_code=200,
     )
 
 
-@router.get("/admin/forms/create", response_class=HTMLResponse)
+@router.get("/admin/forms/create", response_class=FileResponse)
 async def create_new_form_page(admin_user: str = Depends(verify_admin_auth)):
-    """Dedicated 3-tab creation page."""
+    """Serves pure static Form Creation client."""
+    html_file = os.path.join(STATIC_DIR, "ui", "form_editor.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     return HTMLResponse(
         content=render_form_editor_html(None, is_new=True, environment=settings.ENVIRONMENT),
         status_code=200,
     )
 
 
-@router.get("/admin/forms/edit/{form_id}", response_class=HTMLResponse)
+@router.get("/admin/forms/edit/{form_id}", response_class=FileResponse)
 async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_auth)):
-    """Dedicated 3-tab edit page for a specific form."""
+    """Serves pure static Form Editor client."""
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
+    html_file = os.path.join(STATIC_DIR, "ui", "form_editor.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     return HTMLResponse(
         content=render_form_editor_html(schema, is_new=False, environment=settings.ENVIRONMENT),
         status_code=200,
     )
-
 
 @router.post("/api/v1/forms/upload-schema")
 async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):

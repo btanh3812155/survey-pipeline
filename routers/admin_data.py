@@ -9,9 +9,9 @@ import os
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from config import settings
-from core.state import verify_admin_auth, FORM_REGISTRY, DEV_STORAGE_FILE, get_db_pool
+from core.state import verify_admin_auth, FORM_REGISTRY, DEV_STORAGE_FILE, STATIC_DIR, get_db_pool
 from core.repositories import fetch_aggregated_submissions
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.google_drive_delivery import has_google_credentials, sync_all_approved_to_drive
@@ -32,7 +32,10 @@ async def admin_submissions_dashboard(
     search: Optional[str] = None,
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Web UI dashboard to view, query, sort, and filter survey data in a table per form."""
+    """Serves pure static Submissions Data Hub client."""
+    html_file = os.path.join(STATIC_DIR, "ui", "submissions_viewer.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     subs = await fetch_aggregated_submissions(form_id=form_id, status_filter=status, search=search, limit=2000)
     forms_dict = {fid: f.model_dump() for fid, f in FORM_REGISTRY.items()}
     return HTMLResponse(
