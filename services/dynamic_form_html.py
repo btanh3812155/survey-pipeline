@@ -1792,7 +1792,7 @@ def render_dynamic_form_html(
                             </button>
                             <label class="btn-camera-upload" id="uploadLabel_${{q.id}}" title="Tải ảnh có sẵn từ thiết bị / Thư viện" style="display:${{activeSlotObj && activeSlotObj.allow_upload === false ? 'none' : 'inline-flex'}};">
                                 <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
-                                <input type="file" accept="image/*" style="display:none;" onchange="handleSlotFileUpload('${{q.id}}', this)">
+                                <input type="file" accept="image/*" multiple style="display:none;" onchange="handleSlotFileUpload('${{q.id}}', this)">
                             </label>
                         </div>
                         <button type="button" class="btn-camera-retake" id="retake_${{q.id}}" onclick="retakeCam('${{q.id}}')">${{t.btn_retake}}</button>
@@ -2035,41 +2035,69 @@ def render_dynamic_form_html(
         }}
 
         function handleSlotFileUpload(qid, input) {{
-            if (!input.files || !input.files[0]) return;
-            const file = input.files[0];
+            if (!input.files || input.files.length === 0) return;
             const q = SCHEMA.questions.find(item => item.id === qid);
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
             const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
 
-            const img = document.getElementById(`img_${{qid}}`);
-            const vid = document.getElementById(`vid_${{qid}}`);
-            const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
-            const snapBtn = document.getElementById(`snap_${{qid}}`);
-            const retakeBtn = document.getElementById(`retake_${{qid}}`);
-            const btnCamOff = document.getElementById(`btnCamOff_${{qid}}`);
-
-            if (vid) vid.style.display = 'none';
-            if (screenOff) screenOff.style.display = 'none';
-            if (img) {{
-                img.src = URL.createObjectURL(file);
-                img.style.display = 'block';
-            }}
-            if (snapBtn) snapBtn.style.display = 'none';
-            const uploadLabel = document.getElementById(`uploadLabel_${{qid}}`);
-            if (uploadLabel) uploadLabel.style.display = 'none';
-            if (retakeBtn) retakeBtn.style.display = 'inline-block';
-            if (btnCamOff) btnCamOff.style.display = 'inline-block';
-
-            if (hasSlots) {{
-                answers[`${{qid}}_${{currentSlotIdx}}`] = file;
-                syncAnswersImageList(qid);
-                updateSlotPillCapturedState(qid, currentSlotIdx, true);
-
-                // Stay on current uploaded slot and show preview; do not auto-advance or activate camera!
-            }} else {{
+            if (!hasSlots) {{
+                const file = input.files[0];
                 answers[qid] = file;
+                const img = document.getElementById(`img_${{qid}}`);
+                if (img) {{ img.src = URL.createObjectURL(file); img.style.display = 'block'; }}
+                const vid = document.getElementById(`vid_${{qid}}`);
+                if (vid) vid.style.display = 'none';
+                const screenOff = document.getElementById(`camOffScreen_${{qid}}`);
+                if (screenOff) screenOff.style.display = 'none';
+                const snapBtn = document.getElementById(`snap_${{qid}}`);
+                if (snapBtn) snapBtn.style.display = 'none';
+                const retakeBtn = document.getElementById(`retake_${{qid}}`);
+                if (retakeBtn) retakeBtn.style.display = 'inline-block';
+            }} else {{
+                // Identify all slots that allow file upload
+                const uploadableSlots = q.image_slots
+                    .map((s, idx) => ({{ slot: s, idx }}))
+                    .filter(item => item.slot.allow_upload !== false);
+
+                if (uploadableSlots.length === 0) {{
+                    alert('Các ô chụp ảnh này chỉ cho phép chụp trực tiếp từ camera!');
+                    input.value = "";
+                    return;
+                }}
+
+                const files = Array.from(input.files);
+
+                if (files.length === 1) {{
+                    // Single file: place in current slot if uploadable, else first available uploadable slot
+                    let targetIdx = currentSlotIdx;
+                    const isCurrentUploadable = q.image_slots[currentSlotIdx] && q.image_slots[currentSlotIdx].allow_upload !== false;
+                    if (!isCurrentUploadable) {{
+                        targetIdx = uploadableSlots[0].idx;
+                    }}
+                    answers[`${{qid}}_${{targetIdx}}`] = files[0];
+                    updateSlotPillCapturedState(qid, targetIdx, true);
+                    selectCameraSlot(qid, targetIdx, false);
+                }} else {{
+                    // Multi-image upload: sequentially fill slots that allow upload!
+                    let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx);
+                    if (startPos === -1 || files.length >= uploadableSlots.length) {{
+                        startPos = 0;
+                    }}
+
+                    for (let i = 0; i < files.length && (startPos + i) < uploadableSlots.length; i++) {{
+                        const targetSlotIdx = uploadableSlots[startPos + i].idx;
+                        answers[`${{qid}}_${{targetSlotIdx}}`] = files[i];
+                        updateSlotPillCapturedState(qid, targetSlotIdx, true);
+                    }}
+
+                    // Show preview of the first filled slot without activating camera
+                    selectCameraSlot(qid, uploadableSlots[startPos].idx, false);
+                }}
+
+                syncAnswersImageList(qid);
             }}
 
+            input.value = "";
             evaluateConditionals();
             scheduleDraftSave();
         }}

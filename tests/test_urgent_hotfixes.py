@@ -270,3 +270,9 @@ async def test_telegram_menu_check_alone_prompts_with_fill_button():
     btns = msg["reply_markup"]["inline_keyboard"]
     # Must have switch_inline_query_current_chat to prefill /check in input box
     assert any(b.get("switch_inline_query_current_chat") == "/check " for row in btns for b in row)
+def test_multi_image_upload_and_slot_filling():
+    """Verify camera input has multiple attribute and handleSlotFileUpload fills upload-allowed slots."""
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    assert '<input type="file" accept="image/*" multiple' in html
+    assert 'uploadableSlots' in html
+    assert 'item.slot.allow_upload !== false' in html
