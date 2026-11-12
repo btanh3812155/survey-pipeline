@@ -628,21 +628,9 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
 
 @app.get("/api/v1/forms/draft/{slug}")
 async def get_form_draft(slug: str):
-    """Retrieves saved draft responses for a specific CTV link."""
-    if db_pool:
-        try:
-            async with db_pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT draft_data, ctv_id FROM survey_drafts WHERE ctv_slug = %s LIMIT 1;",
-                        (slug,)
-                    )
-                    row = await cur.fetchone()
-                    if row and row[0]:
-                        return {"status": "success", "slug": slug, "ctv_id": row[1], "draft": row[0]}
-        except Exception as e:
-            logger.warning(f"Error fetching draft from DB: {e}")
-    return {"status": "not_found", "slug": slug, "draft": {}}
+    """Drafts are stored strictly client-side in localStorage (YAGNI / Privacy)."""
+    return {"status": "client_only", "slug": slug, "draft": {}}
+
 
 class DraftPayload(BaseModel):
     ctv_slug: str
@@ -650,30 +638,11 @@ class DraftPayload(BaseModel):
     form_id: Optional[str] = "income_survey"
     draft_data: Dict[str, Any] = Field(default_factory=dict)
 
+
 @app.post("/api/v1/forms/draft")
 async def save_form_draft(payload: DraftPayload):
-    """Persists filled-in data per CTV link across page reloads and cross-device access."""
-    slug = payload.ctv_slug.strip()
-    ctv = payload.ctv_id or resolve_ctv_from_slug(slug) or "CTV_GENERAL"
-    if db_pool:
-        try:
-            async with db_pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO survey_drafts (ctv_slug, ctv_id, form_id, draft_data, updated_at)
-                        VALUES (%s, %s, %s, %s, NOW())
-                        ON CONFLICT (ctv_slug) DO UPDATE
-                        SET draft_data = EXCLUDED.draft_data, updated_at = NOW();
-                        """,
-                        (slug, ctv, payload.form_id, json.dumps(payload.draft_data))
-                    )
-                    await conn.commit()
-            return {"status": "saved", "slug": slug}
-        except Exception as e:
-            logger.warning(f"Error saving draft to DB: {e}")
-            return {"status": "db_error", "detail": str(e)}
-    return {"status": "saved_fallback"}
+    """Drafts are stored strictly client-side in localStorage (YAGNI / Privacy)."""
+    return {"status": "client_only", "slug": payload.ctv_slug}
 
 @app.get("/admin", include_in_schema=False)
 async def admin_root(admin_user: str = Depends(verify_admin_auth)):

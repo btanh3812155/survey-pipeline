@@ -2001,6 +2001,7 @@ def render_dynamic_form_html(
                     if (snapBtn) snapBtn.style.display = 'none';
                     if (btnCamOff) btnCamOff.style.display = 'none';
                 }}
+            }}
         }}
 
         function updateSlotPillCapturedState(qid, slotIdx, isCaptured) {{
@@ -2982,35 +2983,15 @@ def render_dynamic_form_html(
                         textAnswers[k] = answers[k];
                     }}
                 }}
-                const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
+                const storageKey = `tb_draft_${{SCHEMA.form_id || 'income_survey'}}`;
                 try {{
                     localStorage.setItem(storageKey, JSON.stringify(textAnswers));
                 }} catch(e) {{}}
-
-                // Optional server backup for shared form options only (never sync private phone/name across shared CTV links!)
-                if (ACTIVE_CTV_SLUG) {{
-                    const serverDraft = Object.assign({{}}, textAnswers);
-                    delete serverDraft['driver_phone'];
-                    delete serverDraft['driver_name'];
-                    delete serverDraft['driver_signature'];
-                    delete serverDraft['consent_choice'];
-                    fetch('/api/v1/forms/draft', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            ctv_slug: ACTIVE_CTV_SLUG,
-                            ctv_id: LOCKED_CTV_CODE || null,
-                            form_id: SCHEMA.form_id || 'income_survey',
-                            draft_data: serverDraft
-                        }})
-                    }}).catch(() => {{}});
-                }}
             }}, 300);
         }}
 
-        async function restoreDraftIfExists() {{
-            const storageKey = `tb_draft_${{ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}}`;
-            let restored = false;
+        function restoreDraftIfExists() {{
+            const storageKey = `tb_draft_${{SCHEMA.form_id || 'income_survey'}}`;
             try {{
                 const cached = localStorage.getItem(storageKey);
                 if (cached) {{
@@ -3019,6 +3000,7 @@ def render_dynamic_form_html(
                         for (let k in data) {{
                             if (k === 'driver_signature' || k === 'consent_choice') continue;
                             answers[k] = data[k];
+                            const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select, [data-qid="${{k}}"] textarea`);
                             if (input && input.id !== 'ctv_code') {{
                                 input.value = data[k];
                             }}
@@ -3029,31 +3011,11 @@ def render_dynamic_form_html(
                                 }}
                             }});
                         }}
-                        restored = true;
                         evaluateConditionals();
                     }}
                 }}
-            }} catch(e) {{}}
-
-            // Fallback cross-device server restore if local storage was empty
-            if (!restored && ACTIVE_CTV_SLUG) {{
-                try {{
-                    const resp = await fetch(`/api/v1/forms/draft/${{encodeURIComponent(ACTIVE_CTV_SLUG)}}`);
-                    if (resp.ok) {{
-                        const data = await resp.json();
-                        if (data.status === 'success' && data.draft) {{
-                            for (let k in data.draft) {{
-                                if (k === 'driver_signature' || k === 'consent_choice' || k === 'driver_phone' || k === 'driver_name') continue;
-                                answers[k] = data.draft[k];
-                                const input = document.querySelector(`[data-qid="${{k}}"] input, [data-qid="${{k}}"] select`);
-                                if (input && input.id !== 'ctv_code') {{
-                                    input.value = data.draft[k];
-                                }}
-                            }}
-                            evaluateConditionals();
-                        }}
-                    }}
-                }} catch(e) {{}}
+            }} catch(e) {{
+                console.error('Draft restore error:', e);
             }}
         }}
 
