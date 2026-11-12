@@ -1936,7 +1936,7 @@ def render_dynamic_form_html(
             if (screenOff) screenOff.style.display = 'flex';
         }}
 
-        function selectCameraSlot(qid, slotIdx) {{
+        function selectCameraSlot(qid, slotIdx, shouldActivateCamera = false) {{
             activeSlotByQId[qid] = slotIdx;
             const q = SCHEMA.questions.find(item => item.id === qid);
             if (!q) return;
@@ -1993,11 +1993,14 @@ def render_dynamic_form_html(
                     if (vid) vid.style.display = 'block';
                     if (snapBtn) snapBtn.style.display = 'flex';
                     if (btnCamOff) btnCamOff.style.display = 'inline-block';
-                }} else {{
-                    // Camera not active, automatically activate camera so user gets live feed immediately
+                }} else if (shouldActivateCamera) {{
                     activateCamera(qid);
+                }} else {{
+                    if (screenOff) screenOff.style.display = 'flex';
+                    if (vid) vid.style.display = 'none';
+                    if (snapBtn) snapBtn.style.display = 'none';
+                    if (btnCamOff) btnCamOff.style.display = 'none';
                 }}
-            }}
         }}
 
         function updateSlotPillCapturedState(qid, slotIdx, isCaptured) {{
@@ -2061,17 +2064,7 @@ def render_dynamic_form_html(
                 syncAnswersImageList(qid);
                 updateSlotPillCapturedState(qid, currentSlotIdx, true);
 
-                let nextUncapturedIdx = -1;
-                for (let i = 0; i < q.image_slots.length; i++) {{
-                    const checkIdx = (currentSlotIdx + 1 + i) % q.image_slots.length;
-                    if (!answers[`${{qid}}_${{checkIdx}}`]) {{
-                        nextUncapturedIdx = checkIdx;
-                        break;
-                    }}
-                }}
-                if (nextUncapturedIdx !== -1) {{
-                    selectCameraSlot(qid, nextUncapturedIdx);
-                }}
+                // Stay on current uploaded slot and show preview; do not auto-advance or activate camera!
             }} else {{
                 answers[qid] = file;
             }}
