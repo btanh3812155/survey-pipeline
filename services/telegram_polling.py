@@ -116,50 +116,66 @@ class TelegramPollingRunner:
             logger.error(f"Failed to answer callback query {callback_query_id}: {e}")
             return False
 
-    async def send_media_group(
-        self,
-        chat_id: Union[int, str],
-        photo_paths: List[str],
-    ) -> bool:
-        """Sends an album of photo images to Telegram chat using sendMediaGroup."""
+    def prepare_media_group_payload(self, photo_paths: List[str]) -> Optional[dict]:
+        """Loads and pre-compresses photos into lightweight memory buffers for instant Telegram transmission."""
         if not photo_paths:
-            return False
-        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
-            return True
-
-        url = f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup"
-        selected_paths = [p for p in photo_paths[:10] if os.path.exists(p) and os.path.getsize(p) > 0]
-        if not selected_paths:
-            return False
+            return None
+        selected = [p for p in photo_paths[:10] if os.path.exists(p) and os.path.getsize(p) > 0]
+        if not selected:
+            return None
 
         files = {}
         media = []
-        open_fps = []
-        try:
-            for idx, p in enumerate(selected_paths):
-                key = f"photo_{idx}"
-                fp = open(p, "rb")
-                open_fps.append(fp)
-                files[key] = (os.path.basename(p), fp, "image/jpeg")
+        for idx, p in enumerate(selected):
+            key = f"photo_{idx}"
+            try:
+                with open(p, "rb") as fp:
+                    raw_b = fp.read()
+                # Fast downscale if oversized (> 300KB) to ensure sub-second transmission
+                if len(raw_b) > 300_000:
+                    try:
+                        im = Image.open(io.BytesIO(raw_b))
+                        if max(im.size) > 1200:
+                            im.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
+                        out_io = io.BytesIO()
+                        im.convert("RGB").save(out_io, format="JPEG", quality=82, optimize=True)
+                        raw_b = out_io.getvalue()
+                    except Exception:
+                        pass
+                files[key] = (os.path.basename(p), raw_b, "image/jpeg")
                 media.append({"type": "photo", "media": f"attach://{key}"})
+            except Exception as e:
+                logger.warning(f"Error reading photo for media group: {e}")
 
+        if not files:
+            return None
+        return {"files": files, "media": media}
+
+    async def send_prepared_media_group(self, chat_id: Union[int, str], payload: dict) -> bool:
+        """Dispatches an already prepared in-memory media group to Telegram."""
+        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            return True
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup"
+        try:
             client = await self.get_client()
             resp = await client.post(
                 url,
-                data={"chat_id": str(chat_id), "media": json.dumps(media)},
-                files=files,
+                data={"chat_id": str(chat_id), "media": json.dumps(payload["media"])},
+                files=payload["files"],
                 timeout=30.0,
             )
             return resp.status_code == 200
         except Exception as e:
-            logger.error(f"Failed to send media group: {e}")
+            logger.error(f"Failed to send prepared media group: {e}")
             return False
-        finally:
-            for fp in open_fps:
-                try:
-                    fp.close()
-                except Exception:
-                    pass
+
+    async def send_media_group(self, chat_id: Union[int, str], photo_paths: List[str]) -> bool:
+        """Convenience helper to prepare and send media group."""
+        payload = self.prepare_media_group_payload(photo_paths)
+        if payload:
+            return await self.send_prepared_media_group(chat_id, payload)
+        return False
+
     async def edit_message_reply_markup(
         self,
         chat_id: Union[int, str],
@@ -187,7 +203,7 @@ class TelegramPollingRunner:
     async def execute_submission_review(self, chat_id: Union[int, str], sub_id: str) -> None:
         """
         Unified review handler invoked identically by /check command and [📋 Mở Phiếu] button.
-        Fetches full dossier, dispatches photo media group, and presents decision cards.
+        Loads media group and review text in parallel, waiting for both to be ready before dispatching.
         """
         clean_sub_id = sub_id.strip().lstrip("#")
         dossier = await query_submission_dossier(clean_sub_id, db_pool=self.db_pool)
@@ -195,35 +211,50 @@ class TelegramPollingRunner:
             await self.send_message(chat_id, f"❌ {dossier['error']}")
             return
 
-        # 1. Dispatch actual photos as a Telegram media group album if available on server
         photo_paths = dossier.get("photo_paths") or []
-        if photo_paths:
-            await self.send_media_group(chat_id, photo_paths)
+        cur_status = dossier.get("status", "PENDING")
+
+        # 1. Parallel loading: prepare media group payload AND format text card in parallel
+        async def load_photos():
+            if photo_paths:
+                return await asyncio.to_thread(self.prepare_media_group_payload, photo_paths)
+            return None
+
+        def load_card():
+            if cur_status in ("APPROVED", "REJECTED"):
+                status_text = "Đã DUYỆT (APPROVED)" if cur_status == "APPROVED" else "Đã TỪ CHỐI (REJECTED)"
+                buttons = {
+                    "inline_keyboard": [
+                        [
+                            {"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"},
+                        ],
+                    ]
+                }
+            else:
+                # First level buttons require confirmation!
+                buttons = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_req_approve:{clean_sub_id}"},
+                            {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_req_reject:{clean_sub_id}"},
+                        ],
+                    ]
+                }
+            text = render_dossier_message(dossier)
+            return text, buttons
+
+        # Bot waits for BOTH messages to be completely ready in memory before sending either!
+        media_payload, (report_text, review_buttons) = await asyncio.gather(
+            load_photos(),
+            asyncio.to_thread(load_card)
+        )
+
+        # 2. Both are ready: dispatch photos followed immediately by review card with zero gap!
+        if media_payload:
+            await self.send_prepared_media_group(chat_id, media_payload)
         elif dossier.get("image_url"):
             await self.send_message(chat_id, f"📷 <b>Ảnh đính kèm:</b> <a href='{dossier['image_url']}'>Xem ảnh gốc trên Cloud</a>")
 
-        # 2. If already resolved, lock and do not present active decision buttons!
-        cur_status = dossier.get("status", "PENDING")
-        if cur_status in ("APPROVED", "REJECTED"):
-            status_text = "Đã DUYỆT (APPROVED)" if cur_status == "APPROVED" else "Đã TỪ CHỐI (REJECTED)"
-            review_buttons = {
-                "inline_keyboard": [
-                    [
-                        {"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"},
-                    ],
-                ]
-            }
-        else:
-            review_buttons = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{clean_sub_id}"},
-                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{clean_sub_id}"},
-                    ],
-                ]
-            }
-
-        report_text = render_dossier_message(dossier)
         await self.send_message(chat_id, report_text, reply_markup=review_buttons)
     async def log_chat_history(
         self,
@@ -364,7 +395,8 @@ class TelegramPollingRunner:
         cq_msg = cq.get("message") or {}
         cq_chat = cq_msg.get("chat") or {}
         cq_chat_id = cq_chat.get("id")
-
+        from_user = cq.get("from") or {}
+        msg_id = cq_msg.get("message_id")
         if not cq_chat_id:
             await self.answer_callback_query(cq_id)
             return
@@ -373,6 +405,54 @@ class TelegramPollingRunner:
             sub_id = data.split(":", 1)[1]
             await self.execute_submission_review(cq_chat_id, sub_id)
             await self.answer_callback_query(cq_id, f"Đã mở phiếu #{sub_id}")
+        elif data.startswith("admin_req_approve:"):
+            sub_id = data.split(":", 1)[1]
+            confirm_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": f"⚠️ Xác nhận DUYỆT phiếu #{sub_id}?", "callback_data": "none"},
+                    ],
+                    [
+                        {"text": "✅ ĐỒNG Ý DUYỆT", "callback_data": f"admin_approve:{sub_id}"},
+                        {"text": "↩️ HỦY BỎ", "callback_data": f"admin_cancel_decision:{sub_id}"},
+                    ],
+                ]
+            }
+            if msg_id:
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=confirm_buttons)
+            await self.answer_callback_query(cq_id, "Vui lòng xác nhận để hoàn tất duyệt phiếu.")
+
+        elif data.startswith("admin_req_reject:"):
+            sub_id = data.split(":", 1)[1]
+            confirm_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": f"⚠️ Xác nhận TỪ CHỐI phiếu #{sub_id}?", "callback_data": "none"},
+                    ],
+                    [
+                        {"text": "❌ ĐỒNG Ý TỪ CHỐI", "callback_data": f"admin_reject:{sub_id}"},
+                        {"text": "↩️ HỦY BỎ", "callback_data": f"admin_cancel_decision:{sub_id}"},
+                    ],
+                ]
+            }
+            if msg_id:
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=confirm_buttons)
+            await self.answer_callback_query(cq_id, "Vui lòng xác nhận để hoàn tất từ chối phiếu.")
+
+        elif data.startswith("admin_cancel_decision:"):
+            sub_id = data.split(":", 1)[1]
+            restore_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_req_approve:{sub_id}"},
+                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_req_reject:{sub_id}"},
+                    ],
+                ]
+            }
+            if msg_id:
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=restore_buttons)
+            await self.answer_callback_query(cq_id, "Đã hủy thao tác.")
+
         elif data.startswith("admin_approve:"):
             sub_id = data.split(":", 1)[1]
             success, final_status = await self._update_submission_status(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
@@ -409,7 +489,6 @@ class TelegramPollingRunner:
 
         elif data == "resolved_notice":
             await self.answer_callback_query(cq_id, "Phiếu này đã được xử lý hoàn tất và bị khóa, không nhận phản hồi thêm.", show_alert=True)
-
         elif data.startswith("admin_warn:"):
             parts = data.split(":")
             sub_id = parts[1] if len(parts) > 1 else "N/A"
@@ -430,29 +509,57 @@ class TelegramPollingRunner:
             )
             await self.answer_callback_query(cq_id, "Đã cho phép đổi xe")
 
-        elif data.startswith("admin_audit:"):
-            sub_id = data.split(":", 1)[1]
-            dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
-            report_text = render_dossier_message(dossier)
-            await self.send_message(cq_chat_id, report_text)
-            await self.answer_callback_query(cq_id, f"Đã kiểm toán #{sub_id}")
-
+        # /audit button removed as requested
         elif data.startswith("admin_reply_chat:"):
             target_user_id = int(data.split(":", 1)[1])
+            admin_id = from_user.get("id")
+            admin_name = from_user.get("first_name", "Admin")
+
+            # Check if this support request is already locked by another admin!
+            existing = ACTIVE_SUPPORT_CONVERSATIONS.get(target_user_id)
+            if existing and existing.get("locked_admin_id"):
+                locked_id = existing["locked_admin_id"]
+                locked_name = existing.get("locked_admin_name", "quản trị viên khác")
+                if locked_id != admin_id:
+                    await self.answer_callback_query(
+                        cq_id,
+                        f"⚠️ Yêu cầu hỗ trợ này đã được khóa và đang xử lý bởi {locked_name}! Chỉ {locked_name} mới có quyền nhắn tin.",
+                        show_alert=True
+                    )
+                    return
+
+            # Lock session to this admin only!
             ACTIVE_SUPPORT_CONVERSATIONS[target_user_id] = {
                 "user_id": target_user_id,
                 "admin_chat_id": cq_chat_id,
+                "locked_admin_id": admin_id,
+                "locked_admin_name": admin_name,
                 "opened_at": time.time(),
             }
             ADMIN_GROUP_ACTIVE_SESSION[str(cq_chat_id)] = target_user_id
+            ADMIN_GROUP_ACTIVE_SESSION[cq_chat_id] = target_user_id
+
+            # Update ticket message buttons in group to show locked state!
+            if msg_id:
+                locked_ticket_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": f"🔒 Đang hỗ trợ bởi {admin_name}", "callback_data": f"admin_locked_info:{target_user_id}"},
+                        ],
+                        [
+                            {"text": "🔒 Đóng phiên chat", "callback_data": f"admin_close_ticket:{target_user_id}"},
+                        ],
+                    ]
+                }
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=locked_ticket_markup)
+
             await self.send_message(
                 cq_chat_id,
-                f"🟢 <b>ĐÃ MỞ PHIÊN HỘI THOẠI TRỰC TIẾP VỚI THÀNH VIÊN (ID: <code>{target_user_id}</code>)!</b>\n\n"
-                f"👉 Mọi tin nhắn của bạn trong nhóm bây giờ sẽ được bot tự động chuyển tiếp tới người dùng.\n"
-                f"👉 Gõ <code>/close</code> hoặc <code>/end</code> để kết thúc cuộc trò chuyện bất cứ lúc nào.",
+                f"🟢 <b>ĐÃ MỞ & KHÓA PHIÊN HỘI THOẠI TRỰC TIẾP (ID: <code>{target_user_id}</code>) CHO {admin_name}!</b>\n\n"
+                f"👉 Phiên chat này đã được <b>khóa riêng cho {admin_name}</b>. Tin nhắn từ quản trị viên khác trong nhóm sẽ không chuyển tiếp tới người dùng.\n"
+                f"👉 {admin_name} gõ <code>/close</code> để kết thúc phiên bất cứ lúc nào.",
             )
-            await self.answer_callback_query(cq_id, "Đã mở phiên chat trực tiếp")
-
+            await self.answer_callback_query(cq_id, f"Đã khóa phiên hỗ trợ cho {admin_name}")
             driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
             if driver_token and driver_token != "mock_tg_token":
                 client = await self.get_client()
@@ -605,14 +712,27 @@ class TelegramPollingRunner:
                     target_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id)) or ADMIN_GROUP_ACTIVE_SESSION.get(chat_id)
 
                 if target_user and not text.startswith("/"):
-                    ACTIVE_SUPPORT_CONVERSATIONS[target_user] = {
+                    convo = ACTIVE_SUPPORT_CONVERSATIONS.get(target_user)
+                    from_user_id = from_user.get("id")
+
+                    # If session is locked to a specific admin, only relay messages from that admin!
+                    if convo and convo.get("locked_admin_id"):
+                        if from_user_id and from_user_id != convo["locked_admin_id"]:
+                            logger.info(
+                                f"Ignored group message from non-assigned admin {admin_name} ({from_user_id}) "
+                                f"for session locked to {convo.get('locked_admin_name')} ({convo.get('locked_admin_id')})"
+                            )
+                            return
+
+                    ACTIVE_SUPPORT_CONVERSATIONS[target_user] = convo or {
                         "user_id": target_user,
                         "admin_chat_id": chat_id,
+                        "locked_admin_id": from_user_id,
+                        "locked_admin_name": admin_name,
                         "opened_at": time.time(),
                     }
                     ADMIN_GROUP_ACTIVE_SESSION[str(chat_id)] = target_user
                     ADMIN_GROUP_ACTIVE_SESSION[chat_id] = target_user
-
                     driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
                     if driver_token and driver_token != "mock_tg_token":
                         client = await self.get_client()

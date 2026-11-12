@@ -247,8 +247,8 @@ async def test_telegram_reply_with_check_runs_command_for_replied_submission():
     # The brought up form MUST have buttons to approve or reject
     assert resp_msg["reply_markup"] is not None
     btns = resp_msg["reply_markup"]["inline_keyboard"]
-    assert any("admin_approve:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
-    assert any("admin_reject:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
+    assert any("admin_req_approve:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
+    assert any("admin_req_reject:VN-ABCDEF1234" in b["callback_data"] for row in btns for b in row)
 
 
 @pytest.mark.asyncio
@@ -310,3 +310,135 @@ async def test_resolved_submission_locked_against_further_responses():
     assert not any("admin_approve:" in b.get("callback_data", "") for row in rev_btns for b in row)
     assert not any("admin_reject:" in b.get("callback_data", "") for row in rev_btns for b in row)
     assert any("resolved_notice" in b.get("callback_data", "") for row in rev_btns for b in row)
+@pytest.mark.asyncio
+async def test_admin_decision_confirmation_flow():
+    """Approving or rejecting a form requires confirmation before committing status change."""
+    from services.telegram_polling import TelegramPollingRunner
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    import os, json
+    dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+    dev_records = [{"submission_id": "DEV-CONFIRM-01", "status": "MANUAL_REVIEW"}]
+    with open(dev_storage_file, "w", encoding="utf-8") as f:
+        json.dump(dev_records, f)
+
+    # 1. Open review card presents confirmation-request buttons
+    sent_msgs = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_msgs.append({"text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+
+    await runner.execute_submission_review(123456, "DEV-CONFIRM-01")
+    assert len(sent_msgs) >= 1
+    print("DEBUG sent_msgs:", sent_msgs)
+    rev_btns = sent_msgs[-1]["reply_markup"]["inline_keyboard"] if sent_msgs[-1].get("reply_markup") else []
+    assert any("admin_req_approve:DEV-CONFIRM-01" in b.get("callback_data", "") for row in rev_btns for b in row)
+    assert any("admin_req_reject:DEV-CONFIRM-01" in b.get("callback_data", "") for row in rev_btns for b in row)
+
+    # 2. Clicking approve button triggers confirmation prompt with CANCEL and CONFIRM buttons
+    edited_markups = []
+    async def mock_edit(chat_id, msg_id, reply_markup=None):
+        edited_markups.append(reply_markup)
+        return True
+    runner.edit_message_reply_markup = mock_edit
+
+    cq_approve_req = {
+        "id": "cq_101",
+        "data": "admin_req_approve:DEV-CONFIRM-01",
+        "message": {"message_id": 999, "chat": {"id": 123456}},
+        "from": {"id": 1001, "first_name": "Admin1"},
+    }
+    await runner.handle_callback_query(cq_approve_req)
+    assert len(edited_markups) == 1
+    conf_btns = edited_markups[0]["inline_keyboard"]
+    assert any("admin_approve:DEV-CONFIRM-01" in b.get("callback_data", "") for row in conf_btns for b in row)
+    assert any("admin_cancel_decision:DEV-CONFIRM-01" in b.get("callback_data", "") for row in conf_btns for b in row)
+
+    # 3. Clicking CANCEL restores original buttons without modifying status
+    cq_cancel = {
+        "id": "cq_102",
+        "data": "admin_cancel_decision:DEV-CONFIRM-01",
+        "message": {"message_id": 999, "chat": {"id": 123456}},
+        "from": {"id": 1001, "first_name": "Admin1"},
+    }
+    await runner.handle_callback_query(cq_cancel)
+    assert len(edited_markups) == 2
+    restored_btns = edited_markups[1]["inline_keyboard"]
+    assert any("admin_req_approve:DEV-CONFIRM-01" in b.get("callback_data", "") for row in restored_btns for b in row)
+
+
+@pytest.mark.asyncio
+async def test_support_request_locks_to_responding_admin_only():
+    """One admin responding to support locks ticket and subsequent messages from other admins are ignored."""
+    from services.telegram_polling import (
+        TelegramPollingRunner,
+        ACTIVE_SUPPORT_CONVERSATIONS,
+        ADMIN_GROUP_ACTIVE_SESSION,
+    )
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    ACTIVE_SUPPORT_CONVERSATIONS.clear()
+    ADMIN_GROUP_ACTIVE_SESSION.clear()
+
+    alerts = []
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        alerts.append({"text": text, "show_alert": show_alert})
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    # 1. Admin A (ID 777) clicks to reply to support user 9999
+    cq_admin_a = {
+        "id": "cq_a",
+        "data": "admin_reply_chat:9999",
+        "message": {"message_id": 111, "chat": {"id": -100999}},
+        "from": {"id": 777, "first_name": "Alice"},
+    }
+    await runner.handle_callback_query(cq_admin_a)
+    assert 9999 in ACTIVE_SUPPORT_CONVERSATIONS
+    assert ACTIVE_SUPPORT_CONVERSATIONS[9999]["locked_admin_id"] == 777
+    assert ACTIVE_SUPPORT_CONVERSATIONS[9999]["locked_admin_name"] == "Alice"
+
+    # 2. Admin B (ID 888) attempts to click reply to same user -> BLOCKED with warning alert!
+    cq_admin_b = {
+        "id": "cq_b",
+        "data": "admin_reply_chat:9999",
+        "message": {"message_id": 111, "chat": {"id": -100999}},
+        "from": {"id": 888, "first_name": "Bob"},
+    }
+    await runner.handle_callback_query(cq_admin_b)
+    assert any("đã được khóa và đang xử lý bởi Alice" in a.get("text", "") for a in alerts)
+
+    # 3. Admin B sends a message in admin group -> Ignored, not relayed
+    relayed_messages = []
+    class MockClient:
+        async def post(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+            relayed_messages.append(kwargs)
+            return Resp()
+    async def get_mock_client():
+        return MockClient()
+    runner.get_client = get_mock_client
+
+    msg_bob = {
+        "message": {
+            "message_id": 501,
+            "chat": {"id": -100999},
+            "from": {"id": 888, "first_name": "Bob"},
+            "text": "Hello user, Bob here!",
+        }
+    }
+    await runner.handle_update(msg_bob)
+    assert len(relayed_messages) == 0  # Blocked!
+
+    # 4. Admin A (Alice) sends a message in admin group -> Relayed to user 9999
+    msg_alice = {
+        "message": {
+            "message_id": 502,
+            "chat": {"id": -100999},
+            "from": {"id": 777, "first_name": "Alice"},
+            "text": "Hello user, Alice here to help!",
+        }
+    }
+    await runner.handle_update(msg_alice)
+    user_relayed = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 9999]
+    assert len(user_relayed) == 1
+    assert "Alice here to help" in str(user_relayed[0])
