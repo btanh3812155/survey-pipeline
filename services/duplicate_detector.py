@@ -151,16 +151,13 @@ def check_intra_submission_duplicates(
                 pi = str(wi.get("period") or "").strip().lower()
                 pj = str(wj.get("period") or "").strip().lower()
 
-                # If revenue differs by > 50,000 VND
-                if gi > 0 and gj > 0 and abs(gi - gj) > 50_000:
+                # If ANY financial or operational metric differs AT ALL, they are NOT duplicate photos!
+                if gi > 0 and gj > 0 and gi != gj:
                     has_different_ocr = True
-                # If net income differs by > 50,000 VND
-                elif ni > 0 and nj > 0 and abs(ni - nj) > 50_000:
+                elif ni > 0 and nj > 0 and ni != nj:
                     has_different_ocr = True
-                # If trip counts differ
                 elif ti > 0 and tj > 0 and ti != tj:
                     has_different_ocr = True
-                # If periods/dates explicitly differ (e.g. '07 - 13' vs '14 - 20')
                 elif pi and pj and pi != pj and not ("tuần" in pi and "tuần" in pj and pi == pj):
                     has_different_ocr = True
 
@@ -307,8 +304,8 @@ async def check_inter_submission_duplicates(
                     row_vec = await cur.fetchone()
                     if row_vec:
                         past_sub_id, past_gross, sim_val = row_vec[0], row_vec[1], row_vec[2]
-                        if tot_gross and past_gross and abs(int(tot_gross) - int(past_gross)) > 50_000:
-                            logger.info(f"✅ [OCR OVERRIDE] Inter-submission visual match with #{past_sub_id} overridden by distinct gross revenue.")
+                        if tot_gross and past_gross and int(tot_gross) != int(past_gross):
+                            logger.info(f"✅ [OCR OVERRIDE] Inter-submission visual match with #{past_sub_id} overridden by distinct gross revenue ({tot_gross:,} vs {past_gross:,}).")
                         else:
                             logger.warning(f"🚫 [INTER-DUPLICATE] DINOv2 match with approved #{past_sub_id} (similarity={sim_val:.4f})")
                             return True, past_sub_id, "IMAGE_DINOV2"

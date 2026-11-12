@@ -1905,7 +1905,7 @@ async def submit_webrtc_survey(
                                                         if prev.get("image_dhash_int") is not None:
                                                             prev_dh = int(prev["image_dhash_int"])
                                                             if hamming_distance(target_dhash, prev_dh) <= 4:
-                                                                if prev_g > 0 and tot_gross > 0 and abs(prev_g - tot_gross) > 50_000:
+                                                                if prev_g > 0 and tot_gross > 0 and prev_g != tot_gross:
                                                                     logger.info(f"✅ [OCR OVERRIDE] Hash similarity <= 4 overridden by distinct financial numbers ({prev_g:,} vs {tot_gross:,}).")
                                                                 else:
                                                                     is_approved = False
