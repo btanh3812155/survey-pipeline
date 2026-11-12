@@ -1196,17 +1196,17 @@
             let raw = String(text);
             
             // 1. Markdown Images: ![alt](url) -> <img ...>
-            raw = raw.replace(/!\\[([^\\]]*)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, (match, alt, url) => {
+            raw = raw.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (match, alt, url) => {
                 return `<img src="${url}" alt="${escapeHtml(alt || '')}" class="q-desc-img" loading="lazy">`;
             });
 
             // 2. Markdown Links: [label](url) -> <a ...>
-            raw = raw.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, (match, label, url) => {
+            raw = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label, url) => {
                 return `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
             });
 
             // 3. Raw URLs (not already part of an href or src)
-            raw = raw.replace(/(^|[^"'])(https?:\\/\\/[^\\s<)]+)/g, (match, prefix, url) => {
+            raw = raw.replace(/(^|[^"'])(https?:\/\/[^\s<)]+)/g, (match, prefix, url) => {
                 return `${prefix}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
             });
 
@@ -1753,7 +1753,7 @@
                             </button>
                             <label class="btn-camera-upload" id="uploadLabel_${q.id}" title="Tải ảnh có sẵn từ thiết bị / Thư viện" style="display:${activeSlotObj && activeSlotObj.allow_upload === false ? 'none' : 'inline-flex'};">
                                 <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
-                                <input type="file" accept="image/*" style="display:none;" onchange="handleSlotFileUpload('${q.id}', this)">
+                                <input type="file" accept="image/*" multiple style="display:none;" onchange="handleSlotFileUpload('${q.id}', this)">
                             </label>
                         </div>
                         <button type="button" class="btn-camera-retake" id="retake_${q.id}" onclick="retakeCam('${q.id}')">${t.btn_retake}</button>
@@ -2030,22 +2030,49 @@
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
             const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
 
-            if (input.files.length === 1) {
+            if (!hasSlots) {
                 const file = input.files[0];
-                applyFileToSlot(qid, currentSlotIdx, file);
-                // Stay on current slot, show preview, and do not advance or turn on camera!
+                applyFileToSlot(qid, 0, file);
             } else {
-                // Batch multi-file upload at once across available slots
+                // Identify all slots that allow file upload
+                const uploadableSlots = q.image_slots
+                    .map((s, idx) => ({ slot: s, idx }))
+                    .filter(item => item.slot.allow_upload !== false);
+
+                if (uploadableSlots.length === 0) {
+                    alert('Các ô chụp ảnh này chỉ cho phép chụp trực tiếp từ camera!');
+                    input.value = "";
+                    return;
+                }
+
                 const files = Array.from(input.files);
-                const totalSlots = hasSlots ? q.image_slots.length : 1;
-                let startSlot = (files.length >= totalSlots || currentSlotIdx === 0) ? 0 : currentSlotIdx;
-                for (let i = 0; i < files.length && (startSlot + i) < totalSlots; i++) {
-                    applyFileToSlot(qid, startSlot + i, files[i]);
+
+                if (files.length === 1) {
+                    let targetIdx = currentSlotIdx;
+                    const isCurrentUploadable = q.image_slots[currentSlotIdx] && q.image_slots[currentSlotIdx].allow_upload !== false;
+                    if (!isCurrentUploadable) {
+                        targetIdx = uploadableSlots[0].idx;
+                    }
+                    applyFileToSlot(qid, targetIdx, files[0]);
+                    selectCameraSlot(qid, targetIdx, false);
+                } else {
+                    // Multi-image upload: sequentially fill slots that allow upload!
+                    let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx);
+                    if (startPos === -1 || files.length >= uploadableSlots.length) {
+                        startPos = 0;
+                    }
+
+                    for (let i = 0; i < files.length && (startPos + i) < uploadableSlots.length; i++) {
+                        const targetSlotIdx = uploadableSlots[startPos + i].idx;
+                        applyFileToSlot(qid, targetSlotIdx, files[i]);
+                    }
+
+                    selectCameraSlot(qid, uploadableSlots[startPos].idx, false);
                 }
-                if (hasSlots) {
-                    selectCameraSlot(qid, startSlot, false);
-                }
+
+                syncAnswersImageList(qid);
             }
+
             input.value = "";
             evaluateConditionals();
             scheduleDraftSave();
@@ -2784,6 +2811,8 @@
                     return;
                 }
                 const res = await resp.json();
+                const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
+                try { localStorage.removeItem(storageKey); } catch(e) {}
                 showSubmissionResultModal(res);
             } catch(e) {
                 showSubmissionResultModal({
@@ -2952,30 +2981,15 @@
                         textAnswers[k] = answers[k];
                     }
                 }
-                const storageKey = `tb_draft_${ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}`;
+                const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
                 try {
                     localStorage.setItem(storageKey, JSON.stringify(textAnswers));
                 } catch(e) {}
-
-                // Optional server backup if running on a dedicated CTV link
-                if (ACTIVE_CTV_SLUG) {
-                    fetch('/api/v1/forms/draft', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            ctv_slug: ACTIVE_CTV_SLUG,
-                            ctv_id: LOCKED_CTV_CODE || null,
-                            form_id: SCHEMA.form_id || 'income_survey',
-                            draft_data: textAnswers
-                        })
-                    }).catch(() => {});
-                }
             }, 300);
         }
 
-        async function restoreDraftIfExists() {
-            const storageKey = `tb_draft_${ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}`;
-            let restored = false;
+        function restoreDraftIfExists() {
+            const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
             try {
                 const cached = localStorage.getItem(storageKey);
                 if (cached) {
@@ -2984,6 +2998,7 @@
                         for (let k in data) {
                             if (k === 'driver_signature' || k === 'consent_choice') continue;
                             answers[k] = data[k];
+                            const input = document.querySelector(`[data-qid="${k}"] input, [data-qid="${k}"] select, [data-qid="${k}"] textarea`);
                             if (input && input.id !== 'ctv_code') {
                                 input.value = data[k];
                             }
@@ -2994,30 +3009,11 @@
                                 }
                             });
                         }
-                        restored = true;
                         evaluateConditionals();
                     }
                 }
-            } catch(e) {}
-
-            // Fallback cross-device server restore if local storage was empty
-            if (!restored && ACTIVE_CTV_SLUG) {
-                try {
-                    const resp = await fetch(`/api/v1/forms/draft/${encodeURIComponent(ACTIVE_CTV_SLUG)}`);
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        if (data.status === 'success' && data.draft) {
-                            for (let k in data.draft) {
-                                answers[k] = data.draft[k];
-                                const input = document.querySelector(`[data-qid="${k}"] input, [data-qid="${k}"] select`);
-                                if (input && input.id !== 'ctv_code') {
-                                    input.value = data.draft[k];
-                                }
-                            }
-                            evaluateConditionals();
-                        }
-                    }
-                } catch(e) {}
+            } catch(e) {
+                console.error('Draft restore error:', e);
             }
         }
 
@@ -3025,7 +3021,7 @@
             try { applyI18n(); } catch(e) { console.error('applyI18n error:', e); }
             try { initGpsBannerBehavior(); } catch(e) { console.error('initGps error:', e); }
             try { renderForm(); } catch(e) { console.error('renderForm error:', e); }
-            try { await restoreDraftIfExists(); } catch(e) { console.error('restoreDraft error:', e); }
+            try { restoreDraftIfExists(); } catch(e) { console.error('restoreDraft error:', e); }
         });
     </script>
 </body>

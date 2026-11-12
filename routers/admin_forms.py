@@ -109,50 +109,11 @@ async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verif
 
 @router.get("/api/v1/forms/draft/{slug}")
 async def get_form_draft(slug: str):
-    """Retrieves saved draft responses for a specific CTV link."""
-    db_pool = get_db_pool()
-    if db_pool:
-        try:
-            async with db_pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT draft_data, ctv_id FROM survey_drafts WHERE ctv_slug = %s LIMIT 1;",
-                        (slug,)
-                    )
-                    row = await cur.fetchone()
-                    if row:
-                        return {"status": "success", "slug": slug, "ctv_id": row[1], "draft": row[0]}
-        except Exception as e:
-            logger.warning(f"Error fetching draft from DB: {e}")
-    return {"status": "not_found", "slug": slug, "draft": {}}
+    """Drafts are stored strictly client-side in localStorage (YAGNI / Privacy)."""
+    return {"status": "client_only", "slug": slug, "draft": {}}
 
 
 @router.post("/api/v1/forms/draft")
 async def save_form_draft(payload: DraftPayload):
-    """Persists filled-in data per CTV link across page reloads and cross-device access."""
-    slug = payload.ctv_slug.strip()
-    if not slug:
-        raise HTTPException(status_code=400, detail="Mã liên kết CTV không được để trống")
-    db_pool = get_db_pool()
-    if db_pool:
-        try:
-            import json
-            async with db_pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO survey_drafts (ctv_slug, ctv_id, draft_data, updated_at)
-                        VALUES (%s, %s, %s, NOW())
-                        ON CONFLICT (ctv_slug) DO UPDATE
-                        SET draft_data = EXCLUDED.draft_data,
-                            ctv_id = COALESCE(EXCLUDED.ctv_id, survey_drafts.ctv_id),
-                            updated_at = NOW();
-                        """,
-                        (slug, payload.ctv_id, json.dumps(payload.draft_data))
-                    )
-                await conn.commit()
-            return {"status": "success", "slug": slug}
-        except Exception as e:
-            logger.warning(f"Failed to save survey draft: {e}")
-            raise HTTPException(status_code=500, detail="Không thể lưu bản nháp")
-    return {"status": "skipped", "reason": "db_not_configured"}
+    """Drafts are stored strictly client-side in localStorage (YAGNI / Privacy)."""
+    return {"status": "client_only", "slug": payload.ctv_slug}
