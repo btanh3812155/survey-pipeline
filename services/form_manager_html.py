@@ -13,43 +13,48 @@ import os
 from typing import Dict, Optional, List, Any
 from services.form_engine import FormSchema, FormSettings, FormQuestion, QuestionType
 
+# =========================================================================================
+# NOTE / IMPORTANT RELEASE GATE:
+# DUMMY_DEV_FORMS below are STRICTLY for development staging UI layout & pagination testing.
+# They MUST be removed or stripped before promoting the dev branch to production master!
+# =========================================================================================
 DUMMY_DEV_FORMS: List[Dict[str, Any]] = [
     {
-        "form_id": "customer_service_evaluation",
-        "title": "Khảo Sát Đánh Giá Chất Lượng Phục Vụ & Thái Độ Tài Xế GSM Toàn Quốc",
-        "description": "Thu thập phản hồi từ hành khách và quản lý vận hành về chất lượng chuyến đi xe điện",
+        "form_id": "placeholder_1",
+        "title": "Placeholder 1",
+        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
         "question_count": 8,
         "is_test_mode": False,
         "access_control": "public"
     },
     {
-        "form_id": "vehicle_handover_inspection",
-        "title": "Biên Bản Bàn Giao & Kiểm Tra Tình Trạng Xe Điện VinFast Định Kỳ",
-        "description": "Kiểm tra hiện trạng ngoại thất, áp suất lốp và phụ kiện trước khi nhận ca",
+        "form_id": "placeholder_2",
+        "title": "Placeholder 2",
+        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
         "question_count": 12,
         "is_test_mode": True,
         "access_control": "public"
     },
     {
-        "form_id": "driver_onboarding_survey",
-        "title": "Khảo Sát Đào Tạo & Hội Nhập Tài Xế Mới Gia Nhập Đội Xe",
-        "description": "Đánh giá mức độ nắm bắt quy trình phục vụ và hướng dẫn sử dụng ứng dụng tài xế",
+        "form_id": "placeholder_3",
+        "title": "Placeholder 3",
+        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
         "question_count": 6,
         "is_test_mode": False,
         "access_control": "public"
     },
     {
-        "form_id": "battery_charging_incident",
-        "title": "Báo Cáo Sự Cố Pin, Trạm Sạc & Cứu Hộ Khẩn Cấp",
-        "description": "Ghi nhận thông tin trụ sạc lỗi hoặc tình trạng hao hụt pin bất thường",
+        "form_id": "placeholder_4",
+        "title": "Placeholder 4",
+        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
         "question_count": 5,
         "is_test_mode": True,
         "access_control": "public"
     },
     {
-        "form_id": "performance_bonus_w11",
-        "title": "Khảo Sát Hiệu Quả Chương Trình Thưởng Năng Suất Tuần 11",
-        "description": "Thu thập ý kiến đóng góp về chính sách thưởng chuyến cao điểm và chỉ tiêu tuần",
+        "form_id": "placeholder_5",
+        "title": "Placeholder 5",
+        "description": "Biểu mẫu mẫu để kiểm thử giao diện phân trang và hiển thị lưới. Bắt buộc xóa khi đẩy lên production.",
         "question_count": 7,
         "is_test_mode": False,
         "access_control": "public"
