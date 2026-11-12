@@ -442,3 +442,144 @@ async def test_support_request_locks_to_responding_admin_only():
     user_relayed = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 9999]
     assert len(user_relayed) == 1
     assert "Alice here to help" in str(user_relayed[0])
+@pytest.mark.asyncio
+async def test_concurrent_multi_admin_support_routing_isolation():
+    """
+    If CTV A and B request help, Admin C takes A, Admin D takes B:
+    - Only Admin C's messages go to A's convo and ONLY A's convo.
+    - Only Admin D's messages go to B's convo and ONLY B's convo.
+    - Neither can cross-talk or leak into the other's user.
+    """
+    from services.telegram_polling import (
+        TelegramPollingRunner,
+        ACTIVE_SUPPORT_CONVERSATIONS,
+        ADMIN_GROUP_ACTIVE_SESSION,
+        ADMIN_ACTIVE_CONVERSATIONS,
+    )
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    ACTIVE_SUPPORT_CONVERSATIONS.clear()
+    ADMIN_GROUP_ACTIVE_SESSION.clear()
+    ADMIN_ACTIVE_CONVERSATIONS.clear()
+
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    relayed_messages = []
+    class MockClient:
+        async def post(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+            relayed_messages.append(kwargs)
+            return Resp()
+    async def get_mock_client():
+        return MockClient()
+    runner.get_client = get_mock_client
+
+    # 1. Admin C (1001) takes CTV A (1111)
+    cq_c = {
+        "id": "cq_c",
+        "data": "admin_reply_chat:1111",
+        "message": {"message_id": 10, "chat": {"id": -100999}},
+        "from": {"id": 1001, "first_name": "Admin_C"},
+    }
+    await runner.handle_callback_query(cq_c)
+
+    # 2. Admin D (2002) takes CTV B (2222)
+    cq_d = {
+        "id": "cq_d",
+        "data": "admin_reply_chat:2222",
+        "message": {"message_id": 20, "chat": {"id": -100999}},
+        "from": {"id": 2002, "first_name": "Admin_D"},
+    }
+    await runner.handle_callback_query(cq_d)
+
+    assert ADMIN_ACTIVE_CONVERSATIONS[1001] == 1111
+    assert ADMIN_ACTIVE_CONVERSATIONS[2002] == 2222
+
+    # 3. Admin C sends a message in admin group without replying
+    relayed_messages.clear()
+    msg_from_c = {
+        "message": {
+            "message_id": 101,
+            "chat": {"id": -100999},
+            "from": {"id": 1001, "first_name": "Admin_C"},
+            "text": "Hello CTV A, I am Admin C!",
+        }
+    }
+    await runner.handle_update(msg_from_c)
+
+    # Must go ONLY to CTV A (1111), NEVER to CTV B (2222)
+    a_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 1111]
+    b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
+    assert len(a_msgs) == 1
+    assert len(b_msgs) == 0
+    assert "Hello CTV A" in str(a_msgs[0])
+
+    # 4. Admin D sends a message in admin group without replying
+    relayed_messages.clear()
+    msg_from_d = {
+        "message": {
+            "message_id": 102,
+            "chat": {"id": -100999},
+            "from": {"id": 2002, "first_name": "Admin_D"},
+            "text": "Hello CTV B, I am Admin D!",
+        }
+    }
+    await runner.handle_update(msg_from_d)
+
+    # Must go ONLY to CTV B (2222), NEVER to CTV A (1111)
+    a_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 1111]
+    b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
+    assert len(a_msgs) == 0
+    assert len(b_msgs) == 1
+    assert "Hello CTV B" in str(b_msgs[0])
+
+    # 5. Admin C attempts to reply to a ticket belonging to CTV B (cross-convo leakage prevention)
+    relayed_messages.clear()
+    msg_cross_reply = {
+        "message": {
+            "message_id": 103,
+            "chat": {"id": -100999},
+            "from": {"id": 1001, "first_name": "Admin_C"},
+            "text": "Accidental message from C to B",
+            "reply_to_message": {
+                "text": "Yêu cầu hỗ trợ từ CTV B (ID: <code>2222</code>)"
+            }
+        }
+    }
+    await runner.handle_update(msg_cross_reply)
+    # Blocked completely! Nothing relayed to 2222
+    b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
+    assert len(b_msgs) == 0
+
+    # 6. Admin C closes their session (/close)
+    msg_close_c = {
+        "message": {
+            "message_id": 104,
+            "chat": {"id": -100999},
+            "from": {"id": 1001, "first_name": "Admin_C"},
+            "text": "/close",
+        }
+    }
+    await runner.handle_update(msg_close_c)
+    assert 1111 not in ACTIVE_SUPPORT_CONVERSATIONS
+    assert 1001 not in ADMIN_ACTIVE_CONVERSATIONS
+
+    # CTV B's session with Admin D is STILL OPEN and active!
+    assert 2222 in ACTIVE_SUPPORT_CONVERSATIONS
+    assert ADMIN_ACTIVE_CONVERSATIONS[2002] == 2222
+
+    # Admin D can still message CTV B seamlessly
+    relayed_messages.clear()
+    msg_from_d_again = {
+        "message": {
+            "message_id": 105,
+            "chat": {"id": -100999},
+            "from": {"id": 2002, "first_name": "Admin_D"},
+            "text": "Still here for you CTV B!",
+        }
+    }
+    await runner.handle_update(msg_from_d_again)
+    b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
+    assert len(b_msgs) == 1

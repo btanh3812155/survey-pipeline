@@ -22,9 +22,9 @@ logger = logging.getLogger("telegram_polling")
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
 
 # Shared live support conversation registry between Admin Group and User Private DMs
-ACTIVE_SUPPORT_CONVERSATIONS: Dict[int, dict] = {}
-ADMIN_GROUP_ACTIVE_SESSION: Dict[str, int] = {}
-
+ACTIVE_SUPPORT_CONVERSATIONS: Dict[int, dict] = {}  # user_id -> conversation metadata
+ADMIN_GROUP_ACTIVE_SESSION: Dict[str, int] = {}     # legacy chat/admin identifier -> user_id
+ADMIN_ACTIVE_CONVERSATIONS: Dict[int, int] = {}     # admin_user_id -> user_id (isolated per-admin routing)
 
 class TelegramPollingRunner:
     """
@@ -536,9 +536,11 @@ class TelegramPollingRunner:
                 "locked_admin_name": admin_name,
                 "opened_at": time.time(),
             }
+            if admin_id:
+                ADMIN_ACTIVE_CONVERSATIONS[admin_id] = target_user_id
+                ADMIN_GROUP_ACTIVE_SESSION[str(admin_id)] = target_user_id
             ADMIN_GROUP_ACTIVE_SESSION[str(cq_chat_id)] = target_user_id
             ADMIN_GROUP_ACTIVE_SESSION[cq_chat_id] = target_user_id
-
             # Update ticket message buttons in group to show locked state!
             if msg_id:
                 locked_ticket_markup = {
@@ -576,8 +578,12 @@ class TelegramPollingRunner:
 
         elif data.startswith("admin_close_ticket:"):
             target_user_id = int(data.split(":", 1)[1])
-            if target_user_id in ACTIVE_SUPPORT_CONVERSATIONS:
-                del ACTIVE_SUPPORT_CONVERSATIONS[target_user_id]
+            convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(target_user_id, None)
+            locked_admin = convo.get("locked_admin_id") if convo else None
+            if locked_admin and locked_admin in ADMIN_ACTIVE_CONVERSATIONS:
+                del ADMIN_ACTIVE_CONVERSATIONS[locked_admin]
+            if locked_admin and str(locked_admin) in ADMIN_GROUP_ACTIVE_SESSION:
+                del ADMIN_GROUP_ACTIVE_SESSION[str(locked_admin)]
             if str(cq_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
                 del ADMIN_GROUP_ACTIVE_SESSION[str(cq_chat_id)]
             await self.send_message(
@@ -637,10 +643,20 @@ class TelegramPollingRunner:
                 except Exception as e:
                     logger.error(f"Failed to update submission status in {fpath}: {e}")
         return True, new_status
-    async def close_active_support(self, admin_chat_id: int, user_id: int, closed_by: str = "admin") -> None:
-        """Closes live support conversation from admin side."""
-        if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
-            del ACTIVE_SUPPORT_CONVERSATIONS[user_id]
+    async def close_active_support(
+        self,
+        admin_chat_id: int,
+        user_id: int,
+        closed_by: str = "admin",
+        admin_user_id: Optional[int] = None,
+    ) -> None:
+        """Closes live support conversation from admin side for the specific admin session."""
+        convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, None)
+        locked_admin = convo.get("locked_admin_id") if convo else admin_user_id
+        if locked_admin and locked_admin in ADMIN_ACTIVE_CONVERSATIONS:
+            del ADMIN_ACTIVE_CONVERSATIONS[locked_admin]
+        if locked_admin and str(locked_admin) in ADMIN_GROUP_ACTIVE_SESSION:
+            del ADMIN_GROUP_ACTIVE_SESSION[str(locked_admin)]
         if str(admin_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
             del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat_id)]
 
@@ -688,14 +704,20 @@ class TelegramPollingRunner:
             admin_name = from_user.get("first_name", "Quản trị viên")
 
             if chat_id and text:
-                # Check for /close command in admin group
+                from_user_id = from_user.get("id")
+
+                # Check for /close command in admin group - closes ONLY the active session of this specific admin!
                 if text.strip().lower() in ("/close", "/end", "/ketthuc"):
-                    active_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id))
+                    active_user = (
+                        (ADMIN_ACTIVE_CONVERSATIONS.get(from_user_id) if from_user_id else None)
+                        or (ADMIN_GROUP_ACTIVE_SESSION.get(str(from_user_id)) if from_user_id else None)
+                        or ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id))
+                    )
                     if active_user:
-                        await self.close_active_support(chat_id, active_user, closed_by="admin")
+                        await self.close_active_support(chat_id, active_user, closed_by="admin", admin_user_id=from_user_id)
                         return
                     else:
-                        await self.send_message(chat_id, "ℹ️ Hiện không có phiên hội thoại hỗ trợ nào đang mở.")
+                        await self.send_message(chat_id, "ℹ️ Hiện bạn không có phiên hội thoại hỗ trợ nào đang mở.")
                         return
 
                 # Check if message is replying to a support ticket, or if session is active
@@ -708,12 +730,28 @@ class TelegramPollingRunner:
                     if m:
                         target_user = int(m.group(1))
 
-                if not target_user:
-                    target_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id)) or ADMIN_GROUP_ACTIVE_SESSION.get(chat_id)
+                # Guard cross-admin leakage:
+                if target_user:
+                    convo = ACTIVE_SUPPORT_CONVERSATIONS.get(target_user)
+                    if convo and convo.get("locked_admin_id"):
+                        if from_user_id and from_user_id != convo["locked_admin_id"]:
+                            logger.info(
+                                f"Blocked cross-convo reply: admin {admin_name} ({from_user_id}) tried to message user {target_user} "
+                                f"locked to {convo.get('locked_admin_name')} ({convo.get('locked_admin_id')})"
+                            )
+                            return
+                else:
+                    # Message is typed into group without replying: route EXCLUSIVELY by this admin's active session!
+                    if from_user_id and from_user_id in ADMIN_ACTIVE_CONVERSATIONS:
+                        target_user = ADMIN_ACTIVE_CONVERSATIONS[from_user_id]
+                    elif from_user_id and str(from_user_id) in ADMIN_GROUP_ACTIVE_SESSION:
+                        target_user = ADMIN_GROUP_ACTIVE_SESSION[str(from_user_id)]
+                    elif not ACTIVE_SUPPORT_CONVERSATIONS and (ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id)) or ADMIN_GROUP_ACTIVE_SESSION.get(chat_id)):
+                        # Fall back to group-level only if no conflicting active conversations exist
+                        target_user = ADMIN_GROUP_ACTIVE_SESSION.get(str(chat_id)) or ADMIN_GROUP_ACTIVE_SESSION.get(chat_id)
 
                 if target_user and not text.startswith("/"):
                     convo = ACTIVE_SUPPORT_CONVERSATIONS.get(target_user)
-                    from_user_id = from_user.get("id")
 
                     # If session is locked to a specific admin, only relay messages from that admin!
                     if convo and convo.get("locked_admin_id"):
@@ -731,8 +769,10 @@ class TelegramPollingRunner:
                         "locked_admin_name": admin_name,
                         "opened_at": time.time(),
                     }
+                    if from_user_id:
+                        ADMIN_ACTIVE_CONVERSATIONS[from_user_id] = target_user
+                        ADMIN_GROUP_ACTIVE_SESSION[str(from_user_id)] = target_user
                     ADMIN_GROUP_ACTIVE_SESSION[str(chat_id)] = target_user
-                    ADMIN_GROUP_ACTIVE_SESSION[chat_id] = target_user
                     driver_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
                     if driver_token and driver_token != "mock_tg_token":
                         client = await self.get_client()
@@ -1370,6 +1410,11 @@ class DriverBotRunner(TelegramPollingRunner):
         if user_id in ACTIVE_SUPPORT_CONVERSATIONS or user_id in self.pending_help_tickets:
             if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
                 convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, {})
+                locked_admin = convo.get("locked_admin_id")
+                if locked_admin and locked_admin in ADMIN_ACTIVE_CONVERSATIONS:
+                    del ADMIN_ACTIVE_CONVERSATIONS[locked_admin]
+                if locked_admin and str(locked_admin) in ADMIN_GROUP_ACTIVE_SESSION:
+                    del ADMIN_GROUP_ACTIVE_SESSION[str(locked_admin)]
                 admin_chat = convo.get("admin_chat_id") or admin_group
                 if str(admin_chat) in ADMIN_GROUP_ACTIVE_SESSION:
                     del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat)]
@@ -1414,10 +1459,14 @@ class DriverBotRunner(TelegramPollingRunner):
     async def close_user_support(self, chat_id: int, user_id: int, closed_by: str = "user") -> None:
         """Closes live support conversation from user side."""
         convo = ACTIVE_SUPPORT_CONVERSATIONS.pop(user_id, {})
+        locked_admin = convo.get("locked_admin_id")
+        if locked_admin and locked_admin in ADMIN_ACTIVE_CONVERSATIONS:
+            del ADMIN_ACTIVE_CONVERSATIONS[locked_admin]
+        if locked_admin and str(locked_admin) in ADMIN_GROUP_ACTIVE_SESSION:
+            del ADMIN_GROUP_ACTIVE_SESSION[str(locked_admin)]
         admin_chat_id = convo.get("admin_chat_id") or getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-5445563473")
         if str(admin_chat_id) in ADMIN_GROUP_ACTIVE_SESSION:
             del ADMIN_GROUP_ACTIVE_SESSION[str(admin_chat_id)]
-
         await self.send_message(
             chat_id,
             "🔒 <b>Cuộc trò chuyện hỗ trợ đã kết thúc theo yêu cầu của bạn.</b>\n\n"
