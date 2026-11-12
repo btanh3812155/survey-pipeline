@@ -15,130 +15,660 @@
             --border: #23314f;
             --accent: #2563eb;
             --accent-hover: #1d4ed8;
+            --success: #10b981;
+            --danger: #ef4444;
             --text: #f8fafc;
             --muted: #94a3b8;
         }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
             font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 20px 16px;
+            padding: 16px 14px 40px 14px;
         }
-        .container { max-width: 1440px; width: 96%; margin: 0 auto; }
-        header {
+
+        .container { max-width: 860px; margin: 0 auto; }
+
+
+        /* 3 Clean Tabs Navigation */
+        .tab-nav {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 16px;
-            margin-bottom: 20px;
+            gap: 6px;
+            margin-bottom: 16px;
+            border-bottom: 1.5px solid var(--border);
+            padding-bottom: 2px;
+            overflow-x: auto;
         }
-        .tab-nav { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+
         .tab-btn {
-            background: none;
+            background: transparent;
             border: none;
             color: var(--muted);
-            padding: 10px 18px;
-            font-size: 0.9rem;
+            padding: 10px 16px;
+            font-size: 0.88rem;
             font-weight: 700;
             cursor: pointer;
-            border-bottom: 2px solid transparent;
+            border-bottom: 2.5px solid transparent;
+            transition: all 0.2s;
+            white-space: nowrap;
         }
-        .tab-btn.active { color: #38bdf8; border-bottom-color: #38bdf8; }
-        .tab-panel { display: none; }
-        .tab-panel.active { display: block; }
-        .form-group { margin-bottom: 16px; }
-        .form-group label { display: block; font-size: 0.82rem; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
-        .form-control {
-            width: 100%;
+
+        .tab-btn.active {
+            color: #60a5fa;
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-panel {
+            display: none;
+            animation: fadeIn 0.2s ease;
+        }
+        .tab-panel.active { display: flex; flex-direction: column; gap: 14px; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive Form Layout */
+        .card {
             background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #fff;
-            font-size: 0.9rem;
-            outline: none;
+            border: 1.5px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
-        .btn-save {
-            background: #2563eb;
+
+        .field-group { display: flex; flex-direction: column; gap: 6px; }
+        .field-group label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+
+        .field-group input, .field-group select, .field-group textarea {
+            background: var(--bg);
+            border: 1.5px solid var(--border);
+            color: #fff;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 0.92rem;
+            outline: none;
+            width: 100%;
+        }
+
+        .field-group input:focus, .field-group select:focus, .field-group textarea:focus {
+            border-color: var(--accent);
+        }
+
+        /* Mobile Responsive Grid Override */
+        .row-2, .row-3 {
+            display: grid;
+            gap: 12px;
+        }
+        .row-2 { grid-template-columns: 1fr 1fr; }
+        .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+        /* STACK VERTICALLY ON MOBILE SO DROPDOWNS ARE NEVER SQUISHED */
+        @media (max-width: 640px) {
+            .row-2, .row-3 {
+                grid-template-columns: 1fr !important;
+            }
+        }
+
+        /* Question Item Card */
+        .question-item {
+            background: var(--bg);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .btn-delete {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .btn-add-q {
+            background: #1e293b;
+            color: #60a5fa;
+            border: 1.5px dashed var(--accent);
+            padding: 12px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.88rem;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .btn-save-master {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
             color: #fff;
             border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-weight: 700;
-            font-size: 0.95rem;
+            padding: 16px;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 800;
             cursor: pointer;
+            margin-top: 16px;
+            width: 100%;
+        }
+
+        /* Modern Switch Toggle Component */
+        .toggle-switch {
+            position: relative;
             display: inline-flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            font-weight: 600;
+        }
+
+        .toggle-switch input[type="checkbox"] {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+        }
+
+        .toggle-slider {
+            position: relative;
+            width: 38px;
+            height: 20px;
+            background-color: #334155;
+            border-radius: 20px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid #475569;
+            flex-shrink: 0;
+        }
+
+        .toggle-slider::before {
+            content: "";
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 2px;
+            top: 2px;
+            background-color: #f8fafc;
+            border-radius: 50%;
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+
+        .toggle-switch input[type="checkbox"]:checked + .toggle-slider {
+            background-color: var(--accent);
+            border-color: #3b82f6;
+        }
+
+        .toggle-switch input[type="checkbox"]:checked + .toggle-slider::before {
+            transform: translateX(18px);
+            background-color: #ffffff;
+        }
+
+        .toggle-switch:hover .toggle-slider {
+            border-color: #64748b;
+        }
+
+        .toggle-switch input[type="checkbox"]:checked:hover + .toggle-slider {
+            background-color: var(--accent-hover);
         }
     </style>
 </head>
 <body>
     <div class="container">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <button type="button" onclick="toggleEditorLang()" style="display:inline-flex; align-items:center; gap:6px; background:rgba(30, 41, 59, 0.85); border:1px solid var(--border); color:#f8fafc; padding:6px 14px; border-radius:20px; font-size:0.82rem; font-weight:700; cursor:pointer;">
+                <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#60a5fa;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                <span id="editorLangCode">VI</span>
+            </button>
+            <a href="/admin/forms" class="back-link" id="linkBackAdmin">Quay lại danh sách biểu mẫu</a>
+        </div>
         <header>
-            <div>
-                <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + title_val} {env_badge}</h1>
-            </div>
-            <a href="/admin/forms" style="color:var(--muted); text-decoration:none; font-size:0.85rem; font-weight:600;">← Quay lại danh sách</a>
+            <h1 id="txtEditorTitle">{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa: ' + (html.escape(schema.title) if schema else '')}</h1>
         </header>
 
+        <!-- 3 Tabs Navigation -->
         <div class="tab-nav">
-            <button type="button" class="tab-btn active" onclick="switchEditorTab('common', this)">1. Thông tin chung</button>
-            <button type="button" class="tab-btn" onclick="switchEditorTab('settings', this)">2. Cài đặt & Phòng chống gian lận</button>
-            <button type="button" class="tab-btn" onclick="switchEditorTab('questions', this)">3. Danh sách câu hỏi ({len(schema_dict['questions'])})</button>
+            <button type="button" class="tab-btn active" id="btnTabCommon" onclick="switchTab('common')">1. Thông tin chung</button>
+            <button type="button" class="tab-btn" id="btnTabOptions" onclick="switchTab('options')">2. Tùy chọn & Cài đặt</button>
+            <button type="button" class="tab-btn" id="btnTabQuestions" onclick="switchTab('questions')">3. Danh sách câu hỏi</button>
         </div>
 
         <form id="editorForm" onsubmit="return false;">
-            <div id="tab-common" class="tab-panel active">
-                <div class="form-group">
-                    <label>Mã Biểu Mẫu (Form ID)</label>
-                    <input type="text" id="formId" class="form-control" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
-                </div>
-                <div class="form-group">
-                    <label>Tiêu Đề Biểu Mẫu</label>
-                    <input type="text" id="formTitle" class="form-control" value="" required>
-                </div>
-                <div class="form-group">
-                    <label>Mô Tả Biểu Mẫu</label>
-                    <textarea id="formDesc" class="form-control" rows="3">{html.escape(schema_dict['description'])}</textarea>
-                </div>
-            </div>
-
-            <div id="tab-settings" class="tab-panel">
-                <div class="form-group">
-                    <label>Giới Hạn Lượt Nộp (0 = Không giới hạn)</label>
-                    <input type="number" id="responseLimit" class="form-control" value="{schema_dict['settings']['response_limit']}">
-                </div>
-                <div class="form-group">
-                    <label>Quyền Truy Cập</label>
-                    <select id="accessControl" class="form-control">
-                        <option value="public" {'selected' if schema_dict['settings']['access_control'] == 'public' else ''}>Công khai (Public)</option>
-                        <option value="internal" {'selected' if schema_dict['settings']['access_control'] == 'internal' else ''}>Nội bộ (Internal)</option>
-                    </select>
+            <!-- Tab 1: Common Info -->
+            <div class="tab-panel active" id="tabCommon">
+                <div class="card">
+                    <div class="row-2">
+                        <div class="field-group">
+                            <label for="formId">Mã định danh (Form ID - viết liền không dấu) *</label>
+                            <input type="text" id="formId" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
+                        </div>
+                        <div class="field-group">
+                            <label for="formTitle">Tên biểu mẫu (Tiêu đề) *</label>
+                            <input type="text" id="formTitle" value="{html.escape(schema_dict['title'])}" required>
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label for="formDesc">Mô tả biểu mẫu</label>
+                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế...">{html.escape(schema_dict.get('description') or '')}</textarea>
+                    </div>
                 </div>
             </div>
 
-            <div id="tab-questions" class="tab-panel">
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px;">
-                    <div id="questionsBuilderList"></div>
+            <!-- Tab 2: Options & Settings -->
+            <div class="tab-panel" id="tabOptions">
+                <div class="card">
+                    <div class="row-2">
+                        <div class="field-group">
+                            <label for="responseLimit">Giới hạn số lượng phản hồi (0 = Không giới hạn)</label>
+                            <input type="number" id="responseLimit" value="{schema_dict['settings'].get('response_limit') or 0}">
+                        </div>
+                        <div class="field-group">
+                            <label for="accessControl">Quyền truy cập</label>
+                            <select id="accessControl">
+                                <option value="public" {'selected' if schema_dict['settings'].get('access_control')=='public' else ''}>Công khai (Bất kỳ ai có link)</option>
+                                <option value="private" {'selected' if schema_dict['settings'].get('access_control')=='private' else ''}>Nội bộ (Chỉ tài xế được duyệt)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row-2">
+                        <div class="field-group">
+                            <label for="isTestMode">Chế độ vận hành</label>
+                            <select id="isTestMode">
+                                <option value="false" {'selected' if not schema_dict['settings'].get('is_test_mode') else ''}>Chính thức (Lưu PostgreSQL SSOT)</option>
+                                <option value="true" {'selected' if schema_dict['settings'].get('is_test_mode') else ''}>Thử nghiệm (Lưu Dev Storage tạm)</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="notifyChatId">Telegram Chat ID nhận thông báo</label>
+                            <input type="number" id="notifyChatId" value="{schema_dict['settings'].get('notify_telegram_chat_id') or ''}" placeholder="Ví dụ: -1001234567890">
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
+                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableBlurCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_blur_check', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra độ mờ / rung tay</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableAiVision" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_vision', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra AI Vision trích xuất hóa đơn</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableVehicleMatch" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_vehicle_match', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra đối chiếu biển số</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableAntiFraud" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_anti_fraud', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra chống gian lận & trùng lặp</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalRequireUnique" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('require_unique', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Yêu cầu ảnh độc nhất (Chống trùng lặp)</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableAiGeneratedCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_generated_check', True) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra ảnh AI tổng hợp</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', False) else ''}>
+                                <span class="toggle-slider"></span>
+                                <span>Kiểm tra ảnh chụp màn hình</span>
+                            </label>
+                        </div>
+                        <div class="field-group" style="max-width: 320px;">
+                            <label for="globalBlurThreshold">Ngưỡng độ mờ tùy chỉnh (mặc định 40)</label>
+                            <input type="number" step="0.1" id="globalBlurThreshold" value="{(schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') if (schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') is not None else 40}" placeholder="40">
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border); display:flex; justify-content:flex-end;">
-                <button type="button" class="btn-save" onclick="saveFormSchema()">
-                    <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
-                    <span>Lưu Thay Đổi Biểu Mẫu</span>
-                </button>
+            <!-- Tab 3: Questions -->
+            <div class="tab-panel" id="tabQuestions">
+                <div class="card">
+                    <div id="questionsBuilderList" style="display:flex; flex-direction:column; gap:12px;"></div>
+                    <button type="button" class="btn-add-q" onclick="addQuestion()">+ Thêm Câu Hỏi Mới</button>
+                </div>
             </div>
+
+            <button type="button" class="btn-save-master" onclick="saveForm()">Lưu & Kích Hoạt Biểu Mẫu</button>
         </form>
     </div>
 
     <script>
-        let INITIAL_SCHEMA = {form_id: "", title: "", description: "", settings: {response_limit: 0, access_control: "public"}, questions: []};
-        const questions = INITIAL_SCHEMA.questions || [];
+        const INITIAL_SCHEMA = {schema_json_str};
+        let questions = JSON.parse(JSON.stringify(INITIAL_SCHEMA.questions || []));
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+
+            if (tabId === 'common') {
+                document.getElementById('btnTabCommon').classList.add('active');
+                document.getElementById('tabCommon').classList.add('active');
+            } else if (tabId === 'options') {
+                document.getElementById('btnTabOptions').classList.add('active');
+                document.getElementById('tabOptions').classList.add('active');
+            } else if (tabId === 'questions') {
+                document.getElementById('btnTabQuestions').classList.add('active');
+                document.getElementById('tabQuestions').classList.add('active');
+                renderQuestions();
+            }
+        }
+
+        function slugifyText(str) {
+            return (str || '')
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '')
+                .substring(0, 32);
+        }
+        function addQuestion() {
+            const num = questions.length + 1;
+            const autoId = `q_${num}_${Date.now().toString(36)}`;
+            questions.push({
+                id: autoId,
+                title: `Câu hỏi số ${num}`,
+                type: 'text',
+                required: true,
+                description: '',
+                tooltip: '',
+                ai_detection_prompt: '',
+                sample_response: '',
+                options: []
+            });
+            renderQuestions();
+        }
+        function syncQuestionId(idx) {
+            const q = questions[idx];
+            if (!q) return;
+            const titleSlug = slugifyText(q.title);
+            if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {
+                q.id = `${titleSlug}_${idx + 1}`;
+                const idInput = document.getElementById(`qid_${idx}`);
+                if (idInput) idInput.value = q.id;
+            }
+        }
+        function removeQuestion(idx) {
+            questions.splice(idx, 1);
+            renderQuestions();
+        }
+
+        function toggleQuestionImageChecks(idx, enabled) {
+            if (enabled) {
+                questions[idx].image_checks = {
+                    enable_blur_check: true,
+                    blur_threshold: null,
+                    enable_ai_vision: true,
+                    enable_vehicle_match: true,
+                    enable_anti_fraud: true,
+                    enable_ai_generated_check: true,
+                    enable_screen_photo_check: true
+                };
+            } else {
+                delete questions[idx].image_checks;
+            }
+            renderQuestions();
+        }
+        function toggleQuestionNumbersOnly(idx, checked) {
+            if (!questions[idx].validation) {
+                questions[idx].validation = {};
+            }
+            questions[idx].validation.numbers_only = checked;
+        }
+
+        function setQCheck(idx, key, val) {
+            if (!questions[idx].image_checks) {
+                questions[idx].image_checks = {};
+            }
+            questions[idx].image_checks[key] = val;
+        }
+        function addImageSlot(qidx) {
+            if (!questions[qidx].image_slots) {
+                questions[qidx].image_slots = [];
+            }
+            const sidx = questions[qidx].image_slots.length;
+            questions[qidx].image_slots.push({
+                slot: sidx,
+                title: `Ảnh ${sidx + 1}: `,
+                role: 'custom_object',
+                required: true,
+                require_unique: true,
+                allow_upload: true
+            });
+            questions[qidx].allow_multiple_images = true;
+            questions[qidx].min_images = questions[qidx].image_slots.length;
+            questions[qidx].max_images = questions[qidx].image_slots.length;
+            questions[qidx].exact_image_count = questions[qidx].image_slots.length;
+            renderQuestions();
+        }
+        function removeImageSlot(qidx, sidx) {
+            if (questions[qidx].image_slots) {
+                questions[qidx].image_slots.splice(sidx, 1);
+                questions[qidx].image_slots.forEach((s, i) => { s.slot = i; });
+                questions[qidx].min_images = questions[qidx].image_slots.length;
+                questions[qidx].max_images = questions[qidx].image_slots.length;
+                questions[qidx].exact_image_count = questions[qidx].image_slots.length;
+                renderQuestions();
+            }
+        }
+        function updateImageSlot(qidx, sidx, field, val) {
+            if (questions[qidx].image_slots && questions[qidx].image_slots[sidx]) {
+                questions[qidx].image_slots[sidx][field] = val;
+            }
+        }
+        function addMultipleChoiceOption(qidx) {
+            if (!Array.isArray(questions[qidx].options)) {
+                questions[qidx].options = [];
+            }
+            questions[qidx].options.push({ label: `Lựa chọn ${questions[qidx].options.length + 1}`, group: 'default' });
+            renderQuestions();
+        }
+        function removeMultipleChoiceOption(qidx, optIdx) {
+            if (Array.isArray(questions[qidx].options)) {
+                questions[qidx].options.splice(optIdx, 1);
+                renderQuestions();
+            }
+        }
+        function updateMultipleChoiceOption(qidx, optIdx, field, val) {
+            if (Array.isArray(questions[qidx].options) && questions[qidx].options[optIdx]) {
+                let opt = questions[qidx].options[optIdx];
+                if (typeof opt !== 'object' || opt === null) {
+                    opt = { label: String(opt), group: 'default' };
+                    questions[qidx].options[optIdx] = opt;
+                }
+                opt[field] = val;
+            }
+        }
+        function updateGroupCompatibilityJson(qidx, jsonStr) {
+            try {
+                if (!jsonStr || !jsonStr.trim()) {
+                    delete questions[qidx].group_compatibility;
+                } else {
+                    questions[qidx].group_compatibility = JSON.parse(jsonStr);
+                }
+            } catch(e) {
+                // Ignore parse errors while typing
+            }
+        }
+        function renderMultipleChoiceOptionsBuilder(q, qidx) {
+            const opts = (q.options || []).map(opt => typeof opt === 'object' && opt !== null ? opt : { label: String(opt), group: 'default' });
+            const rows = opts.map((opt, oidx) => `
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                    <input type="text" style="flex:2; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(opt.label || '')}" placeholder="Tên lựa chọn (Label)" oninput="updateMultipleChoiceOption(${qidx}, ${oidx}, 'label', this.value)">
+                    <input type="text" style="flex:1; padding:6px 10px; font-size:0.82rem; background:#1e293b; border:1px solid #334155; color:#38bdf8; border-radius:4px; font-family:monospace;" value="${escapeHtml(opt.group || 'default')}" placeholder="Nhóm (Group)" oninput="updateMultipleChoiceOption(${qidx}, ${oidx}, 'group', this.value)">
+                    <button type="button" style="background:#ef4444; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:0.75rem; cursor:pointer;" onclick="removeMultipleChoiceOption(${qidx}, ${oidx})">Xóa</button>
+                </div>
+            `).join('');
+            const compatJson = q.group_compatibility ? JSON.stringify(q.group_compatibility, null, 2) : '';
+            return `
+                <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span style="font-size:0.84rem; font-weight:700; color:#38bdf8;">Danh sách Lựa chọn & Nhóm đối kháng (Option Groups)</span>
+                        <button type="button" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addMultipleChoiceOption(${qidx})">+ Thêm lựa chọn</button>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        ${rows.length ? rows : '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có lựa chọn nào.</div>'}
+                    </div>
+                    <details style="margin-top:10px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${q.group_compatibility ? 'open' : ''}>
+                        <summary style="font-size:0.78rem; font-weight:700; color:#93c5fd; cursor:pointer; user-select:none;">
+                            Cấu hình nhóm tương thích (Group Compatibility - Advanced)
+                        </summary>
+                        <div style="margin-top:6px;">
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:4px;">
+                                Mặc định các nhóm khác nhau sẽ <b>đối kháng</b> (mutually exclusive). Nhập JSON mapping những nhóm được phép cùng tồn tại, ví dụ: <code>{"applicable": ["other_group"]}</code>
+                            </div>
+                            <textarea style="width:100%; min-height:60px; background:#020617; border:1px solid #334155; color:#38bdf8; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace;" placeholder='{"group_a": ["group_b"]}' oninput="updateGroupCompatibilityJson(${qidx}, this.value)">${escapeHtml(compatJson)}</textarea>
+                        </div>
+                    </details>
+                </div>
+            `;
+        }
+        function renderSlotsBuilderHtml(q, qidx) {
+            const slots = q.image_slots || [];
+            if (!slots.length) {
+                return '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có slot ảnh riêng (sử dụng 1 ảnh đơn mặc định). Bấm \\'+ Thêm Slot Ảnh\\' để chia nhiều góc chụp/đối tượng.</div>';
+            }
+            return slots.map((s, sidx) => `
+                <div style="background:#090d16; border:1px solid #334155; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:700; font-size:0.8rem; color:#94a3b8;">Slot #${sidx + 1} (Chỉ mục: ${sidx})</span>
+                        <button type="button" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px; font-size:0.72rem; cursor:pointer;" onclick="removeImageSlot(${qidx}, ${sidx})">Xóa</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                        <div>
+                            <label style="font-size:0.72rem; color:#94a3b8;">Tiêu đề hiển thị</label>
+                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.title || '')}" placeholder="VD: Ảnh 1: Mặt trước CCCD" oninput="updateImageSlot(${qidx}, ${sidx}, 'title', this.value)">
+                        </div>
+                        <div>
+                            <label style="font-size:0.72rem; color:#94a3b8;">Loại đối tượng / Role (Mã AI nhận diện)</label>
+                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.role || '')}" placeholder="VD: app_profile, app_income, id_card_front, restaurant_bill..." oninput="updateImageSlot(${qidx}, ${sidx}, 'role', this.value)">
+                        </div>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem; color:#94a3b8;">Tooltip hướng dẫn riêng cho slot</label>
+                        <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.tooltip || '')}" placeholder="VD: Chụp rõ họ tên và mã tài xế..." oninput="updateImageSlot(${qidx}, ${sidx}, 'tooltip', this.value)">
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; flex-wrap:wrap; gap:12px; background:#0f172a; padding:8px 10px; border-radius:6px; border:1px solid #1e293b;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${s.required !== false ? 'checked' : ''} onchange="updateImageSlot(${qidx}, ${sidx}, 'required', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Bắt buộc chụp</span>
+                        </label>
+                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép các ảnh chụp giống nhau (ví dụ: màn hình hồ sơ đã che thông tin / censored profile)">
+                            <input type="checkbox" ${s.require_unique !== false ? 'checked' : ''} onchange="updateImageSlot(${qidx}, ${sidx}, 'require_unique', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Ảnh độc nhất</span>
+                        </label>
+                        <label class="toggle-switch" title="Cho phép người dùng tải ảnh có sẵn từ bộ sưu tập/file thay vì chỉ chụp camera trực tiếp">
+                            <input type="checkbox" ${s.allow_upload !== false ? 'checked' : ''} onchange="updateImageSlot(${qidx}, ${sidx}, 'allow_upload', this.checked)">
+                            <span class="toggle-slider"></span>
+                            <span>Cho phép tải ảnh lên</span>
+                        </label>
+                    </div>
+                    <details style="margin-top:8px; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;" ${s.image_checks ? 'open' : ''}>
+                        <summary style="font-size:0.76rem; font-weight:700; color:#38bdf8; cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px;">
+                            <span>Cấu hình kiểm tra nâng cao riêng cho slot này</span>
+                        </summary>
+                        <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                            <label class="toggle-switch" style="font-size:0.78rem;">
+                                <input type="checkbox" ${s.image_checks ? 'checked' : ''} onchange="toggleSlotImageChecks(${qidx}, ${sidx}, this.checked)">
+                                <span class="toggle-slider"></span>
+                                <span>Kích hoạt cấu hình riêng (ghi đè câu hỏi)</span>
+                            </label>
+                            ${s.image_checks ? `
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; margin-top:8px; padding-left:10px; border-left:2px solid var(--accent);">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_blur_check !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_blur_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra độ mờ / rung</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_ai_vision !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_ai_vision', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra AI Vision</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_vehicle_match !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_vehicle_match', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Đối chiếu biển số</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_anti_fraud !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_anti_fraud', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Chống gian lận & trùng lặp</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_ai_generated_check !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_ai_generated_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra ảnh AI</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" ${s.image_checks.enable_screen_photo_check !== false ? 'checked' : ''} onchange="setSlotCheck(${qidx}, ${sidx}, 'enable_screen_photo_check', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                        <span>Kiểm tra chụp màn hình</span>
+                                    </label>
+                                </div>
+                                <div class="field-group" style="max-width:220px; margin-top:6px; padding-left:10px;">
+                                    <label style="font-size:0.72rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
+                                    <input type="number" step="0.1" value="${s.image_checks.blur_threshold !== undefined && s.image_checks.blur_threshold !== null ? s.image_checks.blur_threshold : 40}" oninput="setSlotCheck(${qidx}, ${sidx}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
+                                </div>
+                            ` : ''}
+                        </div>
+                    </details>
+                </div>
+            `).join('');
+        }
+        function toggleSlotImageChecks(qidx, sidx, isEnabled) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (isEnabled) {
+                slot.image_checks = {
+                    enable_blur_check: true,
+                    blur_threshold: 40.0,
+                    enable_ai_vision: true,
+                    enable_vehicle_match: false,
+                    enable_anti_fraud: true,
+                    enable_ai_generated_check: true,
+                    enable_screen_photo_check: false
+                };
+            } else {
+                delete slot.image_checks;
+            }
+            renderQuestions();
+        }
+        function setSlotCheck(qidx, sidx, key, val) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (!slot.image_checks) slot.image_checks = {};
+            slot.image_checks[key] = val;
+        }
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
             return String(str)
@@ -150,97 +680,223 @@
         }
         function renderQuestions() {
             const wrap = document.getElementById('questionsBuilderList');
-            if (!wrap) return;
             wrap.innerHTML = '';
             questions.forEach((q, idx) => {
                 const item = document.createElement('div');
                 item.className = 'question-item';
-                item.style.padding = '12px';
-                item.style.marginBottom = '12px';
-                item.style.background = '#090d16';
-                item.style.border = '1px solid var(--border)';
-                item.style.borderRadius = '8px';
                 item.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">#${idx + 1}. ${escapeHtml(q.title)}</span>
+                        <button type="button" class="btn-delete" onclick="removeQuestion(${idx})">Xóa</button>
                     </div>
-                    <div class="field-group" style="margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Tiêu đề câu hỏi</label>
-                        <input type="text" class="form-control" value="${escapeHtml(q.title)}" oninput="questions[${idx}].title = this.value">
+                    <div class="row-2">
+                        <div class="field-group">
+                            <label>Tiêu đề câu hỏi</label>
+                            <input type="text" value="${escapeHtml(q.title)}" oninput="questions[${idx}].title = this.value; syncQuestionId(${idx});">
+                        </div>
+                        <div class="field-group">
+                            <label>Loại câu hỏi</label>
+                            <select onchange="questions[${idx}].type = this.value; renderQuestions();">
+                                <option value="text" ${q.type==='text'?'selected':''}>Văn bản (Text)</option>
+                                <option value="number" ${q.type==='number'?'selected':''}>Số (Number)</option>
+                                <option value="single_choice" ${q.type==='single_choice'?'selected':''}>Chọn một (Single Choice)</option>
+                                <option value="multiple_choice" ${q.type==='multiple_choice'?'selected':''}>Chọn nhiều (Multiple Choice)</option>
+                                <option value="dropdown" ${q.type==='dropdown'?'selected':''}>Menu thả xuống (Dropdown)</option>
+                                <option value="camera_webrtc" ${q.type==='camera_webrtc'?'selected':''}>Chụp ảnh trực tiếp (Camera WebRTC)</option>
+                                <option value="signature" ${q.type==='signature'?'selected':''}>Chữ ký điện tử (Signature)</option>
+                            </select>
+                        </div>
                     </div>
+                    <div class="row-2" style="margin-top:6px;">
+                        <div class="field-group">
+                            <label style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>Mã Question ID (Tự động tạo)</span>
+                                <span style="font-size:0.7rem; color:#94a3b8; font-weight:normal;">Định danh duy nhất</span>
+                            </label>
+                            <input type="text" id="qid_${idx}" value="${escapeHtml(q.id || '')}" placeholder="vd: driver_phone, camera_receipt..." oninput="questions[${idx}].id = this.value.trim()">
+                        </div>
+                        <div class="field-group">
+                            <label>Tooltip giải thích (Hiển thị popup khi rê chuột)</label>
+                            <input type="text" value="${escapeHtml(q.tooltip || '')}" placeholder="Thông tin trợ giúp nhanh..." oninput="questions[${idx}].tooltip = this.value">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="toggle-switch" style="margin-top:4px;">
+                            <input type="checkbox" ${q.required !== false ? 'checked' : ''} onchange="questions[${idx}].required = this.checked;">
+                            <span class="toggle-slider"></span>
+                            <span style="color:#38bdf8;">Bắt buộc trả lời (Mandatory Question)</span>
+                        </label>
+                    </div>
+                    ${q.type === 'camera_webrtc' ? `
+                        <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
+                            <label style="color:#fde047; font-size:0.75rem; font-weight:700;">AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
+                            <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${idx}].ai_detection_prompt = this.value">${escapeHtml(q.ai_detection_prompt || '')}</textarea>
+                        </div>
+                    ` : ''}
+                    ${q.type === 'text' ? `
+                        <div>
+                            <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${idx}, this.checked)" ${q.validation && q.validation.numbers_only ? 'checked' : ''}> Chỉ cho phép chữ số (Bàn phím số numeric keypad)</label>
+                        </div>
+                    ` : ''}
                     <div class="field-group">
-                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Mô tả / Hướng dẫn</label>
-                        <input type="text" class="form-control" value="${escapeHtml(q.description || '')}" oninput="questions[${idx}].description = this.value">
+                        <label style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Mô tả / Hướng dẫn</span>
+                            <span style="font-size:0.7rem; color:#38bdf8; font-weight:normal;">Hỗ trợ chèn link [Tên link](url) và ảnh ![Mô tả](url)</span>
+                        </label>
+                        <input type="text" value="${escapeHtml(q.description || '')}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${idx}].description = this.value">
                     </div>
-                    <div class="field-group" style="margin-top:8px;">
-                        <label style="font-size:0.75rem; color:var(--muted); font-weight:700;">Các lựa chọn (phân cách bằng dấu phẩy)</label>
-                        <input type="text" class="form-control" value="${escapeHtml((q.options || []).join(', '))}" oninput="questions[${idx}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
-                    </div>
+                    ${q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? `
+                        <div class="field-group">
+                            <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
+                            <input type="text" value="${escapeHtml((q.options || []).map(o => typeof o === 'object' && o !== null ? o.label : o).join(', '))}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${idx}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
+                        </div>
+                    ` : '')}
+                    <div style="display:none;" data-options-marker="true" value="${escapeHtml((q.options || []).join(', '))}"></div>
+                    ${q.type === 'camera_webrtc' ? `
+                        <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
+                                <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${idx})">+ Thêm Slot Ảnh</button>
+                            </div>
+                            <div id="slotsWrap_${idx}" style="display:flex; flex-direction:column; gap:8px;">
+                                ${renderSlotsBuilderHtml(q, idx)}
+                            </div>
+                        </div>
+                        <details style="background:rgba(15, 23, 42, 0.7); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:4px;" ${q.image_checks ? 'open' : ''}>
+                            <summary style="font-size:0.84rem; font-weight:700; color:#60a5fa; cursor:pointer; user-select:none;">
+                                Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này
+                            </summary>
+                            <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+                                <label class="toggle-switch" style="font-size:0.82rem;">
+                                    <input type="checkbox" ${q.image_checks ? 'checked' : ''} onchange="toggleQuestionImageChecks(${idx}, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                    <span>Kích hoạt cấu hình kiểm tra riêng (ghi đè toàn cục)</span>
+                                </label>
+                                ${q.image_checks ? `
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; margin-top:8px; padding-left:12px; border-left:2px solid var(--accent);">
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_blur_check !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_blur_check', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra độ mờ / rung tay</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_ai_vision !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_ai_vision', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra AI Vision</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_vehicle_match !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_vehicle_match', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Đối chiếu biển số</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_anti_fraud !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_anti_fraud', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Chống gian lận & trùng lặp</span>
+                                        </label>
+                                        <label class="toggle-switch" title="Bỏ chọn nếu cho phép ảnh chụp giống nhau (ví dụ: hồ sơ che mờ)">
+                                            <input type="checkbox" ${q.image_checks.require_unique !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'require_unique', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Ảnh độc nhất (Unique)</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_ai_generated_check !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_ai_generated_check', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra ảnh AI</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" ${q.image_checks.enable_screen_photo_check !== false ? 'checked' : ''} onchange="setQCheck(${idx}, 'enable_screen_photo_check', this.checked)">
+                                            <span class="toggle-slider"></span>
+                                            <span>Kiểm tra chụp màn hình</span>
+                                        </label>
+                                    </div>
+                                    <div class="field-group" style="max-width:240px; margin-top:6px; padding-left:12px;">
+                                        <label style="font-size:0.75rem;">Ngưỡng độ mờ riêng (mặc định 40)</label>
+                                        <input type="number" step="0.1" value="${q.image_checks.blur_threshold !== undefined && q.image_checks.blur_threshold !== null ? q.image_checks.blur_threshold : 40}" oninput="setQCheck(${idx}, 'blur_threshold', this.value === '' ? null : parseFloat(this.value))">
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </details>
+                    ` : ''}
                 `;
                 wrap.appendChild(item);
             });
         }
-        document.addEventListener('DOMContentLoaded', renderQuestions);
-        function switchEditorTab(tabName, btn) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-            btn.classList.add('active');
-            const panel = document.getElementById('tab-' + tabName);
-            if (panel) panel.classList.add('active');
-        }
 
-        async function saveFormSchema() {
+        async function saveForm() {
             const formId = document.getElementById('formId').value.trim();
             const formTitle = document.getElementById('formTitle').value.trim();
-            const formDesc = document.getElementById('formDesc').value.trim();
-            const responseLimit = parseInt(document.getElementById('responseLimit').value || '0');
-            const accessControl = document.getElementById('accessControl').value;
-
             if (!formId || !formTitle) {
-                alert('Vui lòng điền đủ Mã ID và Tiêu đề biểu mẫu!');
+                alert("Vui lòng nhập Mã Form ID và Tên biểu mẫu!");
+                switchTab('common');
                 return;
             }
 
             const payload = {
                 form_id: formId,
                 title: formTitle,
-                description: formDesc,
+                description: document.getElementById('formDesc').value.trim(),
                 settings: {
-                    response_limit: responseLimit,
-                    access_control: accessControl,
-                    allow_anonymous: false,
-                    allow_edit_after_submit: false,
-                    is_test_mode: false,
+                    response_limit: parseInt(document.getElementById('responseLimit').value) || null,
+                    access_control: document.getElementById('accessControl').value,
+                    is_test_mode: document.getElementById('isTestMode').value === 'true',
+                    notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
+                    decree13_required: true,
                     image_checks: {
-                        enable_blur_check: true,
-                        blur_threshold: 40.0,
-                        enable_ai_vision: true,
-                        enable_vehicle_match: true,
-                        enable_anti_fraud: true,
-                        enable_ai_generated_check: true,
-                        enable_screen_photo_check: true
+                        enable_blur_check: document.getElementById('globalEnableBlurCheck') ? document.getElementById('globalEnableBlurCheck').checked : true,
+                        blur_threshold: (document.getElementById('globalBlurThreshold') && document.getElementById('globalBlurThreshold').value !== '') ? parseFloat(document.getElementById('globalBlurThreshold').value) : 40.0,
+                        enable_ai_vision: document.getElementById('globalEnableAiVision') ? document.getElementById('globalEnableAiVision').checked : true,
+                        enable_vehicle_match: document.getElementById('globalEnableVehicleMatch') ? document.getElementById('globalEnableVehicleMatch').checked : true,
+                        enable_anti_fraud: document.getElementById('globalEnableAntiFraud') ? document.getElementById('globalEnableAntiFraud').checked : true,
+                        require_unique: document.getElementById('globalRequireUnique') ? document.getElementById('globalRequireUnique').checked : true,
+                        enable_ai_generated_check: document.getElementById('globalEnableAiGeneratedCheck') ? document.getElementById('globalEnableAiGeneratedCheck').checked : true,
+                        enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : false
                     }
                 },
-                questions: {json.dumps(schema_dict['questions'])}
+                questions: questions.map(q => ({
+                    ...q,
+                    required: q.required !== false
+                }))
             };
 
             try {
                 const resp = await fetch('/api/v1/forms/upload-schema', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
-                const res = await resp.json();
-                if (resp.ok && res.status === 'success') {
+                if (resp.ok) {
                     alert(`Biểu mẫu '${formTitle}' đã được lưu thành công!`);
                     window.location.href = '/admin/forms';
                 } else {
-                    alert('Lỗi lưu: ' + (res.detail || JSON.stringify(res)));
+                    alert("Lỗi lưu: " + (res.detail || JSON.stringify(res)));
                 }
-            } catch (err) {
-                alert('Lỗi mạng: ' + err);
+            } catch(e) {
+                alert("Lỗi kết nối máy chủ!");
             }
         }
+
+        let currentLang = localStorage.getItem('tb_lang') || 'vi';
+        function applyEditorI18n() {
+            document.getElementById('editorLangCode').textContent = currentLang.toUpperCase();
+            if (currentLang === 'en') {
+                document.getElementById('linkBackAdmin').textContent = "← Back to Forms List";
+            } else {
+                document.getElementById('linkBackAdmin').textContent = "← Quay lại danh sách biểu mẫu";
+            }
+        }
+        function toggleEditorLang() {
+            currentLang = currentLang === 'vi' ? 'en' : 'vi';
+            localStorage.setItem('tb_lang', currentLang);
+            applyEditorI18n();
+        }
+        window.addEventListener('DOMContentLoaded', () => {
+            applyEditorI18n();
+            renderQuestions();
+        });
     </script>
 </body>
 </html>
