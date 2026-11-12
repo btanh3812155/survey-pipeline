@@ -276,3 +276,37 @@ def test_multi_image_upload_and_slot_filling():
     assert '<input type="file" accept="image/*" multiple' in html
     assert 'uploadableSlots' in html
     assert 'item.slot.allow_upload !== false' in html
+@pytest.mark.asyncio
+async def test_resolved_submission_locked_against_further_responses():
+    """A submission already approved or rejected is locked and does not take further responses."""
+    from services.telegram_polling import TelegramPollingRunner
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    import os, json
+    dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+    dev_records = [{"submission_id": "DEV-TEST-RESOLVED-01", "status": "MANUAL_REVIEW"}]
+    with open(dev_storage_file, "w", encoding="utf-8") as f:
+        json.dump(dev_records, f)
+
+    # 1. First approval succeeds
+    ok1, st1 = await runner._update_submission_status("DEV-TEST-RESOLVED-01", "APPROVED", reason="Duyệt lần 1")
+    assert ok1 is True
+    assert st1 == "APPROVED"
+
+    # 2. Second attempt to reject or re-approve must FAIL and return current status
+    ok2, st2 = await runner._update_submission_status("DEV-TEST-RESOLVED-01", "REJECTED", reason="Cố tình từ chối lại")
+    assert ok2 is False
+    assert st2 == "APPROVED"
+
+    # 3. Reviewing resolved submission locks buttons
+    sent_msgs = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_msgs.append({"text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+    await runner.execute_submission_review(123456, "DEV-TEST-RESOLVED-01")
+
+    assert len(sent_msgs) == 1
+    rev_btns = sent_msgs[0]["reply_markup"]["inline_keyboard"]
+    # Action buttons must be locked; no admin_approve or admin_reject!
+    assert not any("admin_approve:" in b.get("callback_data", "") for row in rev_btns for b in row)
+    assert not any("admin_reject:" in b.get("callback_data", "") for row in rev_btns for b in row)
+    assert any("resolved_notice" in b.get("callback_data", "") for row in rev_btns for b in row)

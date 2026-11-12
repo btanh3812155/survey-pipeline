@@ -104,15 +104,35 @@ async def query_submission_dossier(
     Queries complete forensic, vehicle, financial, and legal audit data for a submission from PostgreSQL & Redis.
     """
     if not db_pool:
-        # mock dossier for testing
+        dev_storage = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+        if os.path.exists(dev_storage):
+            try:
+                with open(dev_storage, "r", encoding="utf-8") as df:
+                    dev_recs = json.load(df)
+                for r in dev_recs:
+                    if r.get("submission_id") == submission_id:
+                        return {
+                            "submission_id": submission_id,
+                            "status": r.get("status", "MANUAL_REVIEW"),
+                            "rejection_reason": r.get("reason"),
+                            "driver_name": r.get("driver_name", "Tài xế"),
+                            "driver_phone": r.get("driver_phone", "N/A"),
+                            "created_at": r.get("submitted_at", "Vừa xong"),
+                            "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+                            "gross_income": r.get("total_gross_revenue", 0),
+                            "net_income": r.get("total_net_income", 0),
+                            "trips_count": r.get("total_trips", 0),
+                            "photo_paths": [],
+                        }
+            except Exception:
+                pass
         return {
             "submission_id": submission_id,
-            "status": "REJECTED",
-            "rejection_reason": "Ảnh đồng hồ công-tơ-mét bị mờ chói đèn (Laplacian: 42.1 / 100)",
+            "status": "MANUAL_REVIEW",
+            "rejection_reason": "Chờ ban quản trị kiểm tra",
             "driver_name": "Nguyễn Văn A",
             "driver_phone": "0988123456",
             "created_at": "01/11/2026 14:20:10",
-            "receipt_serial_no": "VN-9921",
             "store_tax_id": "0100109106",
             "registered_plate": "29E-123.45",
             "detected_plate": "29E-123.45",

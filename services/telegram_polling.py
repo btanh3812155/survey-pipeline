@@ -6,7 +6,7 @@ import json
 import random
 import asyncio
 import logging
-from typing import Optional, Union, Dict, Any, List
+from typing import Optional, Union, Dict, Any, List, Tuple
 import httpx
 from PIL import Image
 
@@ -97,18 +97,18 @@ class TelegramPollingRunner:
             return False
 
     async def answer_callback_query(
-        self, callback_query_id: str, text: Optional[str] = None
+        self, callback_query_id: str, text: Optional[str] = None, show_alert: bool = False
     ) -> bool:
-        """Acknowledges an inline callback query."""
+        """Acknowledges an inline callback query with optional pop-up alert."""
         if not self.bot_token or self.bot_token == "mock_tg_token":
             return True
-
         client = await self.get_client()
         url = f"https://api.telegram.org/bot{self.bot_token}/answerCallbackQuery"
         payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
         if text:
             payload["text"] = text
-
+        if show_alert:
+            payload["show_alert"] = True
         try:
             resp = await client.post(url, json=payload)
             return resp.status_code == 200
@@ -160,7 +160,71 @@ class TelegramPollingRunner:
                     fp.close()
                 except Exception:
                     pass
+    async def edit_message_reply_markup(
+        self,
+        chat_id: Union[int, str],
+        message_id: int,
+        reply_markup: Optional[dict] = None,
+    ) -> bool:
+        """Updates or removes inline keyboard buttons on an existing message."""
+        if not message_id or not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            return True
 
+        client = await self.get_client()
+        url = f"https://api.telegram.org/bot{self.bot_token}/editMessageReplyMarkup"
+        payload = {
+            "chat_id": str(chat_id),
+            "message_id": message_id,
+            "reply_markup": reply_markup or {"inline_keyboard": []},
+        }
+        try:
+            resp = await client.post(url, json=payload, timeout=10.0)
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error(f"Failed to edit message reply markup: {e}")
+            return False
+
+    async def execute_submission_review(self, chat_id: Union[int, str], sub_id: str) -> None:
+        """
+        Unified review handler invoked identically by /check command and [📋 Mở Phiếu] button.
+        Fetches full dossier, dispatches photo media group, and presents decision cards.
+        """
+        clean_sub_id = sub_id.strip().lstrip("#")
+        dossier = await query_submission_dossier(clean_sub_id, db_pool=self.db_pool)
+        if "error" in dossier:
+            await self.send_message(chat_id, f"❌ {dossier['error']}")
+            return
+
+        # 1. Dispatch actual photos as a Telegram media group album if available on server
+        photo_paths = dossier.get("photo_paths") or []
+        if photo_paths:
+            await self.send_media_group(chat_id, photo_paths)
+        elif dossier.get("image_url"):
+            await self.send_message(chat_id, f"📷 <b>Ảnh đính kèm:</b> <a href='{dossier['image_url']}'>Xem ảnh gốc trên Cloud</a>")
+
+        # 2. If already resolved, lock and do not present active decision buttons!
+        cur_status = dossier.get("status", "PENDING")
+        if cur_status in ("APPROVED", "REJECTED"):
+            status_text = "Đã DUYỆT (APPROVED)" if cur_status == "APPROVED" else "Đã TỪ CHỐI (REJECTED)"
+            review_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"},
+                    ],
+                ]
+            }
+        else:
+            review_buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{clean_sub_id}"},
+                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{clean_sub_id}"},
+                    ],
+                ]
+            }
+
+        report_text = render_dossier_message(dossier)
+        await self.send_message(chat_id, report_text, reply_markup=review_buttons)
     async def log_chat_history(
         self,
         telegram_user_id: int,
@@ -284,23 +348,7 @@ class TelegramPollingRunner:
                 )
                 return
 
-            dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
-
-            # Send photo album if photos exist on disk
-            if dossier.get("photo_paths"):
-                await self.send_media_group(chat_id, dossier["photo_paths"])
-
-            report_text = render_dossier_message(dossier)
-            review_buttons = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
-                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
-                    ],
-                ]
-            }
-            await self.send_message(chat_id, report_text, reply_markup=review_buttons)
-
+            await self.execute_submission_review(chat_id, sub_id)
         else:
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
@@ -323,38 +371,44 @@ class TelegramPollingRunner:
 
         if data.startswith("admin_review:") or data.startswith("admin_query:"):
             sub_id = data.split(":", 1)[1]
-            dossier = await query_submission_dossier(sub_id, db_pool=self.db_pool)
-
-            # Send photo album if photos exist on disk
-            if dossier.get("photo_paths"):
-                await self.send_media_group(cq_chat_id, dossier["photo_paths"])
-
-            report_text = render_dossier_message(dossier)
-            review_buttons = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_approve:{sub_id}"},
-                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_reject:{sub_id}"},
-                    ],
-                ]
-            }
-            await self.send_message(cq_chat_id, report_text, reply_markup=review_buttons)
+            await self.execute_submission_review(cq_chat_id, sub_id)
             await self.answer_callback_query(cq_id, f"Đã mở phiếu #{sub_id}")
         elif data.startswith("admin_approve:"):
             sub_id = data.split(":", 1)[1]
-            await self._update_submission_status(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
+            success, final_status = await self._update_submission_status(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
+            msg_id = cq_msg.get("message_id")
+            if not success:
+                await self.answer_callback_query(cq_id, f"⚠️ Phiếu #{sub_id} đã được xử lý ({final_status}) trước đó! Không thể thay đổi trạng thái.", show_alert=True)
+                if msg_id:
+                    await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": f"🔒 Đã xử lý ({final_status})", "callback_data": "resolved_notice"}]]})
+                return
+
             await self.send_message(
-                cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}.</b>"
+                cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}. (Đã đánh dấu hoàn tất)</b>"
             )
             await self.answer_callback_query(cq_id, f"Đã duyệt #{sub_id}")
+            if msg_id:
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã DUYỆT (APPROVED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
 
         elif data.startswith("admin_reject:"):
             sub_id = data.split(":", 1)[1]
-            await self._update_submission_status(sub_id, "REJECTED", reason="Quản trị viên từ chối thủ công")
+            success, final_status = await self._update_submission_status(sub_id, "REJECTED", reason="Quản trị viên từ chối thủ công")
+            msg_id = cq_msg.get("message_id")
+            if not success:
+                await self.answer_callback_query(cq_id, f"⚠️ Phiếu #{sub_id} đã được xử lý ({final_status}) trước đó! Không thể thay đổi trạng thái.", show_alert=True)
+                if msg_id:
+                    await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": f"🔒 Đã xử lý ({final_status})", "callback_data": "resolved_notice"}]]})
+                return
+
             await self.send_message(
-                cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}.</b>"
+                cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}. (Đã đánh dấu hoàn tất)</b>"
             )
             await self.answer_callback_query(cq_id, f"Đã từ chối #{sub_id}")
+            if msg_id:
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã TỪ CHỐI (REJECTED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
+
+        elif data == "resolved_notice":
+            await self.answer_callback_query(cq_id, "Phiếu này đã được xử lý hoàn tất và bị khóa, không nhận phản hồi thêm.", show_alert=True)
 
         elif data.startswith("admin_warn:"):
             parts = data.split(":")
@@ -426,35 +480,56 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id, "Đã đóng ticket")
         else:
             await self.answer_callback_query(cq_id)
-    async def _update_submission_status(self, sub_id: str, new_status: str, reason: str = "") -> None:
+    async def _update_submission_status(self, sub_id: str, new_status: str, reason: str = "") -> Tuple[bool, str]:
+        """
+        Updates submission status in DB and dev storage.
+        If the submission was already resolved (APPROVED or REJECTED), refuses to take further responses!
+        Returns (success: bool, current_status: str).
+        """
         if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
                     async with conn.cursor() as cur:
                         await cur.execute(
+                            "SELECT status FROM survey_submissions WHERE submission_id = %s FOR UPDATE;",
+                            (sub_id,),
+                        )
+                        row = await cur.fetchone()
+                        if row:
+                            current_status = row[0]
+                            if current_status in ("APPROVED", "REJECTED"):
+                                return False, current_status
+
+                        await cur.execute(
                             "UPDATE survey_submissions SET status = %s, rejection_reason = %s WHERE submission_id = %s;",
                             (new_status, reason or None, sub_id),
                         )
                     await conn.commit()
+                    return True, new_status
             except Exception as e:
                 logger.error(f"Failed to update submission status in DB: {e}")
 
-        if os.path.exists(DEV_STORAGE_FILE):
-            try:
-                with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
-                    records = json.load(f)
-                updated = False
-                for r in records:
-                    if r.get("submission_id") == sub_id:
-                        r["status"] = new_status
-                        r["reason"] = reason
-                        updated = True
-                        break
-                if updated:
-                    with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
-                        json.dump(records, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error(f"Failed to update submission status in dev storage: {e}")
+        for fpath in (
+            os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
+            os.path.join(os.getcwd(), "data", "dev_submissions.json"),
+        ):
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        records = json.load(f)
+                    for r in records:
+                        if r.get("submission_id") == sub_id:
+                            current_status = r.get("status")
+                            if current_status in ("APPROVED", "REJECTED"):
+                                return False, current_status
+                            r["status"] = new_status
+                            r["reason"] = reason
+                            with open(fpath, "w", encoding="utf-8") as f_out:
+                                json.dump(records, f_out, ensure_ascii=False, indent=2)
+                            return True, new_status
+                except Exception as e:
+                    logger.error(f"Failed to update submission status in {fpath}: {e}")
+        return True, new_status
     async def close_active_support(self, admin_chat_id: int, user_id: int, closed_by: str = "admin") -> None:
         """Closes live support conversation from admin side."""
         if user_id in ACTIVE_SUPPORT_CONVERSATIONS:
