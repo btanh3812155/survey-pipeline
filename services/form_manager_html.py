@@ -7,60 +7,60 @@ from services.form_engine import FormSchema
 
 DEFAULT_SAMPLE_IMAGES: List[Dict[str, Any]] = [
     {
-        "filename": "gsm_real_driver_profile.png",
-        "title": "Ảnh 1: Hồ Sơ Tài Xế GSM (Ảnh Thực Tế)",
+        "filename": "slot_1_profile.jpg",
+        "title": "Ảnh 1: Hồ Sơ Tài Xế App GSM",
         "slot_badge": "Slot 1: Hồ Sơ App",
         "dimensions": "1568 × 1568",
-        "size_kb": "6.7 MB",
-        "desc": "Màn hình hồ sơ ứng dụng tài xế Xanh SM thực tế: Thông tin tài xế, Ví tài xế, Hạng thành viên, Tiện ích bổ trợ.",
+        "size_kb": "2.2 MB",
+        "desc": "Màn hình hồ sơ ứng dụng tài xế Xanh SM: Thông tin đối tác, Ví tài xế, Hạng thành viên.",
     },
     {
-        "filename": "gsm_sample_bike.jpg",
+        "filename": "slot_2_vehicle.jpg",
         "title": "Ảnh 2: Phương Tiện Vận Hành (Xe Máy Xanh SM)",
         "slot_badge": "Slot 2: Phương Tiện",
         "dimensions": "870 × 1884",
         "size_kb": "106 KB",
-        "desc": "Ảnh chụp thực tế phương tiện xe máy điện GSM (VinFast Feliz / Evo 200) phục vụ đối soát.",
+        "desc": "Ảnh chụp thực tế phương tiện xe máy điện GSM (VinFast Feliz / Evo 200).",
     },
     {
-        "filename": "gsm_real_week1_income.png",
-        "title": "Ảnh 3: Doanh Thu Tuần 07 - 13 (2.890.510 đ)",
+        "filename": "slot_3_income_w1.jpg",
+        "title": "Ảnh 3: Doanh Thu Tuần 1",
         "slot_badge": "Slot 3: Tuần 1",
         "dimensions": "1568 × 1568",
-        "size_kb": "10.9 MB",
-        "desc": "Báo cáo thu nhập Tuần 07 - 13 Tháng 09: Doanh số 2.828.510 đ, Thu nhập ròng 2.321.732 đ, 65 chuyến hoàn thành.",
+        "size_kb": "2.1 MB",
+        "desc": "Báo cáo doanh thu Tuần 1 từ tập dữ liệu 108 - Bike.",
     },
     {
-        "filename": "gsm_real_week2_income.png",
-        "title": "Ảnh 4: Doanh Thu Tuần 14 - 20 (3.934.932 đ)",
+        "filename": "slot_4_income_w2.jpg",
+        "title": "Ảnh 4: Doanh Thu Tuần 2",
         "slot_badge": "Slot 4: Tuần 2",
         "dimensions": "1568 × 1568",
-        "size_kb": "5.2 MB",
-        "desc": "Báo cáo thu nhập Tuần 14 - 20 Tháng 09: Doanh số 3.860.932 đ, Thu nhập ròng 3.169.166 đ, 80 chuyến hoàn thành.",
+        "size_kb": "4.3 MB",
+        "desc": "Báo cáo doanh thu Tuần 2 từ tập dữ liệu 108 - Bike.",
     },
     {
-        "filename": "gsm_real_week3_income.png",
-        "title": "Ảnh 5: Doanh Thu Tuần 28 - 04 (3.653.000 đ)",
+        "filename": "slot_5_income_w3.jpg",
+        "title": "Ảnh 5: Doanh Thu Tuần 3",
         "slot_badge": "Slot 5: Tuần 3",
         "dimensions": "1568 × 1568",
-        "size_kb": "6.9 MB",
-        "desc": "Báo cáo thu nhập Tuần 28 - 04: Doanh số 3.601.000 đ, Thu nhập ròng 2.955.808 đ, 62 chuyến hoàn thành.",
+        "size_kb": "1.6 MB",
+        "desc": "Báo cáo doanh thu Tuần 3 từ tập dữ liệu 108 - Bike.",
     },
     {
-        "filename": "gsm_sample_car_crop.jpg",
-        "title": "Ảnh 6: Đồng Hồ Công Tơ Mét (Odometer)",
-        "slot_badge": "Slot 6: Odometer",
-        "dimensions": "1164 × 1169",
-        "size_kb": "114 KB",
-        "desc": "Ảnh chụp thực tế công tơ mét quãng đường xe điện VinFast phục vụ kiểm tra đối soát ca.",
+        "filename": "slot_6_income_w4.jpg",
+        "title": "Ảnh 6: Doanh Thu Tuần 4",
+        "slot_badge": "Slot 6: Tuần 4",
+        "dimensions": "1568 × 1568",
+        "size_kb": "1.9 MB",
+        "desc": "Báo cáo doanh thu Tuần 4 từ tập dữ liệu 108 - Bike.",
     },
     {
-        "filename": "gsm_sample_car_photo.jpg",
-        "title": "Ảnh 7: Toàn Cảnh Phương Tiện Vận Hành (Ô Tô GSM)",
-        "slot_badge": "Slot 7: Ô Tô GSM",
-        "dimensions": "3072 × 3072",
-        "size_kb": "3.9 MB",
-        "desc": "Ảnh chụp toàn cảnh thân xe và đầu xe taxi điện VinFast VF 5 Plus từ tập dữ liệu GSM thực tế.",
+        "filename": "slot_7_income_w5.jpg",
+        "title": "Ảnh 7: Doanh Thu Tuần 5",
+        "slot_badge": "Slot 7: Tuần 5",
+        "dimensions": "1568 × 1568",
+        "size_kb": "2.2 MB",
+        "desc": "Báo cáo doanh thu Tuần 5 từ tập dữ liệu 108 - Bike.",
     },
 ]
 
@@ -1359,7 +1359,7 @@ def render_form_editor_html(schema: Optional[FormSchema] = None, is_new: bool = 
                     </div>
                     <div style="margin-top:4px;">
                         <label style="font-size:0.72rem; color:#fde047; font-weight:700;">AI Detection Prompt riêng cho Slot này (Ẩn khỏi giao diện khảo sát):</label>
-                        <textarea style="width:100%; min-height:44px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì ở ảnh này, kiểm tra tuần hay tháng..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'ai_detection_prompt', this.value)">${{escapeHtml(s.ai_detection_prompt || '')}}</textarea>
+                        <textarea style="width:100%; min-height:44px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì ở ảnh này..." oninput="updateImageSlot(${{qidx}}, ${{sidx}}, 'ai_detection_prompt', this.value)">${{escapeHtml(s.ai_detection_prompt || '')}}</textarea>
                     </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${{s.required !== false ? 'checked' : ''}} onchange="updateImageSlot(${{qidx}}, ${{sidx}}, 'required', this.checked)">

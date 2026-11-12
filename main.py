@@ -2083,7 +2083,14 @@ async def submit_webrtc_survey(
                         )
                     effective_ctv = str(collab_param or answers.get("ctv_code") or "").strip() or None
                     consent_val = str(answers.get("consent_choice") or "Tôi đồng ý")
-                    calc_dhash = compute_image_dhash_str(pil_im) if pil_im is not None else None
+                    calc_dhash = None
+                    if pil_im is not None:
+                        try:
+                            raw_dh = compute_image_dhash_str(pil_im)
+                            if raw_dh:
+                                calc_dhash = f"{int(raw_dh, 16):064b}"
+                        except Exception:
+                            calc_dhash = None
                     calc_emb = compute_dinov2_embedding(pil_im) if pil_im is not None else None
                     calc_emb_str = ("[" + ",".join(str(x) for x in calc_emb) + "]") if calc_emb else None
                     insert_vals_full = (
@@ -2094,7 +2101,7 @@ async def submit_webrtc_survey(
                         persisted_name,
                         f"SN-{license_plate or 'AUTO'}",
                         status_str,
-                        reason_str if not is_approved else None,
+                        reason_str,
                         json.dumps(clean_form_data),
                         json.dumps(ai_res),
                         driver_tag if not is_dissent else None,
@@ -2117,6 +2124,7 @@ async def submit_webrtc_survey(
                         tot_gross_val, tot_net_val, tot_trips_val,
                     )
                     try:
+                        await cur.execute("SAVEPOINT insert_full_sp;")
                         await cur.execute(
                             """
                             INSERT INTO survey_submissions (
@@ -2171,15 +2179,19 @@ async def submit_webrtc_survey(
                             """,
                             insert_vals_full,
                         )
+                        await cur.execute("RELEASE SAVEPOINT insert_full_sp;")
                     except Exception as ins_err:
-                        logger.debug(f"Extended column insert fallback: {ins_err}")
+                        logger.warning(f"Extended column insert fallback: {ins_err}")
+                        await cur.execute("ROLLBACK TO SAVEPOINT insert_full_sp;")
                         await cur.execute(
                             """
                             INSERT INTO survey_submissions (
                                 submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
                                 status, rejection_reason, form_data, raw_extracted_facts, driver_id
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (submission_id) DO NOTHING;
+                            ON CONFLICT (submission_id) DO UPDATE SET
+                                status = EXCLUDED.status,
+                                rejection_reason = EXCLUDED.rejection_reason;
                             """,
                             (
                                 submission_id,
@@ -2189,7 +2201,7 @@ async def submit_webrtc_survey(
                                 persisted_name,
                                 f"SN-{license_plate or 'AUTO'}",
                                 status_str,
-                                reason_str if not is_approved else None,
+                                reason_str,
                                 json.dumps(clean_form_data),
                                 json.dumps(ai_res),
                                 driver_tag if not is_dissent else None,
