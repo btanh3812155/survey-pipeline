@@ -515,7 +515,7 @@ class TelegramPollingRunner:
             admin_id = from_user.get("id")
             admin_name = from_user.get("first_name", "Admin")
 
-            # Check if this support request is already locked by another admin!
+            # 1. Check if this support request is already locked by another admin!
             existing = ACTIVE_SUPPORT_CONVERSATIONS.get(target_user_id)
             if existing and existing.get("locked_admin_id"):
                 locked_id = existing["locked_admin_id"]
@@ -528,6 +528,20 @@ class TelegramPollingRunner:
                     )
                     return
 
+            # 2. Enforce 1-admin-1-convo rule: check if this admin is already holding another active conversation!
+            if admin_id and admin_id in ADMIN_ACTIVE_CONVERSATIONS:
+                held_user_id = ADMIN_ACTIVE_CONVERSATIONS[admin_id]
+                if held_user_id != target_user_id and held_user_id in ACTIVE_SUPPORT_CONVERSATIONS:
+                    await self.answer_callback_query(
+                        cq_id,
+                        f"⚠️ Bạn đang trong phiên hỗ trợ với thành viên khác (ID: {held_user_id})!\n\n"
+                        f"Mỗi quản trị viên chỉ được giữ 1 phiên hỗ trợ tại một thời điểm.\n"
+                        f"Vui lòng gõ /close để hoàn tất phiên hiện tại trước khi nhận phiên mới.",
+                        show_alert=True,
+                    )
+                    return
+                elif held_user_id != target_user_id:
+                    del ADMIN_ACTIVE_CONVERSATIONS[admin_id]
             # Lock session to this admin only!
             ACTIVE_SUPPORT_CONVERSATIONS[target_user_id] = {
                 "user_id": target_user_id,
@@ -740,6 +754,22 @@ class TelegramPollingRunner:
                                 f"locked to {convo.get('locked_admin_name')} ({convo.get('locked_admin_id')})"
                             )
                             return
+                    else:
+                        # 1-admin-1-convo: If admin attempts to start a new convo via reply, ensure they don't already hold one!
+                        if from_user_id and from_user_id in ADMIN_ACTIVE_CONVERSATIONS:
+                            held = ADMIN_ACTIVE_CONVERSATIONS[from_user_id]
+                            if held != target_user and held in ACTIVE_SUPPORT_CONVERSATIONS:
+                                logger.info(
+                                    f"Blocked admin {admin_name} ({from_user_id}) from taking user {target_user} "
+                                    f"because they already hold user {held}"
+                                )
+                                await self.send_message(
+                                    chat_id,
+                                    f"⚠️ {admin_name}, bạn đang trong phiên hỗ trợ với thành viên <code>{held}</code>!\n"
+                                    f"Mỗi quản trị viên chỉ được hỗ trợ 1 thành viên tại một thời điểm. "
+                                    f"Vui lòng gõ <code>/close</code> phiên hiện tại trước khi nhận phiên mới.",
+                                )
+                                return
                 else:
                     # Message is typed into group without replying: route EXCLUSIVELY by this admin's active session!
                     if from_user_id and from_user_id in ADMIN_ACTIVE_CONVERSATIONS:

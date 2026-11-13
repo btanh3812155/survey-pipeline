@@ -583,3 +583,100 @@ async def test_concurrent_multi_admin_support_routing_isolation():
     await runner.handle_update(msg_from_d_again)
     b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
     assert len(b_msgs) == 1
+@pytest.mark.asyncio
+async def test_one_admin_only_holds_one_support_convo_at_a_time():
+    """An admin holding an active support session cannot accept or take another support conversation."""
+    from services.telegram_polling import (
+        TelegramPollingRunner,
+        ACTIVE_SUPPORT_CONVERSATIONS,
+        ADMIN_GROUP_ACTIVE_SESSION,
+        ADMIN_ACTIVE_CONVERSATIONS,
+    )
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    ACTIVE_SUPPORT_CONVERSATIONS.clear()
+    ADMIN_GROUP_ACTIVE_SESSION.clear()
+    ADMIN_ACTIVE_CONVERSATIONS.clear()
+
+    alerts = []
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        alerts.append({"text": text, "show_alert": show_alert})
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    sent_messages = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_messages.append({"chat_id": chat_id, "text": text})
+    runner.send_message = mock_send
+
+    relayed_messages = []
+    class MockClient:
+        async def post(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+            relayed_messages.append(kwargs)
+            return Resp()
+    async def get_mock_client():
+        return MockClient()
+    runner.get_client = get_mock_client
+
+    # 1. Admin X (ID 555) accepts CTV 1 (ID 1001)
+    cq_1 = {
+        "id": "cq_1",
+        "data": "admin_reply_chat:1001",
+        "message": {"message_id": 1, "chat": {"id": -100999}},
+        "from": {"id": 555, "first_name": "Admin_X"},
+    }
+    await runner.handle_callback_query(cq_1)
+    assert ADMIN_ACTIVE_CONVERSATIONS[555] == 1001
+    assert ACTIVE_SUPPORT_CONVERSATIONS[1001]["locked_admin_id"] == 555
+
+    # 2. Admin X attempts to accept CTV 2 (ID 2002) while still holding CTV 1 -> BLOCKED!
+    alerts.clear()
+    cq_2 = {
+        "id": "cq_2",
+        "data": "admin_reply_chat:2002",
+        "message": {"message_id": 2, "chat": {"id": -100999}},
+        "from": {"id": 555, "first_name": "Admin_X"},
+    }
+    await runner.handle_callback_query(cq_2)
+    assert any("đang trong phiên hỗ trợ với thành viên khác (ID: 1001)" in a.get("text", "") for a in alerts)
+    # CTV 2 must NOT be locked by Admin X!
+    assert 2002 not in ACTIVE_SUPPORT_CONVERSATIONS
+    assert ADMIN_ACTIVE_CONVERSATIONS[555] == 1001
+
+    # 3. Admin X attempts to reply to CTV 2's ticket via group message -> BLOCKED!
+    relayed_messages.clear()
+    sent_messages.clear()
+    msg_reply_ctv2 = {
+        "message": {
+            "message_id": 50,
+            "chat": {"id": -100999},
+            "from": {"id": 555, "first_name": "Admin_X"},
+            "text": "Trying to reply to CTV 2",
+            "reply_to_message": {
+                "text": "Yêu cầu hỗ trợ từ CTV 2 (ID: <code>2002</code>)"
+            }
+        }
+    }
+    await runner.handle_update(msg_reply_ctv2)
+    assert len(relayed_messages) == 0  # Blocked from sending to CTV 2!
+    assert any("bạn đang trong phiên hỗ trợ với thành viên <code>1001</code>" in m.get("text", "") for m in sent_messages)
+
+    # 4. Admin X closes CTV 1 session
+    msg_close = {
+        "message": {
+            "message_id": 51,
+            "chat": {"id": -100999},
+            "from": {"id": 555, "first_name": "Admin_X"},
+            "text": "/close",
+        }
+    }
+    await runner.handle_update(msg_close)
+    assert 1001 not in ACTIVE_SUPPORT_CONVERSATIONS
+    assert 555 not in ADMIN_ACTIVE_CONVERSATIONS
+
+    # 5. Now Admin X can freely accept CTV 2
+    alerts.clear()
+    await runner.handle_callback_query(cq_2)
+    assert ADMIN_ACTIVE_CONVERSATIONS[555] == 2002
+    assert ACTIVE_SUPPORT_CONVERSATIONS[2002]["locked_admin_id"] == 555
