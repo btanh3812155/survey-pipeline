@@ -45,35 +45,9 @@ for sub in ("guide", "forms", "general"):
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
 STATIC_DIR = os.path.join(os.getcwd(), "static")
 
-
 def load_persisted_forms() -> Dict[str, FormSchema]:
-    registry: Dict[str, FormSchema] = {
-        DEFAULT_TRUST_BRIDGE_SCHEMA.form_id: DEFAULT_TRUST_BRIDGE_SCHEMA
-    }
-    default_path = os.path.join(FORMS_STORAGE_DIR, f"{DEFAULT_TRUST_BRIDGE_SCHEMA.form_id}.json")
-    if not os.path.exists(default_path):
-        try:
-            with open(default_path, "w", encoding="utf-8") as f:
-                f.write(DEFAULT_TRUST_BRIDGE_SCHEMA.model_dump_json(indent=2))
-        except Exception as e:
-            logger.warning(f"Failed to persist default schema: {e}")
-
-    try:
-        for fname in os.listdir(FORMS_STORAGE_DIR):
-            if fname.endswith(".json"):
-                fpath = os.path.join(FORMS_STORAGE_DIR, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    schema = FormSchema.model_validate(data)
-                    registry[schema.form_id] = schema
-                except Exception as err:
-                    logger.warning(f"Error loading schema from {fname}: {err}")
-    except Exception as e:
-        logger.warning(f"Error scanning forms directory: {e}")
-
-    return registry
-
+    from core.schema_sync import sync_all_persisted_forms
+    return sync_all_persisted_forms(FORMS_STORAGE_DIR, DEFAULT_TRUST_BRIDGE_SCHEMA)
 
 FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 

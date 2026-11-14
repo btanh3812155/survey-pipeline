@@ -19,6 +19,7 @@
       "enable_object_detection": false,
       "enable_vehicle_match": false,
       "enable_anti_fraud": true,
+      "require_unique": true,
       "enable_ai_generated_check": true,
       "enable_screen_photo_check": false
     }
@@ -35,6 +36,7 @@
       "sample_response": "Bấm nút 'Ký tên' và vẽ chữ ký trên bảng",
       "sample_images": null,
       "options": null,
+      "group_compatibility": null,
       "validation": null,
       "conditional": null,
       "image_checks": null,
@@ -58,6 +60,7 @@
         "Tôi đồng ý",
         "Tôi không đồng ý"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": null,
       "image_checks": null,
@@ -78,6 +81,7 @@
       "sample_response": "0988123456",
       "sample_images": null,
       "options": null,
+      "group_compatibility": null,
       "validation": {
         "min_value": null,
         "max_value": null,
@@ -113,6 +117,7 @@
         "Xe máy",
         "Ô tô"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "consent_choice",
@@ -144,6 +149,7 @@
         "VF 8",
         "VF 9"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "vehicle_type",
@@ -174,6 +180,7 @@
         "Từ 1 – 2 năm",
         "Trên 2 năm"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "consent_choice",
@@ -205,6 +212,7 @@
         "Xe thuê tháng của GSM",
         "Khác"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "consent_choice",
@@ -229,6 +237,7 @@
       "sample_response": "18",
       "sample_images": null,
       "options": null,
+      "group_compatibility": null,
       "validation": {
         "min_value": 1.0,
         "max_value": 200.0,
@@ -267,6 +276,7 @@
         "12 – 20 triệu VNĐ",
         "Trên 20 triệu VNĐ"
       ],
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "consent_choice",
@@ -291,11 +301,26 @@
       "sample_response": "Có áp dụng chỉ tiêu",
       "sample_images": null,
       "options": [
-        {"label": "Có áp dụng chỉ tiêu", "group": "applicable"},
-        {"label": "Có khung giờ vàng", "group": "applicable"},
-        {"label": "Có chương trình thưởng", "group": "applicable"},
-        {"label": "Khác", "group": "applicable"},
-        {"label": "Không có", "group": "none_exclusive"}
+        {
+          "label": "Có áp dụng chỉ tiêu",
+          "group": "applicable"
+        },
+        {
+          "label": "Có khung giờ vàng",
+          "group": "applicable"
+        },
+        {
+          "label": "Có chương trình thưởng",
+          "group": "applicable"
+        },
+        {
+          "label": "Khác",
+          "group": "applicable"
+        },
+        {
+          "label": "Không có",
+          "group": "none_exclusive"
+        }
       ],
       "group_compatibility": null,
       "validation": null,
@@ -325,6 +350,7 @@
         "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"
       ],
       "options": null,
+      "group_compatibility": null,
       "validation": null,
       "conditional": {
         "depends_on_question_id": "consent_choice",
@@ -345,6 +371,7 @@
           "require_unique": false,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình hồ sơ ứng dụng tài xế Xanh SM / GSM. Trích xuất mã đối tác, tên tài xế, và hạng thành viên.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -355,6 +382,7 @@
           "require_unique": false,
           "ai_check": false,
           "ai_detection_prompt": "Ảnh chụp phương tiện thực tế: thân xe, đầu xe hoặc vô lăng khoang lái xe điện GSM.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -365,6 +393,7 @@
           "require_unique": true,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình thu nhập TUẦN 1 Tháng 10 (28/09 - 04/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -375,6 +404,7 @@
           "require_unique": true,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình thu nhập TUẦN 2 Tháng 10 (05/10 - 11/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -385,6 +415,7 @@
           "require_unique": true,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình thu nhập TUẦN 3 Tháng 10 (12/10 - 18/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -395,6 +426,7 @@
           "require_unique": true,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình thu nhập TUẦN 4 Tháng 10 (19/10 - 25/10). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
+          "allow_upload": true,
           "tooltip": ""
         },
         {
@@ -405,6 +437,7 @@
           "require_unique": true,
           "ai_check": true,
           "ai_detection_prompt": "Màn hình thu nhập TUẦN 5 Tháng 10 (26/10 - 01/11). Bắt buộc là báo cáo doanh thu theo TUẦN, cấm ảnh báo cáo tổng cả tháng.",
+          "allow_upload": true,
           "tooltip": ""
         }
       ]

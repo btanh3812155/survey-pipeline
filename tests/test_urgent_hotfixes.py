@@ -810,3 +810,115 @@ def test_location_prompt_triggers_on_first_page_in_html():
     # 2. Immediately invokes browser geolocation query on first page load
     assert "fetchGpsSilently()" in html
     assert "initGpsBannerBehavior();" in html
+def test_schema_bidirectional_sync_and_parity(tmp_path):
+    """
+    Safeguard test for automated format synchronization:
+    1. Propagates schema evolutions across disk and in-memory models.
+    2. Injects missing slot defaults (ai_detection_prompt, allow_upload, etc.).
+    3. Downstream parity verifier detects and enforces required contracts.
+    """
+    from core.schema_sync import (
+        reconcile_and_sync_form_schema,
+        verify_schema_downstream_parity,
+        normalize_slot_definition,
+    )
+    from services.form_engine import DEFAULT_TRUST_BRIDGE_SCHEMA
+
+    # 1. Normalizing raw slot definitions injects contract defaults
+    raw_slot = {"slot": "3", "title": "Slot 3", "role": "app_income_week_1"}
+    normalized = normalize_slot_definition(raw_slot, fallback_index=3)
+    assert normalized["slot"] == 3
+    assert normalized["allow_upload"] is True
+    assert normalized["ai_detection_prompt"] == ""
+
+    # 2. Reconciling with an outdated disk file automatically propagates new fields to disk
+    test_json_file = tmp_path / "test_outdated_schema.json"
+    outdated_data = DEFAULT_TRUST_BRIDGE_SCHEMA.model_dump()
+    # Strip ai_detection_prompt to simulate schema drift
+    for q in outdated_data["questions"]:
+        if q.get("image_slots"):
+            for s in q["image_slots"]:
+                s.pop("ai_detection_prompt", None)
+
+    import json
+    with open(test_json_file, "w", encoding="utf-8") as f:
+        json.dump(outdated_data, f)
+
+    canonical_schema, was_updated = reconcile_and_sync_form_schema(
+        DEFAULT_TRUST_BRIDGE_SCHEMA, str(test_json_file)
+    )
+    assert was_updated is True
+
+    # Verify disk was automatically updated and contains the missing prompt
+    with open(test_json_file, "r", encoding="utf-8") as f:
+        re_read = json.load(f)
+    cam_q = next(q for q in re_read["questions"] if q["type"] == "camera_webrtc")
+    assert all("ai_detection_prompt" in s for s in cam_q["image_slots"])
+
+    # 3. Downstream parity validation
+    violations = verify_schema_downstream_parity(canonical_schema)
+    assert len(violations) == 0
+
+
+def test_admin_dossier_suppresses_redundant_driver_name():
+    """When driver_name is absent or a placeholder ('Tài xế'), dossier renders 'Số điện thoại:' directly."""
+    from services.admin_moderator import render_dossier_message
+
+    # Case A: Placeholder 'Tài xế' -> renders 'Số điện thoại: 0988111222'
+    dossier_placeholder = {
+        "submission_id": "TEST-01",
+        "status": "APPROVED",
+        "driver_name": "Tài xế",
+        "driver_phone": "0988111222",
+        "gross_income": 5000000,
+        "net_income": 4000000,
+        "trips_count": 30,
+    }
+    rendered_a = render_dossier_message(dossier_placeholder)
+    assert "• <b>Số điện thoại:</b> <code>0988111222</code>" in rendered_a
+    assert "Tài xế: Tài xế" not in rendered_a
+
+    # Case B: Verified name -> renders 'Tài xế: Nguyễn Văn B (0988222333)'
+    dossier_verified = {
+        "submission_id": "TEST-02",
+        "status": "APPROVED",
+        "driver_name": "Nguyễn Văn B",
+        "driver_phone": "0988222333",
+        "gross_income": 5000000,
+        "net_income": 4000000,
+        "trips_count": 30,
+    }
+    rendered_b = render_dossier_message(dossier_verified)
+    assert "• <b>Tài xế:</b> <b>Nguyễn Văn B</b> (<code>0988222333</code>)" in rendered_b
+
+
+@pytest.mark.asyncio
+async def test_support_ticket_markup_has_no_dead_close_button():
+    """When an admin claims a support ticket, the updated markup has NO dead close button."""
+    from services.telegram_polling import TelegramPollingRunner
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    edited_markups = []
+    async def mock_edit(chat_id, msg_id, reply_markup=None):
+        edited_markups.append(reply_markup)
+        return True
+    runner.edit_message_reply_markup = mock_edit
+
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    cq_claim = {
+        "id": "cq_claim",
+        "data": "admin_reply_chat:1001",
+        "message": {"message_id": 999, "chat": {"id": -100999}},
+        "from": {"id": 888, "first_name": "Alex"},
+    }
+    await runner.handle_callback_query(cq_claim)
+
+    assert len(edited_markups) == 1
+    buttons = edited_markups[0]["inline_keyboard"]
+    # Only locked info status button must exist; NO admin_close_ticket!
+    all_callbacks = [b.get("callback_data", "") for row in buttons for b in row]
+    assert any("admin_locked_info:1001" in cb for cb in all_callbacks)
+    assert not any("admin_close_ticket" in cb for cb in all_callbacks)
