@@ -1405,25 +1405,22 @@
         function initGpsBannerBehavior() {
             if (!navigator.geolocation) return;
             const wasGranted = localStorage.getItem('tb_gps_granted') === 'true';
+
+            // Show prompt banner and immediately request browser geolocation on first form page!
+            showInitialGpsPrompt();
+            fetchGpsSilently();
+
             if (navigator.permissions && navigator.permissions.query) {
                 navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
                     if (perm.state === 'granted' || wasGranted) {
                         fetchGpsSilently();
-                    } else if (perm.state === 'prompt') {
-                        showInitialGpsPrompt();
-                    } else {
+                    } else if (perm.state === 'denied') {
                         applyGpsFailure({ code: 1 });
                     }
                     perm.onchange = () => {
                         if (perm.state === 'granted') fetchGpsSilently();
                     };
-                }).catch(() => {
-                    if (wasGranted) fetchGpsSilently();
-                    else showInitialGpsPrompt();
-                });
-            } else {
-                if (wasGranted) fetchGpsSilently();
-                else showInitialGpsPrompt();
+                }).catch(() => {});
             }
         }
 

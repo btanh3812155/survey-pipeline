@@ -288,21 +288,78 @@ def analyze_driver_income(
                 suggested_action="REJECT",
             )
 
-    # 4. Arithmetic Reconciliation: Gross - Discount - Tax == Net
-    if net_income and platform_discount:
-        expected_net = gross_income - platform_discount
-        # allow 5% rounding / tip / incentive variance
-        if abs(expected_net - net_income) > (gross_income * 0.05 + 50_000):
+    # 4. Exhaustive Arithmetic Reconciliation: Gross - Costs == Net (Income - Costs == Profit)
+    if net_income is not None:
+        try:
+            n_val = float(net_income)
+            if math.isnan(n_val) or math.isinf(n_val) or n_val < 0:
+                return IncomeAnalysisResult(
+                    is_valid=False,
+                    status_code="ARITHMETIC_MISMATCH",
+                    flag_reason="Thu nhập thực nhận (lợi nhuận) không hợp lệ (phải là số dương hợp lệ).",
+                    suggested_action="REJECT",
+                )
+        except (TypeError, ValueError):
+            return IncomeAnalysisResult(
+                is_valid=False,
+                status_code="ARITHMETIC_MISMATCH",
+                flag_reason="Thu nhập thực nhận (lợi nhuận) không thể phân tích cú pháp số học.",
+                suggested_action="REJECT",
+            )
+
+        # 4.1 Profit cannot exceed revenue without reasonable bonus (net > gross)
+        if n_val > gross_income * 1.15 + 50_000:
             return IncomeAnalysisResult(
                 is_valid=False,
                 status_code="ARITHMETIC_MISMATCH",
                 flag_reason=(
-                    f"Số học không khớp: Doanh số ({gross_income:,}đ) - Chiết khấu ({platform_discount:,}đ) "
-                    f"không khớp Thu nhập thực nhận ({net_income:,}đ)."
+                    f"Số học bất thường: Thu nhập thực nhận ({int(n_val):,}đ) lớn hơn tổng doanh thu ({gross_income:,}đ). "
+                    f"Lợi nhuận không thể vượt quá doanh thu phát sinh."
                 ),
                 suggested_action="REJECT",
             )
 
+        # 4.2 Reconcile when costs / platform_discount are reported
+        if platform_discount is not None:
+            try:
+                c_raw = float(platform_discount)
+                if math.isnan(c_raw) or math.isinf(c_raw):
+                    return IncomeAnalysisResult(
+                        is_valid=False,
+                        status_code="ARITHMETIC_MISMATCH",
+                        flag_reason="Chi phí/chiết khấu không hợp lệ.",
+                        suggested_action="REJECT",
+                    )
+                # In driver apps, costs/deductions are often shown either as positive values (250,000đ)
+                # or negative deltas (-250,000đ). The absolute cost incurred by the driver is abs(c_raw).
+                cost_val = abs(c_raw)
+                expected_net = gross_income - cost_val
+                tolerance = max(gross_income * 0.08, 60_000)
+
+                if abs(expected_net - n_val) > tolerance:
+                    return IncomeAnalysisResult(
+                        is_valid=False,
+                        status_code="ARITHMETIC_MISMATCH",
+                        flag_reason=(
+                            f"Số học không khớp: Doanh thu ({gross_income:,}đ) - Chi phí ({int(cost_val):,}đ) = {int(expected_net):,}đ, "
+                            f"nhưng Thu nhập thực nhận ghi nhận là {int(n_val):,}đ (chênh lệch {abs(int(expected_net - n_val)):,}đ)."
+                        ),
+                        suggested_action="REJECT",
+                    )
+            except (TypeError, ValueError):
+                pass
+        else:
+            # 4.3 When explicit cost is missing, ensure profit is within plausible bounds of revenue
+            if trips_count and trips_count >= 5 and n_val < gross_income * 0.2:
+                return IncomeAnalysisResult(
+                    is_valid=False,
+                    status_code="ARITHMETIC_MISMATCH",
+                    flag_reason=(
+                        f"Số học bất thường: Doanh thu {gross_income:,}đ qua {trips_count} chuyến nhưng "
+                        f"thực nhận chỉ còn {int(n_val):,}đ (dưới 20% doanh thu)."
+                    ),
+                    suggested_action="REJECT",
+                )
     return IncomeAnalysisResult(
         is_valid=True,
         status_code="APPROVED",

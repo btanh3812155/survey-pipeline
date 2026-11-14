@@ -7,6 +7,7 @@ and driver appeal workflows.
 """
 
 import os
+import httpx
 import html
 import re
 import json
@@ -22,7 +23,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from config import settings
-from core.state import get_db_pool, get_redis_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client
+from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
 from core.repositories import append_dev_submission
@@ -31,7 +32,7 @@ from services.normalizer import sanitize_and_normalize_image, compute_laplacian_
 from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.duplicate_detector import compute_image_dhash_str, compute_dinov2_embedding, check_intra_submission_duplicates, check_inter_submission_duplicates
 from services.vehicle_tracker import VehiclePersistenceTracker, normalize_license_plate
-from services.evaluator import evaluate_survey_compliance
+from services.income_sanitizer import analyze_driver_income
 from services.action_checklist import init_action_checklist, dispatch_action_checklist
 from services.storage_r2 import r2_client
 from services.dynamic_form_html import render_dynamic_form_html, render_ctv_selector_landing_html
@@ -334,6 +335,7 @@ async def submit_webrtc_survey(
 
     # Extract all submitted form parameters and support multiple image uploads
     form_data = await request.form()
+    car_model_val = str(form_data.get("car_model") or "")
     collab_param = (
         collaborator_id
         or form_data.get("collaborator_id")
@@ -630,6 +632,7 @@ async def submit_webrtc_survey(
                         tot_net = 0
                         tot_trips = 0
                         monthly_violation = None
+                        math_violation = None
                         for w_i in range(5):
                             w_num = w_i + 1
                             if w_i < len(income_res_list) and isinstance(income_res_list[w_i], dict) and not isinstance(income_res_list[w_i], Exception):
@@ -669,6 +672,35 @@ async def submit_webrtc_survey(
                                     "ocr_data": ocr_w,
                                 }
                                 break
+                            # Guard against arithmetic inconsistency: Income - Costs != Profit
+                            c_val = ocr_w.get("discount_and_tax")
+                            if g_val > 0 and (n_val > 0 or c_val is not None):
+                                w_math_res = analyze_driver_income(
+                                    vehicle_type=vehicle_type or "CAR",
+                                    gross_income=g_val,
+                                    net_income=n_val if n_val > 0 else None,
+                                    trips_count=t_val if t_val > 0 else None,
+                                    platform_discount=c_val,
+                                    period="weekly",
+                                    car_model=car_model_val,
+                                )
+                                if not w_math_res.is_valid and w_math_res.status_code == "ARITHMETIC_MISMATCH":
+                                    s_num = matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else w_num + 2
+                                    math_violation = {
+                                        "failed_slot": matched_income_indices[w_i] if w_i < len(matched_income_indices) else w_num,
+                                        "reason": f"Ảnh {s_num} (Tuần {w_num}): {w_math_res.flag_reason}",
+                                        "ocr_data": ocr_w,
+                                    }
+                                    break
+
+                        # Check aggregate 5-week arithmetic consistency
+                        if not monthly_violation and not math_violation and tot_gross > 0 and tot_net > 0:
+                            if tot_net > tot_gross * 1.15 + 100_000:
+                                math_violation = {
+                                    "failed_slot": matched_income_indices[0] if matched_income_indices else 2,
+                                    "reason": f"Số học tổng 5 tuần không khớp: Tổng thực nhận ({tot_net:,}đ) vượt quá tổng doanh thu ({tot_gross:,}đ)!",
+                                    "ocr_data": ocr_data,
+                                }
                         slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
 
@@ -683,8 +715,17 @@ async def submit_webrtc_survey(
                                 "reason": reason_str,
                                 "ocr_data": monthly_violation["ocr_data"],
                             }
-                        elif role_0 in ("app_income", "revenue_screen"):
+                        elif math_violation:
                             is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = math_violation["reason"]
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": math_violation["failed_slot"],
+                                "reason": reason_str,
+                                "ocr_data": math_violation["ocr_data"],
+                            }
+                        elif role_0 in ("app_income", "revenue_screen"):
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
                             ai_res = {

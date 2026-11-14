@@ -153,8 +153,8 @@ class TestFuzzDriverIncomeAnalysis:
 
     def test_negative_discounts(self):
         """
-        Negative discounts (e.g. platform fee is -200,000).
-        Finding: Negative discount does not fail if gross - (-discount) == net.
+        Negative discounts (e.g. platform fee is -200,000) cannot inflate net profit over gross income.
+        Must be rejected as ARITHMETIC_MISMATCH.
         """
         res = analyze_driver_income(
             vehicle_type="BIKE",
@@ -163,8 +163,8 @@ class TestFuzzDriverIncomeAnalysis:
             platform_discount=-200_000,
         )
         assert hasattr(res, "is_valid")
-        assert res.is_valid is True
-
+        assert res.is_valid is False
+        assert res.status_code == "ARITHMETIC_MISMATCH"
     def test_discount_greater_than_gross(self):
         """Discounts exceeding gross income (platform_discount > gross_income)."""
         res_mismatch = analyze_driver_income(

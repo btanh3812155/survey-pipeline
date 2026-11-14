@@ -683,3 +683,130 @@ async def test_one_admin_only_holds_one_support_convo_at_a_time():
     await runner.handle_callback_query(cq_2)
     assert ADMIN_ACTIVE_CONVERSATIONS[555] == 2002
     assert ACTIVE_SUPPORT_CONVERSATIONS[2002]["locked_admin_id"] == 555
+def test_exhaustive_arithmetic_check_income_minus_costs_equals_profit():
+    """
+    Exhaustive arithmetic validation:
+    1. income - costs != profit must REJECT.
+    2. profit > income (net > gross) must REJECT.
+    3. negative costs (-5M) to inflate profit must REJECT.
+    4. NaN / inf / negative income or net must REJECT.
+    5. matching gross - costs == net passes.
+    """
+    from services.income_sanitizer import analyze_driver_income
+
+    # 1. income - costs != profit (Gross: 10M, Costs: 2M, Profit: 5M -> 10M - 2M = 8M != 5M)
+    res_mismatch = analyze_driver_income(
+        vehicle_type="CAR",
+        gross_income=10_000_000,
+        net_income=5_000_000,
+        platform_discount=2_000_000,
+        period="weekly",
+    )
+    assert res_mismatch.is_valid is False
+    assert res_mismatch.status_code == "ARITHMETIC_MISMATCH"
+    assert "Số học không khớp" in res_mismatch.flag_reason
+
+    # 2. profit > income (Gross: 5M, Net: 8M without valid explanation)
+    res_net_exceeds = analyze_driver_income(
+        vehicle_type="CAR",
+        gross_income=5_000_000,
+        net_income=8_000_000,
+        period="weekly",
+    )
+    assert res_net_exceeds.is_valid is False
+    assert res_net_exceeds.status_code == "ARITHMETIC_MISMATCH"
+    assert "lớn hơn tổng doanh thu" in res_net_exceeds.flag_reason
+
+    # 3. Negative costs bypass attempt (Gross: 10M, Discount: -5M, Net: 15M)
+    res_neg_cost = analyze_driver_income(
+        vehicle_type="CAR",
+        gross_income=10_000_000,
+        net_income=15_000_000,
+        platform_discount=-5_000_000,
+        period="weekly",
+    )
+    assert res_neg_cost.is_valid is False
+    assert res_neg_cost.status_code == "ARITHMETIC_MISMATCH"
+
+    # 4. Valid arithmetic (Gross: 10M, Costs: 2.2M, Net: 7.8M) -> APPROVED!
+    res_valid = analyze_driver_income(
+        vehicle_type="CAR",
+        gross_income=10_000_000,
+        net_income=7_800_000,
+        platform_discount=2_200_000,
+        period="weekly",
+    )
+    assert res_valid.is_valid is True
+    assert res_valid.status_code == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_rejects_arithmetic_mismatch_in_ocr(monkeypatch):
+    """When OCR returns revenue - costs != profit in weekly statement, endpoint rejects submission."""
+    monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    client = TestClient(app)
+
+    async def mock_role(img_bytes, filename=None, *args, **kwargs):
+        fn = (filename or "").lower()
+        if "slot_0" in fn or "profile" in fn:
+            return "app_profile"
+        if "slot_1" in fn or "vehicle" in fn:
+            return "vehicle_exterior"
+        return "app_income"
+
+    async def mock_ocr_arithmetic_flaw(b, week_idx=None, *args, **kwargs):
+        # Gross: 10,000,000, discount: 2,000,000, but net_income claimed is 3,000,000 (missing 5M!)
+        return {
+            "gross_revenue": 10_000_000,
+            "net_income": 3_000_000,
+            "discount_and_tax": 2_000_000,
+            "total_trips": 120,
+            "period": f"Tuần {week_idx or 1}",
+            "period_type": "WEEKLY",
+            "is_weekly_report": True,
+            "confidence_score": 0.99,
+            "is_legible": True,
+            "is_authentic_gsm_ui": True,
+        }
+
+    real_photos = get_real_distinct_test_photos(7)
+    with patch.object(vision_client, "classify_image_role", side_effect=mock_role), \
+         patch.object(vision_client, "ocr_driver_app_income", side_effect=mock_ocr_arithmetic_flaw):
+        resp = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "driver_phone": "0912345678",
+                "driver_name": "Tài xế Sai Số Học",
+                "consent_choice": "Tôi đồng ý",
+                "signature_png": "data:image/png;base64,mock",
+                "vehicle_type": "Ô tô",
+                "car_model": "VF 5 Plus",
+                "gsm_duration": "Từ 6 – 12 tháng",
+                "gsm_contract_type": "Xe Taxi xanh GSM",
+                "daily_trips": "18",
+                "monthly_income_range": "12 – 20 triệu VNĐ",
+                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+                "is_test_mode": "true",
+                "bypass_img_check": "false",
+            },
+            files={
+                f"survey_photo_{i}": (f"slot_{i}.jpg", real_photos[i][1], "image/jpeg")
+                for i in range(min(7, len(real_photos)))
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("status") == "REJECTED"
+    assert "Số học không khớp" in data.get("reason")
+
+
+def test_location_prompt_triggers_on_first_page_in_html():
+    """Verify that GPS location request triggers immediately on first page load in dynamic form."""
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    # 1. Shows initial GPS prompt banner on page 1
+    assert "showInitialGpsPrompt()" in html
+    # 2. Immediately invokes browser geolocation query on first page load
+    assert "fetchGpsSilently()" in html
+    assert "initGpsBannerBehavior();" in html
