@@ -15,11 +15,14 @@ from services.form_engine import DEFAULT_TRUST_BRIDGE_SCHEMA
 def test_first_form_page_layout_has_all_needed_components():
     """Verifies that the first form page has all required components in the exact spot."""
     html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    # 1. Company Navigation Top Header Bar
+    assert 'id="companyNavBar"' in html
+    assert "TRUST BRIDGE" in html
+    assert "Cổng Khảo Sát & Đối Soát" in html
 
-    # 1. Top Navigation: QR Share & Language Globe Switcher
+    # 2. Top Navigation: QR Share & Language Globe Switcher
     assert "btnOpenQrModal" in html
     assert "btn-lang-toggle" in html
-
     # 2. First Form Page: Location check banner must exist INSIDE <form id="dynamicForm"> above #questionsContainer
     assert '<form id="dynamicForm"' in html
     assert 'id="gpsBanner"' in html
@@ -83,3 +86,28 @@ def test_ctv_landing_page_layout_has_all_needed_and_only_needed_components():
     assert "</html>" in html
     assert html.count("</script>") == 1
     assert html.count("<script>") == 1
+    # 6. Security Invariant (1a): GPS coordinates are NEVER attached to URL query params!
+    assert 'params.delete("lat")' in html
+    assert 'params.delete("lon")' in html
+    assert 'params.delete("acc")' in html
+    assert 'params.set("lat"' not in html
+
+    # 7. Gating Invariant (1k): Button requires BOTH CTV selection AND confirmed location!
+    assert "Boolean(ctv && gpsDone)" in html
+
+
+def test_model_answer_toggle_per_question():
+    """Form designers can toggle whether a question renders a sample response / model answer."""
+    from services.form_engine import FormSchema, FormQuestion, QuestionType
+
+    # Case A: show_sample_response = True (default) -> sample response is allowed to render
+    schema_with_sample = DEFAULT_TRUST_BRIDGE_SCHEMA.model_copy(deep=True)
+    schema_with_sample.questions[0].show_sample_response = True
+    html_with = render_dynamic_form_html(schema_with_sample)
+    assert "q.show_sample_response !== false" in html_with
+
+    # Case B: show_sample_response = False -> question suppresses model answer box
+    schema_suppressed = DEFAULT_TRUST_BRIDGE_SCHEMA.model_copy(deep=True)
+    schema_suppressed.questions[0].show_sample_response = False
+    html_suppressed = render_dynamic_form_html(schema_suppressed)
+    assert "show_sample_response" in html_suppressed

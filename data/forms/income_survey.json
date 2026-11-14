@@ -34,6 +34,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Bấm nút 'Ký tên' và vẽ chữ ký trên bảng",
+      "show_sample_response": true,
       "sample_images": null,
       "options": null,
       "group_compatibility": null,
@@ -55,6 +56,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Tôi đồng ý",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "Tôi đồng ý",
@@ -79,6 +81,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "0988123456",
+      "show_sample_response": true,
       "sample_images": null,
       "options": null,
       "group_compatibility": null,
@@ -112,6 +115,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Ô tô",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "Xe máy",
@@ -140,6 +144,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "VF 5 Plus",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "VF 5 Plus",
@@ -172,6 +177,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Từ 6 – 12 tháng",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "Dưới 3 tháng",
@@ -203,6 +209,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Xe Taxi xanh GSM",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "Xe Partner (Hợp tác kinh doanh)",
@@ -235,6 +242,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "18",
+      "show_sample_response": true,
       "sample_images": null,
       "options": null,
       "group_compatibility": null,
@@ -268,6 +276,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "12 – 20 triệu VNĐ",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         "Dưới 3 triệu VNĐ",
@@ -299,6 +308,7 @@
       "tooltip": null,
       "ai_detection_prompt": null,
       "sample_response": "Có áp dụng chỉ tiêu",
+      "show_sample_response": true,
       "sample_images": null,
       "options": [
         {
@@ -345,6 +355,7 @@
       "tooltip": "Chụp rõ nét màn hình điện thoại và phương tiện. Xe máy hoặc ô tô chụp góc rõ thân xe, đầu xe hoặc vô lăng khoang lái; màn hình thu nhập chuyển lần lượt qua từng tuần trong Tháng 10.",
       "ai_detection_prompt": "Slot 0 (app_profile): Verify authentic Xanh SM / GSM driver profile and account screen.\nSlot 1 (vehicle_exterior_or_interior): Vehicle exterior body, front, or steering wheel/dashboard. Pass without strict block for post-audit verification.\nSlots 2 to 6 (app_income_oct_week_1 to 5): Weekly earnings statements for October 2026. Verify authentic Xanh SM UI, legible revenue figures, and non-tampered numbers.",
       "sample_response": "Chụp đủ 7 ảnh theo hướng dẫn của từng ô",
+      "show_sample_response": true,
       "sample_images": [
         "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80",
         "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=600&auto=format&fit=crop&q=80"

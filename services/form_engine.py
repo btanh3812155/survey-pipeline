@@ -44,6 +44,7 @@ class FormQuestion(BaseModel):
     tooltip: Optional[str] = None # Helpful tooltip popover for collaborators/drivers
     ai_detection_prompt: Optional[str] = None # Hidden instruction to describe to AI what needs to be detected
     sample_response: Optional[str] = None
+    show_sample_response: bool = True
     sample_images: Optional[List[str]] = None # List of sample image URLs for visual guidance
     options: Optional[List[Any]] = None # For single_choice, multiple_choice, dropdown
     group_compatibility: Optional[Dict[str, List[str]]] = None # For multiple_choice mutual exclusivity

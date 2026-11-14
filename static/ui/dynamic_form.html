@@ -861,6 +861,11 @@
     </style>
 </head>
 <body>
+    <!-- Company Navigation Header Bar -->
+    <div class="company-nav-bar" id="companyNavBar" style="display:flex; align-items:center; justify-content:space-between; background:rgba(15, 23, 42, 0.95); border-bottom:1px solid #334155; padding:12px 18px; margin:-20px -16px 16px -16px; border-radius:0 0 12px 12px;">
+        <div style="font-weight:800; font-size:0.95rem; color:#f8fafc; letter-spacing:0.02em;">TRUST BRIDGE</div>
+        <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;">Cổng Khảo Sát & Đối Soát</div>
+    </div>
     <!-- Top Nav: QR Button & Language Switcher aligned to the right -->
     <div class="top-nav-bar" style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:12px;">
         <button type="button" class="btn-qr-share" id="btnOpenQrModal" onclick="openFormQrModal()" title="Chia sẻ mã QR">
@@ -1566,7 +1571,8 @@
                 card.dataset.qid = q.id;
 
                 let sampleHtml = '';
-                if (q.sample_response || (q.sample_images && q.sample_images.length > 0)) {
+                const allowSample = q.show_sample_response !== false;
+                if (allowSample && (q.sample_response || (q.sample_images && q.sample_images.length > 0))) {
                     let imagesHtml = '';
                     if (q.sample_images && q.sample_images.length > 0) {
                         imagesHtml = `

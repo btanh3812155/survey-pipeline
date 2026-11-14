@@ -141,19 +141,18 @@
                 {options_html}
             </select>
         </div>
-        <!-- Location Check Component built from scratch with immediate IP fallback & native GPS upgrade -->
+        <!-- Location Check Component: user-initiated fallback only -->
         <div class="gps-banner-box" style="display:flex; align-items:center; justify-content:space-between; background:#0f172a; border:1px solid #334155; border-radius:12px; padding:12px 14px; margin: 16px 0 20px 0; text-align:left;">
             <div style="display:flex; align-items:center; gap:8px;">
                 <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#38bdf8; flex-shrink:0;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5 2.5-2.5 2.5z"/></svg>
                 <div>
-                    <div id="gpsStatusPill" style="display:inline-flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.12); padding:3px 8px; border-radius:6px; border:1px solid rgba(56,189,248,0.25);">
-                        <span id="txtCtvGps">📍 Đang định vị vị trí đối soát...</span>
+                    <div id="gpsStatusPill" style="display:inline-flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#94a3b8; background:rgba(30,41,59,0.6); padding:4px 10px; border-radius:6px; border:1px solid #334155;">
+                        <span id="txtCtvGps">📍 Vui lòng bấm 'Bật vị trí' để xác thực đối soát</span>
                     </div>
                 </div>
             </div>
-            <button type="button" id="btnRequestGps" onclick="requestGps()" style="background:#0284c7; color:#fff; border:none; padding:6px 12px; border-radius:8px; font-size:0.75rem; font-weight:700; cursor:pointer;">Bật GPS</button>
+            <button type="button" id="btnRequestGps" onclick="requestGps()" style="background:#0284c7; color:#fff; border:none; padding:7px 14px; border-radius:8px; font-size:0.78rem; font-weight:700; cursor:pointer;">Bật vị trí</button>
         </div>
-        
         <button type="button" class="btn-open" id="btnOpenForm" onclick="openSelectedCtvForm()" disabled style="opacity:0.45; cursor:not-allowed; background:#334155; box-shadow:none;">
             <span>Mở Biểu Mẫu Khảo Sát</span>
             <span>&rarr;</span>
@@ -164,16 +163,21 @@
 
     <script>
         let earlyGps = null;
+        let gpsDone = false;
 
         function setGpsState(lat, lon, acc, label, isSuccess = true) {
             earlyGps = { lat: parseFloat(lat), lon: parseFloat(lon), acc: parseFloat(acc || 15) };
+            gpsDone = true;
             try {
                 sessionStorage.setItem("survey_gps_lat", earlyGps.lat);
                 sessionStorage.setItem("survey_gps_lon", earlyGps.lon);
                 sessionStorage.setItem("survey_gps_acc", earlyGps.acc);
+                sessionStorage.setItem("survey_gps_confirmed", "true");
                 localStorage.setItem("survey_gps_lat", earlyGps.lat);
                 localStorage.setItem("survey_gps_lon", earlyGps.lon);
+                localStorage.setItem("tb_gps_granted", "true");
             } catch (e) {}
+
             const pill = document.getElementById("gpsStatusPill");
             const btn = document.getElementById("btnRequestGps");
             if (pill) {
@@ -185,75 +189,94 @@
                     : `📍 Đã dùng vị trí mạng (IP dự phòng)`;
             }
             if (btn && isSuccess) btn.style.display = "none";
+            updateCtvButtonState();
         }
 
         function requestGps() {
             const btn = document.getElementById("btnRequestGps");
+            const pill = document.getElementById("gpsStatusPill");
             if (btn) { btn.disabled = true; btn.textContent = "..."; }
+            if (pill) pill.innerHTML = "<span>📍 Đang xác thực vị trí vệ tinh...</span>";
+
+            let resolved = false;
+
+            // Strict 2.0s user-initiated timeout: ONLY falls back to IP when user clicked and 2s elapsed!
+            const fallbackTimer = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    fetch("/api/v1/geo/ip-fallback")
+                        .then((res) => res.json())
+                        .then((data) => {
+                            setGpsState(data.latitude || 10.822, data.longitude || 106.6257, data.accuracy || 5000, "IP", false);
+                        })
+                        .catch(() => {
+                            setGpsState(10.822, 106.6257, 5000, "IP", false);
+                        });
+                }
+            }, 2000);
+
             if ("geolocation" in navigator) {
                 navigator.geolocation.getCurrentPosition(
                     (pos) => {
-                        setGpsState(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, "GPS", true);
+                        if (!resolved) {
+                            resolved = true;
+                            clearTimeout(fallbackTimer);
+                            setGpsState(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, "GPS", true);
+                        }
                     },
                     (err) => {
-                        if (btn) { btn.disabled = false; btn.textContent = "Thử lại"; }
+                        if (!resolved) {
+                            resolved = true;
+                            clearTimeout(fallbackTimer);
+                            fetch("/api/v1/geo/ip-fallback")
+                                .then((res) => res.json())
+                                .then((data) => {
+                                    setGpsState(data.latitude || 10.822, data.longitude || 106.6257, data.accuracy || 5000, "IP", false);
+                                })
+                                .catch(() => {
+                                    setGpsState(10.822, 106.6257, 5000, "IP", false);
+                                });
+                        }
                     },
-                    { enableHighAccuracy: false, timeout: 3000, maximumAge: 300000 }
+                    { enableHighAccuracy: false, timeout: 2000, maximumAge: 300000 }
                 );
             }
         }
 
-        // 1. Check storage first - instant resolution!
+        // 1. Check storage first - instant reuse if already authorized in past!
         try {
             const sLat = sessionStorage.getItem("survey_gps_lat") || localStorage.getItem("survey_gps_lat");
             const sLon = sessionStorage.getItem("survey_gps_lon") || localStorage.getItem("survey_gps_lon");
-            if (sLat && sLon) {
+            if (sLat && sLon && localStorage.getItem("tb_gps_granted") === "true") {
                 setGpsState(sLat, sLon, 15, "GPS", true);
-            } else {
-                // 2. Fetch IP fallback immediately in 50ms so it NEVER gets stuck!
-                fetch("/api/v1/geo/ip-fallback")
-                    .then((res) => res.json())
-                    .then((data) => {
-                        if (data && typeof data.latitude === "number") {
-                            if (!earlyGps || earlyGps.lat === 21.0285) {
-                                setGpsState(data.latitude, data.longitude, data.accuracy || 5000, "IP", false);
-                            }
-                        }
-                    })
-                    .catch(() => {
-                        // Static safe fallback if network offline
-                        if (!earlyGps) setGpsState(10.822, 106.6257, 5000, "IP", false);
-                    });
-
-                // 3. Simultaneously request browser GPS natively
-                if ("geolocation" in navigator) {
-                    navigator.geolocation.getCurrentPosition(
-                        (pos) => {
-                            setGpsState(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, "GPS", true);
-                        },
-                        (err) => {},
-                        { enableHighAccuracy: false, timeout: 2500, maximumAge: 300000 }
-                    );
-                }
             }
-        } catch (e) {
-            setGpsState(10.822, 106.6257, 5000, "IP", false);
-        }
+        } catch (e) {}
+
         function updateCtvButtonState() {
             const sel = document.getElementById("ctvSelect");
             const btn = document.getElementById("btnOpenForm");
             const helper = document.getElementById("btnHelperText");
             const ctv = sel ? sel.value.trim() : "";
 
-            if (!ctv) {
+            const canOpen = Boolean(ctv && gpsDone);
+
+            if (!canOpen) {
                 btn.disabled = true;
                 btn.style.opacity = "0.45";
                 btn.style.cursor = "not-allowed";
                 btn.style.background = "#334155";
                 btn.style.boxShadow = "none";
                 if (helper) {
-                    helper.textContent = "Vui lòng chọn Cộng tác viên (CTV) phụ trách để tiếp tục";
-                    helper.style.color = "#f59e0b";
+                    if (!ctv && !gpsDone) {
+                        helper.textContent = "Vui lòng chọn CTV và bấm 'Bật vị trí' để tiếp tục";
+                        helper.style.color = "#f59e0b";
+                    } else if (!ctv) {
+                        helper.textContent = "Vui lòng chọn Cộng tác viên (CTV) phụ trách để tiếp tục";
+                        helper.style.color = "#f59e0b";
+                    } else {
+                        helper.textContent = "Vui lòng bấm 'Bật vị trí' để hoàn tất định vị đối soát";
+                        helper.style.color = "#f59e0b";
+                    }
                 }
             } else {
                 btn.disabled = false;
@@ -268,6 +291,9 @@
             }
         }
 
+        // Initialize button state immediately
+        updateCtvButtonState();
+
         function openSelectedCtvForm() {
             const sel = document.getElementById("ctvSelect");
             const ctv = sel ? sel.value.trim() : "";
@@ -276,13 +302,17 @@
                 sel.focus();
                 return;
             }
+            if (!gpsDone) {
+                alert("Vui lòng xác thực vị trí đối soát trước khi mở biểu mẫu!");
+                return;
+            }
             const params = new URLSearchParams(window.location.search);
             params.set("ref", ctv);
-            if (earlyGps) {
-                params.set("lat", earlyGps.lat);
-                params.set("lon", earlyGps.lon);
-                params.set("acc", earlyGps.acc);
-            }
+            // DO NOT put GPS coordinates in the URL! Securely stored in sessionStorage only.
+            params.delete("lat");
+            params.delete("lon");
+            params.delete("acc");
+
             const targetPath = window.location.pathname.startsWith("/forms/")
                 ? window.location.pathname
                 : "/forms/" + encodeURIComponent("{form_id}");
