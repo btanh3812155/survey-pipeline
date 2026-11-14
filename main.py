@@ -1994,54 +1994,53 @@ async def submit_webrtc_survey(
         if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")
     }
 
+    dev_record = {
+        "submission_id": submission_id,
+        "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_DEV_FALLBACK",
+        "status": status_str,
+        "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
+        "form_data": clean_form_data,
+        "weekly_incomes": w_incomes,
+        "total_gross_revenue": tot_gross_val,
+        "total_net_income": tot_net_val,
+        "total_trips": tot_trips_val,
+        "income_week_1_gross": w1_g,
+        "income_week_1_net": w1_n,
+        "income_week_1_trips": w1_t,
+        "income_week_2_gross": w2_g,
+        "income_week_2_net": w2_n,
+        "income_week_2_trips": w2_t,
+        "income_week_3_gross": w3_g,
+        "income_week_3_net": w3_n,
+        "income_week_3_trips": w3_t,
+        "income_week_4_gross": w4_g,
+        "income_week_4_net": w4_n,
+        "income_week_4_trips": w4_t,
+        "income_week_5_gross": w5_g,
+        "income_week_5_net": w5_n,
+        "income_week_5_trips": w5_t,
+        "driver_tag": driver_tag,
+        "driver_phone": persisted_phone,
+        "driver_name": persisted_name,
+        "collaborator_id": collab_param,
+        "vehicle_type": vehicle_type_val,
+        "car_model": car_model_val,
+        "gsm_duration": gsm_duration_val,
+        "gsm_contract_type": gsm_contract_type_val,
+        "daily_trips": daily_trips_val,
+        "ai_result": ai_res,
+        "image_dhash_int": compute_dhash_int(pil_im) if pil_im is not None else None,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "net_income": tot_net_val,
+        "trip_count": tot_trips_val,
+        "license_plate": license_plate or ai_res.get("detected_plate"),
+        "reason": reason_str,
+    }
     if is_test_mode:
-        dev_record = {
-            "submission_id": submission_id,
-            "mode": "TEST_DEV_MODE",
-            "status": status_str,
-            "consent_choice": str(answers.get("consent_choice") or "Tôi đồng ý"),
-            "form_data": clean_form_data,
-            "weekly_incomes": w_incomes,
-            "total_gross_revenue": tot_gross_val,
-            "total_net_income": tot_net_val,
-            "total_trips": tot_trips_val,
-            "income_week_1_gross": w1_g,
-            "income_week_1_net": w1_n,
-            "income_week_1_trips": w1_t,
-            "income_week_2_gross": w2_g,
-            "income_week_2_net": w2_n,
-            "income_week_2_trips": w2_t,
-            "income_week_3_gross": w3_g,
-            "income_week_3_net": w3_n,
-            "income_week_3_trips": w3_t,
-            "income_week_4_gross": w4_g,
-            "income_week_4_net": w4_n,
-            "income_week_4_trips": w4_t,
-            "income_week_5_gross": w5_g,
-            "income_week_5_net": w5_n,
-            "income_week_5_trips": w5_t,
-            "driver_tag": driver_tag,
-            "driver_phone": persisted_phone,
-            "driver_name": persisted_name,
-            "collaborator_id": collab_param,
-            "vehicle_type": vehicle_type_val,
-            "car_model": car_model_val,
-            "gsm_duration": gsm_duration_val,
-            "gsm_contract_type": gsm_contract_type_val,
-            "daily_trips": daily_trips_val,
-            "ai_result": ai_res,
-            "image_dhash_int": compute_dhash_int(pil_im) if pil_im is not None else None,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "net_income": tot_net_val,
-            "trip_count": tot_trips_val,
-            "license_plate": license_plate or ai_res.get("detected_plate"),
-            "reason": reason_str,
-            "ai_result": ai_res,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-        }
         append_dev_submission(dev_record)
         logger.info(f"[DEV TEST MODE] Saved #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
     elif db_pool:
+        db_success = False
         try:
             async with db_pool.connection() as conn:
                 cur_res = conn.cursor()
@@ -2226,27 +2225,39 @@ async def submit_webrtc_survey(
                         ),
                     )
                     await conn.commit()
+                    db_success = True
                 finally:
                     if hasattr(cur_res, "__aexit__"):
                         await cur_res.__aexit__(None, None, None)
         except Exception as e:
             logger.error(f"failed to persist survey to DB: {e}")
+        if not db_success:
+            append_dev_submission(dev_record)
+            logger.info(f"[DB FALLBACK] Persisted #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
+    else:
+        append_dev_submission(dev_record)
+        logger.info(f"[DEV FALLBACK] No DB pool; saved #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
 
     # 4. Telegram dispatch to admin group
     status_emoji = "⏳" if status_str == "MANUAL_REVIEW" else ("✅" if status_str == "APPROVED" else "❌")
     auto_emoji = "✅" if auto_verdict == "APPROVED" else "❌"
+    safe_driver_name = html.escape(str(driver_name or ""))
+    safe_driver_phone = html.escape(str(driver_phone or "N/A"))
+    safe_veh_type = html.escape(str(vehicle_type_val or "Xe điện GSM"))
+    safe_status = html.escape(str(status_str or "PENDING"))
+    safe_auto_reason = html.escape(str(auto_reason)) if auto_reason else "Đạt chuẩn"
     driver_info_line = (
-        f"• <b>Tài xế:</b> <b>{html.escape(driver_name)}</b> (<code>{driver_phone or 'N/A'}</code>)"
+        f"• <b>Tài xế:</b> <b>{safe_driver_name}</b> (<code>{safe_driver_phone}</code>)"
         if driver_name and driver_name not in ("Tài xế", "Tài xế Bí Mật", "N/A", "[SCRUBBED]")
-        else f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>"
+        else f"• <b>Số điện thoại:</b> <code>{safe_driver_phone}</code>"
     )
     verdict_text = (
         f"{status_emoji} <b>PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #{submission_id}</b>\n\n"
         f"{driver_info_line}\n"
-        f"• <b>Loại xe:</b> <code>{vehicle_type_val}</code>\n"
-        f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({html.escape(auto_reason) if auto_reason else 'Đạt chuẩn'})\n"
+        f"• <b>Loại xe:</b> <code>{safe_veh_type}</code>\n"
+        f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({safe_auto_reason})\n"
         f"• <b>Doanh thu:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
-        f"• <b>Trạng thái:</b> <code>{status_str}</code>"
+        f"• <b>Trạng thái:</b> <code>{safe_status}</code>"
     )
     admin_markup = {
         "inline_keyboard": [
@@ -2547,12 +2558,12 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         "message": f"Đã hủy yêu cầu kiểm tra lại cho phiếu #{sub_id} thành công!"
     })
 
-async def send_telegram_notification(chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None):
-    """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram."""
+async def send_telegram_notification(chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None) -> bool:
+    """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram with retries."""
     bot_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
     if not bot_token or bot_token == "mock_tg_token":
         logger.info(f"[MOCK TELEGRAM DISPATCH] to {chat_id}:\n{text}")
-        return
+        return True
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
@@ -2562,12 +2573,51 @@ async def send_telegram_notification(chat_id: Union[int, str], text: str, reply_
     }
     if reply_markup:
         payload["reply_markup"] = reply_markup
+
+    client = http_client
+    should_close = False
+    if client is None or getattr(client, "is_closed", False):
+        client = httpx.AsyncClient(timeout=15.0)
+        should_close = True
+
+    max_retries = 3
     try:
-        resp = await http_client.post(url, json=payload)
-        if resp.status_code == 429:
-            logger.warning("telegram 429 hit; backing off")
-    except Exception as e:
-        logger.error(f"failed to push telegram message: {e}")
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    return True
+                elif resp.status_code == 429:
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        wait_sec = float(retry_after) if retry_after else (1.5 * (attempt + 1))
+                    except (ValueError, TypeError):
+                        wait_sec = 1.5 * (attempt + 1)
+                    logger.warning(f"Telegram 429 rate limit for admin group {chat_id}; backing off {wait_sec:.1f}s (attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_sec)
+                    continue
+                elif resp.status_code == 400:
+                    logger.warning(f"Telegram 400 entity parse error ({resp.text}); falling back to plain text dispatch")
+                    fallback_payload = dict(payload)
+                    fallback_payload.pop("parse_mode", None)
+                    fallback_payload["text"] = re.sub(r"<[^>]+>", "", text)
+                    fb_resp = await client.post(url, json=fallback_payload)
+                    if fb_resp.status_code == 200:
+                        return True
+                    break
+                elif resp.status_code >= 500:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                else:
+                    logger.error(f"Telegram admin dispatch failed with HTTP {resp.status_code}: {resp.text}")
+                    break
+            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
+                logger.warning(f"Telegram network glitch ({net_err}); retrying {attempt+1}/{max_retries}...")
+                await asyncio.sleep(1.0 * (attempt + 1))
+        return False
+    finally:
+        if should_close:
+            await client.aclose()
 
 
 async def lookup_telegram_user_by_phone(phone: str) -> Optional[int]:
@@ -2595,7 +2645,9 @@ async def lookup_telegram_user_by_phone(phone: str) -> Optional[int]:
 
 
 async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> Optional[int]:
-    """Resolves collaborator identifier to telegram_user_id (supports ID, phone, or username)."""
+    """Resolves collaborator identifier to telegram_user_id (supports ID, phone, username, or CTV code)."""
+    if not collab_id:
+        return None
     collab_str = str(collab_id).strip()
     if collab_str.isdigit():
         val = int(collab_str)
@@ -2615,19 +2667,46 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
         return val
 
     clean_user = collab_str.lstrip("@")
+    short_code = extract_ctv_short_code(collab_str) if "extract_ctv_short_code" in globals() else collab_str.lower()
+
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT telegram_user_id FROM authorized_users WHERE (username = %s OR driver_phone = %s) AND is_active = TRUE LIMIT 1;",
-                        (clean_user, collab_str),
+                        """
+                        SELECT telegram_user_id FROM authorized_users 
+                        WHERE (
+                            username = %s 
+                            OR driver_phone = %s 
+                            OR username ILIKE %s 
+                            OR full_name ILIKE %s
+                            OR full_name ILIKE %s
+                        ) AND is_active = TRUE 
+                        LIMIT 1;
+                        """,
+                        (clean_user, collab_str, f"%{short_code}%", f"%{short_code}%", f"%{clean_user}%"),
                     )
                     row = await cur.fetchone()
                     if row and row[0]:
                         return int(row[0])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"DB lookup failed for collaborator {collab_id}: {e}")
+
+    for storage_path in (
+        os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
+        os.path.join(os.getcwd(), "data", "dev_submissions.json"),
+    ):
+        if os.path.exists(storage_path):
+            try:
+                with open(storage_path, "r", encoding="utf-8") as f:
+                    records = json.load(f)
+                for r in records:
+                    c_val = str(r.get("collaborator_id") or r.get("ctv_code") or "").strip()
+                    if (c_val == collab_str or c_val.lower() == short_code) and r.get("collaborator_tg_id"):
+                        return int(r["collaborator_tg_id"])
+            except Exception:
+                pass
     return None
 
 
@@ -2638,7 +2717,7 @@ async def send_telegram_direct_message(
     parse_mode: str = "HTML",
     reply_markup: Optional[dict] = None,
 ) -> bool:
-    """Dispatches a direct message using the specified bot token (Driver Bot or Admin Bot)."""
+    """Dispatches a direct message using the specified bot token with retries and entity fallback."""
     if not bot_token or bot_token == "mock_tg_token":
         logger.info(f"[MOCK DIRECT MESSAGE DISPATCH] to {chat_id}:\n{text}")
         return True
@@ -2652,12 +2731,50 @@ async def send_telegram_direct_message(
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
+    client = http_client
+    should_close = False
+    if client is None or getattr(client, "is_closed", False):
+        client = httpx.AsyncClient(timeout=15.0)
+        should_close = True
+
+    max_retries = 3
     try:
-        resp = await http_client.post(url, json=payload)
-        return resp.status_code == 200
-    except Exception as e:
-        logger.error(f"Failed to dispatch Telegram message to {chat_id}: {e}")
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    return True
+                elif resp.status_code == 429:
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        wait_sec = float(retry_after) if retry_after else (1.5 * (attempt + 1))
+                    except (ValueError, TypeError):
+                        wait_sec = 1.5 * (attempt + 1)
+                    logger.warning(f"Telegram 429 rate limit for direct chat {chat_id}; backing off {wait_sec:.1f}s (attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_sec)
+                    continue
+                elif resp.status_code == 400:
+                    logger.warning(f"Telegram 400 entity parse error in direct message ({resp.text}); falling back to plain text")
+                    fallback_payload = dict(payload)
+                    fallback_payload.pop("parse_mode", None)
+                    fallback_payload["text"] = re.sub(r"<[^>]+>", "", text)
+                    fb_resp = await client.post(url, json=fallback_payload)
+                    if fb_resp.status_code == 200:
+                        return True
+                    break
+                elif resp.status_code >= 500:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                else:
+                    logger.error(f"Telegram direct message to {chat_id} failed with HTTP {resp.status_code}: {resp.text}")
+                    break
+            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
+                logger.warning(f"Telegram direct message network glitch ({net_err}); retrying {attempt+1}/{max_retries}...")
+                await asyncio.sleep(1.0 * (attempt + 1))
         return False
+    finally:
+        if should_close:
+            await client.aclose()
 
 
 def render_driver_submission_verdict_message(
@@ -2668,7 +2785,7 @@ def render_driver_submission_verdict_message(
     gross_revenue: Optional[Union[str, int]] = None,
 ) -> Tuple[str, Optional[dict]]:
     """Renders user-friendly, supportive verdict notifications for drivers/collaborators."""
-    name_display = f" {driver_name}" if driver_name else ""
+    name_display = f" {html.escape(driver_name)}" if driver_name else ""
     if status_str == "APPROVED":
         rev_text = ""
         if gross_revenue and str(gross_revenue) not in ("0", ""):
@@ -2691,7 +2808,7 @@ def render_driver_submission_verdict_message(
             f"⚠️ <b>Thông báo kết quả khảo sát #{submission_id}:</b>\n\n"
             f"Chào bạn{name_display}, phiếu khảo sát của bạn chưa đạt yêu cầu.\n"
             f"• <b>Trạng thái:</b> <b>CHƯA ĐẠT ❌</b>\n"
-            f"• <b>Lý do:</b> <i>{reason_str or 'Ảnh chụp hoặc số liệu chưa hợp lệ'}</i>\n\n"
+            f"• <b>Lý do:</b> <i>{html.escape(str(reason_str)) if reason_str else 'Ảnh chụp hoặc số liệu chưa hợp lệ'}</i>\n\n"
             f"👉 <i>Bạn có thể bấm nút bên dưới để gửi lại ảnh chụp rõ nét hơn hoặc gửi yêu cầu phúc khảo:</i>"
         )
         reply_markup = {
@@ -2712,7 +2829,7 @@ def render_driver_submission_verdict_message(
             f"⏳ <b>Khảo sát #{submission_id} đang được kiểm tra:</b>\n\n"
             f"Chào bạn{name_display}, hồ sơ của bạn đang được chuyển tới Giám Sát Viên duyệt bổ sung.\n"
             f"• <b>Trạng thái:</b> <b>ĐANG XỬ LÝ ⏳</b>\n"
-            f"• <b>Ghi chú:</b> <i>{reason_str or 'Hệ thống đang đối soát dữ liệu'}</i>\n\n"
+            f"• <b>Ghi chú:</b> <i>{html.escape(str(reason_str)) if reason_str else 'Hệ thống đang đối soát dữ liệu'}</i>\n\n"
             f"Kết quả cuối cùng sẽ được thông báo trực tiếp tại đây ngay khi hoàn tất."
         )
         return text, None
@@ -2762,11 +2879,14 @@ async def dispatch_submission_telegram_notifications(
             status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
             clean_phone = driver_phone or "N/A"
             masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
+            safe_collab_name = html.escape(str(driver_name or "Tài xế"))
+            safe_collab_status = html.escape(str(status_str or "PENDING"))
+            safe_collab_reason = html.escape(str(reason_str or "Hợp lệ"))
             collab_msg = (
                 f"📋 <b>Cập Nhật Khảo Sát #{submission_id}</b>\n\n"
-                f"• <b>Đối tác / Khách hàng:</b> {driver_name or 'Tài xế'} (<code>{masked_phone}</code>)\n"
-                f"• <b>Trạng thái:</b> {status_emoji} <b>{status_str}</b>\n"
-                f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}\n\n"
+                f"• <b>Đối tác / Khách hàng:</b> {safe_collab_name} (<code>{masked_phone}</code>)\n"
+                f"• <b>Trạng thái:</b> {status_emoji} <b>{safe_collab_status}</b>\n"
+                f"• <b>Ghi chú:</b> {safe_collab_reason}\n\n"
                 f"<i>Thông báo tự động dành cho Cộng tác viên phụ trách.</i>"
             )
             await send_telegram_direct_message(

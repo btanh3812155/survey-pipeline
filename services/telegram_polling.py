@@ -380,11 +380,36 @@ class TelegramPollingRunner:
                 return
 
             await self.execute_submission_review(chat_id, sub_id)
+        elif cmd in ("/start", "/help"):
+            help_msg = (
+                "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
+                "Chào mừng bạn đến với hệ thống kiểm định khảo sát Trust Bridge!\n\n"
+                "Lệnh điều hành:\n"
+                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu khảo sát để xét duyệt\n"
+                "• <code>/stats</code> - Xem thống kê tiến độ duyệt phiếu\n"
+                "• <code>/close</code> - Kết thúc phiên chat hỗ trợ trực tiếp\n\n"
+                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
+            )
+            await self.send_message(chat_id, help_msg)
+        elif cmd in ("/forms", "/form"):
+            lines = ["📝 <b>Biểu Mẫu Khảo Sát Đang Mở:</b>\n"]
+            try:
+                from main import FORM_REGISTRY
+                if FORM_REGISTRY:
+                    for fid, schema in FORM_REGISTRY.items():
+                        title = getattr(schema, "title", fid)
+                        lines.append(f"• <b>{title}</b>:\n  🔗 https://survey.trustbridgevn.com/forms/{fid}")
+                else:
+                    lines.append("• <b>Khảo Sát Thu Nhập (income_survey)</b>:\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
+            except Exception:
+                lines.append("• <b>Khảo Sát Thu Nhập (income_survey)</b>:\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
+            await self.send_message(chat_id, "\n".join(lines))
         else:
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
+                "Chào mừng bạn đến với hệ thống kiểm định khảo sát Trust Bridge!\n\n"
                 "Lệnh điều hành:\n"
-                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu để xét duyệt\n\n"
+                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu khảo sát để xét duyệt\n\n"
                 "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
@@ -469,6 +494,7 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id, f"Đã duyệt #{sub_id}")
             if msg_id:
                 await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã DUYỆT (APPROVED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
+            await self._notify_parties_of_decision(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
 
         elif data.startswith("admin_reject:"):
             sub_id = data.split(":", 1)[1]
@@ -486,6 +512,7 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id, f"Đã từ chối #{sub_id}")
             if msg_id:
                 await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã TỪ CHỐI (REJECTED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
+            await self._notify_parties_of_decision(sub_id, "REJECTED", reason="Quản trị viên từ chối thủ công")
 
         elif data == "resolved_notice":
             await self.answer_callback_query(cq_id, "Phiếu này đã được xử lý hoàn tất và bị khóa, không nhận phản hồi thêm.", show_alert=True)
@@ -654,6 +681,36 @@ class TelegramPollingRunner:
                 except Exception as e:
                     logger.error(f"Failed to update submission status in {fpath}: {e}")
         return True, new_status
+    async def _notify_parties_of_decision(
+        self, sub_id: str, new_status: str, reason: str = ""
+    ) -> None:
+        """Dispatches decision updates directly to Collaborator (CTV) and Driver."""
+        clean_sub_id = sub_id.strip().lstrip("#")
+        dossier = await query_submission_dossier(clean_sub_id, db_pool=self.db_pool)
+        if not dossier or "error" in dossier:
+            logger.warning(f"Could not load dossier for #{clean_sub_id} to dispatch decision notification.")
+            return
+
+        driver_phone = dossier.get("driver_phone")
+        driver_name = dossier.get("driver_name")
+        collab_id = dossier.get("collaborator_id") or dossier.get("ctv_code")
+        gross_rev = dossier.get("gross_income") or 0
+        effective_reason = reason or dossier.get("rejection_reason") or ""
+
+        try:
+            from main import dispatch_submission_telegram_notifications
+            await dispatch_submission_telegram_notifications(
+                submission_id=clean_sub_id,
+                status_str=new_status,
+                driver_phone=driver_phone,
+                driver_name=driver_name,
+                collaborator_id=collab_id,
+                reason_str=effective_reason,
+                gross_revenue=gross_rev,
+            )
+            logger.info(f"Dispatched decision verdict for #{clean_sub_id} to CTV ({collab_id}) and driver ({driver_phone})")
+        except Exception as e:
+            logger.error(f"Failed to dispatch decision notification for #{clean_sub_id}: {e}")
     async def close_active_support(
         self,
         admin_chat_id: int,

@@ -94,3 +94,97 @@ def test_submit_webrtc_schedules_party_notifications(monkeypatch):
         kwargs = mock_dispatch.await_args.kwargs
         assert kwargs["driver_phone"] == "0988777888"
         assert kwargs["collaborator_id"] == "ctv_01"
+
+@pytest.mark.asyncio
+async def test_send_telegram_notification_retries_on_429():
+    """Verifies that 429 rate limit is retried instead of dropping the submission notification."""
+    from main import send_telegram_notification
+    from unittest.mock import MagicMock
+    import httpx
+
+    resp_429 = MagicMock()
+    resp_429.status_code = 429
+    resp_429.headers = {"Retry-After": "0.01"}
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post.side_effect = [resp_429, resp_200]
+
+    with patch("main.http_client", mock_client), \
+         patch("main.settings.TELEGRAM_ADMIN_BOT_TOKEN", "real_token_123"):
+        success = await send_telegram_notification(chat_id="-100123", text="<b>Thông báo test</b>")
+        assert success is True
+        assert mock_client.post.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_notification_fallback_on_400():
+    """Verifies that 400 entity parse error strips HTML tags and falls back to plain text."""
+    from main import send_telegram_notification
+    from unittest.mock import MagicMock
+
+    resp_400 = MagicMock()
+    resp_400.status_code = 400
+    resp_400.text = "Bad Request: can't parse entities"
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.post.side_effect = [resp_400, resp_200]
+
+    with patch("main.http_client", mock_client), \
+         patch("main.settings.TELEGRAM_ADMIN_BOT_TOKEN", "real_token_123"):
+        success = await send_telegram_notification(chat_id="-100123", text="<b>Malformed <tag></b>")
+        assert success is True
+        assert mock_client.post.await_count == 2
+        # Second call should have fallen back without parse_mode and with tags stripped
+        fb_call = mock_client.post.await_args_list[1]
+        assert "parse_mode" not in fb_call.kwargs["json"]
+        assert "<" not in fb_call.kwargs["json"]["text"]
+
+
+@pytest.mark.asyncio
+async def test_admin_decision_notifies_ctv_and_driver():
+    """Verifies that admin approve/reject callbacks in TelegramPollingRunner send responses back to CTV and driver."""
+    from services.telegram_polling import TelegramPollingRunner
+
+    runner = TelegramPollingRunner(bot_token="mock_admin_token", role="admin")
+
+    mock_dossier = {
+        "submission_id": "VN-CTVTEST1",
+        "driver_phone": "0988999888",
+        "driver_name": "Tài xế CTV",
+        "collaborator_id": "ctv001",
+        "ctv_code": "CTV001_Dũng_HN",
+        "gross_income": 900000,
+        "status": "MANUAL_REVIEW",
+    }
+
+    mock_dispatch = AsyncMock()
+    with patch("services.telegram_polling.query_submission_dossier", AsyncMock(return_value=mock_dossier)), \
+         patch.object(runner, "_update_submission_status", AsyncMock(return_value=(True, "APPROVED"))), \
+         patch.object(runner, "send_message", AsyncMock(return_value=True)), \
+         patch.object(runner, "answer_callback_query", AsyncMock(return_value=True)), \
+         patch.object(runner, "edit_message_reply_markup", AsyncMock(return_value=True)), \
+         patch("main.dispatch_submission_telegram_notifications", mock_dispatch):
+
+        cq = {
+            "id": "cq_123",
+            "data": "admin_approve:VN-CTVTEST1",
+            "message": {"message_id": 999, "chat": {"id": -100555}},
+            "from": {"id": 111, "first_name": "Admin"},
+        }
+        await runner.handle_callback_query(cq)
+
+        # Must dispatch response back to CTV & driver
+        mock_dispatch.assert_awaited_once()
+        kwargs = mock_dispatch.await_args.kwargs
+        assert kwargs["submission_id"] == "VN-CTVTEST1"
+        assert kwargs["status_str"] == "APPROVED"
+        assert kwargs["collaborator_id"] in ("ctv001", "CTV001_Dũng_HN")
+        assert kwargs["driver_phone"] == "0988999888"

@@ -104,28 +104,33 @@ async def query_submission_dossier(
     Queries complete forensic, vehicle, financial, and legal audit data for a submission from PostgreSQL & Redis.
     """
     if not db_pool:
-        dev_storage = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
-        if os.path.exists(dev_storage):
-            try:
-                with open(dev_storage, "r", encoding="utf-8") as df:
-                    dev_recs = json.load(df)
-                for r in dev_recs:
-                    if r.get("submission_id") == submission_id:
-                        return {
-                            "submission_id": submission_id,
-                            "status": r.get("status", "MANUAL_REVIEW"),
-                            "rejection_reason": r.get("reason"),
-                            "driver_name": r.get("driver_name", "Tài xế"),
-                            "driver_phone": r.get("driver_phone", "N/A"),
-                            "created_at": r.get("submitted_at", "Vừa xong"),
-                            "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
-                            "gross_income": r.get("total_gross_revenue", 0),
-                            "net_income": r.get("total_net_income", 0),
-                            "trips_count": r.get("total_trips", 0),
-                            "photo_paths": [],
-                        }
-            except Exception:
-                pass
+        for storage_path in (
+            os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
+            os.path.join(os.getcwd(), "data", "dev_submissions.json"),
+        ):
+            if os.path.exists(storage_path):
+                try:
+                    with open(storage_path, "r", encoding="utf-8") as df:
+                        dev_recs = json.load(df)
+                    for r in dev_recs:
+                        if r.get("submission_id") == submission_id:
+                            return {
+                                "submission_id": submission_id,
+                                "status": r.get("status", "MANUAL_REVIEW"),
+                                "rejection_reason": r.get("reason"),
+                                "driver_name": r.get("driver_name", "Tài xế"),
+                                "driver_phone": r.get("driver_phone", "N/A"),
+                                "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
+                                "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
+                                "created_at": r.get("submitted_at", "Vừa xong"),
+                                "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+                                "gross_income": r.get("total_gross_revenue", 0),
+                                "net_income": r.get("total_net_income", 0),
+                                "trips_count": r.get("total_trips", 0),
+                                "photo_paths": [],
+                            }
+                except Exception:
+                    pass
         return {
             "submission_id": submission_id,
             "status": "MANUAL_REVIEW",
@@ -169,7 +174,8 @@ async def query_submission_dossier(
                        created_at, moderated_by_admin_id, moderated_at,
                        total_gross_revenue, total_net_income, total_trips,
                        vehicle_type, car_model, form_data,
-                       income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross
+                       income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross,
+                       collaborator_id, ctv_code
                 FROM survey_submissions
                 WHERE submission_id = %s;
             """,
@@ -177,30 +183,35 @@ async def query_submission_dossier(
             )
             sub = await cur.fetchone()
             if not sub:
-                dev_storage = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
-                if os.path.exists(dev_storage):
-                    try:
-                        with open(dev_storage, "r", encoding="utf-8") as df:
-                            dev_recs = json.load(df)
-                        for r in dev_recs:
-                            if r.get("submission_id") == submission_id:
-                                return {
-                                    "submission_id": submission_id,
-                                    "status": r.get("status", "MANUAL_REVIEW"),
-                                    "rejection_reason": r.get("reason"),
-                                    "driver_name": r.get("driver_name", "Tài xế"),
-                                    "driver_phone": r.get("driver_phone", "N/A"),
-                                    "created_at": r.get("submitted_at", "Vừa xong"),
-                                    "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
-                                    "car_model": r.get("car_model", ""),
-                                    "gross_income": r.get("total_gross_revenue", 0),
-                                    "net_income": r.get("total_net_income", 0),
-                                    "trips_count": r.get("total_trips", 0),
-                                    "weekly_incomes": r.get("weekly_incomes", {}),
-                                    "photo_paths": [],
-                                }
-                    except Exception:
-                        pass
+                for storage_path in (
+                    os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
+                    os.path.join(os.getcwd(), "data", "dev_submissions.json"),
+                ):
+                    if os.path.exists(storage_path):
+                        try:
+                            with open(storage_path, "r", encoding="utf-8") as df:
+                                dev_recs = json.load(df)
+                            for r in dev_recs:
+                                if r.get("submission_id") == submission_id:
+                                    return {
+                                        "submission_id": submission_id,
+                                        "status": r.get("status", "MANUAL_REVIEW"),
+                                        "rejection_reason": r.get("reason"),
+                                        "driver_name": r.get("driver_name", "Tài xế"),
+                                        "driver_phone": r.get("driver_phone", "N/A"),
+                                        "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
+                                        "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
+                                        "created_at": r.get("submitted_at", "Vừa xong"),
+                                        "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+                                        "car_model": r.get("car_model", ""),
+                                        "gross_income": r.get("total_gross_revenue", 0),
+                                        "net_income": r.get("total_net_income", 0),
+                                        "trips_count": r.get("total_trips", 0),
+                                        "weekly_incomes": r.get("weekly_incomes", {}),
+                                        "photo_paths": [],
+                                    }
+                        except Exception:
+                            pass
                 return {"error": f"Không tìm thấy phiếu #{submission_id} trong cơ sở dữ liệu."}
 
             phone = sub[1] or "Chưa có SĐT"
@@ -274,6 +285,8 @@ async def query_submission_dossier(
                 "trips_count": tot_trips,
                 "weekly_incomes": weekly_incomes,
                 "photo_paths": photo_paths,
+                "collaborator_id": sub[28] if len(sub) > 28 and sub[28] else (form_data.get("collaborator_id") if isinstance(form_data, dict) else None),
+                "ctv_code": sub[29] if len(sub) > 29 and sub[29] else (form_data.get("ctv_code") if isinstance(form_data, dict) else None),
             }
 
 
