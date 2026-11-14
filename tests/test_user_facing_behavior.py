@@ -330,3 +330,197 @@ async def test_telegram_admin_notification_license_plate_stripped(monkeypatch):
     assert "29E-999.88" not in admin_msg["text"]
     assert "Biển số xe" not in admin_msg["text"]
     assert admin_msg["reply_markup"] is not None
+# ==============================================================================
+# 5. Simulated User Actions & Edge-Case Input Checks
+# ==============================================================================
+
+def test_simulated_user_floating_reset_button_clearing():
+    """Simulates user filling form and clicking floating reset: all state, inputs, and drafts are purged."""
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    # 1. Reset button exists as floating overlay with prompt handler
+    assert "btn-floating-reset" in html
+    assert "promptResetForm()" in html
+    # 2. Reset execution purges localStorage draft and deep-resets camera slots
+    assert "executeResetForm(" in html
+    assert "localStorage.removeItem(storageKey)" in html
+    assert "delete answers[k]" in html
+    assert "selectCameraSlot(q.id, 0)" in html
+
+
+@pytest.mark.asyncio
+async def test_simulated_user_bypass_checkbox_toggle_not_sticky(monkeypatch):
+    """
+    Simulates user toggling 'Bỏ qua kiểm tra ảnh':
+    1. Submitting with bypass_img_check=true approves test mode.
+    2. Submitting with bypass_img_check=false immediately enforces real checks (not sticky!).
+    """
+    monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    client = TestClient(app)
+
+    # Submission 1: Checked bypass -> passes
+    resp_bypassed = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "driver_phone": "0911222333",
+            "is_test_mode": "true",
+            "bypass_img_check": "true",
+            "consent_choice": "Tôi đồng ý",
+            "signature_png": "data:image/png;base64,mock",
+            "vehicle_type": "Ô tô",
+            "car_model": "VF 5 Plus",
+            "gsm_duration": "Từ 6 – 12 tháng",
+            "gsm_contract_type": "Xe Taxi xanh GSM",
+            "daily_trips": "18",
+            "monthly_income_range": "12 – 20 triệu VNĐ",
+            "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+        },
+    )
+    assert resp_bypassed.status_code == 200
+    assert resp_bypassed.json().get("status") == "APPROVED"
+
+    # Submission 2: User explicitly unchecks bypass -> must NOT remain bypassed!
+    resp_unbypassed = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={
+            "driver_phone": "0911222333",
+            "is_test_mode": "true",
+            "bypass_img_check": "false",
+            "consent_choice": "Tôi đồng ý",
+            "signature_png": "data:image/png;base64,mock",
+            "vehicle_type": "Ô tô",
+            "car_model": "VF 5 Plus",
+            "gsm_duration": "Từ 6 – 12 tháng",
+            "gsm_contract_type": "Xe Taxi xanh GSM",
+            "daily_trips": "18",
+            "monthly_income_range": "12 – 20 triệu VNĐ",
+            "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+        },
+    )
+    assert resp_unbypassed.status_code == 200
+    # Must reject because photos were not attached!
+    assert resp_unbypassed.json().get("status") == "REJECTED"
+
+
+def test_simulated_user_multi_image_upload_stays_on_slot_without_camera():
+    """
+    Simulates user choosing file from gallery:
+    Verifies that slot selection keeps camera off and stays on slot (no auto-jump, no camera turn-on).
+    """
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    assert "selectCameraSlot(qid, targetIdx, false)" in html
+    assert "shouldActivateCamera = false" in html
+
+
+def test_simulated_user_ctv_draft_isolation_client_only():
+    """Simulates draft persistence: verifies draft endpoint is client_only to prevent server-side phone leaks."""
+    client = TestClient(app)
+    resp = client.get("/api/v1/forms/draft/ref-ctv004")
+    assert resp.status_code == 200
+    assert resp.json().get("status") == "client_only"
+
+    # Saving drafts also returns client_only
+    resp_post = client.post(
+        "/api/v1/forms/draft",
+        json={"ctv_slug": "ref-ctv004", "draft_data": {"driver_phone": "0580800056"}},
+    )
+    assert resp_post.status_code == 200
+    assert resp_post.json().get("status") == "client_only"
+
+
+@pytest.mark.asyncio
+async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
+    """Simulates admin swiping right on a Telegram notification to reply /check: extracts sub_id seamlessly."""
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    import os, json
+    dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+    os.makedirs(os.path.dirname(dev_storage_file), exist_ok=True)
+    with open(dev_storage_file, "w", encoding="utf-8") as f:
+        json.dump([{"submission_id": "VN-SWIPE-99", "status": "MANUAL_REVIEW"}], f)
+
+    sent_msgs = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+
+    # Admin sends /check replying to a message containing the submission ID
+    msg_reply = {
+        "text": "/check",
+        "reply_to_message": {
+            "text": "⏳ PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #VN-SWIPE-99\n• Số điện thoại: 0988111222\n• Doanh thu: 15,000,000 VNĐ"
+        }
+    }
+    await runner.handle_command(123456, "/check", reply_to_message=msg_reply["reply_to_message"])
+
+    assert len(sent_msgs) >= 1
+    resp = sent_msgs[-1]
+    assert "VN-SWIPE-99" in resp["text"]
+    assert resp["reply_markup"] is not None
+
+
+@pytest.mark.asyncio
+async def test_simulated_admin_menu_check_alone_prefills_input_box():
+    """Simulates admin clicking /check alone from bot menu: pre-fills /check with switch_inline_query."""
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    sent_msgs = []
+    async def mock_send(chat_id, text, reply_markup=None):
+        sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+    runner.send_message = mock_send
+
+    # Bare /check without replied message
+    await runner.handle_command(123456, "/check", reply_to_message=None)
+
+    assert len(sent_msgs) >= 1
+    resp = sent_msgs[-1]
+    assert resp["reply_markup"] is not None
+    btns = resp["reply_markup"]["inline_keyboard"]
+    assert any(b.get("switch_inline_query_current_chat") == "/check " for row in btns for b in row)
+
+
+@pytest.mark.asyncio
+async def test_simulated_admin_decision_cancel_flow():
+    """Simulates admin clicking Duyệt then clicking HỦY BỎ: restores original buttons without touching status."""
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+
+    import os, json
+    dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+    os.makedirs(os.path.dirname(dev_storage_file), exist_ok=True)
+    with open(dev_storage_file, "w", encoding="utf-8") as f:
+        json.dump([{"submission_id": "VN-CANCEL-01", "status": "MANUAL_REVIEW"}], f)
+
+    edited_markups = []
+    async def mock_edit(chat_id, msg_id, reply_markup=None):
+        edited_markups.append(reply_markup)
+        return True
+    runner.edit_message_reply_markup = mock_edit
+
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    # 1. Click Duyệt -> prompts confirmation
+    await runner.handle_callback_query({
+        "id": "cq_1",
+        "data": "admin_req_approve:VN-CANCEL-01",
+        "message": {"message_id": 200, "chat": {"id": 123456}},
+        "from": {"id": 777, "first_name": "Admin1"},
+    })
+    assert len(edited_markups) == 1
+
+    # 2. Click HỦY BỎ -> restores original decision buttons
+    await runner.handle_callback_query({
+        "id": "cq_2",
+        "data": "admin_cancel_decision:VN-CANCEL-01",
+        "message": {"message_id": 200, "chat": {"id": 123456}},
+        "from": {"id": 777, "first_name": "Admin1"},
+    })
+    assert len(edited_markups) == 2
+    restored_btns = edited_markups[1]["inline_keyboard"]
+    assert any("admin_req_approve:VN-CANCEL-01" in b.get("callback_data", "") for row in restored_btns for b in row)
+
+    # 3. Status in dev storage is still MANUAL_REVIEW!
+    with open(dev_storage_file, "r", encoding="utf-8") as f:
+        recs = json.load(f)
+    assert recs[0]["status"] == "MANUAL_REVIEW"

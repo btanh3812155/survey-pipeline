@@ -393,6 +393,7 @@ async def submit_webrtc_survey(
         answers["driver_name"] = driver_name
     if "driver_signature" not in answers and signature_png:
         answers["driver_signature"] = signature_png
+    is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
     if images_list:
         if has_indexed_photos or len(images_list) > 1:
             answers[target_question_id] = [f"uploaded_{i}" for i in range(len(images_list))]
@@ -402,6 +403,9 @@ async def submit_webrtc_survey(
                 answers[target_question_id] = [f"uploaded_{i}" for i in range(target_q.min_images)]
             else:
                 answers[target_question_id] = "uploaded"
+    elif is_bypassed:
+        slot_cnt = len(target_q.image_slots) if (target_q and target_q.image_slots) else (target_q.min_images or 7 if target_q else 7)
+        answers[target_question_id] = [f"bypassed_slot_{i}" for i in range(slot_cnt)]
     elif target_question_id not in answers or not answers[target_question_id]:
         answers[target_question_id] = None
     if "camera_receipt" not in answers and target_question_id != "camera_receipt":
