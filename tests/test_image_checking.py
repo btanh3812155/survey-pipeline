@@ -234,6 +234,67 @@ async def test_monthly_income_upload_rejected_in_weekly_slot(monkeypatch):
     data = resp.json()
     assert data.get("status") == "REJECTED"
     assert "theo THÁNG" in data.get("reason") and "theo TUẦN" in data.get("reason")
+def test_temporal_validation_rejects_daily_statement_in_weekly_slot():
+    """Submitting a 1-day daily statement into a weekly slot is strictly rejected."""
+    from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
+
+    # Case A: Active tab is explicitly DAILY
+    hdr_daily_tab = PeriodHeaderMetadata(
+        active_tab=TimeGranularity.DAILY,
+        period_raw_text="Hôm nay (15/10/2026)",
+    )
+    ok_a, err_a = validate_extracted_weekly_period(hdr_daily_tab, expected_week_num=3)
+    assert ok_a is False
+    assert "báo cáo thu nhập theo NGÀY" in err_a
+
+    # Case B: Date range evaluates to 1 single day (15/10 - 15/10)
+    hdr_single_day = PeriodHeaderMetadata(
+        active_tab=TimeGranularity.UNKNOWN,
+        period_raw_text="15/10/2026 - 15/10/2026",
+    )
+    ok_b, err_b = validate_extracted_weekly_period(hdr_single_day, expected_week_num=3)
+    assert ok_b is False
+    assert "báo cáo thu nhập của 1 ngày" in err_b
+
+
+def test_temporal_validation_rejects_swapped_week_uploaded_to_wrong_slot():
+    """Uploading Week 1 statement into Week 4 slot is detected and rejected with swapped week notice."""
+    from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
+
+    # Driver uploaded Tuần 1 (28/09 - 04/10) into Tuần 4 slot
+    hdr_w1 = PeriodHeaderMetadata(
+        active_tab=TimeGranularity.WEEKLY,
+        period_raw_text="28/09/2026 - 04/10/2026",
+    )
+    ok, err = validate_extracted_weekly_period(hdr_w1, expected_week_num=4)
+    assert ok is False
+    assert "nộp nhầm ảnh của Tuần 1 (28/09 - 04/10) vào ô Tuần 4" in err
+
+
+def test_temporal_validation_accepts_valid_october_week_ranges():
+    """Correct weekly statements matching their assigned slot calendar window pass cleanly."""
+    from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
+
+    # Week 1: 28/09 - 04/10
+    ok1, _ = validate_extracted_weekly_period(
+        PeriodHeaderMetadata(active_tab=TimeGranularity.WEEKLY, period_raw_text="28/09 - 04/10/2026"),
+        expected_week_num=1,
+    )
+    assert ok1 is True
+
+    # Week 2: 05/10 - 11/10
+    ok2, _ = validate_extracted_weekly_period(
+        PeriodHeaderMetadata(active_tab=TimeGranularity.WEEKLY, period_raw_text="05/10 - 11/10/2026"),
+        expected_week_num=2,
+    )
+    assert ok2 is True
+
+    # Week 5: 26/10 - 01/11 (cross-month boundary)
+    ok5, _ = validate_extracted_weekly_period(
+        PeriodHeaderMetadata(active_tab=TimeGranularity.WEEKLY, period_raw_text="26/10 - 01/11/2026"),
+        expected_week_num=5,
+    )
+    assert ok5 is True
 
 
 # ==============================================================================

@@ -33,6 +33,7 @@ from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.duplicate_detector import compute_image_dhash_str, compute_dinov2_embedding, check_intra_submission_duplicates, check_inter_submission_duplicates
 from services.vehicle_tracker import VehiclePersistenceTracker, normalize_license_plate
 from services.income_sanitizer import analyze_driver_income
+from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
 from services.action_checklist import init_action_checklist, dispatch_action_checklist
 from services.storage_r2 import r2_client
 from services.dynamic_form_html import render_dynamic_form_html, render_ctv_selector_landing_html
@@ -671,19 +672,20 @@ async def submit_webrtc_survey(
                             tot_net += n_val
                             tot_trips += t_val
 
-                            # Guard against uploading monthly income report into weekly slot
-                            p_type = str(ocr_w.get("period_type", "")).upper()
-                            p_str = str(ocr_w.get("period", "")).lower()
-                            is_wk = ocr_w.get("is_weekly_report")
-                            if p_type == "MONTHLY" or (is_wk is False and ("tháng" in p_str or "month" in p_str)):
+                            # Guard against invalid timeframe (Daily, Monthly, Swapped Week, Out-of-Window)
+                            p_raw = ocr_w.get("period") or ocr_w.get("period_raw_text") or ""
+                            p_gran = ocr_w.get("period_granularity") or (TimeGranularity.MONTHLY if ("tháng" in str(p_raw).lower() or ocr_w.get("period_type") == "MONTHLY") else TimeGranularity.UNKNOWN)
+                            hdr = PeriodHeaderMetadata(
+                                detected_app=ocr_w.get("detected_app", "XANH_SM"),
+                                active_tab=p_gran,
+                                period_raw_text=str(p_raw),
+                            )
+                            period_ok, period_err = validate_extracted_weekly_period(hdr, expected_week_num=w_num)
+                            if not period_ok:
                                 s_num = matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else w_num + 2
                                 monthly_violation = {
                                     "failed_slot": matched_income_indices[w_i] if w_i < len(matched_income_indices) else w_num,
-                                    "reason": (
-                                        f"Ảnh {s_num} (Tuần {w_num}): Phát hiện ảnh chụp báo cáo doanh thu theo THÁNG "
-                                        f"(kỳ ghi nhận: '{ocr_w.get('period', 'Tháng')}') thay vì theo TUẦN. "
-                                        f"Vui lòng chụp đúng màn hình thu nhập chi tiết từng tuần!"
-                                    ),
+                                    "reason": f"Ảnh {s_num}: {period_err}",
                                     "ocr_data": ocr_w,
                                 }
                                 break
