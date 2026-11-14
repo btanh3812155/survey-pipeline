@@ -259,9 +259,8 @@ async def test_simulated_one_admin_one_convo_cap():
 
 
 # ==============================================================================
-# 4. User-Facing Information Display Checks
+# 4. Exposed & Tamperable Information Protection Checks
 # ==============================================================================
-
 def test_user_facing_driver_name_suppression_when_placeholder():
     """When driver name is missing or placeholder ('Tài xế'), dossier displays 'Số điện thoại:' directly."""
     # Placeholder
@@ -330,6 +329,37 @@ async def test_telegram_admin_notification_license_plate_stripped(monkeypatch):
     assert "29E-999.88" not in admin_msg["text"]
     assert "Biển số xe" not in admin_msg["text"]
     assert admin_msg["reply_markup"] is not None
+def test_tamperable_and_exposed_info_protection_in_urls_and_drafts():
+    """
+    Generalized protection against exposed or tamperable information across the user-facing surface:
+    1. Geolocation Tampering in URLs: Coordinates (lat, lon, acc) must NEVER be exposed or
+       passed via URL query parameters, preventing trivial client-side geofence spoofing.
+    2. Draft Keystroke Leakage: Server drafts are client-only (localStorage) to prevent
+       driver phone numbers or inputs leaking to subsequent drivers opening shared referral links.
+    3. Secret Exposure: Client HTML templates must never leak backend secrets or tokens.
+    """
+    from services.dynamic_form_html import render_ctv_selector_landing_html
+    ctv_html = render_ctv_selector_landing_html(DEFAULT_TRUST_BRIDGE_SCHEMA, ["CTV001_Dũng_HN"])
+
+    # 1. URL Query String Tampering Prevention:
+    # CTV selection must delete any spoofed lat/lon/acc params and store coordinates in storage only!
+    assert 'params.delete("lat")' in ctv_html
+    assert 'params.delete("lon")' in ctv_html
+    assert 'params.delete("acc")' in ctv_html
+    assert 'params.set("lat"' not in ctv_html
+    assert 'params.set("lon"' not in ctv_html
+
+    # 2. Draft Storage Isolation:
+    client = TestClient(app)
+    draft_resp = client.get("/api/v1/forms/draft/ref-ctv004")
+    assert draft_resp.status_code == 200
+    assert draft_resp.json().get("status") == "client_only"
+
+    # 3. Secret Exposure:
+    form_html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    assert "postgresql://" not in form_html
+    assert "mock_webhook_secret" not in form_html
+    assert "service_account" not in form_html
 # ==============================================================================
 # 5. Simulated User Actions & Edge-Case Input Checks
 # ==============================================================================

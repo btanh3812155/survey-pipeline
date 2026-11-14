@@ -86,13 +86,7 @@ def test_ctv_landing_page_layout_has_all_needed_and_only_needed_components():
     assert "</html>" in html
     assert html.count("</script>") == 1
     assert html.count("<script>") == 1
-    # 6. Security Invariant (1a): GPS coordinates are NEVER attached to URL query params!
-    assert 'params.delete("lat")' in html
-    assert 'params.delete("lon")' in html
-    assert 'params.delete("acc")' in html
-    assert 'params.set("lat"' not in html
-
-    # 7. Gating Invariant (1k): Button requires BOTH CTV selection AND confirmed location!
+    # 6. Gating Invariant (1k): Button requires BOTH CTV selection AND confirmed location!
     assert "Boolean(ctv && gpsDone)" in html
 
 
