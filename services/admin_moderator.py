@@ -1,7 +1,10 @@
+import os
+import glob
+import json
 import html
 import logging
 import httpx
-from typing import Optional
+from typing import Optional, List, Dict, Any, Union
 from config import settings
 logger = logging.getLogger("admin_moderator")
 
@@ -101,15 +104,35 @@ async def query_submission_dossier(
     Queries complete forensic, vehicle, financial, and legal audit data for a submission from PostgreSQL & Redis.
     """
     if not db_pool:
-        # mock dossier for testing
+        dev_storage = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+        if os.path.exists(dev_storage):
+            try:
+                with open(dev_storage, "r", encoding="utf-8") as df:
+                    dev_recs = json.load(df)
+                for r in dev_recs:
+                    if r.get("submission_id") == submission_id:
+                        return {
+                            "submission_id": submission_id,
+                            "status": r.get("status", "MANUAL_REVIEW"),
+                            "rejection_reason": r.get("reason"),
+                            "driver_name": r.get("driver_name", "Tài xế"),
+                            "driver_phone": r.get("driver_phone", "N/A"),
+                            "created_at": r.get("submitted_at", "Vừa xong"),
+                            "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+                            "gross_income": r.get("total_gross_revenue", 0),
+                            "net_income": r.get("total_net_income", 0),
+                            "trips_count": r.get("total_trips", 0),
+                            "photo_paths": [],
+                        }
+            except Exception:
+                pass
         return {
             "submission_id": submission_id,
-            "status": "REJECTED",
-            "rejection_reason": "Ảnh đồng hồ công-tơ-mét bị mờ chói đèn (Laplacian: 42.1 / 100)",
+            "status": "MANUAL_REVIEW",
+            "rejection_reason": "Chờ ban quản trị kiểm tra",
             "driver_name": "Nguyễn Văn A",
             "driver_phone": "0988123456",
             "created_at": "01/11/2026 14:20:10",
-            "receipt_serial_no": "VN-9921",
             "store_tax_id": "0100109106",
             "registered_plate": "29E-123.45",
             "detected_plate": "29E-123.45",
@@ -137,13 +160,16 @@ async def query_submission_dossier(
 
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
-            # 1. query submission record
+            # 1. Query submission record with all real survey columns
             await cur.execute(
                 """
                 SELECT submission_id, driver_phone, driver_name, receipt_serial_no, store_tax_id,
                        status, rejection_reason, raw_extracted_facts, audit_seal_hash,
                        gps_latitude, gps_longitude, gps_accuracy_meters, signature_r2_url, image_r2_url,
-                       created_at, moderated_by_admin_id, moderated_at
+                       created_at, moderated_by_admin_id, moderated_at,
+                       total_gross_revenue, total_net_income, total_trips,
+                       vehicle_type, car_model, form_data,
+                       income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross
                 FROM survey_submissions
                 WHERE submission_id = %s;
             """,
@@ -151,40 +177,87 @@ async def query_submission_dossier(
             )
             sub = await cur.fetchone()
             if not sub:
+                dev_storage = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+                if os.path.exists(dev_storage):
+                    try:
+                        with open(dev_storage, "r", encoding="utf-8") as df:
+                            dev_recs = json.load(df)
+                        for r in dev_recs:
+                            if r.get("submission_id") == submission_id:
+                                return {
+                                    "submission_id": submission_id,
+                                    "status": r.get("status", "MANUAL_REVIEW"),
+                                    "rejection_reason": r.get("reason"),
+                                    "driver_name": r.get("driver_name", "Tài xế"),
+                                    "driver_phone": r.get("driver_phone", "N/A"),
+                                    "created_at": r.get("submitted_at", "Vừa xong"),
+                                    "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+                                    "car_model": r.get("car_model", ""),
+                                    "gross_income": r.get("total_gross_revenue", 0),
+                                    "net_income": r.get("total_net_income", 0),
+                                    "trips_count": r.get("total_trips", 0),
+                                    "weekly_incomes": r.get("weekly_incomes", {}),
+                                    "photo_paths": [],
+                                }
+                    except Exception:
+                        pass
                 return {"error": f"Không tìm thấy phiếu #{submission_id} trong cơ sở dữ liệu."}
 
             phone = sub[1] or "Chưa có SĐT"
+            driver_name = sub[2] or "Tài xế"
             raw_facts = sub[7] or {}
+            if isinstance(raw_facts, str):
+                try: raw_facts = json.loads(raw_facts)
+                except: raw_facts = {}
 
-            # 2. query registered vehicle
-            await cur.execute(
-                "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone = %s;",
-                (phone,),
-            )
-            veh = await cur.fetchone()
-            reg_plate = veh[0] if veh else "Chưa đăng ký"
-            reg_type = veh[1] if veh else "CAR"
+            tot_gross = int(sub[17] or 0)
+            tot_net = int(sub[18] or 0)
+            tot_trips = int(sub[19] or 0)
+            v_type = sub[20] or "Chưa xác định"
+            c_model = sub[21] or ""
+            form_data = sub[22] or {}
+            if isinstance(form_data, str):
+                try: form_data = json.loads(form_data)
+                except: form_data = {}
 
-            # 3. query vehicle change frequency (last 30 days)
-            await cur.execute(
-                "SELECT COUNT(*) FROM vehicle_change_history WHERE driver_phone = %s AND created_at > NOW() - INTERVAL '30 DAYS';",
-                (phone,),
-            )
-            changes_count = (await cur.fetchone())[0]
+            if tot_gross == 0 and isinstance(raw_facts, dict):
+                tot_gross = int(raw_facts.get("total_gross_revenue") or raw_facts.get("gross_revenue") or raw_facts.get("raw_total") or 0)
+                tot_net = int(raw_facts.get("total_net_income") or raw_facts.get("net_income") or raw_facts.get("raw_subtotal") or 0)
+                tot_trips = int(raw_facts.get("total_trips") or raw_facts.get("total_trips_count") or 0)
 
-            # 4. query remaining appeals in Redis
-            remaining_appeals = 3
-            if redis_client and phone:
-                used_count = await redis_client.get(f"rate_limit:appeal:{phone}")
-                if used_count:
-                    remaining_appeals = max(0, 3 - int(used_count.decode()))
+            if (not v_type or v_type in ("CAR", "N/A")) and isinstance(form_data, dict):
+                v_type = form_data.get("vehicle_type") or v_type
+
+            # Locate photos on disk
+            photo_paths = []
+            candidates = [
+                os.path.join(os.getcwd(), "data", "submission_photos", submission_id),
+                os.path.join(os.getcwd(), "data", "google_drive_deliverables", "Images", submission_id),
+            ]
+            for c_dir in candidates:
+                if os.path.exists(c_dir):
+                    p_files = sorted(
+                        glob.glob(os.path.join(c_dir, "*.jpg")) +
+                        glob.glob(os.path.join(c_dir, "*.jpeg")) +
+                        glob.glob(os.path.join(c_dir, "*.png")) +
+                        glob.glob(os.path.join(c_dir, "*.webp"))
+                    )
+                    if p_files:
+                        photo_paths = p_files
+                        break
+
+            weekly_incomes = raw_facts.get("weekly_incomes") or {
+                "week_1": {"gross_revenue": int(sub[23] or 0), "period": "Tuần 1"},
+                "week_2": {"gross_revenue": int(sub[24] or 0), "period": "Tuần 2"},
+                "week_3": {"gross_revenue": int(sub[25] or 0), "period": "Tuần 3"},
+                "week_4": {"gross_revenue": int(sub[26] or 0), "period": "Tuần 4"},
+                "week_5": {"gross_revenue": int(sub[27] or 0), "period": "Tuần 5"},
+            }
 
             return {
                 "submission_id": sub[0],
                 "driver_phone": phone,
-                "driver_name": sub[2] or "Tài xế",
-                "receipt_serial_no": sub[3] or "N/A",
-                "store_tax_id": sub[4] or "N/A",
+                "driver_name": driver_name,
                 "status": sub[5],
                 "rejection_reason": sub[6] or "Không có",
                 "audit_seal_hash": sub[8] or "N/A",
@@ -194,17 +267,13 @@ async def query_submission_dossier(
                 "signature_url": sub[12],
                 "image_url": sub[13],
                 "created_at": sub[14].strftime("%d/%m/%Y %H:%M:%S") if sub[14] else "N/A",
-                "registered_plate": reg_plate,
-                "detected_plate": raw_facts.get("detected_plate", reg_plate),
-                "vehicle_type": reg_type,
-                "recent_vehicle_changes": changes_count,
-                "gross_income": raw_facts.get("raw_total", 0),
-                "platform_discount": raw_facts.get("vat_amount", 0),
-                "net_income": raw_facts.get("raw_subtotal", 0),
-                "has_signature": raw_facts.get("has_signature", False),
-                "is_screen_photo": raw_facts.get("is_screen_photo", False),
-                "is_tampered": raw_facts.get("is_manipulated_or_photoshopped", False),
-                "remaining_appeals": remaining_appeals,
+                "vehicle_type": v_type,
+                "car_model": c_model,
+                "gross_income": tot_gross,
+                "net_income": tot_net,
+                "trips_count": tot_trips,
+                "weekly_incomes": weekly_incomes,
+                "photo_paths": photo_paths,
             }
 
 
@@ -217,54 +286,53 @@ def render_dossier_message(dossier: dict) -> str:
         return f"❌ <b>Lỗi tra cứu:</b> {safe_err}"
 
     sub_id = html.escape(str(dossier.get("submission_id", "N/A")))
-    status = dossier["status"]
-    status_badge = (
-        "✅ HỢP LỆ (APPROVED)"
-        if status == "APPROVED"
-        else ("❌ ĐÃ TỪ CHỐI (REJECTED)" if status == "REJECTED" else f"⏳ {status}")
-    )
+    status = dossier.get("status", "PENDING")
+    status_icon = "✅" if status == "APPROVED" else ("⏳" if status == "MANUAL_REVIEW" else "❌")
 
-    # vehicle match badge
-    reg_p = html.escape(str(dossier.get("registered_plate", "N/A")))
-    det_p = html.escape(str(dossier.get("detected_plate", "N/A")))
-    veh_type = html.escape(str(dossier.get("vehicle_type", "N/A")))
-    driver_name = html.escape(str(dossier.get("driver_name", "Tài xế")))
-    driver_phone = html.escape(str(dossier.get("driver_phone", "N/A")))
-    rej_reason = html.escape(str(dossier.get("rejection_reason", "Không có")))
-    veh_badge = "Khớp chuẩn ✅" if reg_p == det_p else f"Lệch biển! (ĐK: {reg_p} != Ảnh: {det_p}) ❌"
-    changes = dossier.get("recent_vehicle_changes", 0)
-    change_badge = f"{changes} lần trong 30 ngày qua" + (" ⚠️ (Bất thường)" if changes >= 3 else " (Bình thường ✅)")
-
-    # financial math
     gross = dossier.get("gross_income", 0)
     net = dossier.get("net_income", 0)
-    discount = dossier.get("platform_discount", 0)
+    trips = dossier.get("trips_count", 0)
+    v_type = dossier.get("vehicle_type", "Chưa xác định")
+    c_model = dossier.get("car_model", "")
+    veh_str = f"{v_type} ({c_model})" if c_model else v_type
 
-    # gps and signature links
+    lines = [
+        f"📋 <b>HỒ SƠ KHẢO SÁT #{sub_id}</b>\n",
+        f"• <b>Trạng thái:</b> {status_icon} <code>{status}</code>",
+        f"• <b>Thời gian:</b> <code>{dossier.get('created_at', 'Vừa xong')}</code>",
+        f"• <b>Tài xế:</b> <b>{html.escape(dossier.get('driver_name', 'Tài xế'))}</b> (<code>{dossier.get('driver_phone', 'N/A')}</code>)",
+        f"• <b>Phương tiện:</b> <code>{veh_str}</code>\n",
+        "📊 <b>Số Liệu Thu Nhập:</b>",
+        f"• Tổng doanh số: <b>{gross:,} VNĐ</b>",
+        f"• Thu nhập thực nhận: <b>{net:,} VNĐ</b>",
+        f"• Số chuyến: <b>{trips} chuyến</b>\n",
+    ]
+
+    w_inc = dossier.get("weekly_incomes") or {}
+    if w_inc and isinstance(w_inc, dict):
+        w_lines = []
+        for w_i in range(1, 6):
+            w_data = w_inc.get(f"week_{w_i}", {})
+            g_w = int(w_data.get("gross_revenue") or 0)
+            t_w = int(w_data.get("total_trips") or 0)
+            p_w = w_data.get("period", f"Tuần {w_i}")
+            if g_w > 0:
+                t_str = f" ({t_w} chuyến)" if t_w > 0 else ""
+                w_lines.append(f"  - {p_w}: <b>{g_w:,} đ</b>{t_str}")
+        if w_lines:
+            lines.append("📅 <b>Chi Tiết Từng Tuần:</b>")
+            lines.extend(w_lines)
+            lines.append("")
+
+    # Only show GPS if coordinates actually exist!
     lat, lng = dossier.get("gps_latitude"), dossier.get("gps_longitude")
-    gps_link = f"<a href='https://maps.google.com/?q={lat},{lng}'>{lat:.4f}, {lng:.4f} (±{dossier.get('gps_accuracy', 0)}m)</a>" if lat and lng else "Chưa có GPS"
-    sig_link = f"<a href='{dossier['signature_url']}'>Xem chữ ký ngón tay</a>" if dossier.get("signature_url") else "Không có"
+    if lat and lng:
+        acc = dossier.get("gps_accuracy")
+        acc_str = f" (±{acc}m)" if acc else ""
+        lines.append(f"📍 <b>Tọa độ GPS:</b> <a href='https://maps.google.com/?q={lat},{lng}'>{lat:.4f}, {lng:.4f}</a>{acc_str}\n")
 
-    return (
-        f"📋 <b>HỒ SƠ TRA CỨU DỮ LIỆU PHIẾU #{sub_id}</b>\n\n"
-        f"• Trạng thái: <b>{status_badge}</b>\n"
-        f"• Thời gian nộp: <code>{dossier.get('created_at', 'N/A')}</code>\n"
-        f"• Lý do từ chối: <i>{rej_reason}</i>\n\n"
-        f"👤 <b>Tài Xế & Phương Tiện:</b>\n"
-        f"• Họ tên: <b>{driver_name}</b>\n"
-        f"• Số điện thoại: <code>{driver_phone}</code>\n"
-        f"• Loại xe: <b>{veh_type}</b> | Biển số: <code>{reg_p}</code>\n"
-        f"• Đối soát biển số: {veh_badge}\n"
-        f"• Lịch sử đổi xe: {change_badge}\n\n"
-        f"📊 <b>Số Liệu Tài Chính:</b>\n"
-        f"• Tổng doanh số: <b>{gross:,} VNĐ</b>\n"
-        f"• Chiết khấu/Phí: {discount:,} VNĐ\n"
-        f"• Thu nhập thực nhận: {net:,} VNĐ\n\n"
-        f"🛡️ <b>Kiểm Định Gian Lận & Pháp Lý (DPIA):</b>\n"
-        f"• Chụp lại màn hình: {'Có ❌' if dossier.get('is_screen_photo') else 'Không ✅'}\n"
-        f"• Dấu hiệu Photoshop: {'Có ❌' if dossier.get('is_tampered') else 'Không ✅'}\n"
-        f"• Chữ ký xác thực: {sig_link}\n"
-        f"• Tọa độ thực tế: {gps_link}\n"
-        f"• Lượt khiếu nại còn lại: <b>{dossier.get('remaining_appeals', 3)}/3 lượt</b> (trong phiên 8h)\n"
-        f"• Mã niêm phong SHA-256: <code>{dossier.get('audit_seal_hash', 'N/A')[:16]}...</code>\n"
-    )
+    rejection = dossier.get("rejection_reason")
+    if rejection and rejection != "Không có":
+        lines.append(f"⚠️ <b>Ghi chú:</b> <i>{html.escape(rejection)}</i>\n")
+
+    return "\n".join(lines)

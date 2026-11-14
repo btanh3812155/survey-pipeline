@@ -39,6 +39,8 @@ from services.form_engine import validate_submission_against_schema, get_effecti
 
 logger = logging.getLogger("routers.survey")
 router = APIRouter(tags=["Survey Ingress"])
+SUBMISSION_PHOTOS_DIR = os.path.join(os.getcwd(), "data", "submission_photos")
+os.makedirs(SUBMISSION_PHOTOS_DIR, exist_ok=True)
 
 # Rate limiters & in-memory caches
 HISTORY_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
@@ -413,7 +415,6 @@ async def submit_webrtc_survey(
     validation_err = None
     if schema:
         is_schema_valid, validation_err = validate_submission_against_schema(schema, answers)
-
     pil_im = None
     blur_var = None
     raw_bytes_list = []
@@ -422,6 +423,17 @@ async def submit_webrtc_survey(
         b = await img.read()
         raw_bytes_list.append(b)
         await img.seek(0)
+
+    # Save photos locally so admin Telegram bot can send them in /check response
+    sub_photo_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
+    os.makedirs(sub_photo_dir, exist_ok=True)
+    for i_idx, r_b in enumerate(raw_bytes_list):
+        try:
+            with open(os.path.join(sub_photo_dir, f"slot_{i_idx}.jpg"), "wb") as fp:
+                fp.write(r_b)
+        except Exception:
+            pass
+
     raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
     if not is_schema_valid:
         status_str = "REJECTED"
@@ -617,6 +629,7 @@ async def submit_webrtc_survey(
                         tot_gross = 0
                         tot_net = 0
                         tot_trips = 0
+                        monthly_violation = None
                         for w_i in range(5):
                             w_num = w_i + 1
                             if w_i < len(income_res_list) and isinstance(income_res_list[w_i], dict) and not isinstance(income_res_list[w_i], Exception):
@@ -640,11 +653,37 @@ async def submit_webrtc_survey(
                             tot_net += n_val
                             tot_trips += t_val
 
+                            # Guard against uploading monthly income report into weekly slot
+                            p_type = str(ocr_w.get("period_type", "")).upper()
+                            p_str = str(ocr_w.get("period", "")).lower()
+                            is_wk = ocr_w.get("is_weekly_report")
+                            if p_type == "MONTHLY" or (is_wk is False and ("tháng" in p_str or "month" in p_str)):
+                                s_num = matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else w_num + 2
+                                monthly_violation = {
+                                    "failed_slot": matched_income_indices[w_i] if w_i < len(matched_income_indices) else w_num,
+                                    "reason": (
+                                        f"Ảnh {s_num} (Tuần {w_num}): Phát hiện ảnh chụp báo cáo doanh thu theo THÁNG "
+                                        f"(kỳ ghi nhận: '{ocr_w.get('period', 'Tháng')}') thay vì theo TUẦN. "
+                                        f"Vui lòng chụp đúng màn hình thu nhập chi tiết từng tuần!"
+                                    ),
+                                    "ocr_data": ocr_w,
+                                }
+                                break
                         slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
 
                         # 1. Profile Verification (Slot 0)
-                        if role_0 in ("app_income", "revenue_screen"):
+                        if monthly_violation:
+                            is_approved = False
+                            status_str = "REJECTED"
+                            reason_str = monthly_violation["reason"]
+                            ai_res = {
+                                "status": "REJECTED",
+                                "failed_slot": monthly_violation["failed_slot"],
+                                "reason": reason_str,
+                                "ocr_data": monthly_violation["ocr_data"],
+                            }
+                        elif role_0 in ("app_income", "revenue_screen"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
@@ -863,6 +902,9 @@ async def submit_webrtc_survey(
                                 reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
+    if is_approved and not is_bypassed and not is_dissent and not is_test_mode:
+        status_str = "MANUAL_REVIEW"
+        reason_str = "Phiếu khảo sát của bạn đã được ghi nhận. Ban Quản Trị đang tiến hành đối soát thủ công. Vui lòng mở Telegram @TrustBridgeVN_bot để nhận kết quả!"
     persisted_phone = None if is_dissent else driver_phone
     persisted_name = None if is_dissent else (driver_name or "Tài xế")
 
@@ -1157,6 +1199,37 @@ async def submit_webrtc_survey(
         )
     except Exception as act_err:
         logger.error(f"Failed to dispatch action checklist task: {act_err}")
+    # 4. Telegram dispatch to admin group
+    status_emoji = "⏳" if status_str == "MANUAL_REVIEW" else ("✅" if status_str == "APPROVED" else "❌")
+    auto_verdict = ai_res.get("status", "MANUAL_REVIEW") if isinstance(ai_res, dict) else "MANUAL_REVIEW"
+    auto_reason = ai_res.get("reason", "") if isinstance(ai_res, dict) else ""
+    auto_emoji = "✅" if str(auto_verdict).upper() == "APPROVED" else "❌"
+    vehicle_type_val = vehicle_type or (ai_res.get("vehicle_type") if isinstance(ai_res, dict) else None) or "Chưa xác định"
+    verdict_text = (
+        f"{status_emoji} <b>PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #{submission_id}</b>\n\n"
+        f"• <b>Tài xế:</b> <b>{html.escape(driver_name or 'Tài xế')}</b> (<code>{driver_phone or 'N/A'}</code>)\n"
+        f"• <b>Loại xe:</b> <code>{vehicle_type_val}</code>\n"
+        f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({html.escape(auto_reason) if auto_reason else 'Đạt chuẩn'})\n"
+        f"• <b>Doanh thu:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
+        f"• <b>Trạng thái:</b> <code>{status_str}</code>"
+    )
+    admin_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "📋 Mở Phiếu Xét Duyệt", "callback_data": f"admin_review:{submission_id}"}
+            ]
+        ]
+    }
+    if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
+        try:
+            background_tasks.add_task(
+                send_telegram_notification,
+                settings.TELEGRAM_ADMIN_GROUP_ID,
+                verdict_text,
+                admin_markup,
+            )
+        except Exception as tg_err:
+            logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
 
     # 5. Direct Telegram DMs to Driver / Collaborator if linked
     try:
@@ -1384,7 +1457,7 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         "message": f"Đã hủy yêu cầu kiểm tra lại cho phiếu #{sub_id} thành công!"
     })
 
-async def send_telegram_notification(chat_id: Union[int, str], text: str):
+async def send_telegram_notification(chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None):
     """Dispatches standardized HTML verdict message to admin group or collaborator on Telegram."""
     bot_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
     if not bot_token or bot_token == "mock_tg_token":
@@ -1397,8 +1470,11 @@ async def send_telegram_notification(chat_id: Union[int, str], text: str):
         "text": text,
         "parse_mode": "HTML",
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
-        resp = await http_client.post(url, json=payload)
+        client = get_http_client() or httpx.AsyncClient(timeout=10.0)
+        resp = await client.post(url, json=payload)
         if resp.status_code == 429:
             logger.warning("telegram 429 hit; backing off")
     except Exception as e:

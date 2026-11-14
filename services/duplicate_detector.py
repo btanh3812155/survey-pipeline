@@ -41,11 +41,11 @@ def compute_dinov2_embedding(pil_img: Image.Image) -> Optional[List[float]]:
     Computes 384-dimensional dense visual feature vector using Meta DINOv2 ViT-S/14.
     Returns L2-normalized 384-dim float list.
     """
-    if os.environ.get("MOCK_AI") == "1":
+    if os.environ.get("MOCK_AI") == "1" or os.environ.get("ENVIRONMENT") == "test":
         import hashlib
         b = pil_img.tobytes()
         h = hashlib.sha512(b).digest()
-        arr = (np.frombuffer(h * 8, dtype=np.uint8).astype(np.float32) / 255.0)[:384]
+        arr = ((np.frombuffer(h * 8, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0)[:384]
         norm = np.linalg.norm(arr)
         return (arr / norm).tolist() if norm > 0 else None
 
@@ -135,28 +135,60 @@ def check_intra_submission_duplicates(
             week_i_num = i + 1
             week_j_num = j + 1
 
-            # Check dHash
+            # Check if OCR extracted distinct financial metrics for these two weeks.
+            # Real-world driver photos of the same physical phone (cracked screen, identical LED odometer on desk)
+            # have high visual embedding similarity. If OCR numbers differ, OCR MUST OVERRIDE visual similarity!
+            has_different_ocr = False
+            if weekly_incomes and isinstance(weekly_incomes, dict):
+                wi = weekly_incomes.get(f"week_{week_i_num}", {})
+                wj = weekly_incomes.get(f"week_{week_j_num}", {})
+                gi = int(wi.get("gross_revenue") or 0)
+                gj = int(wj.get("gross_revenue") or 0)
+                ni = int(wi.get("net_income") or 0)
+                nj = int(wj.get("net_income") or 0)
+                ti = int(wi.get("total_trips") or 0)
+                tj = int(wj.get("total_trips") or 0)
+                pi = str(wi.get("period") or "").strip().lower()
+                pj = str(wj.get("period") or "").strip().lower()
+
+                # If ANY financial or operational metric differs AT ALL, they are NOT duplicate photos!
+                if gi > 0 and gj > 0 and gi != gj:
+                    has_different_ocr = True
+                elif ni > 0 and nj > 0 and ni != nj:
+                    has_different_ocr = True
+                elif ti > 0 and tj > 0 and ti != tj:
+                    has_different_ocr = True
+                elif pi and pj and pi != pj and not ("tuần" in pi and "tuần" in pj and pi == pj):
+                    has_different_ocr = True
+
+            if has_different_ocr:
+                logger.info(
+                    f"✅ [OCR OVERRIDE] Visual similarity between Week {week_i_num} and Week {week_j_num} overridden by distinct OCR data. "
+                    f"Allowing submission!"
+                )
+                continue
+
+            # Check dHash (tightened to <= 4 to avoid false positives on same-phone app chrome)
             if dhashes[i] is not None and dhashes[j] is not None:
                 dist = hamming_distance(dhashes[i], dhashes[j])
-                if dist <= 8:
-                    logger.warning(f"🚫 [INTRA-DUPLICATE] dHash match between Week {week_i_num} and Week {week_j_num} (distance={dist} <= 8)")
+                if dist <= 4:
+                    logger.warning(f"🚫 [INTRA-DUPLICATE] dHash match between Week {week_i_num} and Week {week_j_num} (distance={dist} <= 4)")
                     return True, (
                         f"Ảnh chụp thu nhập giữa các tuần bị trùng lặp! Ảnh Tuần {week_i_num} (slot {idx_i+1}) "
                         f"và Ảnh Tuần {week_j_num} (slot {idx_j+1}) giống nhau. "
                         f"Vui lòng chụp đúng màn hình thu nhập của 5 tuần khác nhau trong Tháng 10!"
                     )
 
-            # Check DINOv2 cosine similarity
+            # Check DINOv2 cosine similarity (relaxed from 0.88 to 0.985 for physical phone/desk tolerance)
             if embeddings[i] is not None and embeddings[j] is not None:
                 sim = compute_cosine_similarity(embeddings[i], embeddings[j])
-                if sim >= 0.88:
-                    logger.warning(f"🚫 [INTRA-DUPLICATE] DINOv2 match between Week {week_i_num} and Week {week_j_num} (similarity={sim:.4f} >= 0.88)")
+                if sim >= 0.985:
+                    logger.warning(f"🚫 [INTRA-DUPLICATE] DINOv2 match between Week {week_i_num} and Week {week_j_num} (similarity={sim:.4f} >= 0.985)")
                     return True, (
                         f"Ảnh chụp thu nhập giữa các tuần bị trùng lặp! Ảnh Tuần {week_i_num} (slot {idx_i+1}) "
                         f"và Ảnh Tuần {week_j_num} (slot {idx_j+1}) có cấu trúc hình ảnh giống hệt nhau (Meta DINOv2 khớp {sim*100:.1f}%). "
                         f"Vui lòng chụp đúng màn hình thu nhập của 5 tuần khác nhau trong Tháng 10!"
                     )
-
     # 2. Check OCR metrics duplication between weeks
     if weekly_incomes and isinstance(weekly_incomes, dict):
         weeks_data = [weekly_incomes.get(f"week_{w+1}", {}) for w in range(n)]
@@ -259,11 +291,11 @@ async def check_inter_submission_duplicates(
                     vec_str = "[" + ",".join(str(x) for x in primary_embedding) + "]"
                     await cur.execute(
                         """
-                        SELECT submission_id, (1 - (embedding <=> %s::vector)) as similarity
+                        SELECT submission_id, total_gross_revenue, (1 - (embedding <=> %s::vector)) as similarity
                         FROM survey_submissions
                         WHERE status = 'APPROVED'
                           AND embedding IS NOT NULL
-                          AND (1 - (embedding <=> %s::vector)) >= 0.88
+                          AND (1 - (embedding <=> %s::vector)) >= 0.985
                         ORDER BY embedding <=> %s::vector ASC
                         LIMIT 1;
                         """,
@@ -271,9 +303,12 @@ async def check_inter_submission_duplicates(
                     )
                     row_vec = await cur.fetchone()
                     if row_vec:
-                        logger.warning(f"🚫 [INTER-DUPLICATE] DINOv2 match with approved #{row_vec[0]} (similarity={row_vec[1]:.4f})")
-                        return True, row_vec[0], "IMAGE_DINOV2"
+                        past_sub_id, past_gross, sim_val = row_vec[0], row_vec[1], row_vec[2]
+                        if tot_gross and past_gross and int(tot_gross) != int(past_gross):
+                            logger.info(f"✅ [OCR OVERRIDE] Inter-submission visual match with #{past_sub_id} overridden by distinct gross revenue ({tot_gross:,} vs {past_gross:,}).")
+                        else:
+                            logger.warning(f"🚫 [INTER-DUPLICATE] DINOv2 match with approved #{past_sub_id} (similarity={sim_val:.4f})")
+                            return True, past_sub_id, "IMAGE_DINOV2"
     except Exception as e:
         logger.debug(f"Inter-submission duplicate query note: {e}")
-
     return False, None, None

@@ -919,7 +919,7 @@
             <div class="paper-footer" style="touch-action: manipulation;">
                 <button type="button" class="btn-modal cancel" onclick="closeSigModal()" ontouchend="closeSigModal()" id="btnSigClose">Đóng</button>
                 <button type="button" class="btn-modal clear" onclick="clearModalSig()" ontouchend="clearModalSig()" id="btnSigClear">Ký lại</button>
-                <button type="button" class="btn-modal confirm" onclick="confirmModalSig()" ontouchend="confirmModalSig()" id="btnSigConfirm">Hoàn tất chữ ký</button>
+                <button type="button" class="btn-modal confirm" onclick="confirmModalSig(event)" id="btnSigConfirm">Hoàn tất chữ ký</button>
             </div>
         </div>
     </div>
@@ -2241,8 +2241,9 @@
             }
             e.preventDefault();
         }
-
+        let sigModalCooldown = false;
         function openSigModal(qid) {
+            if (sigModalCooldown) return;
             activeSignatureTargetQId = qid;
             modal.style.display = 'flex';
             document.body.style.overflow = 'hidden';
@@ -2265,6 +2266,8 @@
             modal.style.display = 'none';
             document.body.style.overflow = '';
             window.removeEventListener('touchmove', preventWindowScroll);
+            sigModalCooldown = true;
+            setTimeout(() => { sigModalCooldown = false; }, 400);
         }
 
         function clearModalSig() {
