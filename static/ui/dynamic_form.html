@@ -1921,7 +1921,7 @@
                 }
                 activeVideoStream = stream;
                 vid.srcObject = stream;
-                await vid.play().catch(e => console.log("Play blocked:", e));
+                vid.play().catch(() => {});
             } catch(err) {
                 console.warn("Camera failed:", err);
             }
@@ -1958,6 +1958,17 @@
             if (snapBtn) snapBtn.style.display = 'none';
             if (btnCamOff) btnCamOff.style.display = 'none';
             if (screenOff) screenOff.style.display = 'flex';
+
+            const uploadLabel = document.getElementById(`uploadLabel_${qid}`);
+            if (uploadLabel) {
+                const q = SCHEMA.questions.find(item => item.id === qid);
+                const currentSlotIdx = (q && q.image_slots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
+                const slotObj = (q && q.image_slots) ? q.image_slots[currentSlotIdx] : null;
+                const slotKey = `${qid}_${currentSlotIdx}`;
+                if (!answers[slotKey] || !(answers[slotKey] instanceof Blob)) {
+                    uploadLabel.style.display = (slotObj && slotObj.allow_upload === false) ? 'none' : 'inline-flex';
+                }
+            }
         }
 
         function selectCameraSlot(qid, slotIdx, shouldActivateCamera = false) {
@@ -2154,13 +2165,20 @@
                     applyFileToSlot(qid, targetIdx, compressed);
                     selectCameraSlot(qid, targetIdx, false);
                 } else {
-                    // Multi-image upload: sequentially fill slots that allow upload!
+                    // Multi-image upload: sequentially fill slots that allow upload starting from current slot!
                     let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx);
-                    if (startPos === -1 || files.length >= uploadableSlots.length) {
+                    if (startPos === -1) {
                         startPos = 0;
                     }
 
-                    for (let i = 0; i < files.length && (startPos + i) < uploadableSlots.length; i++) {
+                    const remainingSlots = uploadableSlots.length - startPos;
+                    const maxFill = Math.min(files.length, remainingSlots);
+
+                    if (files.length > remainingSlots) {
+                        alert(`Bạn đã chọn ${files.length} ảnh. Hệ thống sẽ điền ${maxFill} ảnh vào các ô còn lại theo đúng thứ tự!`);
+                    }
+
+                    for (let i = 0; i < maxFill; i++) {
                         const targetSlotIdx = uploadableSlots[startPos + i].idx;
                         const compressed = await compressImageFile(files[i]);
                         applyFileToSlot(qid, targetSlotIdx, compressed);

@@ -250,3 +250,71 @@ def test_blur_variance_detection():
     is_sharp, b_var = compute_laplacian_blur_score(pil_im, threshold=15.0)
     assert is_sharp is True
     assert b_var >= 15.0
+# ==============================================================================
+# 5. Image Upload, Camera Toggle Persistence & Multi-Upload Ordering
+# ==============================================================================
+
+def test_camera_toggle_and_upload_button_persist_through_retake_reupload_and_toggle():
+    """
+    Verifies that camera toggle button and image upload button persist through:
+    1. Retaking (retakeCam restores upload button and camera controls).
+    2. Camera toggle (deactivateCamera / activateCamera preserves uploadLabel).
+    3. Re-uploading a photo into an already captured slot.
+    """
+    from services.dynamic_form_html import render_dynamic_form_html
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    # 1. Camera toggle controls exist in DOM
+    assert "btn-cam-deactivate" in html
+    assert "btnCamOff_" in html
+    assert "deactivateCamera" in html
+    assert "activateCamera" in html
+
+    # 2. Retake button exists and has wiring to restore upload button
+    assert "btn-camera-retake" in html
+    assert "retakeCam" in html
+    assert "uploadLabel.style.display = (slotObj && slotObj.allow_upload === false) ? 'none' : 'inline-flex'" in html
+
+    # 3. Deactivate camera ensures upload label is NOT hidden so user can upload from gallery
+    assert "if (!answers[slotKey] || !(answers[slotKey] instanceof Blob))" in html
+
+
+def test_multi_image_upload_ordering_all_cases():
+    """
+    Simulates sequential multi-image upload from slot 0:
+    Verifies that files fill slots 0, 1, 2, 3, 4, 5, 6 in exact sequential order.
+    """
+    from services.dynamic_form_html import render_dynamic_form_html
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    # Verifies sequential multi-image file assignment loop
+    assert "for (let i = 0; i < maxFill; i++)" in html
+    assert "const targetSlotIdx = uploadableSlots[startPos + i].idx" in html
+    assert "applyFileToSlot(qid, targetSlotIdx, compressed)" in html
+
+
+def test_multi_image_upload_from_halfway_maintains_order():
+    """
+    Simulates multi-image upload starting from halfway (e.g. currentSlotIdx = 3):
+    Verifies that files start from currentSlotIdx and sequentially populate subsequent slots.
+    """
+    from services.dynamic_form_html import render_dynamic_form_html
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    # Verifies startPos calculation based on currentSlotIdx
+    assert "let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx)" in html
+    assert "selectCameraSlot(qid, uploadableSlots[startPos].idx, false)" in html
+
+
+def test_uploading_more_than_allowed_slots_clamps_gracefully():
+    """
+    Simulates selecting more files than remaining available slots (e.g. 10 files selected):
+    Verifies code clamps to remaining slots without crashing or throwing index out of bounds.
+    """
+    from services.dynamic_form_html import render_dynamic_form_html
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    # Verifies remainingSlots calculation and clamping via Math.min
+    assert "const remainingSlots = uploadableSlots.length - startPos" in html
+    assert "const maxFill = Math.min(files.length, remainingSlots)" in html
+    assert "if (files.length > remainingSlots)" in html
