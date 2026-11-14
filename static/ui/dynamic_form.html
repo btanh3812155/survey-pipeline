@@ -873,15 +873,6 @@
         </button>
     </div>
 
-    <!-- GPS Authorization Banner -->
-    <div class="gps-banner" id="gpsBanner" style="display:none;">
-        <div class="gps-status-text" id="gpsStatusText">
-            Cho phép truy cập vị trí để ghi nhận địa điểm khảo sát
-        </div>
-        <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
-        <div class="gps-status-pill" id="gpsStatusPill" style="display:none;"></div>
-    </div>
-
     {test_banner_html}
 
     <header>
@@ -890,8 +881,16 @@
     </header>
 
     <form id="dynamicForm" onsubmit="return false;">
-        <div id="questionsContainer"></div>
+        <!-- Location Check Component Displayed on First Form Page -->
+        <div class="gps-banner" id="gpsBanner" style="display:flex; margin-bottom:14px;">
+            <div class="gps-status-text" id="gpsStatusText">
+                Cho phép truy cập vị trí để ghi nhận địa điểm khảo sát
+            </div>
+            <button type="button" class="btn-gps" id="btnRequestGps" onclick="requestGps()">Bật vị trí</button>
+            <div class="gps-status-pill" id="gpsStatusPill" style="display:none;"></div>
+        </div>
 
+        <div id="questionsContainer"></div>
         <button type="button" class="btn-submit" id="btnSubmitForm" onclick="handleSubmit()">
             <span id="txtSubmitBtn">Gửi Báo Cáo</span>
         </button>
@@ -1402,8 +1401,47 @@
             }
         }
 
+        function checkCachedOrQueryGps() {
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const uLat = urlParams.get('lat');
+                const uLon = urlParams.get('lon');
+                const uAcc = urlParams.get('acc');
+                if (uLat && uLon) {
+                    applyGpsSuccess({
+                        coords: {
+                            latitude: parseFloat(uLat),
+                            longitude: parseFloat(uLon),
+                            accuracy: parseFloat(uAcc || '15')
+                        }
+                    });
+                    return true;
+                }
+
+                const sLat = sessionStorage.getItem('survey_gps_lat') || localStorage.getItem('survey_gps_lat');
+                const sLon = sessionStorage.getItem('survey_gps_lon') || localStorage.getItem('survey_gps_lon');
+                const sAcc = sessionStorage.getItem('survey_gps_acc') || localStorage.getItem('survey_gps_acc');
+                if (sLat && sLon) {
+                    applyGpsSuccess({
+                        coords: {
+                            latitude: parseFloat(sLat),
+                            longitude: parseFloat(sLon),
+                            accuracy: parseFloat(sAcc || '15')
+                        }
+                    });
+                    return true;
+                }
+            } catch(e) {}
+            return false;
+        }
+
         function initGpsBannerBehavior() {
-            if (!navigator.geolocation) return;
+            if (checkCachedOrQueryGps()) return;
+            if (!navigator.geolocation) {
+                applyGpsFailure({ code: 2, message: 'Geolocation not supported' });
+                return;
+            }
+
             const wasGranted = localStorage.getItem('tb_gps_granted') === 'true';
 
             // Show prompt banner and immediately request browser geolocation on first form page!
@@ -1469,10 +1507,32 @@
                 banner.style.marginBottom = '8px';
                 banner.style.justifyContent = 'flex-start';
             }
+
+            // Short 2.5s fallback guard so it NEVER hangs
+            let resolved = false;
+            const fallbackTimer = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    applyGpsFailure({ code: 3, message: 'Timeout' });
+                }
+            }, 2500);
+
             navigator.geolocation.getCurrentPosition(
-                (pos) => applyGpsSuccess(pos),
-                (err) => applyGpsFailure(err),
-                { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+                (pos) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(fallbackTimer);
+                        applyGpsSuccess(pos);
+                    }
+                },
+                (err) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(fallbackTimer);
+                        applyGpsFailure(err);
+                    }
+                },
+                { enableHighAccuracy: false, timeout: 2000, maximumAge: 300000 }
             );
         }
 
