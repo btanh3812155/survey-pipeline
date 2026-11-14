@@ -84,10 +84,10 @@ def get_real_distinct_test_photos(count: int = 7) -> List[Tuple[str, bytes]]:
             continue
         fname, b = photos[0]
         try:
-            _, im = sanitize_and_normalize_image(b)
+            norm_b, im = sanitize_and_normalize_image(b, max_dimension=1024)
             dh = compute_dhash_int(im)
             if not any(hamming_distance(dh, existing) <= 8 for existing in dhashes):
-                selected.append((fname, b))
+                selected.append((fname, norm_b))
                 dhashes.append(dh)
                 if len(selected) >= count:
                     break

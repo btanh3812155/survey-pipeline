@@ -141,7 +141,7 @@
                 {options_html}
             </select>
         </div>
-        <div id="ctvGpsPill" style="display:inline-flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; background:rgba(30,41,59,0.8); border:1px solid #334155; padding:6px 12px; border-radius:8px; margin: 12px 0 16px 0;">
+        <div id="ctvGpsPill" onclick="resolveEarlyLocation(true)" title="Bấm để kiểm tra lại vị trí" style="display:inline-flex; align-items:center; gap:6px; font-size:0.75rem; color:#94a3b8; background:rgba(30,41,59,0.8); border:1px solid #334155; padding:6px 12px; border-radius:8px; margin: 12px 0 16px 0; cursor:pointer;">
             <svg viewBox="0 0 24 24" style="width:14px; height:14px; fill:currentColor;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5 2.5-2.5 2.5z"/></svg>
             <span id="txtCtvGps">Đang xác thực vị trí đối soát...</span>
         </div>
@@ -157,6 +157,28 @@
     <script>
         let earlyGps = null;
         let gpsDone = false;
+
+        function checkCachedGps() {
+            try {
+                const lat = sessionStorage.getItem("survey_gps_lat") || localStorage.getItem("survey_gps_lat");
+                const lon = sessionStorage.getItem("survey_gps_lon") || localStorage.getItem("survey_gps_lon");
+                const acc = sessionStorage.getItem("survey_gps_acc") || localStorage.getItem("survey_gps_acc");
+                if (lat && lon) {
+                    earlyGps = { lat: parseFloat(lat), lon: parseFloat(lon), acc: parseFloat(acc || 15) };
+                    gpsDone = true;
+                    const el = document.getElementById("txtCtvGps");
+                    const pill = document.getElementById("ctvGpsPill");
+                    if (el) el.textContent = `Đã xác thực vị trí GPS (${earlyGps.lat.toFixed(4)}, ${earlyGps.lon.toFixed(4)})`;
+                    if (pill) {
+                        pill.style.borderColor = "#10b981";
+                        pill.style.color = "#10b981";
+                        pill.style.background = "rgba(16, 185, 129, 0.15)";
+                    }
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        }
 
         function applyGpsFallback() {
             if (gpsDone) return;
@@ -177,9 +199,12 @@
             }
         }
 
-        function resolveEarlyLocation() {
-            // Strict 3.0s timeout fallback guard so it NEVER hangs
-            const fallbackTimer = setTimeout(applyGpsFallback, 3000);
+        function resolveEarlyLocation(force = false) {
+            if (force) gpsDone = false;
+            if (!force && checkCachedGps()) return;
+
+            // Strict 1.2s timeout fallback guard so it NEVER hangs
+            const fallbackTimer = setTimeout(applyGpsFallback, 1200);
 
             if ("geolocation" in navigator) {
                 navigator.geolocation.getCurrentPosition(
@@ -196,6 +221,8 @@
                             sessionStorage.setItem("survey_gps_lat", earlyGps.lat);
                             sessionStorage.setItem("survey_gps_lon", earlyGps.lon);
                             sessionStorage.setItem("survey_gps_acc", earlyGps.acc);
+                            localStorage.setItem("survey_gps_lat", earlyGps.lat);
+                            localStorage.setItem("survey_gps_lon", earlyGps.lon);
                         } catch (e) {}
                         const el = document.getElementById("txtCtvGps");
                         const pill = document.getElementById("ctvGpsPill");
@@ -210,14 +237,21 @@
                         clearTimeout(fallbackTimer);
                         applyGpsFallback();
                     },
-                    { enableHighAccuracy: false, timeout: 2500, maximumAge: 60000 }
+                    { enableHighAccuracy: false, timeout: 1000, maximumAge: 300000 }
                 );
             } else {
                 clearTimeout(fallbackTimer);
                 applyGpsFallback();
             }
         }
-        document.addEventListener("DOMContentLoaded", resolveEarlyLocation);
+
+        // Initialize immediately if DOM is ready, else attach listener
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", () => resolveEarlyLocation());
+        } else {
+            resolveEarlyLocation();
+        }
+        checkCachedGps();
 
         function updateCtvButtonState() {
             const sel = document.getElementById("ctvSelect");
