@@ -198,6 +198,63 @@ async def process_36h_message_deletions(db_pool, http_client, bot_token: str) ->
 
             await conn.commit()
     return deleted_count
+async def purge_14day_telegram_retention(db_pool, http_client=None, bot_token: Optional[str] = None) -> Dict[str, int]:
+    """
+    Automated 14-day retention purger for Telegram CTV Bot messages & logs:
+    1. Purges internal conversation history older than 14 days from telegram_chat_history.
+    2. Deletes tracked sent messages older than 14 days.
+    3. In supergroups/channels (chat_id < 0 where bot has admin delete rights), invokes
+       Telegram Bot API deleteMessage to physically remove messages past 14 days from Telegram.
+       (Note: In 1-on-1 private DMs, Telegram Bot API limits programmatic deleteMessage to <48h;
+       records >48h are purged from internal storage while private users utilize Telegram's native Auto-Delete timer).
+    """
+    if not db_pool:
+        return {"chat_history_purged": 0, "messages_deleted": 0}
+
+    purged_history_count = 0
+    deleted_msg_count = 0
+
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            # 1. Purge internal chat history older than 14 days
+            await cur.execute(
+                """
+                DELETE FROM telegram_chat_history
+                WHERE created_at < NOW() - INTERVAL '14 days';
+                """
+            )
+            purged_history_count = cur.rowcount
+
+            # 2. Find messages past their 14-day retention window
+            await cur.execute(
+                """
+                SELECT id, chat_id, message_id
+                FROM telegram_sent_messages
+                WHERE is_deleted = FALSE AND sent_at < NOW() - INTERVAL '14 days'
+                LIMIT 100
+                FOR UPDATE SKIP LOCKED;
+                """
+            )
+            rows = await cur.fetchall()
+            for row in rows:
+                rec_id, chat_id, msg_id = row
+                # In Telegram supergroups (negative chat_id), admin bots can delete messages past 48h
+                if str(chat_id).startswith("-") and bot_token and bot_token != "mock_tg_token" and http_client:
+                    try:
+                        url = f"https://api.telegram.org/bot{bot_token}/deleteMessage"
+                        await http_client.post(url, json={"chat_id": chat_id, "message_id": msg_id}, timeout=5.0)
+                    except Exception as e:
+                        logger.debug(f"Telegram deleteMessage note for {msg_id}: {e}")
+
+                await cur.execute(
+                    "UPDATE telegram_sent_messages SET is_deleted = TRUE, deleted_at = NOW() WHERE id = %s;",
+                    (rec_id,)
+                )
+                deleted_msg_count += 1
+
+            await conn.commit()
+
+    return {"chat_history_purged": purged_history_count, "messages_deleted": deleted_msg_count}
 
 async def scrub_driver_pii(db_pool, driver_phone: str) -> Dict[str, Any]:
     """

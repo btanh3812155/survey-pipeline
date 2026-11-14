@@ -360,6 +360,46 @@ def test_tamperable_and_exposed_info_protection_in_urls_and_drafts():
     assert "postgresql://" not in form_html
     assert "mock_webhook_secret" not in form_html
     assert "service_account" not in form_html
+@pytest.mark.asyncio
+async def test_auto_delete_telegram_messages_past_14_days():
+    """
+    Simulates automated message deletion past 14 days:
+    1. Internal chat logs older than 14 days are purged from database.
+    2. Tracked sent messages past 14 days in supergroups/channels trigger deleteMessage.
+    3. Private DM records past 14 days are cleanly pruned from retention storage.
+    """
+    from services.audit_and_privacy import purge_14day_telegram_retention
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_cur = AsyncMock()
+    mock_cur.rowcount = 42
+    # Simulate finding old messages: one group (-100123) and one private DM (8888)
+    mock_cur.fetchall.return_value = [
+        ("rec_01", -1001234567890, 501),
+        ("rec_02", 88889999, 502),
+    ]
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__aenter__.return_value = mock_cur
+    mock_conn.commit = AsyncMock()
+
+    mock_pool = MagicMock()
+    mock_pool.connection.return_value.__aenter__.return_value = mock_conn
+
+    deleted_api_calls = []
+    class MockClient:
+        async def post(self, url, **kwargs):
+            deleted_api_calls.append(kwargs.get("json"))
+            class Resp:
+                status_code = 200
+            return Resp()
+
+    res = await purge_14day_telegram_retention(mock_pool, MockClient(), bot_token="123:mock_token")
+
+    assert res["chat_history_purged"] == 42
+    assert res["messages_deleted"] == 2
+    # deleteMessage triggered for the group chat (-1001234567890)
+    assert any(call.get("chat_id") == -1001234567890 and call.get("message_id") == 501 for call in deleted_api_calls)
 # ==============================================================================
 # 5. Simulated User Actions & Edge-Case Input Checks
 # ==============================================================================
