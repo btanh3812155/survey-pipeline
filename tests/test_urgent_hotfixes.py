@@ -1,3 +1,5 @@
+import os
+import sys
 import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
@@ -181,8 +183,9 @@ async def test_telegram_admin_notification_no_license_plate_and_has_review_butto
     async def mock_send_tg(chat_id, text, reply_markup=None):
         dispatched_messages.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
 
-    with patch("main.send_telegram_notification", side_effect=mock_send_tg), \
-         patch("main.settings.TELEGRAM_ADMIN_GROUP_ID", "-1001234567890"):
+    patch_target = "routers.survey.send_telegram_notification" if os.path.exists("routers/survey.py") else "main.send_telegram_notification"
+    with patch(patch_target, side_effect=mock_send_tg), \
+         patch("config.settings.TELEGRAM_ADMIN_GROUP_ID", "-1001234567890"):
         real_photos = get_real_distinct_test_photos(7)
         resp = client.post(
             "/api/v1/survey/submit-webrtc",

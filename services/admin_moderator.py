@@ -300,7 +300,11 @@ def render_dossier_message(dossier: dict) -> str:
         f"📋 <b>HỒ SƠ KHẢO SÁT #{sub_id}</b>\n",
         f"• <b>Trạng thái:</b> {status_icon} <code>{status}</code>",
         f"• <b>Thời gian:</b> <code>{dossier.get('created_at', 'Vừa xong')}</code>",
-        f"• <b>Tài xế:</b> <b>{html.escape(dossier.get('driver_name', 'Tài xế'))}</b> (<code>{dossier.get('driver_phone', 'N/A')}</code>)",
+        (
+            f"• <b>Tài xế:</b> <b>{html.escape(dossier['driver_name'])}</b> (<code>{dossier.get('driver_phone', 'N/A')}</code>)"
+            if dossier.get("driver_name") and dossier.get("driver_name") not in ("Tài xế", "Tài xế Bí Mật", "N/A", "[SCRUBBED]")
+            else f"• <b>Số điện thoại:</b> <code>{dossier.get('driver_phone', 'N/A')}</code>"
+        ),
         f"• <b>Phương tiện:</b> <code>{veh_str}</code>\n",
         "📊 <b>Số Liệu Thu Nhập:</b>",
         f"• Tổng doanh số: <b>{gross:,} VNĐ</b>",

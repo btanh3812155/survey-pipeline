@@ -562,9 +562,6 @@ class TelegramPollingRunner:
                         [
                             {"text": f"🔒 Đang hỗ trợ bởi {admin_name}", "callback_data": f"admin_locked_info:{target_user_id}"},
                         ],
-                        [
-                            {"text": "🔒 Đóng phiên chat", "callback_data": f"admin_close_ticket:{target_user_id}"},
-                        ],
                     ]
                 }
                 await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=locked_ticket_markup)

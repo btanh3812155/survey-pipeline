@@ -2235,9 +2235,14 @@ async def submit_webrtc_survey(
     # 4. Telegram dispatch to admin group
     status_emoji = "⏳" if status_str == "MANUAL_REVIEW" else ("✅" if status_str == "APPROVED" else "❌")
     auto_emoji = "✅" if auto_verdict == "APPROVED" else "❌"
+    driver_info_line = (
+        f"• <b>Tài xế:</b> <b>{html.escape(driver_name)}</b> (<code>{driver_phone or 'N/A'}</code>)"
+        if driver_name and driver_name not in ("Tài xế", "Tài xế Bí Mật", "N/A", "[SCRUBBED]")
+        else f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>"
+    )
     verdict_text = (
         f"{status_emoji} <b>PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #{submission_id}</b>\n\n"
-        f"• <b>Tài xế:</b> <b>{html.escape(driver_name or 'Tài xế')}</b> (<code>{driver_phone or 'N/A'}</code>)\n"
+        f"{driver_info_line}\n"
         f"• <b>Loại xe:</b> <code>{vehicle_type_val}</code>\n"
         f"• <b>Đề xuất từ Hệ thống AI:</b> {auto_emoji} <b>{auto_verdict}</b> ({html.escape(auto_reason) if auto_reason else 'Đạt chuẩn'})\n"
         f"• <b>Doanh thu:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
