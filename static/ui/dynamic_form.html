@@ -2052,6 +2052,40 @@
             }
         }
 
+        async function compressImageFile(file, maxDim = 1280, quality = 0.85) {
+            if (!file || !(file instanceof Blob)) return file;
+            if (file.size && file.size < 350_000) return file;
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    let w = img.width;
+                    let h = img.height;
+                    if (w > maxDim || h > maxDim) {
+                        if (w > h) {
+                            h = Math.round(h * (maxDim / w));
+                            w = maxDim;
+                        } else {
+                            w = Math.round(w * (maxDim / h));
+                            h = maxDim;
+                        }
+                    }
+                    const cvs = document.createElement('canvas');
+                    cvs.width = w;
+                    cvs.height = h;
+                    const ctx = cvs.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    cvs.toBlob((blob) => {
+                        if (blob && blob.size < file.size) {
+                            resolve(blob);
+                        } else {
+                            resolve(file);
+                        }
+                    }, 'image/webp', quality);
+                };
+                img.onerror = () => resolve(file);
+                img.src = URL.createObjectURL(file);
+            });
+        }
         function applyFileToSlot(qid, slotIdx, file) {
             const q = SCHEMA.questions.find(item => item.id === qid);
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
@@ -2081,14 +2115,14 @@
             }
         }
 
-        function handleSlotFileUpload(qid, input) {
+        async function handleSlotFileUpload(qid, input) {
             if (!input.files || input.files.length === 0) return;
             const q = SCHEMA.questions.find(item => item.id === qid);
             const hasSlots = q && Array.isArray(q.image_slots) && q.image_slots.length > 0;
             const currentSlotIdx = (hasSlots && activeSlotByQId[qid] !== undefined) ? activeSlotByQId[qid] : 0;
 
             if (!hasSlots) {
-                const file = input.files[0];
+                const file = await compressImageFile(input.files[0]);
                 applyFileToSlot(qid, 0, file);
             } else {
                 // Identify all slots that allow file upload
@@ -2110,7 +2144,8 @@
                     if (!isCurrentUploadable) {
                         targetIdx = uploadableSlots[0].idx;
                     }
-                    applyFileToSlot(qid, targetIdx, files[0]);
+                    const compressed = await compressImageFile(files[0]);
+                    applyFileToSlot(qid, targetIdx, compressed);
                     selectCameraSlot(qid, targetIdx, false);
                 } else {
                     // Multi-image upload: sequentially fill slots that allow upload!
@@ -2121,7 +2156,8 @@
 
                     for (let i = 0; i < files.length && (startPos + i) < uploadableSlots.length; i++) {
                         const targetSlotIdx = uploadableSlots[startPos + i].idx;
-                        applyFileToSlot(qid, targetSlotIdx, files[i]);
+                        const compressed = await compressImageFile(files[i]);
+                        applyFileToSlot(qid, targetSlotIdx, compressed);
                     }
 
                     selectCameraSlot(qid, uploadableSlots[startPos].idx, false);

@@ -567,16 +567,30 @@ async def submit_webrtc_survey(
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
                     if target_q and target_q.image_slots and len(images_list) >= 2:
-                        # 1. Order-agnostic role classification across all uploaded images
-                        classify_tasks = []
-                        for s_idx, img_b in enumerate(raw_bytes_list):
-                            fn = getattr(images_list[s_idx], "filename", "") or ""
-                            n_b, _ = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                            classify_tasks.append(vision_client.classify_image_role(n_b, filename=fn, expected_slots=target_q.image_slots))
+                        # 1. Parallel threadpool normalization: downscale each image ONCE concurrently!
+                        norm_tasks = [
+                            asyncio.to_thread(sanitize_and_normalize_image, b, settings.IMAGE_MAX_DIMENSION)
+                            for b in raw_bytes_list
+                        ]
+                        norm_results = await asyncio.gather(*norm_tasks, return_exceptions=True)
+                        norm_bytes_list = [
+                            res[0] if (isinstance(res, tuple) and res[0]) else raw_bytes_list[i]
+                            for i, res in enumerate(norm_results)
+                        ]
+
+                        # 2. Parallel role classification across all normalized images
+                        classify_tasks = [
+                            vision_client.classify_image_role(
+                                norm_bytes_list[s_idx],
+                                filename=getattr(images_list[s_idx], "filename", "") or "",
+                                expected_slots=target_q.image_slots,
+                            )
+                            for s_idx in range(len(raw_bytes_list))
+                        ]
                         classified_roles = await asyncio.gather(*classify_tasks, return_exceptions=True)
                         classified_roles = [r if isinstance(r, str) else "unknown" for r in classified_roles]
 
-                        # 2. Dynamic slot matching: match slots strictly AFTER classification!
+                        # 3. Dynamic slot matching: match slots strictly AFTER classification!
                         matched_profile_idx = None
                         matched_vehicle_idx = None
                         matched_income_indices = []
@@ -604,19 +618,16 @@ async def submit_webrtc_survey(
                         if not matched_income_indices:
                             matched_income_indices = [1] if len(raw_bytes_list) > 1 else [0]
 
-                        # 3. Process matched profile slot
-                        norm_profile_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[matched_profile_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
-                        task_profile_ocr = vision_client.ocr_driver_app_profile(norm_profile_bytes)
-
-                        # 4. Process matched income slots
-                        income_tasks = []
-                        for i_pos, s_idx in enumerate(matched_income_indices):
-                            n_b, _ = sanitize_and_normalize_image(raw_bytes_list[s_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
-                            income_tasks.append(vision_client.ocr_driver_app_income(n_b, week_idx=i_pos + 1))
-
+                        # 4. Concurrently run Profile OCR, Facts extraction, and all Weekly Income OCR tasks
+                        # REUSING pre-normalized bytes (ZERO redundant libvips calls!)
+                        task_profile_ocr = vision_client.ocr_driver_app_profile(norm_bytes_list[matched_profile_idx])
                         primary_income_idx = matched_income_indices[0]
-                        norm_income_bytes, _ = sanitize_and_normalize_image(raw_bytes_list[primary_income_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
-                        task_facts = vision_client.extract_facts(norm_income_bytes)
+                        task_facts = vision_client.extract_facts(norm_bytes_list[primary_income_idx])
+
+                        income_tasks = [
+                            vision_client.ocr_driver_app_income(norm_bytes_list[s_idx], week_idx=i_pos + 1)
+                            for i_pos, s_idx in enumerate(matched_income_indices)
+                        ]
 
                         all_results = await asyncio.gather(task_profile_ocr, task_facts, *income_tasks, return_exceptions=True)
                         profile_res = all_results[0]
