@@ -11,6 +11,12 @@ from services.normalizer import sanitize_and_normalize_image
 
 logger = logging.getLogger(__name__)
 
+# Verified against the providers' /models endpoints (2026-11-15):
+# - deepseek-flash = DeepSeek-V4.1-Flash, text+image input
+# - gemini-2.5-flash is current; gemini-2.0 / 1.5 no longer exist
+DEEPSEEK_VISION_MODEL = "deepseek-flash"
+GEMINI_VISION_MODELS = ("gemini-2.5-flash",)
+
 class ReceiptLineItem(BaseModel):
     item_name: str
     amount: Optional[int] = 0
@@ -121,8 +127,8 @@ def robust_json_parse(text: str) -> Dict[str, Any]:
 class DualModelVisionClient:
     """
     Manages dual-model AI vision extraction with automated failover:
-    - Primary: DeepSeek Flash (3.0s hard cutoff, no reasoning)
-    - Fallback: Gemini (gemini-2.5-flash, gemini-2.0-flash, 4.0s cutoff)
+    - Primary: DeepSeek Flash (deepseek-flash, vision, 3.0s hard cutoff, no reasoning)
+    - Fallback: Gemini (gemini-2.5-flash, 4.0s cutoff)
     - Circuit breaker: 5 consecutive failures opens breaker for 60s
     """
 
@@ -234,7 +240,7 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=DEEPSEEK_VISION_MODEL,
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -249,7 +255,7 @@ class DualModelVisionClient:
             except Exception as e:
                 logger.warning(f"DeepSeek classify error: {e}")
         if self.gemini_client:
-            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for model in GEMINI_VISION_MODELS:
                 try:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
@@ -308,7 +314,7 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=DEEPSEEK_VISION_MODEL,
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -323,7 +329,7 @@ class DualModelVisionClient:
                 logger.error(f"[OCR PROFILE ERROR] DeepSeek profile OCR failed: {e}")
 
         if self.gemini_client:
-            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for model in GEMINI_VISION_MODELS:
                 try:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
@@ -417,7 +423,7 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=DEEPSEEK_VISION_MODEL,
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -432,7 +438,7 @@ class DualModelVisionClient:
                 logger.error(f"[OCR ERROR] DeepSeek OCR failed: {e}")
 
         if self.gemini_client:
-            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for model in GEMINI_VISION_MODELS:
                 try:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
@@ -508,7 +514,7 @@ class DualModelVisionClient:
         if self.deepseek_client:
             try:
                 resp = await self.deepseek_client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=DEEPSEEK_VISION_MODEL,
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
@@ -533,24 +539,15 @@ class DualModelVisionClient:
         raise RuntimeError("both primary and fallback vision providers failed")
 
     async def _call_gemini(self, messages: list) -> ExtractedReceiptFacts:
-        resp = None
-        models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
         gemini_timeout = min(self.timeout_seconds, 4.0)
-        for model in models_to_try:
-            try:
-                resp = await self.gemini_client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=0.0,
-                    max_tokens=2048,
-                    timeout=gemini_timeout,
-                )
-                break
-            except Exception as e:
-                if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and model != models_to_try[-1]:
-                    continue
-                raise
+        resp = await self.gemini_client.chat.completions.create(
+            model=GEMINI_VISION_MODELS[0],
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=2048,
+            timeout=gemini_timeout,
+        )
         content = resp.choices[0].message.content or "{}"
         if content.startswith("```json"):
             content = content[7:-3].strip()
