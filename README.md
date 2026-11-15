@@ -1,6 +1,6 @@
 # High-Performance Survey Verification Pipeline
 
-Production-ready, sub-3-second automated survey verification and anti-fraud pipeline. Replaces legacy n8n visual workflows with a lightweight asynchronous Python (FastAPI) microservice, dual-model AI vision failover (Gemini 2.5 Flash + DeepSeek Flash), Cloudflare R2 zero-egress storage, and PostgreSQL transactional outbox.
+Production-ready, sub-3-second automated survey verification and anti-fraud pipeline. Replaces legacy n8n visual workflows with a lightweight asynchronous Python (FastAPI) microservice, dual-model AI vision failover (DeepSeek-V4.1 Flash primary + Gemini 3.5 Flash fallback), Cloudflare R2 zero-egress storage, and PostgreSQL transactional outbox.
 
 Designed to scale from 300 submissions/month to **20,000+ submissions/day** for under **$90/month** in total infrastructure.
 
@@ -13,7 +13,7 @@ Designed to scale from 300 submissions/month to **20,000+ submissions/day** for 
 - **Two-Tier Anti-Fraud**:
   - *Tier 1 (Synchronous, < 2ms)*: B-tree partial unique index on `(receipt_serial_no, store_tax_id) WHERE status = 'APPROVED'`.
   - *Tier 2 (Asynchronous background)*: Meta DINOv2 ONNX visual vector embeddings stored via `pgvector` HNSW index.
-- **Dual-Model Vision Failover**: Primary Gemini 2.5 Flash (`thinking_budget=0`) with automated circuit breaker failover to DeepSeek Flash via Alibaba Cloud Singapore (`ap-southeast-1`).
+- **Layered Vision Failover**: Primary DeepSeek-V4.1 Flash (`deepseek-flash`, reasoning disabled) with automated circuit-breaker failover to Gemini 3.5 Flash. A deterministic layout layer (`services/income_layout.py`) locates the period tab row, reads the selected teal pill, and derives DAILY / WEEKLY / MONTHLY from the date span before compliance math runs.
 - **Prompt Injection Immunity**: Extract-then-Evaluate pattern — the LLM only outputs raw JSON facts; Python deterministically evaluates compliance rules and arithmetic ($\sum \text{items} + \text{VAT} == \text{Total}$).
 - **100% Financial Integrity**: PostgreSQL Transactional Outbox pattern processed via `SELECT ... FOR UPDATE SKIP LOCKED`, preventing dropped collaborator payouts during server reboots.
 

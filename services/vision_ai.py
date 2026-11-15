@@ -8,14 +8,15 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 from services.normalizer import sanitize_and_normalize_image
+from services.income_layout import apply_layout_to_ocr
 
 logger = logging.getLogger(__name__)
 
-# Verified against the providers' /models endpoints (2026-11-15):
-# - deepseek-flash = DeepSeek-V4.1-Flash, text+image input
-# - gemini-2.5-flash is current; gemini-2.0 / 1.5 no longer exist
+# Verified against the providers' /models endpoints (2026-11):
+# - deepseek-flash = DeepSeek-V4.1-Flash, text+image input (primary)
+# - gemini-3.5-flash = fallback; 2.0/1.5 no longer exist and 2.5 lagged on layout
 DEEPSEEK_VISION_MODEL = "deepseek-flash"
-GEMINI_VISION_MODELS = ("gemini-2.5-flash",)
+GEMINI_VISION_MODELS = ("gemini-3.5-flash",)
 
 class ReceiptLineItem(BaseModel):
     item_name: str
@@ -128,7 +129,7 @@ class DualModelVisionClient:
     """
     Manages dual-model AI vision extraction with automated failover:
     - Primary: DeepSeek Flash (deepseek-flash, vision, 3.0s hard cutoff, no reasoning)
-    - Fallback: Gemini (gemini-2.5-flash, 4.0s cutoff)
+    - Fallback: Gemini (gemini-3.5-flash, 4.0s cutoff)
     - Circuit breaker: 5 consecutive failures opens breaker for 60s
     """
 
@@ -244,6 +245,7 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
+                    reasoning_effort="none",
                     max_tokens=512,
                     timeout=10.0,
                 )
@@ -260,7 +262,6 @@ class DualModelVisionClient:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        response_format={"type": "json_object"},
                         temperature=0.0,
                         max_tokens=1024,
                         timeout=10.0,
@@ -318,6 +319,7 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
+                    reasoning_effort="none",
                     max_tokens=256,
                     timeout=10.0,
                 )
@@ -334,7 +336,6 @@ class DualModelVisionClient:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        response_format={"type": "json_object"},
                         temperature=0.0,
                         max_tokens=256,
                         timeout=10.0,
@@ -381,6 +382,11 @@ class DualModelVisionClient:
             "- net_income (int, Thu nhap rong, in VND, or 0 if unreadable)\n"
             "- discount_and_tax (int, Chiet khau + thue, can be negative, or 0 if unreadable)\n"
             "- period (string, e.g. 08/2026 31 - 06, or '' if unreadable)\n"
+            "- period_month (string, the selected month tab at the top, e.g. 09/2026, or '' if unreadable)\n"
+            "- period_tabs (array of strings, ONLY the day-range tabs in the row BELOW the month tabs, from left to right, e.g. ['31 - 06', '07 - 13', '14 - 20']; never the month tabs)\n"
+            "- selected_period_label (string, the DATE RANGE written inside the teal-highlighted tab, e.g. '16 - 22'; do NOT return the 'Tuần N' caption)\n"
+            "- selected_period_index (int, 0-based index inside period_tabs of the tab rendered with white text on a teal/blue background)\n"
+            "- field_labels (array of strings, the visible income row labels in reading order, e.g. ['Tong thu nhap', 'Doanh so', 'Chiet khau + thue', 'Thu nhap rong', 'So gio online', 'So gio van doanh', 'Tong so chuyen'])\n"
             "- confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately)\n"
             "- is_legible (bool, true if income numbers are clearly readable, false if too blurry, distorted, or unreadable)\n"
             "- is_manipulated_or_photoshopped (bool, true if digits or text appear digitally edited/spliced)\n"
@@ -400,6 +406,11 @@ class DualModelVisionClient:
                     "total_trips (integer, Tong so chuyen, or 0 if unreadable), "
                     "online_hours (string, e.g. 95h 7m, or '' if unreadable), "
                     "period (string, e.g. 08/2026, or '' if unreadable), "
+                    "period_month (string, the selected month tab at the top, e.g. 09/2026, or '' if unreadable), "
+                    "period_tabs (array of ONLY the day-range tab labels in the row below the month tabs, left to right), "
+                    "selected_period_label (the date range inside the teal-highlighted tab, e.g. '16 - 22', not the week caption), "
+                    "selected_period_index (integer, 0-based index inside period_tabs of the tab with white text on a teal/blue background), "
+                    "field_labels (array of the visible income row labels in order), "
                     "confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately), "
                     "is_legible (boolean, true if numbers are legible, false if too blurry/corrupted), "
                     "is_manipulated_or_photoshopped (boolean, true if digits or text appear digitally edited/spliced), "
@@ -427,13 +438,16 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
+                    reasoning_effort="none",
                     max_tokens=1024,
                     timeout=10.0,
                 )
                 content = resp.choices[0].message.content or "{}"
                 res_data = robust_json_parse(content)
                 logger.info(f"[OCR SUCCESS] Extracted: {res_data}")
-                return res_data
+                if not res_data:
+                    raise RuntimeError("DeepSeek returned empty JSON")
+                return apply_layout_to_ocr(res_data, image_bytes)
             except Exception as e:
                 logger.error(f"[OCR ERROR] DeepSeek OCR failed: {e}")
 
@@ -443,14 +457,13 @@ class DualModelVisionClient:
                     resp = await self.gemini_client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        response_format={"type": "json_object"},
                         temperature=0.0,
                         max_tokens=1024,
                         timeout=10.0,
                     )
                     content = resp.choices[0].message.content or "{}"
                     res_data = robust_json_parse(content)
-                    return res_data
+                    return apply_layout_to_ocr(res_data, image_bytes)
                 except Exception:
                     continue
 
@@ -518,6 +531,7 @@ class DualModelVisionClient:
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.0,
+                    reasoning_effort="none",
                     max_tokens=1024,
                     timeout=10.0,
                 )
@@ -543,7 +557,6 @@ class DualModelVisionClient:
         resp = await self.gemini_client.chat.completions.create(
             model=GEMINI_VISION_MODELS[0],
             messages=messages,
-            response_format={"type": "json_object"},
             temperature=0.0,
             max_tokens=2048,
             timeout=gemini_timeout,
