@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{'Tạo Biểu Mẫu Mới' if is_new else 'Chỉnh Sửa Biểu Mẫu: ' + title_val}</title>
+    <title>Trình Chỉnh Sửa Biểu Mẫu</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
@@ -255,16 +255,16 @@
                     <div class="row-2">
                         <div class="field-group">
                             <label for="formId">Mã định danh (Form ID - viết liền không dấu) *</label>
-                            <input type="text" id="formId" value="{html.escape(schema_dict['form_id'])}" {'readonly' if not is_new else ''} required>
+                            <input type="text" id="formId" value="" required>
                         </div>
                         <div class="field-group">
                             <label for="formTitle">Tên biểu mẫu (Tiêu đề) *</label>
-                            <input type="text" id="formTitle" value="{html.escape(schema_dict['title'])}" required>
+                            <input type="text" id="formTitle" value="" required>
                         </div>
                     </div>
                     <div class="field-group">
                         <label for="formDesc">Mô tả biểu mẫu</label>
-                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế...">{html.escape(schema_dict.get('description') or '')}</textarea>
+                        <textarea id="formDesc" rows="3" placeholder="Ghi chú hướng dẫn cho tài xế..."></textarea>
                     </div>
                 </div>
             </div>
@@ -275,13 +275,13 @@
                     <div class="row-2">
                         <div class="field-group">
                             <label for="responseLimit">Giới hạn số lượng phản hồi (0 = Không giới hạn)</label>
-                            <input type="number" id="responseLimit" value="{schema_dict['settings'].get('response_limit') or 0}">
+                            <input type="number" id="responseLimit" value="">
                         </div>
                         <div class="field-group">
                             <label for="accessControl">Quyền truy cập</label>
                             <select id="accessControl">
-                                <option value="public" {'selected' if schema_dict['settings'].get('access_control')=='public' else ''}>Công khai (Bất kỳ ai có link)</option>
-                                <option value="private" {'selected' if schema_dict['settings'].get('access_control')=='private' else ''}>Nội bộ (Chỉ tài xế được duyệt)</option>
+                                <option value="public">Công khai (Bất kỳ ai có link)</option>
+                                <option value="private">Nội bộ (Chỉ tài xế được duyệt)</option>
                             </select>
                         </div>
                     </div>
@@ -290,13 +290,13 @@
                         <div class="field-group">
                             <label for="isTestMode">Chế độ vận hành</label>
                             <select id="isTestMode">
-                                <option value="false" {'selected' if not schema_dict['settings'].get('is_test_mode') else ''}>Chính thức (Lưu PostgreSQL SSOT)</option>
-                                <option value="true" {'selected' if schema_dict['settings'].get('is_test_mode') else ''}>Thử nghiệm (Lưu Dev Storage tạm)</option>
+                                <option value="false">Chính thức (Lưu PostgreSQL SSOT)</option>
+                                <option value="true">Thử nghiệm (Lưu Dev Storage tạm)</option>
                             </select>
                         </div>
                         <div class="field-group">
                             <label for="notifyChatId">Telegram Chat ID nhận thông báo</label>
-                            <input type="number" id="notifyChatId" value="{schema_dict['settings'].get('notify_telegram_chat_id') or ''}" placeholder="Ví dụ: -1001234567890">
+                            <input type="number" id="notifyChatId" value="" placeholder="Ví dụ: -1001234567890">
                         </div>
                     </div>
 
@@ -304,44 +304,44 @@
                         <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableBlurCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_blur_check', True) else ''}>
+                                <input type="checkbox" id="globalEnableBlurCheck">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra độ mờ / rung tay</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAiVision" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_vision', True) else ''}>
+                                <input type="checkbox" id="globalEnableAiVision">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra AI Vision trích xuất hóa đơn</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableVehicleMatch" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_vehicle_match', True) else ''}>
+                                <input type="checkbox" id="globalEnableVehicleMatch">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra đối chiếu biển số</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAntiFraud" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_anti_fraud', True) else ''}>
+                                <input type="checkbox" id="globalEnableAntiFraud">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra chống gian lận & trùng lặp</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalRequireUnique" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('require_unique', True) else ''}>
+                                <input type="checkbox" id="globalRequireUnique">
                                 <span class="toggle-slider"></span>
                                 <span>Yêu cầu ảnh độc nhất (Chống trùng lặp)</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableAiGeneratedCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_ai_generated_check', True) else ''}>
+                                <input type="checkbox" id="globalEnableAiGeneratedCheck">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra ảnh AI tổng hợp</span>
                             </label>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="globalEnableScreenPhotoCheck" {'checked' if (schema_dict['settings'].get('image_checks') or {}).get('enable_screen_photo_check', False) else ''}>
+                                <input type="checkbox" id="globalEnableScreenPhotoCheck">
                                 <span class="toggle-slider"></span>
                                 <span>Kiểm tra ảnh chụp màn hình</span>
                             </label>
                         </div>
                         <div class="field-group" style="max-width: 320px;">
                             <label for="globalBlurThreshold">Ngưỡng độ mờ tùy chỉnh (mặc định 40)</label>
-                            <input type="number" step="0.1" id="globalBlurThreshold" value="{(schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') if (schema_dict['settings'].get('image_checks') or {}).get('blur_threshold') is not None else 40}" placeholder="40">
+                            <input type="number" step="0.1" id="globalBlurThreshold" value="" placeholder="40">
                         </div>
                     </div>
                 </div>
@@ -837,12 +837,13 @@
                 title: formTitle,
                 description: document.getElementById('formDesc').value.trim(),
                 settings: {
+                    ...INITIAL_SCHEMA.settings,
                     response_limit: parseInt(document.getElementById('responseLimit').value) || null,
                     access_control: document.getElementById('accessControl').value,
                     is_test_mode: document.getElementById('isTestMode').value === 'true',
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
-                    decree13_required: true,
                     image_checks: {
+                        ...((INITIAL_SCHEMA.settings || {}).image_checks || {}),
                         enable_blur_check: document.getElementById('globalEnableBlurCheck') ? document.getElementById('globalEnableBlurCheck').checked : true,
                         blur_threshold: (document.getElementById('globalBlurThreshold') && document.getElementById('globalBlurThreshold').value !== '') ? parseFloat(document.getElementById('globalBlurThreshold').value) : 40.0,
                         enable_ai_vision: document.getElementById('globalEnableAiVision') ? document.getElementById('globalEnableAiVision').checked : true,
@@ -893,8 +894,42 @@
             localStorage.setItem('tb_lang', currentLang);
             applyEditorI18n();
         }
+        function hydrateEditorFromSchema() {
+            const s = INITIAL_SCHEMA || {};
+            const isNew = !s.form_id;
+            const title = isNew ? "Tạo Biểu Mẫu Mới" : `Chỉnh Sửa: ${s.title || s.form_id}`;
+            document.title = title;
+            const h1 = document.getElementById('txtEditorTitle');
+            if (h1) h1.textContent = title;
+            const idEl = document.getElementById('formId');
+            idEl.value = s.form_id || '';
+            idEl.readOnly = !isNew;
+            document.getElementById('formTitle').value = s.title || '';
+            document.getElementById('formDesc').value = s.description || '';
+            const st = s.settings || {};
+            document.getElementById('responseLimit').value = st.response_limit != null ? st.response_limit : '';
+            document.getElementById('notifyChatId').value = st.notify_telegram_chat_id != null ? st.notify_telegram_chat_id : '';
+            document.getElementById('accessControl').value = st.access_control || 'public';
+            document.getElementById('isTestMode').value = st.is_test_mode ? 'true' : 'false';
+            const ic = st.image_checks || {};
+            const checks = {
+                globalEnableBlurCheck: ['enable_blur_check', true],
+                globalEnableAiVision: ['enable_ai_vision', true],
+                globalEnableVehicleMatch: ['enable_vehicle_match', true],
+                globalEnableAntiFraud: ['enable_anti_fraud', true],
+                globalRequireUnique: ['require_unique', true],
+                globalEnableAiGeneratedCheck: ['enable_ai_generated_check', true],
+                globalEnableScreenPhotoCheck: ['enable_screen_photo_check', false]
+            };
+            Object.entries(checks).forEach(([elId, [key, fallback]]) => {
+                const el = document.getElementById(elId);
+                if (el) el.checked = ic[key] != null ? Boolean(ic[key]) : fallback;
+            });
+            document.getElementById('globalBlurThreshold').value = ic.blur_threshold != null ? ic.blur_threshold : '';
+        }
         window.addEventListener('DOMContentLoaded', () => {
             applyEditorI18n();
+            hydrateEditorFromSchema();
             renderQuestions();
         });
     </script>
