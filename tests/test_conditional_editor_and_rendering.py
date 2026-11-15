@@ -190,9 +190,11 @@ def test_form_editor_embeds_conditionals_and_consent_gate():
 
     data = _embedded_schema_json(html_content, "const INITIAL_SCHEMA = ")
     q2 = data["questions"][1]
-    assert q2["conditionals"][0]["expected_value"] == ["A", "B"]
-    assert q2["conditionals"][1]["operator"] == "not_empty"
-    assert "conditional" not in q2
+    groups = q2["condition_groups"]
+    assert len(groups) == 1
+    assert groups[0][0]["expected_value"] == ["A", "B"]
+    assert groups[0][1]["operator"] == "not_empty"
+    assert "conditionals" not in q2 and "conditional" not in q2
     gate = data["questions"][2]
     assert gate["is_consent_gate"] is True
     assert gate["consent_accept_values"] == ["Đồng ý"]
@@ -202,7 +204,7 @@ def test_dynamic_form_embeds_conditionals_and_consent_gate():
     schema = _schema_with_multi_conditions()
     data = _embedded_schema_json(render_dynamic_form_html(schema), "const SCHEMA = ")
     q2 = data["questions"][1]
-    assert [rule["operator"] for rule in q2["conditionals"]] == ["equals", "not_empty"]
+    assert [rule["operator"] for rule in q2["condition_groups"][0]] == ["equals", "not_empty"]
     assert data["questions"][2]["is_consent_gate"] is True
 
 
@@ -419,8 +421,67 @@ def test_signature_parent_condition_is_forced_to_not_empty():
             ),
         ],
     )
-    rule = schema.questions[1].conditionals[0]
+    rule = schema.questions[1].condition_groups[0][0]
     assert rule.operator == "not_empty"
     assert rule.expected_value is None
     ok, err = validate_submission_against_schema(schema, {"sig": "data:x"})
     assert ok is False and "Con" in err
+
+
+def test_condition_groups_or_semantics():
+    schema = FormSchema(
+        form_id="test_or_groups",
+        title="OR groups",
+        settings=FormSettings(decree13_required=False),
+        questions=[
+            FormQuestion(id="q_a", title="A", type=QuestionType.SINGLE_CHOICE, options=["x", "y"]),
+            FormQuestion(id="q_b", title="B", type=QuestionType.SINGLE_CHOICE, options=["x", "y"]),
+            FormQuestion(
+                id="q_target",
+                title="Mục tiêu",
+                type=QuestionType.TEXT,
+                required=True,
+                condition_groups=[
+                    [
+                        ConditionalRule(depends_on_question_id="q_a", operator="equals", expected_value=["x"]),
+                        ConditionalRule(depends_on_question_id="q_b", operator="equals", expected_value=["x"]),
+                    ],
+                    [
+                        ConditionalRule(depends_on_question_id="q_a", operator="equals", expected_value=["y"]),
+                    ],
+                ],
+            ),
+        ],
+    )
+
+    # second group alone satisfies
+    ok, err = validate_submission_against_schema(schema, {"q_a": "y", "q_b": "x"})
+    assert ok is False and "Mục tiêu" in err
+
+    # first group satisfied by both rules
+    ok, err = validate_submission_against_schema(schema, {"q_a": "x", "q_b": "x"})
+    assert ok is False and "Mục tiêu" in err
+
+    # one rule of the first group fails and the second group does not match -> hidden
+    assert validate_submission_against_schema(schema, {"q_a": "x", "q_b": "y"})[0] is True
+
+
+def test_condition_groups_normalize_legacy_and_drop_empty():
+    rule = ConditionalRule(depends_on_question_id="p", operator="equals", expected_value="a")
+    legacy = FormQuestion(
+        id="q_legacy",
+        title="Legacy",
+        type=QuestionType.TEXT,
+        conditional=rule,
+        conditionals=[rule],
+    )
+    assert len(legacy.condition_groups) == 1
+    assert legacy.condition_groups[0] == [rule]
+
+    mixed = FormQuestion(
+        id="q_mixed",
+        title="Mixed",
+        type=QuestionType.TEXT,
+        condition_groups=[[], [rule], [rule]],
+    )
+    assert mixed.condition_groups == [[rule]]

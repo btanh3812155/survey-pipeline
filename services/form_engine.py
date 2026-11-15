@@ -98,7 +98,7 @@ class FormQuestion(BaseModel):
     options: Optional[List[Any]] = None # For single_choice, multiple_choice, dropdown
     group_compatibility: Optional[Dict[str, List[str]]] = None # For multiple_choice mutual exclusivity
     validation: Optional[ValidationRule] = None
-    conditionals: List[ConditionalRule] = Field(default_factory=list) # ALL must match (AND)
+    condition_groups: List[List[ConditionalRule]] = Field(default_factory=list) # OR of AND groups; at least one group must fully match
     is_consent_gate: bool = False # every following question depends on this answer
     consent_accept_values: List[str] = Field(default_factory=list) # empty = any non-blank answer
     image_checks: Optional[ImageCheckConfig] = None
@@ -109,27 +109,40 @@ class FormQuestion(BaseModel):
     image_slots: Optional[List[Dict[str, Any]]] = None  # e.g. [{"slot": 0, "title": "Đồng hồ km", "role": "odometer", "required": True}, ...]
 
     @model_validator(mode="after")
-    def _dedupe_conditionals(self) -> "FormQuestion":
-        unique: List[ConditionalRule] = []
-        for rule in self.conditionals:
-            if rule not in unique:
-                unique.append(rule)
-        self.conditionals = unique
+    def _normalize_condition_groups(self) -> "FormQuestion":
+        cleaned: List[List[ConditionalRule]] = []
+        seen_groups = set()
+        for group in self.condition_groups:
+            unique: List[ConditionalRule] = []
+            for rule in group:
+                if rule not in unique:
+                    unique.append(rule)
+            if not unique:
+                continue
+            key = tuple((r.depends_on_question_id, r.operator, str(r.expected_value)) for r in unique)
+            if key in seen_groups:
+                continue
+            seen_groups.add(key)
+            cleaned.append(unique)
+        self.condition_groups = cleaned
         return self
 
     @model_validator(mode="before")
     @classmethod
-    def _fold_legacy_conditional(cls, data: Any) -> Any:
-        """Older schemas carry a single `conditional` rule; fold it into `conditionals`."""
-        if isinstance(data, dict) and data.get("conditional"):
-            merged = list(data.get("conditionals") or [])
-            legacy = ConditionalRule.model_validate(data["conditional"])
-            if not any(
-                ConditionalRule.model_validate(rule) == legacy for rule in merged
-            ):
-                merged.append(data["conditional"])
-            return {**data, "conditionals": merged, "conditional": None}
-        return data
+    def _fold_legacy_conditionals(cls, data: Any) -> Any:
+        """Fold legacy `conditional` / `conditionals` into a single AND group."""
+        if not isinstance(data, dict):
+            return data
+        folded = dict(data)
+        legacy_single = folded.pop("conditional", None)
+        legacy_list = folded.pop("conditionals", None)
+        groups = [list(g) for g in (folded.get("condition_groups") or []) if isinstance(g, list)]
+        if legacy_list:
+            groups.append(list(legacy_list))
+        if legacy_single:
+            groups.append([legacy_single])
+        folded["condition_groups"] = groups
+        return folded
 
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
@@ -165,21 +178,23 @@ class FormSchema(BaseModel):
 
         declared_ids = set()
         for q in self.questions:
-            for rule in q.conditionals:
-                parent_id = rule.depends_on_question_id
-                if parent_id == q.id:
-                    raise ValueError(f"Câu hỏi '{q.id}' không thể tự phụ thuộc vào chính nó!")
-                if parent_id not in declared_ids:
-                    raise ValueError(f"Điều kiện câu hỏi '{q.id}' phụ thuộc vào câu hỏi chưa được khai báo trước đó: '{parent_id}'")
+            for group in q.condition_groups:
+                for rule in group:
+                    parent_id = rule.depends_on_question_id
+                    if parent_id == q.id:
+                        raise ValueError(f"Câu hỏi '{q.id}' không thể tự phụ thuộc vào chính nó!")
+                    if parent_id not in declared_ids:
+                        raise ValueError(f"Điều kiện câu hỏi '{q.id}' phụ thuộc vào câu hỏi chưa được khai báo trước đó: '{parent_id}'")
             declared_ids.add(q.id)
 
         # A signature can only mean "signed": it never takes an expected value
         types = {q.id: q.type for q in self.questions}
         for q in self.questions:
-            for rule in q.conditionals:
-                if types.get(rule.depends_on_question_id) == QuestionType.SIGNATURE:
-                    rule.operator = "not_empty"
-                    rule.expected_value = None
+            for group in q.condition_groups:
+                for rule in group:
+                    if types.get(rule.depends_on_question_id) == QuestionType.SIGNATURE:
+                        rule.operator = "not_empty"
+                        rule.expected_value = None
 
         return self
 def effective_gates(schema: FormSchema) -> List[FormQuestion]:
@@ -214,7 +229,10 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
         # Every question after an unsatisfied gate is hidden; all conditionals must match (AND)
         if any(gi < idx and not gate_satisfied(gate, answers.get(gate.id)) for gi, gate in gates):
             continue
-        if not all(evaluate_condition(rule, answers.get(rule.depends_on_question_id)) for rule in q.conditionals):
+        if q.condition_groups and not any(
+            all(evaluate_condition(rule, answers.get(rule.depends_on_question_id)) for rule in group)
+            for group in q.condition_groups
+        ):
             continue
         val = answers.get(q.id)
         matching_keys = [k for k in answers.keys() if k.startswith(f"{q.id}_")]

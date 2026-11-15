@@ -418,11 +418,9 @@
             renderQuestions();
         }
         function renameConditionalParents(oldId, newId) {
-            questions.forEach(q => {
-                (q.conditionals || []).forEach(rule => {
-                    if (rule.depends_on_question_id === oldId) rule.depends_on_question_id = newId;
-                });
-            });
+            questions.forEach(q => eachCondition(q, rule => {
+                if (rule.depends_on_question_id === oldId) rule.depends_on_question_id = newId;
+            }));
         }
         function updateQuestionId(idx, newId) {
             const oldId = questions[idx].id;
@@ -447,8 +445,10 @@
             questions.splice(idx, 1);
             if (removed && removed.id) {
                 questions.forEach(q => {
-                    if (Array.isArray(q.conditionals)) {
-                        q.conditionals = q.conditionals.filter(rule => rule.depends_on_question_id !== removed.id);
+                    if (Array.isArray(q.condition_groups)) {
+                        q.condition_groups = q.condition_groups
+                            .map(group => group.filter(rule => rule.depends_on_question_id !== removed.id))
+                            .filter(group => group.length > 0);
                     }
                 });
             }
@@ -471,16 +471,17 @@
         function firstOptionValue(q) {
             return questionHasOptions(q) ? optionLabel(q.options[0]) : '';
         }
+        function eachCondition(q, fn) {
+            (q.condition_groups || []).forEach(group => group.forEach(fn));
+        }
         function normalizeSignatureRules() {
-            questions.forEach(q => {
-                (q.conditionals || []).forEach(rule => {
-                    const parent = questions.find(p => p.id === rule.depends_on_question_id);
-                    if (parent && parent.type === 'signature') {
-                        rule.operator = 'not_empty';
-                        rule.expected_value = [];
-                    }
-                });
-            });
+            questions.forEach(q => eachCondition(q, rule => {
+                const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                if (parent && parent.type === 'signature') {
+                    rule.operator = 'not_empty';
+                    rule.expected_value = [];
+                }
+            }));
         }
         function setQuestionType(idx, value) {
             const q = questions[idx];
@@ -496,27 +497,44 @@
             questions.splice(target, 0, moved);
             renderQuestions();
         }
-        function addConditionalRow(idx) {
-            const q = questions[idx];
-            const prior = questions.slice(0, idx);
-            if (!q || !prior.length) return;
-            const parent = prior[prior.length - 1];
-            if (!Array.isArray(q.conditionals)) q.conditionals = [];
-            q.conditionals.push({
+        function defaultConditionRow(parent) {
+            return {
                 depends_on_question_id: parent.id,
                 operator: parent.type === 'signature' ? 'not_empty' : 'equals',
                 expected_value: parent.type === 'signature' ? [] : (questionHasOptions(parent) ? [firstOptionValue(parent)] : [])
-            });
-            renderQuestions();
+            };
         }
-        function removeConditionalRow(idx, cidx) {
+        function addConditionalGroup(idx) {
             const q = questions[idx];
-            if (!q || !Array.isArray(q.conditionals)) return;
-            q.conditionals.splice(cidx, 1);
+            const prior = questions.slice(0, idx);
+            if (!q || !prior.length) return;
+            if (!Array.isArray(q.condition_groups)) q.condition_groups = [];
+            q.condition_groups.push([defaultConditionRow(prior[prior.length - 1])]);
             renderQuestions();
         }
-        function setConditionalParent(idx, cidx, value) {
-            const rule = questions[idx]?.conditionals?.[cidx];
+        function removeConditionalGroup(idx, gidx) {
+            const q = questions[idx];
+            if (!q || !Array.isArray(q.condition_groups)) return;
+            q.condition_groups.splice(gidx, 1);
+            renderQuestions();
+        }
+        function addConditionalRow(idx, gidx) {
+            const q = questions[idx];
+            const prior = questions.slice(0, idx);
+            if (!q || !prior.length || !Array.isArray(q.condition_groups) || !q.condition_groups[gidx]) return;
+            q.condition_groups[gidx].push(defaultConditionRow(prior[prior.length - 1]));
+            renderQuestions();
+        }
+        function removeConditionalRow(idx, gidx, cidx) {
+            const q = questions[idx];
+            const group = q?.condition_groups?.[gidx];
+            if (!group) return;
+            group.splice(cidx, 1);
+            if (!group.length) q.condition_groups.splice(gidx, 1);
+            renderQuestions();
+        }
+        function setConditionalParent(idx, gidx, cidx, value) {
+            const rule = questions[idx]?.condition_groups?.[gidx]?.[cidx];
             if (!rule) return;
             rule.depends_on_question_id = value;
             const parent = questions.find(p => p.id === value);
@@ -528,15 +546,15 @@
             }
             renderQuestions();
         }
-        function setConditionalOperator(idx, cidx, value) {
-            const rule = questions[idx]?.conditionals?.[cidx];
+        function setConditionalOperator(idx, gidx, cidx, value) {
+            const rule = questions[idx]?.condition_groups?.[gidx]?.[cidx];
             if (!rule) return;
             rule.operator = value;
             if (value === 'empty' || value === 'not_empty') rule.expected_value = [];
             renderQuestions();
         }
-        function toggleConditionalValue(idx, cidx, value, checked) {
-            const rule = questions[idx]?.conditionals?.[cidx];
+        function toggleConditionalValue(idx, gidx, cidx, value, checked) {
+            const rule = questions[idx]?.condition_groups?.[gidx]?.[cidx];
             if (!rule) return;
             const values = Array.isArray(rule.expected_value) ? rule.expected_value.slice() : [];
             const at = values.indexOf(value);
@@ -544,8 +562,8 @@
             if (!checked && at >= 0) values.splice(at, 1);
             rule.expected_value = values;
         }
-        function setConditionalValuesText(idx, cidx, text) {
-            const rule = questions[idx]?.conditionals?.[cidx];
+        function setConditionalValuesText(idx, gidx, cidx, text) {
+            const rule = questions[idx]?.condition_groups?.[gidx]?.[cidx];
             if (!rule) return;
             rule.expected_value = String(text).split('\n').map(v => v.trim()).filter(v => v !== '');
         }
@@ -570,7 +588,7 @@
             if (!q) return;
             q.consent_accept_values = String(text).split('\n').map(v => v.trim()).filter(v => v !== '');
         }
-        function renderConditionalRowHtml(idx, rule, cidx, priorQuestions) {
+        function renderConditionalRowHtml(idx, gidx, rule, cidx, priorQuestions) {
             const parentQ = questions.find(p => p.id === rule.depends_on_question_id);
             const isSignatureParent = Boolean(parentQ && parentQ.type === 'signature');
             const op = isSignatureParent ? 'not_empty' : (rule.operator || 'equals');
@@ -588,26 +606,26 @@
                             const val = optionLabel(opt);
                             return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px;">
                                 <span style="font-size:0.78rem; color:#cbd5e1;">${escapeHtml(val)}</span>
-                                <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConditionalValue(${idx}, ${cidx}, this.value, this.checked)">
+                                <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConditionalValue(${idx}, ${gidx}, ${cidx}, this.value, this.checked)">
                             </label>`;
                         }).join('')}
                     </div>
                 `;
             } else {
                 valueControl = `
-                    <textarea rows="2" style="width:100%; padding:8px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" placeholder="Mỗi dòng một giá trị" oninput="setConditionalValuesText(${idx}, ${cidx}, this.value)">${escapeHtml(values.join('\n'))}</textarea>
+                    <textarea rows="2" style="width:100%; padding:8px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" placeholder="Mỗi dòng một giá trị" oninput="setConditionalValuesText(${idx}, ${gidx}, ${cidx}, this.value)">${escapeHtml(values.join('\n'))}</textarea>
                 `;
             }
             const operatorControl = isSignatureParent
                 ? `<div style="padding:7px; font-size:0.8rem; color:#f59e0b; background:#0b1120; border:1px solid #1e293b; border-radius:6px;">Đã ký (không cần giá trị)</div>`
-                : `<select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalOperator(${idx}, ${cidx}, this.value)">
+                : `<select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalOperator(${idx}, ${gidx}, ${cidx}, this.value)">
                         ${CONDITION_OPERATORS.map(([value, label]) => `<option value="${value}" ${op === value ? 'selected' : ''}>${label}</option>`).join('')}
                     </select>`;
             return `
                 <div style="display:grid; grid-template-columns:1.4fr 1fr 1.6fr auto; gap:8px; align-items:start; padding:8px; background:#0b1120; border:1px solid #1e293b; border-radius:8px; margin-top:8px;">
                     <div class="field-group">
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Câu hỏi phụ thuộc</label>
-                        <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${cidx}, this.value)">
+                        <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${gidx}, ${cidx}, this.value)">
                             ${priorQuestions.map((p, pIdx) => `
                                 <option value="${escapeHtml(p.id)}" ${p.id === rule.depends_on_question_id ? 'selected' : ''}>${escapeHtml(p.title || p.id)}</option>
                             `).join('')}
@@ -621,7 +639,7 @@
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">${isSignatureParent ? 'Điều kiện chữ ký' : 'Giá trị (nhiều dòng = nhiều giá trị)'}</label>
                         ${valueControl}
                     </div>
-                    <button type="button" style="margin-top:20px; background:#ef4444; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer;" onclick="removeConditionalRow(${idx}, ${cidx})">Xóa</button>
+                    <button type="button" style="margin-top:20px; background:#ef4444; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer;" onclick="removeConditionalRow(${idx}, ${gidx}, ${cidx})">Xóa</button>
                 </div>
             `;
         }
@@ -629,21 +647,34 @@
             if (idx === 0) {
                 return `
                     <div style="background:rgba(15, 23, 42, 0.5); border:1px dashed #334155; border-radius:8px; padding:8px 12px; margin-top:8px;">
-                        <span style="font-size:0.75rem; color:#64748b; font-style:italic;">Câu hỏi #1 là câu hỏi khởi đầu, luôn hiển thị mặc định.</span>
+                        <span style="font-size:0.75rem; color:#64748b; font-style:italic;">Câu hỏi đầu tiên luôn hiển thị mặc định.</span>
                     </div>
                 `;
             }
             const priorQuestions = questions.slice(0, idx);
-            const rules = Array.isArray(q.conditionals) ? q.conditionals : [];
+            const groups = Array.isArray(q.condition_groups) ? q.condition_groups : [];
             return `
-                <div style="background:rgba(15, 23, 42, 0.85); border:1.5px solid ${rules.length ? '#38bdf8' : '#334155'}; border-radius:8px; padding:12px; margin-top:10px;">
+                <div style="background:rgba(15, 23, 42, 0.85); border:1.5px solid ${groups.length ? '#38bdf8' : '#334155'}; border-radius:8px; padding:12px; margin-top:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                        <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Điều kiện hiển thị (tất cả phải đúng)</span>
-                        <button type="button" style="background:rgba(56,189,248,0.15); border:1px solid #38bdf8; color:#38bdf8; padding:4px 10px; border-radius:6px; font-size:0.75rem; font-weight:700; cursor:pointer;" onclick="addConditionalRow(${idx})">+ Thêm điều kiện</button>
+                        <div>
+                            <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Điều kiện hiển thị</span>
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">Tất cả điều kiện trong ÍT NHẤT MỘT nhóm phải đúng (HOẶC giữa các nhóm).</div>
+                        </div>
+                        <button type="button" style="background:rgba(56,189,248,0.15); border:1px solid #38bdf8; color:#38bdf8; padding:4px 10px; border-radius:6px; font-size:0.75rem; font-weight:700; cursor:pointer;" onclick="addConditionalGroup(${idx})">+ Thêm nhóm (OR)</button>
                     </div>
-                    ${rules.length
-                        ? rules.map((rule, cidx) => renderConditionalRowHtml(idx, rule, cidx, priorQuestions)).join('')
-                        : `<div style="font-size:0.75rem; color:#64748b; margin-top:6px;">Câu hỏi này luôn hiển thị. Bấm "Thêm điều kiện" để chỉ hiển thị khi câu hỏi trước có giá trị cụ thể.</div>`}
+                    ${groups.length
+                        ? groups.map((group, gidx) => `
+                            ${gidx > 0 ? `<div style="text-align:center; margin:8px 0; font-size:0.72rem; font-weight:800; color:#f59e0b; letter-spacing:1px;">HOẶC (OR)</div>` : ''}
+                            <div style="border:1px solid #1e293b; border-radius:8px; padding:8px; margin-top:8px; background:rgba(2,6,23,0.4);">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                                    <span style="font-size:0.78rem; font-weight:700; color:#94a3b8;">Nhóm ${gidx + 1} (tất cả phải đúng)</span>
+                                    <button type="button" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171; padding:2px 8px; border-radius:4px; font-size:0.7rem; cursor:pointer;" onclick="removeConditionalGroup(${idx}, ${gidx})">Xóa nhóm</button>
+                                </div>
+                                ${group.map((rule, cidx) => renderConditionalRowHtml(idx, gidx, rule, cidx, priorQuestions)).join('')}
+                                <button type="button" style="margin-top:8px; background:rgba(148,163,184,0.12); border:1px solid #475569; color:#cbd5e1; padding:3px 8px; border-radius:4px; font-size:0.72rem; cursor:pointer;" onclick="addConditionalRow(${idx}, ${gidx})">+ Thêm điều kiện (AND)</button>
+                            </div>
+                        `).join('')
+                        : `<div style="font-size:0.75rem; color:#64748b; margin-top:6px;">Câu hỏi này luôn hiển thị. Bấm "Thêm nhóm (OR)" để chỉ hiển thị khi các câu hỏi trước có giá trị cụ thể.</div>`}
                 </div>
             `;
         }
@@ -1135,25 +1166,25 @@
                 },
                 questions: questions.map(q => {
                     const cleanQ = { ...q, required: q.required !== false };
-                    const rules = (q.conditionals || [])
-                        .filter(rule => rule.depends_on_question_id)
-                        .map(rule => ({
-                            depends_on_question_id: rule.depends_on_question_id,
-                            operator: rule.operator || 'equals',
-                            expected_value: (rule.operator === 'empty' || rule.operator === 'not_empty')
-                                ? null
-                                : (Array.isArray(rule.expected_value) ? rule.expected_value : [])
-                        }));
-                    if (rules.length) {
-                        cleanQ.conditionals = rules.map(rule => {
-                            const parent = questions.find(p => p.id === rule.depends_on_question_id);
-                            return (parent && parent.type === 'signature')
-                                ? { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null }
-                                : rule;
-                        });
-                    } else {
-                        delete cleanQ.conditionals;
-                    }
+                    const groups = (q.condition_groups || [])
+                        .map(group => group
+                            .filter(rule => rule.depends_on_question_id)
+                            .map(rule => {
+                                const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                                if (parent && parent.type === 'signature') {
+                                    return { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null };
+                                }
+                                return {
+                                    depends_on_question_id: rule.depends_on_question_id,
+                                    operator: rule.operator || 'equals',
+                                    expected_value: (rule.operator === 'empty' || rule.operator === 'not_empty')
+                                        ? null
+                                        : (Array.isArray(rule.expected_value) ? rule.expected_value : [])
+                                };
+                            }))
+                        .filter(group => group.length > 0);
+                    if (groups.length) cleanQ.condition_groups = groups; else delete cleanQ.condition_groups;
+                    delete cleanQ.conditionals;
                     delete cleanQ.conditional;
                     if (cleanQ.is_consent_gate) {
                         cleanQ.consent_accept_values = (q.type === 'signature' ? [] : (q.consent_accept_values || []))
@@ -1236,22 +1267,27 @@
         }
         function normalizeConditionals() {
             questions.forEach(q => {
-                const legacy = q.conditional ? [q.conditional] : [];
-                const rules = Array.isArray(q.conditionals) ? q.conditionals : legacy;
-                q.conditionals = rules.map(rule => {
-                    const op = rule.operator || 'equals';
-                    let values = rule.expected_value;
-                    if (op === 'empty' || op === 'not_empty') values = [];
-                    else if (Array.isArray(values)) values = values.map(String);
-                    else if (values === undefined || values === null) values = [];
-                    else if (typeof values === 'string') values = op === 'in' ? values.split(',') : values.split('\n');
-                    else values = [String(values)];
-                    return {
-                        depends_on_question_id: rule.depends_on_question_id || '',
-                        operator: op,
-                        expected_value: values.map(v => String(v).trim()).filter(v => v !== '')
-                    };
-                });
+                let groups;
+                if (Array.isArray(q.condition_groups)) groups = q.condition_groups;
+                else if (Array.isArray(q.conditionals)) groups = [q.conditionals];
+                else groups = q.conditional ? [[q.conditional]] : [];
+                q.condition_groups = groups
+                    .map(group => (Array.isArray(group) ? group : []).map(rule => {
+                        const op = rule.operator || 'equals';
+                        let values = rule.expected_value;
+                        if (op === 'empty' || op === 'not_empty') values = [];
+                        else if (Array.isArray(values)) values = values.map(String);
+                        else if (values === undefined || values === null) values = [];
+                        else if (typeof values === 'string') values = op === 'in' ? values.split(',') : values.split('\n');
+                        else values = [String(values)];
+                        return {
+                            depends_on_question_id: rule.depends_on_question_id || '',
+                            operator: op,
+                            expected_value: values.map(v => String(v).trim()).filter(v => v !== '')
+                        };
+                    }))
+                    .filter(group => group.length > 0);
+                delete q.conditionals;
                 delete q.conditional;
                 q.is_consent_gate = Boolean(q.is_consent_gate);
                 q.consent_accept_values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values.map(String) : [];

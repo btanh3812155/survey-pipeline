@@ -39,7 +39,7 @@
       "options": null,
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [],
+      "condition_groups": [],
       "is_consent_gate": true,
       "consent_accept_values": [],
       "image_checks": null,
@@ -66,7 +66,7 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [],
+      "condition_groups": [],
       "is_consent_gate": true,
       "consent_accept_values": [
         "Tôi đồng ý"
@@ -100,12 +100,14 @@
         "min_length": null,
         "numbers_only": true
       },
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -133,12 +135,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -170,12 +174,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "vehicle_type",
-          "operator": "equals",
-          "expected_value": "Ô tô"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "vehicle_type",
+            "operator": "equals",
+            "expected_value": "Ô tô"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -206,12 +212,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -243,12 +251,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -281,12 +291,14 @@
         "min_length": null,
         "numbers_only": true
       },
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -317,12 +329,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -368,12 +382,14 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],
@@ -401,12 +417,14 @@
       "options": null,
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [
-        {
-          "depends_on_question_id": "consent_choice",
-          "operator": "equals",
-          "expected_value": "Tôi đồng ý"
-        }
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "consent_choice",
+            "operator": "equals",
+            "expected_value": "Tôi đồng ý"
+          }
+        ]
       ],
       "is_consent_gate": false,
       "consent_accept_values": [],

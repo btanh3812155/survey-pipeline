@@ -47,7 +47,7 @@
         "min_length": null,
         "numbers_only": false
       },
-      "conditionals": [],
+      "condition_groups": [],
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
@@ -71,7 +71,7 @@
       "options": null,
       "group_compatibility": null,
       "validation": null,
-      "conditionals": [],
+      "condition_groups": [],
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,

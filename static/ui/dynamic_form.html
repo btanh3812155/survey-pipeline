@@ -1877,15 +1877,20 @@
             if (op === 'in') return Array.isArray(answer) ? seen.some(a => values.includes(a)) : equalsMatch(answer, values);
             return !isBlankAnswer(answer);
         }
-        function questionRules(q) {
-            const rules = Array.isArray(q.conditionals) ? q.conditionals : (q.conditional ? [q.conditional] : []);
-            return rules.map(rule => {
-                const parent = SCHEMA.questions.find(p => p.id === rule.depends_on_question_id);
-                if (parent && parent.type === 'signature') {
-                    return { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null };
-                }
-                return rule;
-            });
+        function questionConditionGroups(q) {
+            let groups;
+            if (Array.isArray(q.condition_groups)) groups = q.condition_groups;
+            else if (Array.isArray(q.conditionals)) groups = [q.conditionals];
+            else groups = q.conditional ? [[q.conditional]] : [];
+            return groups
+                .map(group => (Array.isArray(group) ? group : []).map(rule => {
+                    const parent = SCHEMA.questions.find(p => p.id === rule.depends_on_question_id);
+                    if (parent && parent.type === 'signature') {
+                        return { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null };
+                    }
+                    return rule;
+                }))
+                .filter(group => group.length > 0);
         }
         function effectiveGates() {
             return SCHEMA.questions.filter(q => q.is_consent_gate);
@@ -1924,7 +1929,8 @@
                 const card = document.getElementById(`card_${q.id}`);
                 const isGate = gateIds.has(q.id);
                 let show = !blocked;
-                if (show && questionRules(q).some(rule => !evaluateRule(rule, answers[rule.depends_on_question_id]))) {
+                const groups = questionConditionGroups(q);
+                if (show && groups.length && !groups.some(group => group.every(rule => evaluateRule(rule, answers[rule.depends_on_question_id])))) {
                     show = false;
                 }
                 if (card) {
