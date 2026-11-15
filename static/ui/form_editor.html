@@ -459,6 +459,28 @@
         function firstOptionValue(q) {
             return questionHasOptions(q) ? optionLabel(q.options[0]) : '';
         }
+        function normalizeSignatureRules() {
+            questions.forEach(q => {
+                if (q.type === 'signature') {
+                    q.is_consent_gate = true;
+                    q.consent_accept_values = [];
+                }
+                (q.conditionals || []).forEach(rule => {
+                    const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                    if (parent && parent.type === 'signature') {
+                        rule.operator = 'not_empty';
+                        rule.expected_value = [];
+                    }
+                });
+            });
+        }
+        function setQuestionType(idx, value) {
+            const q = questions[idx];
+            if (!q) return;
+            q.type = value;
+            normalizeSignatureRules();
+            renderQuestions();
+        }
         function addConditionalRow(idx) {
             const q = questions[idx];
             const prior = questions.slice(0, idx);
@@ -467,8 +489,8 @@
             if (!Array.isArray(q.conditionals)) q.conditionals = [];
             q.conditionals.push({
                 depends_on_question_id: parent.id,
-                operator: 'equals',
-                expected_value: questionHasOptions(parent) ? [firstOptionValue(parent)] : []
+                operator: parent.type === 'signature' ? 'not_empty' : 'equals',
+                expected_value: parent.type === 'signature' ? [] : (questionHasOptions(parent) ? [firstOptionValue(parent)] : [])
             });
             renderQuestions();
         }
@@ -483,7 +505,12 @@
             if (!rule) return;
             rule.depends_on_question_id = value;
             const parent = questions.find(p => p.id === value);
-            rule.expected_value = questionHasOptions(parent) ? [firstOptionValue(parent)] : [];
+            if (parent && parent.type === 'signature') {
+                rule.operator = 'not_empty';
+                rule.expected_value = [];
+            } else {
+                rule.expected_value = questionHasOptions(parent) ? [firstOptionValue(parent)] : [];
+            }
             renderQuestions();
         }
         function setConditionalOperator(idx, cidx, value) {
@@ -530,11 +557,14 @@
         }
         function renderConditionalRowHtml(idx, rule, cidx, priorQuestions) {
             const parentQ = questions.find(p => p.id === rule.depends_on_question_id);
-            const op = rule.operator || 'equals';
+            const isSignatureParent = Boolean(parentQ && parentQ.type === 'signature');
+            const op = isSignatureParent ? 'not_empty' : (rule.operator || 'equals');
             const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
             const needsValue = op !== 'empty' && op !== 'not_empty';
             let valueControl = '';
-            if (!needsValue) {
+            if (isSignatureParent) {
+                valueControl = `<div style="font-size:0.75rem; color:#f59e0b; padding:8px 0;">Chỉ hiển thị khi câu chữ ký đã được ký. Không cần giá trị.</div>`;
+            } else if (!needsValue) {
                 valueControl = `<div style="font-size:0.75rem; color:#64748b; font-style:italic; padding:8px 0;">Toán tử này không cần giá trị.</div>`;
             } else if (questionHasOptions(parentQ)) {
                 valueControl = `
@@ -551,6 +581,11 @@
                     <textarea rows="2" style="width:100%; padding:8px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" placeholder="Mỗi dòng một giá trị" oninput="setConditionalValuesText(${idx}, ${cidx}, this.value)">${escapeHtml(values.join('\n'))}</textarea>
                 `;
             }
+            const operatorControl = isSignatureParent
+                ? `<div style="padding:7px; font-size:0.8rem; color:#f59e0b; background:#0b1120; border:1px solid #1e293b; border-radius:6px;">Đã ký (không cần giá trị)</div>`
+                : `<select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalOperator(${idx}, ${cidx}, this.value)">
+                        ${CONDITION_OPERATORS.map(([value, label]) => `<option value="${value}" ${op === value ? 'selected' : ''}>${label}</option>`).join('')}
+                    </select>`;
             return `
                 <div style="display:grid; grid-template-columns:1.4fr 1fr 1.6fr auto; gap:8px; align-items:start; padding:8px; background:#0b1120; border:1px solid #1e293b; border-radius:8px; margin-top:8px;">
                     <div class="field-group">
@@ -563,12 +598,10 @@
                     </div>
                     <div class="field-group">
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Toán tử</label>
-                        <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalOperator(${idx}, ${cidx}, this.value)">
-                            ${CONDITION_OPERATORS.map(([value, label]) => `<option value="${value}" ${op === value ? 'selected' : ''}>${label}</option>`).join('')}
-                        </select>
+                        ${operatorControl}
                     </div>
                     <div class="field-group">
-                        <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Giá trị (nhiều dòng = nhiều giá trị)</label>
+                        <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">${isSignatureParent ? 'Điều kiện chữ ký' : 'Giá trị (nhiều dòng = nhiều giá trị)'}</label>
                         ${valueControl}
                     </div>
                     <button type="button" style="margin-top:20px; background:#ef4444; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer;" onclick="removeConditionalRow(${idx}, ${cidx})">Xóa</button>
@@ -598,6 +631,14 @@
             `;
         }
         function renderConsentGateBuilderHtml(q, idx) {
+            if (q.type === 'signature') {
+                return `
+                    <div style="background:rgba(245,158,11,0.08); border:1.5px solid #f59e0b; border-radius:8px; padding:12px; margin-top:10px;">
+                        <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi chữ ký luôn là cổng</span>
+                        <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">Mọi câu hỏi phía sau chỉ hiển thị sau khi tài xế ký. Chữ ký không có giá trị điều kiện.</div>
+                    </div>
+                `;
+            }
             const enabled = Boolean(q.is_consent_gate);
             const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values : [];
             let acceptControl = '';
@@ -913,7 +954,7 @@
                         </div>
                         <div class="field-group">
                             <label>Loại câu hỏi</label>
-                            <select onchange="questions[${idx}].type = this.value; renderQuestions();">
+                            <select onchange="setQuestionType(${idx}, this.value)">
                                 <option value="text" ${q.type==='text'?'selected':''}>Văn bản (Text)</option>
                                 <option value="number" ${q.type==='number'?'selected':''}>Số (Number)</option>
                                 <option value="single_choice" ${q.type==='single_choice'?'selected':''}>Chọn một (Single Choice)</option>
@@ -1084,9 +1125,21 @@
                                 ? null
                                 : (Array.isArray(rule.expected_value) ? rule.expected_value : [])
                         }));
-                    if (rules.length) cleanQ.conditionals = rules; else delete cleanQ.conditionals;
+                    if (rules.length) {
+                        cleanQ.conditionals = rules.map(rule => {
+                            const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                            return (parent && parent.type === 'signature')
+                                ? { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null }
+                                : rule;
+                        });
+                    } else {
+                        delete cleanQ.conditionals;
+                    }
                     delete cleanQ.conditional;
-                    if (cleanQ.is_consent_gate) {
+                    if (q.type === 'signature') {
+                        cleanQ.is_consent_gate = true;
+                        cleanQ.consent_accept_values = [];
+                    } else if (cleanQ.is_consent_gate) {
                         cleanQ.consent_accept_values = (q.consent_accept_values || [])
                             .map(v => String(v).trim())
                             .filter(v => v !== '');
@@ -1187,6 +1240,7 @@
                 q.is_consent_gate = Boolean(q.is_consent_gate);
                 q.consent_accept_values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values.map(String) : [];
             });
+            normalizeSignatureRules();
         }
         window.addEventListener('DOMContentLoaded', () => {
             applyEditorI18n();

@@ -1879,22 +1879,30 @@
             return !isBlankAnswer(answer);
         }
         function questionRules(q) {
-            if (Array.isArray(q.conditionals)) return q.conditionals;
-            return q.conditional ? [q.conditional] : [];
+            const rules = Array.isArray(q.conditionals) ? q.conditionals : (q.conditional ? [q.conditional] : []);
+            return rules.map(rule => {
+                const parent = SCHEMA.questions.find(p => p.id === rule.depends_on_question_id);
+                if (parent && parent.type === 'signature') {
+                    return { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null };
+                }
+                return rule;
+            });
         }
         function effectiveGates() {
-            const explicit = SCHEMA.questions.filter(q => q.is_consent_gate);
-            if (explicit.length) return explicit;
-            if (SCHEMA.settings && SCHEMA.settings.decree13_required === false) return [];
-            return SCHEMA.questions
-                .filter(q => q.type === 'signature' || q.id === 'consent_choice')
-                .map(q => (q.id === 'consent_choice' && !(q.consent_accept_values || []).length)
-                    ? { ...q, consent_accept_values: ['Tôi đồng ý'] }
-                    : q);
+            const gates = SCHEMA.questions.filter(q => q.is_consent_gate || q.type === 'signature');
+            const gateIds = new Set(gates.map(g => g.id));
+            if (!(SCHEMA.settings && SCHEMA.settings.decree13_required === false)) {
+                const legacy = SCHEMA.questions.find(q => q.id === 'consent_choice' && !gateIds.has(q.id));
+                if (legacy) gates.push({ ...legacy, consent_accept_values: ['Tôi đồng ý'] });
+            }
+            return gates
+                .slice()
+                .sort((a, b) => SCHEMA.questions.findIndex(q => q.id === a.id) - SCHEMA.questions.findIndex(q => q.id === b.id));
         }
         function gateSatisfied(gate) {
-            const accepted = (gate.consent_accept_values || []).map(v => String(v).trim()).filter(v => v !== '');
             const answer = answers[gate.id];
+            if (gate.type === 'signature') return !isBlankAnswer(answer);
+            const accepted = (gate.consent_accept_values || []).map(v => String(v).trim()).filter(v => v !== '');
             if (!accepted.length) return !isBlankAnswer(answer);
             return answerValues(answer).some(v => accepted.includes(v));
         }

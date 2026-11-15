@@ -115,6 +115,9 @@ class FormQuestion(BaseModel):
             if rule not in unique:
                 unique.append(rule)
         self.conditionals = unique
+        if self.type == QuestionType.SIGNATURE:
+            self.is_consent_gate = True
+            self.consent_accept_values = []
         return self
 
     @model_validator(mode="before")
@@ -173,21 +176,28 @@ class FormSchema(BaseModel):
                     raise ValueError(f"Điều kiện câu hỏi '{q.id}' phụ thuộc vào câu hỏi chưa được khai báo trước đó: '{parent_id}'")
             declared_ids.add(q.id)
 
+        # A signature can only mean "signed": it never takes an expected value
+        types = {q.id: q.type for q in self.questions}
+        for q in self.questions:
+            for rule in q.conditionals:
+                if types.get(rule.depends_on_question_id) == QuestionType.SIGNATURE:
+                    rule.operator = "not_empty"
+                    rule.expected_value = None
+
         return self
 def effective_gates(schema: FormSchema) -> List[FormQuestion]:
-    """Explicit consent gates, or the legacy signature/consent pair for forms that predate them."""
-    gates = [q for q in schema.questions if q.is_consent_gate]
-    if gates or not schema.settings.decree13_required:
-        return gates
-    legacy: List[FormQuestion] = []
-    for q in schema.questions:
-        if q.type == QuestionType.SIGNATURE:
-            legacy.append(q)
-        elif q.id == "consent_choice":
-            legacy.append(q.model_copy(update={"consent_accept_values": ["Tôi đồng ý"]}))
-    return legacy
+    """Signatures and explicit consent gates always gate; legacy consent_choice still counts for Decree 13."""
+    gates = [q for q in schema.questions if q.is_consent_gate or q.type == QuestionType.SIGNATURE]
+    if schema.settings.decree13_required:
+        gate_ids = {g.id for g in gates}
+        for q in schema.questions:
+            if q.id == "consent_choice" and q.id not in gate_ids:
+                gates.append(q.model_copy(update={"consent_accept_values": ["Tôi đồng ý"]}))
+    return sorted(gates, key=lambda q: next(i for i, x in enumerate(schema.questions) if x.id == q.id))
 
 def gate_satisfied(gate: FormQuestion, answer: Any) -> bool:
+    if gate.type == QuestionType.SIGNATURE:
+        return not _is_blank(answer)
     accepted = [str(v).strip() for v in (gate.consent_accept_values or []) if not _is_blank(v)]
     if not accepted:
         return not _is_blank(answer)

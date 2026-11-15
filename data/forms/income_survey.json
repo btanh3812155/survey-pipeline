@@ -40,7 +40,7 @@
       "group_compatibility": null,
       "validation": null,
       "conditionals": [],
-      "is_consent_gate": false,
+      "is_consent_gate": true,
       "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,

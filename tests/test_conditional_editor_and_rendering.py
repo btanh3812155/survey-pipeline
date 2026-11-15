@@ -361,3 +361,56 @@ def test_consent_gate_gates_following_questions_and_rejects_refusal():
     assert ok is False and "Nghị định 13" in err
     ok, err = validate_submission_against_schema(legacy, {"consent_choice": "Tôi đồng ý"})
     assert ok is False and "Con" in err
+
+
+def test_signature_questions_are_always_gates_without_values():
+    schema = FormSchema(
+        form_id="test_signature_gate",
+        title="Signature gate",
+        settings=FormSettings(decree13_required=False),
+        questions=[
+            FormQuestion(
+                id="sig",
+                title="Ký xác nhận",
+                type=QuestionType.SIGNATURE,
+                is_consent_gate=False,
+                consent_accept_values=["anything"],
+            ),
+            FormQuestion(id="q_after", title="Sau chữ ký", type=QuestionType.TEXT, required=True),
+        ],
+    )
+    sig = schema.questions[0]
+    assert sig.is_consent_gate is True
+    assert sig.consent_accept_values == []
+
+    ok, err = validate_submission_against_schema(schema, {})
+    assert ok is False and "Ký xác nhận" in err
+    ok, err = validate_submission_against_schema(schema, {"sig": "data:image/png;base64,x"})
+    assert ok is False and "Sau chữ ký" in err
+    ok, err = validate_submission_against_schema(schema, {"sig": "data:image/png;base64,x", "q_after": "x"})
+    assert ok is True, err
+
+
+def test_signature_parent_condition_is_forced_to_not_empty():
+    schema = FormSchema(
+        form_id="test_signature_condition",
+        title="Signature condition",
+        settings=FormSettings(decree13_required=False),
+        questions=[
+            FormQuestion(id="sig", title="Ký", type=QuestionType.SIGNATURE),
+            FormQuestion(
+                id="q_child",
+                title="Con",
+                type=QuestionType.TEXT,
+                required=True,
+                conditionals=[
+                    ConditionalRule(depends_on_question_id="sig", operator="equals", expected_value="signed")
+                ],
+            ),
+        ],
+    )
+    rule = schema.questions[1].conditionals[0]
+    assert rule.operator == "not_empty"
+    assert rule.expected_value is None
+    ok, err = validate_submission_against_schema(schema, {"sig": "data:x"})
+    assert ok is False and "Con" in err
