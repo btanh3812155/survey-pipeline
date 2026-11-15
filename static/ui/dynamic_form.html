@@ -3092,14 +3092,19 @@
             a.click();
         }
         let draftTimer = null;
+        function isDraftExcludedQuestion(qid) {
+            const q = (SCHEMA.questions || []).find(item => item.id === qid);
+            if (!q) return false;
+            return q.type === 'signature' || q.type === 'camera_webrtc' || Boolean(q.is_consent_gate);
+        }
         function scheduleDraftSave() {
             clearTimeout(draftTimer);
             draftTimer = setTimeout(() => {
                 const textAnswers = {};
                 for (let k in answers) {
-                    if (!(answers[k] instanceof Blob)) {
-                        textAnswers[k] = answers[k];
-                    }
+                    if (answers[k] instanceof Blob) continue;
+                    if (isDraftExcludedQuestion(k)) continue;
+                    textAnswers[k] = answers[k];
                 }
                 const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
                 try {
@@ -3116,7 +3121,7 @@
                     const data = JSON.parse(cached);
                     if (data && typeof data === 'object') {
                         for (let k in data) {
-                            if (k === 'driver_signature' || k === 'consent_choice') continue;
+                            if (isDraftExcludedQuestion(k)) continue;
                             answers[k] = data[k];
                             const input = document.querySelector(`[data-qid="${k}"] input, [data-qid="${k}"] select, [data-qid="${k}"] textarea`);
                             if (input && input.id !== 'ctv_code') {
