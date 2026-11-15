@@ -375,6 +375,7 @@ def test_signature_questions_are_always_gates_without_values():
                 type=QuestionType.SIGNATURE,
                 is_consent_gate=False,
                 consent_accept_values=["anything"],
+                required=False,
             ),
             FormQuestion(id="q_after", title="Sau chữ ký", type=QuestionType.TEXT, required=True),
         ],
@@ -382,6 +383,7 @@ def test_signature_questions_are_always_gates_without_values():
     sig = schema.questions[0]
     assert sig.is_consent_gate is True
     assert sig.consent_accept_values == []
+    assert sig.required is True
 
     ok, err = validate_submission_against_schema(schema, {})
     assert ok is False and "Ký xác nhận" in err

@@ -464,6 +464,7 @@
                 if (q.type === 'signature') {
                     q.is_consent_gate = true;
                     q.consent_accept_values = [];
+                    q.required = true;
                 }
                 (q.conditionals || []).forEach(rule => {
                     const parent = questions.find(p => p.id === rule.depends_on_question_id);

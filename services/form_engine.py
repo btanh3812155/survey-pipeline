@@ -118,6 +118,7 @@ class FormQuestion(BaseModel):
         if self.type == QuestionType.SIGNATURE:
             self.is_consent_gate = True
             self.consent_accept_values = []
+            self.required = True
         return self
 
     @model_validator(mode="before")
