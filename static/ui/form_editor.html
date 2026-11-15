@@ -139,6 +139,18 @@
             font-weight: 700;
         }
 
+        .btn-move {
+            background: rgba(148, 163, 184, 0.15);
+            color: #cbd5e1;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .btn-move:disabled { opacity: 0.35; cursor: default; }
+
         .btn-add-q {
             background: #1e293b;
             color: #60a5fa;
@@ -461,11 +473,6 @@
         }
         function normalizeSignatureRules() {
             questions.forEach(q => {
-                if (q.type === 'signature') {
-                    q.is_consent_gate = true;
-                    q.consent_accept_values = [];
-                    q.required = true;
-                }
                 (q.conditionals || []).forEach(rule => {
                     const parent = questions.find(p => p.id === rule.depends_on_question_id);
                     if (parent && parent.type === 'signature') {
@@ -480,6 +487,13 @@
             if (!q) return;
             q.type = value;
             normalizeSignatureRules();
+            renderQuestions();
+        }
+        function moveQuestion(idx, delta) {
+            const target = idx + delta;
+            if (target < 0 || target >= questions.length) return;
+            const [moved] = questions.splice(idx, 1);
+            questions.splice(target, 0, moved);
             renderQuestions();
         }
         function addConditionalRow(idx) {
@@ -521,14 +535,14 @@
             if (value === 'empty' || value === 'not_empty') rule.expected_value = [];
             renderQuestions();
         }
-        function toggleConditionalValue(idx, cidx, value) {
+        function toggleConditionalValue(idx, cidx, value, checked) {
             const rule = questions[idx]?.conditionals?.[cidx];
             if (!rule) return;
-            const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
+            const values = Array.isArray(rule.expected_value) ? rule.expected_value.slice() : [];
             const at = values.indexOf(value);
-            if (at >= 0) values.splice(at, 1); else values.push(value);
+            if (checked && at < 0) values.push(value);
+            if (!checked && at >= 0) values.splice(at, 1);
             rule.expected_value = values;
-            renderQuestions();
         }
         function setConditionalValuesText(idx, cidx, text) {
             const rule = questions[idx]?.conditionals?.[cidx];
@@ -542,14 +556,14 @@
             q.consent_accept_values = enabled && questionHasOptions(q) ? [firstOptionValue(q)] : [];
             renderQuestions();
         }
-        function toggleConsentAcceptValue(idx, value) {
+        function toggleConsentAcceptValue(idx, value, checked) {
             const q = questions[idx];
             if (!q) return;
-            const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values : [];
+            const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values.slice() : [];
             const at = values.indexOf(value);
-            if (at >= 0) values.splice(at, 1); else values.push(value);
+            if (checked && at < 0) values.push(value);
+            if (!checked && at >= 0) values.splice(at, 1);
             q.consent_accept_values = values;
-            renderQuestions();
         }
         function setConsentAcceptValuesText(idx, text) {
             const q = questions[idx];
@@ -569,13 +583,15 @@
                 valueControl = `<div style="font-size:0.75rem; color:#64748b; font-style:italic; padding:8px 0;">Toán tử này không cần giá trị.</div>`;
             } else if (questionHasOptions(parentQ)) {
                 valueControl = `
-                    <select multiple size="${Math.min(6, Math.max(2, parentQ.options.length))}" style="width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="toggleConditionalValue(${idx}, ${cidx}, this.value)">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
                         ${parentQ.options.map(opt => {
                             const val = optionLabel(opt);
-                            return `<option value="${escapeHtml(val)}" ${values.includes(val) ? 'selected' : ''}>${escapeHtml(val)}</option>`;
+                            return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px;">
+                                <span style="font-size:0.78rem; color:#cbd5e1;">${escapeHtml(val)}</span>
+                                <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConditionalValue(${idx}, ${cidx}, this.value, this.checked)">
+                            </label>`;
                         }).join('')}
-                    </select>
-                    <div style="font-size:0.7rem; color:#64748b; margin-top:3px;">Giữ Ctrl/Cmd để chọn nhiều giá trị.</div>
+                    </div>
                 `;
             } else {
                 valueControl = `
@@ -593,7 +609,7 @@
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Câu hỏi phụ thuộc</label>
                         <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${cidx}, this.value)">
                             ${priorQuestions.map((p, pIdx) => `
-                                <option value="${escapeHtml(p.id)}" ${p.id === rule.depends_on_question_id ? 'selected' : ''}>#${pIdx + 1}. ${escapeHtml(p.title || p.id)}</option>
+                                <option value="${escapeHtml(p.id)}" ${p.id === rule.depends_on_question_id ? 'selected' : ''}>${escapeHtml(p.title || p.id)}</option>
                             `).join('')}
                         </select>
                     </div>
@@ -632,28 +648,26 @@
             `;
         }
         function renderConsentGateBuilderHtml(q, idx) {
-            if (q.type === 'signature') {
-                return `
-                    <div style="background:rgba(245,158,11,0.08); border:1.5px solid #f59e0b; border-radius:8px; padding:12px; margin-top:10px;">
-                        <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi chữ ký luôn là cổng</span>
-                        <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">Mọi câu hỏi phía sau chỉ hiển thị sau khi tài xế ký. Chữ ký không có giá trị điều kiện.</div>
-                    </div>
-                `;
-            }
+            const isSignature = q.type === 'signature';
             const enabled = Boolean(q.is_consent_gate);
             const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values : [];
             let acceptControl = '';
             if (enabled) {
-                if (questionHasOptions(q)) {
+                if (isSignature) {
+                    acceptControl = `<div style="font-size:0.75rem; color:#f59e0b; margin-top:6px;">Chữ ký: chỉ kiểm tra đã ký hay chưa, không dùng giá trị.</div>`;
+                } else if (questionHasOptions(q)) {
                     acceptControl = `
                         <div style="margin-top:8px;">
-                            <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Giá trị được xem là đồng ý (giữ Ctrl/Cmd để chọn nhiều)</label>
-                            <select multiple size="${Math.min(6, Math.max(2, q.options.length))}" style="width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="toggleConsentAcceptValue(${idx}, this.value)">
+                            <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Giá trị được xem là đồng ý</label>
+                            <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
                                 ${q.options.map(opt => {
                                     const val = optionLabel(opt);
-                                    return `<option value="${escapeHtml(val)}" ${values.includes(val) ? 'selected' : ''}>${escapeHtml(val)}</option>`;
+                                    return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px;">
+                                        <span style="font-size:0.78rem; color:#cbd5e1;">${escapeHtml(val)}</span>
+                                        <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConsentAcceptValue(${idx}, this.value, this.checked)">
+                                    </label>`;
                                 }).join('')}
-                            </select>
+                            </div>
                         </div>
                     `;
                 } else {
@@ -668,7 +682,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                         <div>
                             <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi đồng ý (consent gate)</span>
-                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">Mọi câu hỏi phía sau chỉ hiển thị khi câu này được trả lời hợp lệ. Trả lời không hợp lệ sẽ bị từ chối khi nộp.</div>
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">${isSignature ? 'Khi bật: mọi câu sau chỉ hiển thị sau khi tài xế ký.' : 'Mọi câu hỏi phía sau chỉ hiển thị khi câu này được trả lời hợp lệ. Trả lời không hợp lệ sẽ bị từ chối khi nộp.'}</div>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${enabled ? 'checked' : ''} onchange="setConsentGate(${idx}, this.checked)">
@@ -945,8 +959,12 @@
                 item.className = 'question-item';
                 item.innerHTML = `
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">#${idx + 1}. ${escapeHtml(q.title)}</span>
-                        <button type="button" class="btn-delete" onclick="removeQuestion(${idx})">Xóa</button>
+                        <span style="font-weight:800; font-size:0.92rem; color:#60a5fa;">${escapeHtml(q.title)}</span>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <button type="button" class="btn-move" onclick="moveQuestion(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Di chuyển lên">↑</button>
+                            <button type="button" class="btn-move" onclick="moveQuestion(${idx}, 1)" ${idx === questions.length - 1 ? 'disabled' : ''} title="Di chuyển xuống">↓</button>
+                            <button type="button" class="btn-delete" onclick="removeQuestion(${idx})">Xóa</button>
+                        </div>
                     </div>
                     <div class="row-2">
                         <div class="field-group">
@@ -989,7 +1007,7 @@
                     ${q.type === 'camera_webrtc' ? `
                         <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
                             <label style="color:#fde047; font-size:0.75rem; font-weight:700;">AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
-                            <textarea style="width:100%; min-height:48px; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${idx}].ai_detection_prompt = this.value">${escapeHtml(q.ai_detection_prompt || '')}</textarea>
+                            <textarea rows="4" style="width:100%; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${idx}].ai_detection_prompt = this.value">${escapeHtml(q.ai_detection_prompt || '')}</textarea>
                         </div>
                     ` : ''}
                     ${q.type === 'text' ? `
@@ -1002,7 +1020,7 @@
                             <span>Mô tả / Hướng dẫn</span>
                             <span style="font-size:0.7rem; color:#38bdf8; font-weight:normal;">Hỗ trợ chèn link [Tên link](url) và ảnh ![Mô tả](url)</span>
                         </label>
-                        <input type="text" value="${escapeHtml(q.description || '')}" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${idx}].description = this.value">
+                        <textarea rows="3" style="resize:vertical;" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${idx}].description = this.value">${escapeHtml(q.description || '')}</textarea>
                     </div>
                     ${q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? `
                         <div class="field-group">
@@ -1137,11 +1155,8 @@
                         delete cleanQ.conditionals;
                     }
                     delete cleanQ.conditional;
-                    if (q.type === 'signature') {
-                        cleanQ.is_consent_gate = true;
-                        cleanQ.consent_accept_values = [];
-                    } else if (cleanQ.is_consent_gate) {
-                        cleanQ.consent_accept_values = (q.consent_accept_values || [])
+                    if (cleanQ.is_consent_gate) {
+                        cleanQ.consent_accept_values = (q.type === 'signature' ? [] : (q.consent_accept_values || []))
                             .map(v => String(v).trim())
                             .filter(v => v !== '');
                     } else {

@@ -115,10 +115,6 @@ class FormQuestion(BaseModel):
             if rule not in unique:
                 unique.append(rule)
         self.conditionals = unique
-        if self.type == QuestionType.SIGNATURE:
-            self.is_consent_gate = True
-            self.consent_accept_values = []
-            self.required = True
         return self
 
     @model_validator(mode="before")
@@ -187,14 +183,8 @@ class FormSchema(BaseModel):
 
         return self
 def effective_gates(schema: FormSchema) -> List[FormQuestion]:
-    """Signatures and explicit consent gates always gate; legacy consent_choice still counts for Decree 13."""
-    gates = [q for q in schema.questions if q.is_consent_gate or q.type == QuestionType.SIGNATURE]
-    if schema.settings.decree13_required:
-        gate_ids = {g.id for g in gates}
-        for q in schema.questions:
-            if q.id == "consent_choice" and q.id not in gate_ids:
-                gates.append(q.model_copy(update={"consent_accept_values": ["Tôi đồng ý"]}))
-    return sorted(gates, key=lambda q: next(i for i, x in enumerate(schema.questions) if x.id == q.id))
+    """Explicit consent gates only; a signature gate is satisfied by being signed."""
+    return [q for q in schema.questions if q.is_consent_gate]
 
 def gate_satisfied(gate: FormQuestion, answer: Any) -> bool:
     if gate.type == QuestionType.SIGNATURE:
@@ -388,6 +378,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             title="1. Chữ ký xác nhận khảo sát",
             type=QuestionType.SIGNATURE,
             required=True,
+            is_consent_gate=True,
             description="Dùng ngón tay ký tên trực tiếp trên giấy điện tử để xác nhận thông tin khảo sát",
             sample_response="Bấm nút 'Ký tên' và vẽ chữ ký trên bảng",
         ),
@@ -397,6 +388,8 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             title="2. Cam kết thông tin & Đồng ý xử lý dữ liệu Nghị định 13",
             type=QuestionType.SINGLE_CHOICE,
             required=True,
+            is_consent_gate=True,
+            consent_accept_values=["Tôi đồng ý"],
             options=["Tôi đồng ý", "Tôi không đồng ý"],
             description="Tôi xác nhận các số liệu thu nhập và hình ảnh cung cấp là trung thực, đồng ý xử lý dữ liệu theo NĐ 13",
             sample_response="Tôi đồng ý",

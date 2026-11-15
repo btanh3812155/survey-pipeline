@@ -67,8 +67,10 @@
       "group_compatibility": null,
       "validation": null,
       "conditionals": [],
-      "is_consent_gate": false,
-      "consent_accept_values": [],
+      "is_consent_gate": true,
+      "consent_accept_values": [
+        "Tôi đồng ý"
+      ],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,

@@ -343,10 +343,10 @@ def test_consent_gate_gates_following_questions_and_rejects_refusal():
     )
     assert ok is True, err
 
-    # Legacy schemas without the flag still gate on consent_choice == "Tôi đồng ý"
-    legacy = FormSchema(
-        form_id="test_legacy_gate",
-        title="Legacy",
+    # Without the flag, consent_choice is an ordinary question and must not gate
+    unflagged = FormSchema(
+        form_id="test_unflagged_consent",
+        title="Unflagged",
         questions=[
             FormQuestion(
                 id="consent_choice",
@@ -357,13 +357,13 @@ def test_consent_gate_gates_following_questions_and_rejects_refusal():
             FormQuestion(id="q_child", title="Con", type=QuestionType.TEXT, required=True),
         ],
     )
-    ok, err = validate_submission_against_schema(legacy, {"consent_choice": "Không đồng ý"})
-    assert ok is False and "Nghị định 13" in err
-    ok, err = validate_submission_against_schema(legacy, {"consent_choice": "Tôi đồng ý"})
+    ok, err = validate_submission_against_schema(unflagged, {"consent_choice": "Không đồng ý"})
     assert ok is False and "Con" in err
+    ok, err = validate_submission_against_schema(unflagged, {"consent_choice": "Tôi đồng ý", "q_child": "x"})
+    assert ok is True, err
 
 
-def test_signature_questions_are_always_gates_without_values():
+def test_signature_gate_checks_signed_and_ignores_values():
     schema = FormSchema(
         form_id="test_signature_gate",
         title="Signature gate",
@@ -373,24 +373,32 @@ def test_signature_questions_are_always_gates_without_values():
                 id="sig",
                 title="Ký xác nhận",
                 type=QuestionType.SIGNATURE,
-                is_consent_gate=False,
+                is_consent_gate=True,
                 consent_accept_values=["anything"],
-                required=False,
             ),
             FormQuestion(id="q_after", title="Sau chữ ký", type=QuestionType.TEXT, required=True),
         ],
     )
-    sig = schema.questions[0]
-    assert sig.is_consent_gate is True
-    assert sig.consent_accept_values == []
-    assert sig.required is True
-
     ok, err = validate_submission_against_schema(schema, {})
     assert ok is False and "Ký xác nhận" in err
     ok, err = validate_submission_against_schema(schema, {"sig": "data:image/png;base64,x"})
     assert ok is False and "Sau chữ ký" in err
     ok, err = validate_submission_against_schema(schema, {"sig": "data:image/png;base64,x", "q_after": "x"})
     assert ok is True, err
+
+
+def test_signature_without_gate_does_not_block_following_questions():
+    schema = FormSchema(
+        form_id="test_signature_no_gate",
+        title="Signature not a gate",
+        settings=FormSettings(decree13_required=False),
+        questions=[
+            FormQuestion(id="sig", title="Ký", type=QuestionType.SIGNATURE, required=False),
+            FormQuestion(id="q_after", title="Sau chữ ký", type=QuestionType.TEXT, required=True),
+        ],
+    )
+    ok, err = validate_submission_against_schema(schema, {})
+    assert ok is False and "Sau chữ ký" in err
 
 
 def test_signature_parent_condition_is_forced_to_not_empty():

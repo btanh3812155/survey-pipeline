@@ -209,11 +209,12 @@ class TestArchitectFixes:
 
         # Ensure escapeHtml helper exists in JavaScript
         assert "function escapeHtml" in html
-        # Ensure renderQuestions uses escapeHtml to interpolate q.title, description, and options into value attributes
+        # Ensure renderQuestions uses escapeHtml to interpolate q.title, description, and options
         assert 'value="${escapeHtml(q.title)}"' in html
-        assert 'value="${escapeHtml(q.description || \'\')}"' in html
+        assert '>${escapeHtml(q.description || \'\')}</textarea>' in html
         assert 'value="${escapeHtml((q.options || []).join(\', \'))}"' in html
-        assert '#${idx + 1}. ${escapeHtml(q.title)}' in html
+        assert '>${escapeHtml(q.title)}</span>' in html
+        assert '#${idx + 1}. ' not in html
 
         # Ensure INITIAL_SCHEMA JSON parses cleanly without escaping corruption
         assert 'const INITIAL_SCHEMA =' in html

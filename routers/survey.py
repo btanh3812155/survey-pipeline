@@ -79,8 +79,8 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
         if matched_ctv:
             active_slug = form_id
             active_ref = extract_ctv_short_code(matched_ctv)
-    # 3. Resolve schema
-    effective_form_id = "income_survey" if (form_id in ("default", "camera-form") or matched_ctv or form_id not in FORM_REGISTRY) else form_id
+    # 3. Resolve schema (a matched CTV must not override an explicit form id)
+    effective_form_id = form_id if form_id in FORM_REGISTRY else "income_survey"
     schema = FORM_REGISTRY.get(effective_form_id) or next(iter(FORM_REGISTRY.values()))
 
     has_ctv_tracking = (

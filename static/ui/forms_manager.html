@@ -744,23 +744,28 @@
 
         function saveAdminQrImage() {
             const container = document.getElementById("adminQrCodeContainer");
-            let img = container.querySelector("img");
-            if (!img) {
-                const canvas = container.querySelector("canvas");
-                if (canvas) {
-                    const a = document.createElement("a");
-                    a.href = canvas.toDataURL("image/png");
-                    a.download = `QR_${currentAdminQrFormId}.png`;
-                    a.click();
-                    return;
-                }
+            if (!container) return;
+            const canvas = container.querySelector("canvas");
+            let imgUri = "";
+            if (canvas) {
+                const pad = 24;
+                const out = document.createElement("canvas");
+                out.width = canvas.width + pad * 2;
+                out.height = canvas.height + pad * 2;
+                const ctx = out.getContext("2d");
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, out.width, out.height);
+                ctx.drawImage(canvas, pad, pad);
+                imgUri = out.toDataURL("image/png");
+            } else {
+                const img = container.querySelector("img");
+                if (img && img.src) imgUri = img.src;
             }
-            if (img && img.src) {
-                const a = document.createElement("a");
-                a.href = img.src;
-                a.download = `QR_${currentAdminQrFormId}.png`;
-                a.click();
-            }
+            if (!imgUri) return;
+            const a = document.createElement("a");
+            a.href = imgUri;
+            a.download = `QR_${currentAdminQrFormId}.png`;
+            a.click();
         }
 
         

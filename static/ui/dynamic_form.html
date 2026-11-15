@@ -1013,7 +1013,6 @@
                     <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;" id="txtQrUrlLabel">LINK TRUY CẬP BIỂU MẪU:</div>
                     <div style="display:flex; gap:6px;">
                         <input type="text" id="qrShareUrlInput" readonly style="flex:1; background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 10px; border-radius:8px; font-size:0.8rem; font-family:monospace; outline:none;" />
-                        <button type="button" onclick="regenerateRandomQrSlug()" style="background:#334155; border:none; color:#f8fafc; padding:8px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Tạo mã ngẫu nhiên mới"><svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                     </div>
                 </div>
 
@@ -1611,7 +1610,7 @@
                 card.innerHTML = `
                     <div class="q-header">
                         <div class="q-title-row">
-                            <span class="q-title">${idx + 1}. ${cleanTitle} ${q.required ? '<span class="q-required">*</span>' : ''}</span>
+                            <span class="q-title">${cleanTitle} ${q.required ? '<span class="q-required">*</span>' : ''}</span>
                             ${tooltipBtn}
                         </div>
                         ${q.description ? `<div class="q-desc">${formatRichDescription(q.description)}</div>` : ''}
@@ -1889,15 +1888,7 @@
             });
         }
         function effectiveGates() {
-            const gates = SCHEMA.questions.filter(q => q.is_consent_gate || q.type === 'signature');
-            const gateIds = new Set(gates.map(g => g.id));
-            if (!(SCHEMA.settings && SCHEMA.settings.decree13_required === false)) {
-                const legacy = SCHEMA.questions.find(q => q.id === 'consent_choice' && !gateIds.has(q.id));
-                if (legacy) gates.push({ ...legacy, consent_accept_values: ['Tôi đồng ý'] });
-            }
-            return gates
-                .slice()
-                .sort((a, b) => SCHEMA.questions.findIndex(q => q.id === a.id) - SCHEMA.questions.findIndex(q => q.id === b.id));
+            return SCHEMA.questions.filter(q => q.is_consent_gate);
         }
         function gateSatisfied(gate) {
             const answer = answers[gate.id];
@@ -2993,63 +2984,21 @@
                 btn.textContent = t.btn_submit;
             }
         }
-        // QR Code Sharing Logic with Random Subdomain Generation
-        let currentQrRandomSlug = "";
+        // QR Code Sharing Logic (canonical URL)
         let qrCodeInstance = null;
 
-        function generateRandomAlphanumeric(len = 10) {
-            const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-            let res = "";
-            for (let i = 0; i < len; i++) {
-                res += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            return res;
-        }
-
-        function getFormShareUrl(randSuffix) {
-            const host = window.location.hostname;
-            let baseDomain = window.location.host;
-            if (host.includes("trustbridgevn.com")) {
-                baseDomain = "survey.trustbridgevn.com";
-            } else if (host.includes("sslip.io")) {
-                const parts = host.split(".");
-                const ipIndex = parts.findIndex(p => p.match(/^\\d+$/));
-                if (ipIndex !== -1 && ipIndex + 3 < parts.length) {
-                    baseDomain = parts.slice(ipIndex).join(".");
-                } else {
-                    baseDomain = "146.190.201.32.sslip.io";
-                }
-            }
-            const protocol = (window.location.protocol && window.location.protocol.startsWith("http")) ? window.location.protocol : "https:";
-            const baseUrl = `${protocol}//${baseDomain}`;
-
-            const targetRef = (ACTIVE_REF_CODE && ACTIVE_REF_CODE.trim()) || (LOCKED_CTV_CODE ? LOCKED_CTV_CODE.trim().split("_")[0].toLowerCase() : "");
-            if (targetRef) {
-                const params = new URLSearchParams(window.location.search);
-                params.set("ref", targetRef);
-                return `${baseUrl}/forms/${formId}?${params.toString()}`;
-            }
-
-            if (ACTIVE_CTV_SLUG && ACTIVE_CTV_SLUG.trim() !== "") {
-                return `${baseUrl}/forms/${ACTIVE_CTV_SLUG.trim()}`;
-            }
-
+        function getFormShareUrl() {
+            const baseUrl = window.location.origin || `${window.location.protocol}//${window.location.host}`;
             const formId = SCHEMA.form_id || "income_survey";
-            if (randSuffix && randSuffix.trim() !== "") {
-                return `${baseUrl}/forms/${formId}?ref=${encodeURIComponent(randSuffix.trim())}`;
-            }
-            return `${baseUrl}/forms/${formId}`;
-        }
-
-        function getFormSubdomainUrl(randSuffix) {
-            return getFormShareUrl(randSuffix);
+            const existingRef = (new URLSearchParams(window.location.search).get("ref") || "").trim();
+            const ref = (ACTIVE_REF_CODE && ACTIVE_REF_CODE.trim()) || existingRef || (LOCKED_CTV_CODE ? LOCKED_CTV_CODE.trim().split("_")[0].toLowerCase() : "");
+            return ref
+                ? `${baseUrl}/forms/${formId}?ref=${encodeURIComponent(ref)}`
+                : `${baseUrl}/forms/${formId}`;
         }
 
         function openFormQrModal() {
-            if (!currentQrRandomSlug) {
-                currentQrRandomSlug = generateRandomAlphanumeric(10);
-            }
-            const url = getFormShareUrl(currentQrRandomSlug);
+            const url = getFormShareUrl();
             const input = document.getElementById("qrShareUrlInput");
             if (input) input.value = url;
 
@@ -3062,14 +3011,6 @@
         function closeQrModal() {
             const modal = document.getElementById("qrShareModal");
             if (modal) modal.style.display = "none";
-        }
-
-        function regenerateRandomQrSlug() {
-            currentQrRandomSlug = generateRandomAlphanumeric(10);
-            const url = getFormShareUrl(currentQrRandomSlug);
-            const input = document.getElementById("qrShareUrlInput");
-            if (input) input.value = url;
-            renderQrCode(url);
         }
 
         function renderQrCode(url) {
@@ -3120,24 +3061,29 @@
             }
         }
 
+        function qrImageDataUrl(container, pad = 24) {
+            const canvas = container.querySelector("canvas");
+            if (!canvas) return "";
+            const out = document.createElement("canvas");
+            out.width = canvas.width + pad * 2;
+            out.height = canvas.height + pad * 2;
+            const ctx = out.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, out.width, out.height);
+            ctx.drawImage(canvas, pad, pad);
+            return out.toDataURL("image/png");
+        }
+
         function saveQrImage() {
             const container = document.getElementById("qrCodeContainer");
             if (!container) return;
-            let imgUri = "";
-            const canvas = container.querySelector("canvas");
-            const img = container.querySelector("img");
-            if (canvas) {
-                imgUri = canvas.toDataURL("image/png");
-            } else if (img && img.src) {
-                imgUri = img.src;
-            }
-            if (imgUri) {
-                const a = document.createElement("a");
-                a.href = imgUri;
-                const fileSlug = (ACTIVE_CTV_SLUG || SCHEMA.form_id || "income_survey").replace(/_/g, "-");
-                a.download = `QR_${fileSlug}${!ACTIVE_CTV_SLUG && currentQrRandomSlug ? '_' + currentQrRandomSlug : ''}.png`;
-                a.click();
-            }
+            const imgUri = qrImageDataUrl(container) || (container.querySelector("img") ? container.querySelector("img").src : "");
+            if (!imgUri) return;
+            const a = document.createElement("a");
+            a.href = imgUri;
+            const fileSlug = (SCHEMA.form_id || "income_survey").replace(/_/g, "-");
+            a.download = `QR_${fileSlug}.png`;
+            a.click();
         }
         let draftTimer = null;
         function scheduleDraftSave() {
