@@ -604,9 +604,10 @@
                     <div style="display:flex; flex-direction:column; gap:6px;">
                         ${parentQ.options.map(opt => {
                             const val = optionLabel(opt);
-                            return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px;">
+                            return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px; width:100%;">
                                 <span style="font-size:0.78rem; color:#cbd5e1;">${escapeHtml(val)}</span>
                                 <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConditionalValue(${idx}, ${gidx}, ${cidx}, this.value, this.checked)">
+                                <span class="toggle-slider"></span>
                             </label>`;
                         }).join('')}
                     </div>
@@ -693,9 +694,10 @@
                             <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
                                 ${q.options.map(opt => {
                                     const val = optionLabel(opt);
-                                    return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px;">
+                                    return `<label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px; width:100%;">
                                         <span style="font-size:0.78rem; color:#cbd5e1;">${escapeHtml(val)}</span>
                                         <input type="checkbox" value="${escapeHtml(val)}" ${values.includes(val) ? 'checked' : ''} onchange="toggleConsentAcceptValue(${idx}, this.value, this.checked)">
+                                        <span class="toggle-slider"></span>
                                     </label>`;
                                 }).join('')}
                             </div>
