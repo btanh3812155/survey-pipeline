@@ -553,7 +553,7 @@
         function renderSlotsBuilderHtml(q, qidx) {
             const slots = q.image_slots || [];
             if (!slots.length) {
-                return '<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có slot ảnh riêng (sử dụng 1 ảnh đơn mặc định). Bấm \\'+ Thêm Slot Ảnh\\' để chia nhiều góc chụp/đối tượng.</div>';
+                return `<div style="font-size:0.78rem; color:#64748b; font-style:italic;">Chưa có slot ảnh riêng (sử dụng 1 ảnh đơn mặc định). Bấm '+ Thêm Slot Ảnh' để chia nhiều góc chụp/đối tượng.</div>`;
             }
             return slots.map((s, sidx) => `
                 <div style="background:#090d16; border:1px solid #334155; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px;">
