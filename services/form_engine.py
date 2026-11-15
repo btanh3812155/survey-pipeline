@@ -14,8 +14,57 @@ class QuestionType(str, Enum):
 
 class ConditionalRule(BaseModel):
     depends_on_question_id: str
-    operator: str = "equals" # "equals", "not_equals", "contains", "in"
-    expected_value: Any
+    operator: str = "equals" # "equals", "not_equals", "contains", "in", "empty", "not_empty"
+    expected_value: Any = None # scalar, or list of accepted values (one per line in the editor)
+
+def _is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+def _rule_values(expected: Any) -> List[str]:
+    if expected is None:
+        return []
+    if isinstance(expected, (list, tuple, set)):
+        raw = list(expected)
+    elif isinstance(expected, str):
+        raw = expected.splitlines() if "\n" in expected else [expected]
+    else:
+        raw = [expected]
+    return [str(v).strip() for v in raw if not _is_blank(v)]
+
+def _answer_values(answer: Any) -> List[str]:
+    if isinstance(answer, (list, tuple, set)):
+        return [str(v).strip() for v in answer if not _is_blank(v)]
+    if _is_blank(answer):
+        return []
+    return [str(answer).strip()]
+
+def evaluate_condition(rule: ConditionalRule, answer: Any) -> bool:
+    """Single source of truth for conditional branching (mirrored by dynamic_form.html)."""
+    op = (rule.operator or "equals").strip().lower()
+    values = _rule_values(rule.expected_value)
+    if op == "empty":
+        return _is_blank(answer)
+    if op == "not_empty":
+        return not _is_blank(answer)
+    if op in ("equals", "not_equals", "in", "contains"):
+        answers_seen = _answer_values(answer)
+        if op == "contains":
+            return any(v in a for v in values for a in answers_seen)
+        if isinstance(answer, (list, tuple, set)):
+            if op == "in":
+                matched = bool(set(answers_seen) & set(values))
+            else:  # equals: the whole selection must match the accepted set
+                matched = bool(values) and set(answers_seen) == set(values)
+        else:
+            matched = len(answers_seen) == 1 and answers_seen[0] in values
+        return (not matched) if op == "not_equals" else matched
+    return not _is_blank(answer)
 
 class ValidationRule(BaseModel):
     min_value: Optional[float] = None
@@ -49,13 +98,39 @@ class FormQuestion(BaseModel):
     options: Optional[List[Any]] = None # For single_choice, multiple_choice, dropdown
     group_compatibility: Optional[Dict[str, List[str]]] = None # For multiple_choice mutual exclusivity
     validation: Optional[ValidationRule] = None
-    conditional: Optional[ConditionalRule] = None # Logic branching
+    conditionals: List[ConditionalRule] = Field(default_factory=list) # ALL must match (AND)
+    is_consent_gate: bool = False # every following question depends on this answer
+    consent_accept_values: List[str] = Field(default_factory=list) # empty = any non-blank answer
     image_checks: Optional[ImageCheckConfig] = None
     allow_multiple_images: bool = False
     min_images: Optional[int] = None
     max_images: Optional[int] = None
     exact_image_count: Optional[int] = None
     image_slots: Optional[List[Dict[str, Any]]] = None  # e.g. [{"slot": 0, "title": "Đồng hồ km", "role": "odometer", "required": True}, ...]
+
+    @model_validator(mode="after")
+    def _dedupe_conditionals(self) -> "FormQuestion":
+        unique: List[ConditionalRule] = []
+        for rule in self.conditionals:
+            if rule not in unique:
+                unique.append(rule)
+        self.conditionals = unique
+        return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_conditional(cls, data: Any) -> Any:
+        """Older schemas carry a single `conditional` rule; fold it into `conditionals`."""
+        if isinstance(data, dict) and data.get("conditional"):
+            merged = list(data.get("conditionals") or [])
+            legacy = ConditionalRule.model_validate(data["conditional"])
+            if not any(
+                ConditionalRule.model_validate(rule) == legacy for rule in merged
+            ):
+                merged.append(data["conditional"])
+            return {**data, "conditionals": merged, "conditional": None}
+        return data
+
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
     current_responses: int = 0
@@ -90,8 +165,8 @@ class FormSchema(BaseModel):
 
         declared_ids = set()
         for q in self.questions:
-            if q.conditional:
-                parent_id = q.conditional.depends_on_question_id
+            for rule in q.conditionals:
+                parent_id = rule.depends_on_question_id
                 if parent_id == q.id:
                     raise ValueError(f"Câu hỏi '{q.id}' không thể tự phụ thuộc vào chính nó!")
                 if parent_id not in declared_ids:
@@ -99,33 +174,47 @@ class FormSchema(BaseModel):
             declared_ids.add(q.id)
 
         return self
+def effective_gates(schema: FormSchema) -> List[FormQuestion]:
+    """Explicit consent gates, or the legacy signature/consent pair for forms that predate them."""
+    gates = [q for q in schema.questions if q.is_consent_gate]
+    if gates or not schema.settings.decree13_required:
+        return gates
+    legacy: List[FormQuestion] = []
+    for q in schema.questions:
+        if q.type == QuestionType.SIGNATURE:
+            legacy.append(q)
+        elif q.id == "consent_choice":
+            legacy.append(q.model_copy(update={"consent_accept_values": ["Tôi đồng ý"]}))
+    return legacy
+
+def gate_satisfied(gate: FormQuestion, answer: Any) -> bool:
+    accepted = [str(v).strip() for v in (gate.consent_accept_values or []) if not _is_blank(v)]
+    if not accepted:
+        return not _is_blank(answer)
+    return bool(set(_answer_values(answer)) & set(accepted))
+
 def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, Any]) -> tuple[bool, Optional[str]]:
     """
     Validates a submitted answer dictionary against the dynamic form schema rules and constraints.
     """
-    # 0. Check mandatory Decree 13 consent dissent
-    if answers.get("consent_choice") == "Tôi không đồng ý":
-        return False, "Biểu mẫu yêu cầu tài xế đồng ý điều khoản xử lý dữ liệu Nghị định 13 để tiếp tục!"
+    # 0. Consent gates: an explicit refusal rejects the submission outright
+    positions = {q.id: i for i, q in enumerate(schema.questions)}
+    gates = sorted(((positions[g.id], g) for g in effective_gates(schema)), key=lambda entry: entry[0])
+    for _, gate in gates:
+        answer = answers.get(gate.id)
+        if not _is_blank(answer) and not gate_satisfied(gate, answer):
+            return False, "Biểu mẫu yêu cầu tài xế đồng ý điều khoản xử lý dữ liệu Nghị định 13 để tiếp tục!"
 
     # 1. Check response limit
     if schema.settings.response_limit and schema.settings.current_responses >= schema.settings.response_limit:
         return False, "Biểu mẫu đã đạt giới hạn số lượng phản hồi tối đa của chủ sở hữu!"
-    has_signed = bool(answers.get("driver_signature"))
-    has_consented = answers.get("consent_choice") == "Tôi đồng ý"
-    is_unlocked = has_signed and has_consented
 
-    for q in schema.questions:
-        # Check conditional visibility
-        if q.conditional:
-            if q.conditional.depends_on_question_id == "consent_choice":
-                if not is_unlocked:
-                    continue # Question is hidden unless both signature and consent are satisfied
-            else:
-                parent_val = answers.get(q.conditional.depends_on_question_id)
-                if q.conditional.operator == "equals" and parent_val != q.conditional.expected_value:
-                    continue # Question is hidden, skip validation
-                elif q.conditional.operator == "in" and parent_val not in q.conditional.expected_value:
-                    continue
+    for idx, q in enumerate(schema.questions):
+        # Every question after an unsatisfied gate is hidden; all conditionals must match (AND)
+        if any(gi < idx and not gate_satisfied(gate, answers.get(gate.id)) for gi, gate in gates):
+            continue
+        if not all(evaluate_condition(rule, answers.get(rule.depends_on_question_id)) for rule in q.conditionals):
+            continue
         val = answers.get(q.id)
         matching_keys = [k for k in answers.keys() if k.startswith(f"{q.id}_")]
         if val is None and matching_keys:

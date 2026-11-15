@@ -1116,7 +1116,7 @@
                 btn_open_telegram: "Mở Telegram Bot",
                 btn_view_history_web: "Tra cứu lịch sử nộp trên web",
                 btn_new_submission: "Làm phiếu mới",
-                locked_notice: "Vui lòng ký tên (Câu 1) và chọn 'Tôi đồng ý' (Câu 2) để mở toàn bộ câu hỏi khảo sát (Mã CTV, Xe, Doanh thu, Chụp ảnh...)"
+                locked_notice: "Vui lòng hoàn thành câu hỏi đồng ý phía trên để mở các câu hỏi tiếp theo."
             },
             en: {
                 code: "EN",
@@ -1179,7 +1179,7 @@
                 btn_open_telegram: "Open Telegram Bot",
                 btn_view_history_web: "View submission history on web",
                 btn_new_submission: "New Submission",
-                locked_notice: "Please sign (Q1) and select 'Tôi đồng ý' (Q2) to unlock all survey questions (CTV Code, Vehicle, Revenue, Photos...)"
+                locked_notice: "Please complete the consent question above to unlock the following questions."
             }
         };
 
@@ -1622,14 +1622,6 @@
                 `;
 
                 container.appendChild(card);
-                if (q.id === 'consent_choice') {
-                    const banner = document.createElement('div');
-                    banner.id = "lockedQuestionsNotice";
-                    banner.className = "locked-notice";
-                    banner.style.display = "flex";
-                    banner.textContent = t.locked_notice;
-                    container.appendChild(banner);
-                }
                 renderQuestionInput(q, card.querySelector(`#body_${q.id}`));
             });
 
@@ -1850,53 +1842,101 @@
         }
 
         // 3. Conditional Logic Branching
-        function evaluateConditionals() {
-            const hasSigned = Boolean(answers['driver_signature']);
-            const hasConsented = answers['consent_choice'] === 'Tôi đồng ý';
-            const isUnlocked = hasSigned && hasConsented;
-
-            const lockedNoticeEl = document.getElementById('lockedQuestionsNotice');
-            if (lockedNoticeEl) {
-                lockedNoticeEl.style.display = isUnlocked ? 'none' : 'flex';
+        // Mirrors services/form_engine.py: evaluate_condition / gate_satisfied. Keep both in sync.
+        function isBlankAnswer(value) {
+            if (value === undefined || value === null) return true;
+            if (typeof value === 'string') return value.trim() === '';
+            if (Array.isArray(value)) return value.length === 0;
+            if (typeof value === 'object') return Object.keys(value).length === 0;
+            return false;
+        }
+        function answerValues(value) {
+            if (Array.isArray(value)) return value.filter(v => !isBlankAnswer(v)).map(String);
+            return isBlankAnswer(value) ? [] : [String(value)];
+        }
+        function ruleValues(expected) {
+            const raw = Array.isArray(expected) ? expected
+                : (typeof expected === 'string' ? expected.split('\n')
+                : (expected === undefined || expected === null ? [] : [expected]));
+            return raw.map(v => String(v).trim()).filter(v => v !== '');
+        }
+        function equalsMatch(value, values) {
+            if (!values.length) return false;
+            const seen = answerValues(value);
+            if (Array.isArray(value)) return seen.length === values.length && seen.every(v => values.includes(v));
+            return seen.length === 1 && values.includes(seen[0]);
+        }
+        function evaluateRule(rule, answer) {
+            const op = (rule.operator || 'equals').toLowerCase();
+            const values = ruleValues(rule.expected_value);
+            if (op === 'empty') return isBlankAnswer(answer);
+            if (op === 'not_empty') return !isBlankAnswer(answer);
+            const seen = answerValues(answer);
+            if (op === 'contains') return values.some(v => seen.some(a => a.includes(v)));
+            if (op === 'not_equals') return !equalsMatch(answer, values);
+            if (op === 'equals') return equalsMatch(answer, values);
+            if (op === 'in') return Array.isArray(answer) ? seen.some(a => values.includes(a)) : equalsMatch(answer, values);
+            return !isBlankAnswer(answer);
+        }
+        function questionRules(q) {
+            if (Array.isArray(q.conditionals)) return q.conditionals;
+            return q.conditional ? [q.conditional] : [];
+        }
+        function effectiveGates() {
+            const explicit = SCHEMA.questions.filter(q => q.is_consent_gate);
+            if (explicit.length) return explicit;
+            if (SCHEMA.settings && SCHEMA.settings.decree13_required === false) return [];
+            return SCHEMA.questions
+                .filter(q => q.type === 'signature' || q.id === 'consent_choice')
+                .map(q => (q.id === 'consent_choice' && !(q.consent_accept_values || []).length)
+                    ? { ...q, consent_accept_values: ['Tôi đồng ý'] }
+                    : q);
+        }
+        function gateSatisfied(gate) {
+            const accepted = (gate.consent_accept_values || []).map(v => String(v).trim()).filter(v => v !== '');
+            const answer = answers[gate.id];
+            if (!accepted.length) return !isBlankAnswer(answer);
+            return answerValues(answer).some(v => accepted.includes(v));
+        }
+        function updateLockedNotice(anchorCard) {
+            let notice = document.getElementById('lockedQuestionsNotice');
+            if (!anchorCard) {
+                if (notice) notice.style.display = 'none';
+                return;
             }
+            if (!notice) {
+                notice = document.createElement('div');
+                notice.id = 'lockedQuestionsNotice';
+                notice.className = 'locked-notice';
+                notice.textContent = (I18N[currentLang] || I18N.vi).locked_notice;
+            }
+            notice.style.display = 'flex';
+            if (notice.nextElementSibling !== anchorCard || notice.parentNode !== anchorCard.parentNode) {
+                anchorCard.parentNode.insertBefore(notice, anchorCard);
+            }
+        }
+        function evaluateConditionals() {
+            const gates = effectiveGates();
+            const gateIds = new Set(gates.map(g => g.id));
+            let blocked = false;
+            let firstBlockedCard = null;
 
-            SCHEMA.questions.forEach((q, idx) => {
-                // Q1 (driver_signature) and Q2 (consent_choice) are always visible
-                if (q.id === 'driver_signature' || q.id === 'consent_choice' || idx <= 1) {
-                    return;
-                }
-
+            SCHEMA.questions.forEach((q) => {
                 const card = document.getElementById(`card_${q.id}`);
-                if (!card) return;
-
-                // Rule 1: If first 2 consent questions are not satisfied, ALL subsequent questions are HIDDEN!
-                if (!isUnlocked) {
-                    card.classList.add('hidden');
-                    return;
+                const isGate = gateIds.has(q.id);
+                let show = !blocked;
+                if (show && questionRules(q).some(rule => !evaluateRule(rule, answers[rule.depends_on_question_id]))) {
+                    show = false;
                 }
-
-                // Rule 2: If unlocked, check specific question conditional rule
-                let isMatch = true;
-                if (q.conditional) {
-                    const parentVal = answers[q.conditional.depends_on_question_id];
-                    if (q.conditional.depends_on_question_id === 'consent_choice') {
-                        isMatch = isUnlocked;
-                    } else if (q.conditional.operator === 'equals') {
-                        isMatch = (parentVal === q.conditional.expected_value);
-                    } else if (q.conditional.operator === 'in') {
-                        isMatch = Array.isArray(q.conditional.expected_value) && q.conditional.expected_value.includes(parentVal);
-                    } else {
-                        isMatch = Boolean(parentVal);
-                    }
+                if (card) {
+                    card.classList.toggle('hidden', !show);
+                    if (!show && blocked && !firstBlockedCard) firstBlockedCard = card;
                 }
-
-                if (isMatch) {
-                    card.classList.remove('hidden');
-                } else {
-                    card.classList.add('hidden');
-                    delete answers[q.id];
-                }
+                if (!show && !isGate) delete answers[q.id];
+                if (isGate && !gateSatisfied(q)) blocked = true;
             });
+
+            updateLockedNotice(firstBlockedCard);
         }
 
         // 4. WebRTC Camera Initialization

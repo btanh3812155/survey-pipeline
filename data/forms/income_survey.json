@@ -39,7 +39,9 @@
       "options": null,
       "group_compatibility": null,
       "validation": null,
-      "conditional": null,
+      "conditionals": [],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -64,7 +66,9 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": null,
+      "conditionals": [],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -94,11 +98,15 @@
         "min_length": null,
         "numbers_only": true
       },
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -123,11 +131,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -156,11 +168,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "vehicle_type",
-        "operator": "equals",
-        "expected_value": "Ô tô"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "vehicle_type",
+          "operator": "equals",
+          "expected_value": "Ô tô"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -188,11 +204,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -221,11 +241,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -255,11 +279,15 @@
         "min_length": null,
         "numbers_only": true
       },
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -287,11 +315,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -334,11 +366,15 @@
       ],
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": false,
       "min_images": null,
@@ -363,11 +399,15 @@
       "options": null,
       "group_compatibility": null,
       "validation": null,
-      "conditional": {
-        "depends_on_question_id": "consent_choice",
-        "operator": "equals",
-        "expected_value": "Tôi đồng ý"
-      },
+      "conditionals": [
+        {
+          "depends_on_question_id": "consent_choice",
+          "operator": "equals",
+          "expected_value": "Tôi đồng ý"
+        }
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
       "image_checks": null,
       "allow_multiple_images": true,
       "min_images": 7,

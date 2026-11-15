@@ -405,21 +405,238 @@
             });
             renderQuestions();
         }
+        function renameConditionalParents(oldId, newId) {
+            questions.forEach(q => {
+                (q.conditionals || []).forEach(rule => {
+                    if (rule.depends_on_question_id === oldId) rule.depends_on_question_id = newId;
+                });
+            });
+        }
+        function updateQuestionId(idx, newId) {
+            const oldId = questions[idx].id;
+            newId = (newId || '').trim();
+            questions[idx].id = newId;
+            if (oldId && newId && oldId !== newId) renameConditionalParents(oldId, newId);
+        }
         function syncQuestionId(idx) {
             const q = questions[idx];
             if (!q) return;
+            const oldId = q.id;
             const titleSlug = slugifyText(q.title);
             if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {
                 q.id = `${titleSlug}_${idx + 1}`;
                 const idInput = document.getElementById(`qid_${idx}`);
                 if (idInput) idInput.value = q.id;
+                if (oldId && q.id !== oldId) renameConditionalParents(oldId, q.id);
             }
         }
         function removeQuestion(idx) {
+            const removed = questions[idx];
             questions.splice(idx, 1);
+            if (removed && removed.id) {
+                questions.forEach(q => {
+                    if (Array.isArray(q.conditionals)) {
+                        q.conditionals = q.conditionals.filter(rule => rule.depends_on_question_id !== removed.id);
+                    }
+                });
+            }
             renderQuestions();
         }
-
+        const CONDITION_OPERATORS = [
+            ['equals', 'Bằng (==)'],
+            ['not_equals', 'Khác (!=)'],
+            ['contains', 'Chứa từ khóa'],
+            ['in', 'Nằm trong danh sách'],
+            ['empty', 'Đang trống (blank)'],
+            ['not_empty', 'Không trống (not blank)']
+        ];
+        function optionLabel(opt) {
+            return (opt && typeof opt === 'object') ? String(opt.label || '') : String(opt);
+        }
+        function questionHasOptions(q) {
+            return Boolean(q && Array.isArray(q.options) && q.options.length > 0);
+        }
+        function firstOptionValue(q) {
+            return questionHasOptions(q) ? optionLabel(q.options[0]) : '';
+        }
+        function addConditionalRow(idx) {
+            const q = questions[idx];
+            const prior = questions.slice(0, idx);
+            if (!q || !prior.length) return;
+            const parent = prior[prior.length - 1];
+            if (!Array.isArray(q.conditionals)) q.conditionals = [];
+            q.conditionals.push({
+                depends_on_question_id: parent.id,
+                operator: 'equals',
+                expected_value: questionHasOptions(parent) ? [firstOptionValue(parent)] : []
+            });
+            renderQuestions();
+        }
+        function removeConditionalRow(idx, cidx) {
+            const q = questions[idx];
+            if (!q || !Array.isArray(q.conditionals)) return;
+            q.conditionals.splice(cidx, 1);
+            renderQuestions();
+        }
+        function setConditionalParent(idx, cidx, value) {
+            const rule = questions[idx]?.conditionals?.[cidx];
+            if (!rule) return;
+            rule.depends_on_question_id = value;
+            const parent = questions.find(p => p.id === value);
+            rule.expected_value = questionHasOptions(parent) ? [firstOptionValue(parent)] : [];
+            renderQuestions();
+        }
+        function setConditionalOperator(idx, cidx, value) {
+            const rule = questions[idx]?.conditionals?.[cidx];
+            if (!rule) return;
+            rule.operator = value;
+            if (value === 'empty' || value === 'not_empty') rule.expected_value = [];
+            renderQuestions();
+        }
+        function toggleConditionalValue(idx, cidx, value) {
+            const rule = questions[idx]?.conditionals?.[cidx];
+            if (!rule) return;
+            const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
+            const at = values.indexOf(value);
+            if (at >= 0) values.splice(at, 1); else values.push(value);
+            rule.expected_value = values;
+            renderQuestions();
+        }
+        function setConditionalValuesText(idx, cidx, text) {
+            const rule = questions[idx]?.conditionals?.[cidx];
+            if (!rule) return;
+            rule.expected_value = String(text).split('\n').map(v => v.trim()).filter(v => v !== '');
+        }
+        function setConsentGate(idx, enabled) {
+            const q = questions[idx];
+            if (!q) return;
+            q.is_consent_gate = Boolean(enabled);
+            q.consent_accept_values = enabled && questionHasOptions(q) ? [firstOptionValue(q)] : [];
+            renderQuestions();
+        }
+        function toggleConsentAcceptValue(idx, value) {
+            const q = questions[idx];
+            if (!q) return;
+            const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values : [];
+            const at = values.indexOf(value);
+            if (at >= 0) values.splice(at, 1); else values.push(value);
+            q.consent_accept_values = values;
+            renderQuestions();
+        }
+        function setConsentAcceptValuesText(idx, text) {
+            const q = questions[idx];
+            if (!q) return;
+            q.consent_accept_values = String(text).split('\n').map(v => v.trim()).filter(v => v !== '');
+        }
+        function renderConditionalRowHtml(idx, rule, cidx, priorQuestions) {
+            const parentQ = questions.find(p => p.id === rule.depends_on_question_id);
+            const op = rule.operator || 'equals';
+            const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
+            const needsValue = op !== 'empty' && op !== 'not_empty';
+            let valueControl = '';
+            if (!needsValue) {
+                valueControl = `<div style="font-size:0.75rem; color:#64748b; font-style:italic; padding:8px 0;">Toán tử này không cần giá trị.</div>`;
+            } else if (questionHasOptions(parentQ)) {
+                valueControl = `
+                    <select multiple size="${Math.min(6, Math.max(2, parentQ.options.length))}" style="width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="toggleConditionalValue(${idx}, ${cidx}, this.value)">
+                        ${parentQ.options.map(opt => {
+                            const val = optionLabel(opt);
+                            return `<option value="${escapeHtml(val)}" ${values.includes(val) ? 'selected' : ''}>${escapeHtml(val)}</option>`;
+                        }).join('')}
+                    </select>
+                    <div style="font-size:0.7rem; color:#64748b; margin-top:3px;">Giữ Ctrl/Cmd để chọn nhiều giá trị.</div>
+                `;
+            } else {
+                valueControl = `
+                    <textarea rows="2" style="width:100%; padding:8px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" placeholder="Mỗi dòng một giá trị" oninput="setConditionalValuesText(${idx}, ${cidx}, this.value)">${escapeHtml(values.join('\n'))}</textarea>
+                `;
+            }
+            return `
+                <div style="display:grid; grid-template-columns:1.4fr 1fr 1.6fr auto; gap:8px; align-items:start; padding:8px; background:#0b1120; border:1px solid #1e293b; border-radius:8px; margin-top:8px;">
+                    <div class="field-group">
+                        <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Câu hỏi phụ thuộc</label>
+                        <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${cidx}, this.value)">
+                            ${priorQuestions.map((p, pIdx) => `
+                                <option value="${escapeHtml(p.id)}" ${p.id === rule.depends_on_question_id ? 'selected' : ''}>#${pIdx + 1}. ${escapeHtml(p.title || p.id)}</option>
+                            `).join('')}
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Toán tử</label>
+                        <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalOperator(${idx}, ${cidx}, this.value)">
+                            ${CONDITION_OPERATORS.map(([value, label]) => `<option value="${value}" ${op === value ? 'selected' : ''}>${label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Giá trị (nhiều dòng = nhiều giá trị)</label>
+                        ${valueControl}
+                    </div>
+                    <button type="button" style="margin-top:20px; background:#ef4444; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer;" onclick="removeConditionalRow(${idx}, ${cidx})">Xóa</button>
+                </div>
+            `;
+        }
+        function renderConditionalBuilderHtml(q, idx) {
+            if (idx === 0) {
+                return `
+                    <div style="background:rgba(15, 23, 42, 0.5); border:1px dashed #334155; border-radius:8px; padding:8px 12px; margin-top:8px;">
+                        <span style="font-size:0.75rem; color:#64748b; font-style:italic;">Câu hỏi #1 là câu hỏi khởi đầu, luôn hiển thị mặc định.</span>
+                    </div>
+                `;
+            }
+            const priorQuestions = questions.slice(0, idx);
+            const rules = Array.isArray(q.conditionals) ? q.conditionals : [];
+            return `
+                <div style="background:rgba(15, 23, 42, 0.85); border:1.5px solid ${rules.length ? '#38bdf8' : '#334155'}; border-radius:8px; padding:12px; margin-top:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Điều kiện hiển thị (tất cả phải đúng)</span>
+                        <button type="button" style="background:rgba(56,189,248,0.15); border:1px solid #38bdf8; color:#38bdf8; padding:4px 10px; border-radius:6px; font-size:0.75rem; font-weight:700; cursor:pointer;" onclick="addConditionalRow(${idx})">+ Thêm điều kiện</button>
+                    </div>
+                    ${rules.length
+                        ? rules.map((rule, cidx) => renderConditionalRowHtml(idx, rule, cidx, priorQuestions)).join('')
+                        : `<div style="font-size:0.75rem; color:#64748b; margin-top:6px;">Câu hỏi này luôn hiển thị. Bấm "Thêm điều kiện" để chỉ hiển thị khi câu hỏi trước có giá trị cụ thể.</div>`}
+                </div>
+            `;
+        }
+        function renderConsentGateBuilderHtml(q, idx) {
+            const enabled = Boolean(q.is_consent_gate);
+            const values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values : [];
+            let acceptControl = '';
+            if (enabled) {
+                if (questionHasOptions(q)) {
+                    acceptControl = `
+                        <div style="margin-top:8px;">
+                            <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Giá trị được xem là đồng ý (giữ Ctrl/Cmd để chọn nhiều)</label>
+                            <select multiple size="${Math.min(6, Math.max(2, q.options.length))}" style="width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="toggleConsentAcceptValue(${idx}, this.value)">
+                                ${q.options.map(opt => {
+                                    const val = optionLabel(opt);
+                                    return `<option value="${escapeHtml(val)}" ${values.includes(val) ? 'selected' : ''}>${escapeHtml(val)}</option>`;
+                                }).join('')}
+                            </select>
+                        </div>
+                    `;
+                } else {
+                    acceptControl = `
+                        <div style="font-size:0.75rem; color:#64748b; margin-top:6px;">Câu hỏi không có lựa chọn: bất kỳ câu trả lời không trống đều được xem là đồng ý.</div>
+                        <textarea rows="2" style="width:100%; margin-top:6px; padding:8px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" placeholder="Giá trị được chấp nhận (mỗi dòng một giá trị, có thể để trống)" oninput="setConsentAcceptValuesText(${idx}, this.value)">${escapeHtml(values.join('\n'))}</textarea>
+                    `;
+                }
+            }
+            return `
+                <div style="background:rgba(15, 23, 42, 0.85); border:1.5px solid ${enabled ? '#f59e0b' : '#334155'}; border-radius:8px; padding:12px; margin-top:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <div>
+                            <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi đồng ý (consent gate)</span>
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">Mọi câu hỏi phía sau chỉ hiển thị khi câu này được trả lời hợp lệ. Trả lời không hợp lệ sẽ bị từ chối khi nộp.</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${enabled ? 'checked' : ''} onchange="setConsentGate(${idx}, this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    ${acceptControl}
+                </div>
+            `;
+        }
         function toggleQuestionImageChecks(idx, enabled) {
             if (enabled) {
                 questions[idx].image_checks = {
@@ -713,7 +930,7 @@
                                 <span>Mã Question ID (Tự động tạo)</span>
                                 <span style="font-size:0.7rem; color:#94a3b8; font-weight:normal;">Định danh duy nhất</span>
                             </label>
-                            <input type="text" id="qid_${idx}" value="${escapeHtml(q.id || '')}" placeholder="vd: driver_phone, camera_receipt..." oninput="questions[${idx}].id = this.value.trim()">
+                            <input type="text" id="qid_${idx}" value="${escapeHtml(q.id || '')}" placeholder="vd: driver_phone, camera_receipt..." oninput="updateQuestionId(${idx}, this.value)">
                         </div>
                         <div class="field-group">
                             <label>Tooltip giải thích (Hiển thị popup khi rê chuột)</label>
@@ -818,6 +1035,8 @@
                             </div>
                         </details>
                     ` : ''}
+                    ${renderConditionalBuilderHtml(q, idx)}
+                    ${renderConsentGateBuilderHtml(q, idx)}
                 `;
                 wrap.appendChild(item);
             });
@@ -854,10 +1073,29 @@
                         enable_screen_photo_check: document.getElementById('globalEnableScreenPhotoCheck') ? document.getElementById('globalEnableScreenPhotoCheck').checked : false
                     }
                 },
-                questions: questions.map(q => ({
-                    ...q,
-                    required: q.required !== false
-                }))
+                questions: questions.map(q => {
+                    const cleanQ = { ...q, required: q.required !== false };
+                    const rules = (q.conditionals || [])
+                        .filter(rule => rule.depends_on_question_id)
+                        .map(rule => ({
+                            depends_on_question_id: rule.depends_on_question_id,
+                            operator: rule.operator || 'equals',
+                            expected_value: (rule.operator === 'empty' || rule.operator === 'not_empty')
+                                ? null
+                                : (Array.isArray(rule.expected_value) ? rule.expected_value : [])
+                        }));
+                    if (rules.length) cleanQ.conditionals = rules; else delete cleanQ.conditionals;
+                    delete cleanQ.conditional;
+                    if (cleanQ.is_consent_gate) {
+                        cleanQ.consent_accept_values = (q.consent_accept_values || [])
+                            .map(v => String(v).trim())
+                            .filter(v => v !== '');
+                    } else {
+                        delete cleanQ.is_consent_gate;
+                        delete cleanQ.consent_accept_values;
+                    }
+                    return cleanQ;
+                })
             };
 
             try {
@@ -927,8 +1165,32 @@
             });
             document.getElementById('globalBlurThreshold').value = ic.blur_threshold != null ? ic.blur_threshold : '';
         }
+        function normalizeConditionals() {
+            questions.forEach(q => {
+                const legacy = q.conditional ? [q.conditional] : [];
+                const rules = Array.isArray(q.conditionals) ? q.conditionals : legacy;
+                q.conditionals = rules.map(rule => {
+                    const op = rule.operator || 'equals';
+                    let values = rule.expected_value;
+                    if (op === 'empty' || op === 'not_empty') values = [];
+                    else if (Array.isArray(values)) values = values.map(String);
+                    else if (values === undefined || values === null) values = [];
+                    else if (typeof values === 'string') values = op === 'in' ? values.split(',') : values.split('\n');
+                    else values = [String(values)];
+                    return {
+                        depends_on_question_id: rule.depends_on_question_id || '',
+                        operator: op,
+                        expected_value: values.map(v => String(v).trim()).filter(v => v !== '')
+                    };
+                });
+                delete q.conditional;
+                q.is_consent_gate = Boolean(q.is_consent_gate);
+                q.consent_accept_values = Array.isArray(q.consent_accept_values) ? q.consent_accept_values.map(String) : [];
+            });
+        }
         window.addEventListener('DOMContentLoaded', () => {
             applyEditorI18n();
+            normalizeConditionals();
             hydrateEditorFromSchema();
             renderQuestions();
         });
