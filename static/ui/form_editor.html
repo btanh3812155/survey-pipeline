@@ -832,6 +832,42 @@
                 // Ignore parse errors while typing
             }
         }
+        function setChoiceOption(idx, oi, value) {
+            const q = questions[idx];
+            if (!q || !Array.isArray(q.options)) return;
+            const current = q.options[oi];
+            q.options[oi] = (current && typeof current === 'object') ? { ...current, label: value } : value;
+        }
+        function addChoiceOption(idx) {
+            const q = questions[idx];
+            if (!q) return;
+            if (!Array.isArray(q.options)) q.options = [];
+            q.options.push(`Lựa chọn ${q.options.length + 1}`);
+            renderQuestions();
+        }
+        function removeChoiceOption(idx, oi) {
+            const q = questions[idx];
+            if (!q || !Array.isArray(q.options)) return;
+            q.options.splice(oi, 1);
+            renderQuestions();
+        }
+        function renderChoiceOptionsBuilder(q, idx) {
+            const options = Array.isArray(q.options) ? q.options : [];
+            const rows = options.map((opt, oi) => {
+                const value = (opt && typeof opt === 'object') ? (opt.label || '') : String(opt ?? '');
+                return `
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="text" style="flex:1; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:7px 9px; font-size:0.8rem;" value="${escapeHtml(value)}" oninput="setChoiceOption(${idx}, ${oi}, this.value)">
+                        <button type="button" class="btn-delete" onclick="removeChoiceOption(${idx}, ${oi})">Xóa</button>
+                    </div>`;
+            }).join('');
+            return `
+                <div class="field-group">
+                    <label>Các lựa chọn (mỗi dòng một lựa chọn)</label>
+                    <div style="display:flex; flex-direction:column; gap:6px;">${rows}</div>
+                    <button type="button" style="margin-top:8px; background:#1e293b; border:1px solid #475569; color:#cbd5e1; padding:6px 10px; border-radius:6px; font-size:0.78rem; cursor:pointer;" onclick="addChoiceOption(${idx})">+ Thêm lựa chọn</button>
+                </div>`;
+        }
         function renderMultipleChoiceOptionsBuilder(q, qidx) {
             const opts = (q.options || []).map(opt => typeof opt === 'object' && opt !== null ? opt : { label: String(opt), group: 'default' });
             const rows = opts.map((opt, oidx) => `
@@ -1064,12 +1100,7 @@
                         </label>
                         <textarea rows="3" style="resize:vertical;" placeholder="Hướng dẫn tài xế điền..." oninput="questions[${idx}].description = this.value">${escapeHtml(q.description || '')}</textarea>
                     </div>
-                    ${q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? `
-                        <div class="field-group">
-                            <label>Các lựa chọn (phân cách bằng dấu phẩy)</label>
-                            <input type="text" value="${escapeHtml((q.options || []).map(o => typeof o === 'object' && o !== null ? o.label : o).join(', '))}" placeholder="Lựa chọn 1, Lựa chọn 2, Lựa chọn 3" oninput="questions[${idx}].options = this.value.split(',').map(s=>s.trim()).filter(Boolean)">
-                        </div>
-                    ` : '')}
+                    ${q.type === 'multiple_choice' ? renderMultipleChoiceOptionsBuilder(q, idx) : (['single_choice', 'dropdown'].includes(q.type) ? renderChoiceOptionsBuilder(q, idx) : '')}
                     <div style="display:none;" data-options-marker="true" value="${escapeHtml((q.options || []).join(', '))}"></div>
                     ${q.type === 'camera_webrtc' ? `
                         <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">

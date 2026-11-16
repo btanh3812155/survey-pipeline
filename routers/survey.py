@@ -33,7 +33,7 @@ from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.duplicate_detector import compute_image_dhash_str, compute_dinov2_embedding, check_intra_submission_duplicates, check_inter_submission_duplicates
 from services.vehicle_tracker import VehiclePersistenceTracker, normalize_license_plate
 from services.income_sanitizer import analyze_driver_income
-from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
+from services.image_types import PeriodHeaderMetadata, TimeGranularity, parse_date_range_from_text, validate_extracted_weekly_period
 from services.action_checklist import init_action_checklist, dispatch_action_checklist
 from services.storage_r2 import r2_client
 from services.dynamic_form_html import render_dynamic_form_html, render_ctv_selector_landing_html
@@ -616,33 +616,55 @@ async def submit_webrtc_survey(
                         classified_roles = await asyncio.gather(*classify_tasks, return_exceptions=True)
                         classified_roles = [r if isinstance(r, str) else "unknown" for r in classified_roles]
 
-                        # 3. Dynamic slot matching: match slots strictly AFTER classification!
-                        matched_profile_idx = None
-                        matched_vehicle_idx = None
-                        matched_income_indices = []
+                        # 3. Order-agnostic object coverage: classify every image, then
+                        # require the right objects rather than matching image positions.
+                        def _role_group(role):
+                            value = str(role or "").lower()
+                            if "profile" in value or "odometer" in value:
+                                return "profile"
+                            if "vehicle" in value or "exterior" in value or "steering" in value:
+                                return "vehicle"
+                            if "income" in value or "revenue" in value or "earnings" in value:
+                                return "income"
+                            return "unknown"
 
+                        groups = {"profile": [], "vehicle": [], "income": []}
                         for idx, role in enumerate(classified_roles):
-                            if role in ("app_profile", "odometer", "profile_screen") and matched_profile_idx is None:
-                                matched_profile_idx = idx
-                            elif role in ("vehicle_exterior", "car_exterior", "car_photo", "steering_wheel", "auto_passed_vehicle") and matched_vehicle_idx is None:
-                                matched_vehicle_idx = idx
-                            elif role in ("app_income", "revenue_screen", "weekly_income"):
-                                matched_income_indices.append(idx)
+                            group = _role_group(role)
+                            if group in groups:
+                                groups[group].append(idx)
 
-                        assigned = set(filter(lambda x: x is not None, [matched_profile_idx, matched_vehicle_idx] + matched_income_indices))
-                        unassigned = [i for i in range(len(raw_bytes_list)) if i not in assigned]
+                        required_slots = [slot for slot in target_q.image_slots if slot.get("required", True)]
+                        required_counts = {"profile": 0, "vehicle": 0, "income": 0}
+                        for slot in required_slots:
+                            group = _role_group(slot.get("role", ""))
+                            if group in required_counts:
+                                required_counts[group] += 1
 
-                        if matched_profile_idx is None and unassigned:
-                            matched_profile_idx = unassigned.pop(0)
-                        elif matched_profile_idx is None:
-                            matched_profile_idx = 0
+                        missing_titles = []
+                        for group, needed in required_counts.items():
+                            if len(groups[group]) < needed:
+                                for slot in required_slots:
+                                    if _role_group(slot.get("role", "")) == group:
+                                        missing_titles.append(str(slot.get("title") or slot.get("role") or group))
+                                        break
 
-                        if matched_vehicle_idx is None and unassigned:
-                            matched_vehicle_idx = unassigned.pop(0)
+                        coverage_violation = None
+                        if missing_titles:
+                            coverage_violation = {
+                                "failed_slot": 0,
+                                "ocr_data": {},
+                                "reason": (
+                                    "Thiếu ảnh đúng loại cho: " + "; ".join(missing_titles)
+                                    + ". Vui lòng chụp đủ các mục yêu cầu (thứ tự ảnh không quan trọng)."
+                                ),
+                            }
 
-                        matched_income_indices.extend(unassigned)
-                        if not matched_income_indices:
-                            matched_income_indices = [1] if len(raw_bytes_list) > 1 else [0]
+                        matched_profile_idx = groups["profile"][0] if groups["profile"] else None
+                        matched_vehicle_idx = groups["vehicle"][0] if groups["vehicle"] else None
+                        matched_income_indices = list(groups["income"]) or [0]
+                        if matched_profile_idx is None:
+                            matched_profile_idx = matched_income_indices[0]
 
                         # 4. Concurrently run Profile OCR, Facts extraction, and all Weekly Income OCR tasks
                         # REUSING pre-normalized bytes (ZERO redundant libvips calls!)
@@ -660,7 +682,26 @@ async def submit_webrtc_survey(
                         facts_res = all_results[1]
                         income_res_list = all_results[2:]
 
-                        role_0 = classified_roles[matched_profile_idx]
+                        # Order-agnostic weeks: sort income screens by detected period start
+                        income_pairs = list(zip(matched_income_indices, income_res_list))
+
+                        def _period_start(pair):
+                            result = pair[1]
+                            if isinstance(result, dict):
+                                start, _, _ = parse_date_range_from_text(str(result.get("period") or ""), default_year=2026)
+                                if start:
+                                    return (0, start)
+                            return (1, pair[0])
+
+                        income_pairs.sort(key=_period_start)
+                        matched_income_indices = [pair[0] for pair in income_pairs]
+                        income_res_list = [pair[1] for pair in income_pairs]
+
+                        role_0 = (
+                            classified_roles[matched_profile_idx]
+                            if groups["profile"]
+                            else (target_q.image_slots[0].get("role", "app_profile") if target_q.image_slots else "app_profile")
+                        )
                         membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else "Tiêu chuẩn"
                         primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
                         ocr_data = primary_ocr
@@ -668,7 +709,7 @@ async def submit_webrtc_survey(
                         tot_gross = 0
                         tot_net = 0
                         tot_trips = 0
-                        monthly_violation = None
+                        monthly_violation = coverage_violation
                         math_violation = None
                         for w_i in range(5):
                             w_num = w_i + 1

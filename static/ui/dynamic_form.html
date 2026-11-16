@@ -2016,6 +2016,18 @@
             }
         }
 
+        function advanceToNextUncapturedSlot(qid) {
+            const q = SCHEMA.questions.find(item => item.id === qid);
+            if (!q || !Array.isArray(q.image_slots) || !q.image_slots.length) return;
+            const current = activeSlotByQId[qid] !== undefined ? activeSlotByQId[qid] : 0;
+            for (let i = 1; i <= q.image_slots.length; i++) {
+                const idx = (current + i) % q.image_slots.length;
+                if (!answers[`${qid}_${idx}`]) {
+                    selectCameraSlot(qid, idx, false);
+                    return;
+                }
+            }
+        }
         function selectCameraSlot(qid, slotIdx, shouldActivateCamera = false) {
             activeSlotByQId[qid] = slotIdx;
             const q = SCHEMA.questions.find(item => item.id === qid);
@@ -2208,7 +2220,8 @@
                     }
                     const compressed = await compressImageFile(files[0]);
                     applyFileToSlot(qid, targetIdx, compressed);
-                    selectCameraSlot(qid, targetIdx, false);
+                    activeSlotByQId[qid] = targetIdx;
+                    advanceToNextUncapturedSlot(qid);
                 } else {
                     // Multi-image upload: sequentially fill slots that allow upload starting from current slot!
                     let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx);
@@ -2229,7 +2242,10 @@
                         applyFileToSlot(qid, targetSlotIdx, compressed);
                     }
 
-                    selectCameraSlot(qid, uploadableSlots[startPos].idx, false);
+                    if (maxFill > 0) {
+                        activeSlotByQId[qid] = uploadableSlots[startPos + maxFill - 1].idx;
+                        advanceToNextUncapturedSlot(qid);
+                    }
                 }
 
                 syncAnswersImageList(qid);
