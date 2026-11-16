@@ -366,44 +366,15 @@ async def submit_webrtc_survey(
     target_question_id = question_id or "camera_receipt"
     target_q = next((qu for qu in schema.questions if qu.id == target_question_id), None) if schema else None
 
-    # Inspect survey_photo and request form for survey_photo_0, survey_photo_1, etc.
-    images_list = []
-    has_indexed_photos = False
-    idx = 0
-    while True:
-        k_sp = f"survey_photo_{idx}"
-        k_tq = f"{target_question_id}_{idx}"
-        item = None
-        if k_sp in form_data and (hasattr(form_data[k_sp], "read") or isinstance(form_data[k_sp], UploadFile)):
-            item = form_data[k_sp]
-        elif k_tq in form_data and (hasattr(form_data[k_tq], "read") or isinstance(form_data[k_tq], UploadFile)):
-            item = form_data[k_tq]
-        if item is not None:
-            images_list.append(item)
-            has_indexed_photos = True
-            idx += 1
-        else:
-            break
+    # Collect every uploaded image across all camera questions. Slot files are
+    # keyed `<question_id>__file_<slot>` so multiple camera questions no longer
+    # overwrite each other under a shared survey_photo_<idx> key.
+    images_list = [v for _k, v in form_data.multi_items() if hasattr(v, "read")]
+    has_indexed_photos = len(images_list) > 1
 
-    if not images_list and survey_photo:
-        images_list.append(survey_photo)
-        idx = 1
-        while True:
-            k_sp = f"survey_photo_{idx}"
-            k_tq = f"{target_question_id}_{idx}"
-            item = None
-            if k_sp in form_data and (hasattr(form_data[k_sp], "read") or isinstance(form_data[k_sp], UploadFile)):
-                item = form_data[k_sp]
-            elif k_tq in form_data and (hasattr(form_data[k_tq], "read") or isinstance(form_data[k_tq], UploadFile)):
-                item = form_data[k_tq]
-            if item is not None:
-                images_list.append(item)
-                has_indexed_photos = True
-                idx += 1
-            else:
-                break
-
-    answers: Dict[str, Any] = dict(form_data)
+    answers: Dict[str, Any] = {
+        k: v for k, v in form_data.multi_items() if not hasattr(v, "read")
+    }
     if "driver_phone" not in answers:
         answers["driver_phone"] = driver_phone
     if "driver_name" not in answers and driver_name:
@@ -412,7 +383,9 @@ async def submit_webrtc_survey(
         answers["driver_signature"] = signature_png
     is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
     if images_list:
-        if target_q and target_q.image_slots:
+        if f"{target_question_id}_0" in answers:
+            pass  # modern client already sent per-slot markers for every camera question
+        elif target_q and target_q.image_slots:
             uploaded = min(len(images_list), len(target_q.image_slots))
             answers[target_question_id] = [f"uploaded_{i}" for i in range(uploaded)]
             for slot_index in range(uploaded):

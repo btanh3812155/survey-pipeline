@@ -62,10 +62,11 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
     with open(dev_storage_file, "w", encoding="utf-8") as f:
         json.dump(dev_records, f)
 
-    sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
-        sent_msgs.append({"text": text, "reply_markup": reply_markup})
-    runner.send_message = mock_send
+    review_bundles = []
+    async def mock_bundle(chat_id, key, dossier, caption, txt_bytes, reply_markup=None):
+        review_bundles.append({"caption": caption, "txt": txt_bytes.decode("utf-8"), "reply_markup": reply_markup})
+        return True
+    runner.send_dossier_bundle = mock_bundle
 
     edited_markups = []
     async def mock_edit(chat_id, msg_id, reply_markup=None):
@@ -77,10 +78,13 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
         return True
     runner.answer_callback_query = mock_answer_cq
 
-    # 1. Open review card presents request-confirmation buttons
+    # 1. Open review bundle presents request-confirmation buttons + raw data txt
     await runner.execute_submission_review(123456, "SIM-TEST-01")
-    assert len(sent_msgs) >= 1
-    rev_btns = sent_msgs[-1]["reply_markup"]["inline_keyboard"]
+    assert len(review_bundles) >= 1
+    assert "SIM-TEST-01" in review_bundles[-1]["caption"]
+    assert "Số Liệu" not in review_bundles[-1]["caption"]
+    assert '"submission_id"' in review_bundles[-1]["txt"]
+    rev_btns = review_bundles[-1]["reply_markup"]["inline_keyboard"]
     assert any("admin_req_approve:SIM-TEST-01" in b.get("callback_data", "") for row in rev_btns for b in row)
 
     # 2. Clicking Duyệt prompts confirmation dialog with CONFIRM and CANCEL
@@ -512,9 +516,10 @@ async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
         json.dump([{"submission_id": "VN-SWIPE-99", "status": "MANUAL_REVIEW"}], f)
 
     sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
-        sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
-    runner.send_message = mock_send
+    async def mock_bundle(chat_id, key, dossier, caption, txt_bytes, reply_markup=None):
+        sent_msgs.append({"chat_id": chat_id, "text": caption, "reply_markup": reply_markup})
+        return True
+    runner.send_dossier_bundle = mock_bundle
 
     # Admin sends /check replying to a message containing the submission ID
     msg_reply = {
@@ -738,3 +743,55 @@ def test_editor_conditions_use_hidden_constant_uids():
     assert "Lỗi lưu (HTTP " in src
     assert "await resp.json()" in src
     assert "res.detail" not in src
+
+
+def test_multi_camera_questions_store_all_images():
+    """Every camera question's slot files are persisted, not just the last question's."""
+    import io, os, shutil
+    from unittest.mock import AsyncMock, patch
+    from PIL import Image
+    from main import FORM_REGISTRY
+    from services.form_engine import (
+        FormSchema, FormQuestion, FormSettings, QuestionType, ImageCheckConfig,
+    )
+
+    def jpeg():
+        b = io.BytesIO(); Image.new("RGB", (120, 180), (20, 120, 180)).save(b, format="JPEG")
+        return b.getvalue()
+
+    fid = "SIM-MULTI-CAM-IMAGES"
+    FORM_REGISTRY[fid] = FormSchema(
+        form_id=fid, title="Multi camera", settings=FormSettings(
+            decree13_required=False, is_test_mode=True,
+            image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=False)),
+        questions=[
+            FormQuestion(id="q_a", title="A", type=QuestionType.CAMERA_WEBRTC, required=True,
+                image_slots=[{"slot": 0, "title": "A0", "required": True},
+                             {"slot": 1, "title": "A1", "required": True}],
+                min_images=2, max_images=2, exact_image_count=2),
+            FormQuestion(id="q_b", title="B", type=QuestionType.CAMERA_WEBRTC, required=True,
+                image_slots=[{"slot": 0, "title": "B0", "required": True},
+                             {"slot": 1, "title": "B1", "required": True}],
+                min_images=2, max_images=2, exact_image_count=2),
+        ],
+    )
+    client = TestClient(app)
+    data = {"form_id": fid, "is_test_mode": "true", "bypass_img_check": "true",
+            "q_a_0": "uploaded_0", "q_a_1": "uploaded_1",
+            "q_b_0": "uploaded_0", "q_b_1": "uploaded_1"}
+    files = [(f"q_{name}__file_{i}", (f"{name}{i}.jpg", io.BytesIO(jpeg()), "image/jpeg"))
+             for name in ("a", "b") for i in range(2)]
+    sub_id = None
+    try:
+        with patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
+            body = client.post("/api/v1/survey/submit-webrtc", data=data, files=files).json()
+        sub_id = body.get("submission_id") or (body.get("data") or {}).get("submission_id")
+        photo_dir = os.path.join(os.getcwd(), "data", "submission_photos", sub_id)
+        stored = sorted(os.listdir(photo_dir))
+        assert len(stored) == 4, stored
+    finally:
+        if sub_id:
+            shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
+        FORM_REGISTRY.pop(fid, None)

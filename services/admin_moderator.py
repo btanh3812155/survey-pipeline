@@ -1,6 +1,7 @@
 import os
 import glob
 import json
+import re
 import html
 import logging
 import httpx
@@ -97,6 +98,30 @@ async def forward_flagged_survey_to_admin_group(
         logger.error(f"failed to escalate to admin group: {e}")
 
 
+def _collect_submission_photos(submission_id: str) -> list:
+    """All stored images for a submission, across every camera question, in slot order."""
+    candidates = [
+        os.path.join(os.getcwd(), "data", "submission_photos", submission_id),
+        os.path.join(os.getcwd(), "data", "google_drive_deliverables", "Images", submission_id),
+        os.path.join(os.getcwd(), "data", "uploads", "surveys", submission_id),
+    ]
+    exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+    for c_dir in candidates:
+        if not os.path.isdir(c_dir):
+            continue
+        found = []
+        for root, _dirs, files in os.walk(c_dir):
+            for fn in files:
+                if fn.lower().endswith(exts):
+                    found.append(os.path.join(root, fn))
+        if found:
+            def _sort_key(path):
+                m = re.search(r"(\d+)", os.path.basename(path))
+                return (int(m.group(1)) if m else 10**9, path)
+            return sorted(found, key=_sort_key)
+    return []
+
+
 async def query_submission_dossier(
     submission_id: str, db_pool=None, redis_client=None
 ) -> dict:
@@ -127,7 +152,8 @@ async def query_submission_dossier(
                                 "gross_income": r.get("total_gross_revenue", 0),
                                 "net_income": r.get("total_net_income", 0),
                                 "trips_count": r.get("total_trips", 0),
-                                "photo_paths": [],
+                                "photo_paths": _collect_submission_photos(submission_id),
+                                "raw_data": r,
                             }
                 except Exception:
                     pass
@@ -208,7 +234,8 @@ async def query_submission_dossier(
                                         "net_income": r.get("total_net_income", 0),
                                         "trips_count": r.get("total_trips", 0),
                                         "weekly_incomes": r.get("weekly_incomes", {}),
-                                        "photo_paths": [],
+                                        "photo_paths": _collect_submission_photos(submission_id),
+                                        "raw_data": r,
                                     }
                         except Exception:
                             pass
@@ -239,23 +266,8 @@ async def query_submission_dossier(
             if (not v_type or v_type in ("CAR", "N/A")) and isinstance(form_data, dict):
                 v_type = form_data.get("vehicle_type") or v_type
 
-            # Locate photos on disk
-            photo_paths = []
-            candidates = [
-                os.path.join(os.getcwd(), "data", "submission_photos", submission_id),
-                os.path.join(os.getcwd(), "data", "google_drive_deliverables", "Images", submission_id),
-            ]
-            for c_dir in candidates:
-                if os.path.exists(c_dir):
-                    p_files = sorted(
-                        glob.glob(os.path.join(c_dir, "*.jpg")) +
-                        glob.glob(os.path.join(c_dir, "*.jpeg")) +
-                        glob.glob(os.path.join(c_dir, "*.png")) +
-                        glob.glob(os.path.join(c_dir, "*.webp"))
-                    )
-                    if p_files:
-                        photo_paths = p_files
-                        break
+            # Locate every stored photo (all camera questions, including nested dirs)
+            photo_paths = _collect_submission_photos(submission_id)
 
             weekly_incomes = raw_facts.get("weekly_incomes") or {
                 "week_1": {"gross_revenue": int(sub[23] or 0), "period": "Tuần 1"},
@@ -288,6 +300,10 @@ async def query_submission_dossier(
                 "collaborator_id": sub[28] if len(sub) > 28 and sub[28] else (form_data.get("collaborator_id") if isinstance(form_data, dict) else None),
                 "ctv_code": sub[29] if len(sub) > 29 and sub[29] else (form_data.get("ctv_code") if isinstance(form_data, dict) else None),
                 "form_id": sub[30] if len(sub) > 30 and sub[30] else None,
+                "raw_data": {
+                    "form_data": form_data,
+                    "raw_facts": raw_facts,
+                },
             }
 
 

@@ -251,7 +251,7 @@ async def check_inter_submission_duplicates(
                             """
                             SELECT submission_id
                             FROM survey_submissions
-                            WHERE status = 'APPROVED'
+                            WHERE status = 'APPROVED' AND status <> 'REJECTED'
                               AND income_week_1_gross = %s
                               AND income_week_2_gross = %s
                               AND (
@@ -273,7 +273,7 @@ async def check_inter_submission_duplicates(
                     """
                     SELECT submission_id, bit_count(image_dhash # %s::bit(64)) as dist
                     FROM survey_submissions
-                    WHERE status = 'APPROVED'
+                    WHERE status = 'APPROVED' AND status <> 'REJECTED'
                       AND image_dhash IS NOT NULL
                       AND bit_count(image_dhash # %s::bit(64)) <= 6
                     ORDER BY dist ASC
@@ -293,7 +293,7 @@ async def check_inter_submission_duplicates(
                         """
                         SELECT submission_id, total_gross_revenue, (1 - (embedding <=> %s::vector)) as similarity
                         FROM survey_submissions
-                        WHERE status = 'APPROVED'
+                        WHERE status = 'APPROVED' AND status <> 'REJECTED'
                           AND embedding IS NOT NULL
                           AND (1 - (embedding <=> %s::vector)) >= 0.985
                         ORDER BY embedding <=> %s::vector ASC

@@ -6,6 +6,7 @@ import json
 import random
 import asyncio
 import logging
+import html
 from typing import Optional, Union, Dict, Any, List, Tuple
 import httpx
 from PIL import Image
@@ -56,7 +57,7 @@ class TelegramPollingRunner:
         self.max_backoff = 60.0
         # Chat-scoped registry of the last prompt message per logical content key,
         # so a new instance can strip the old one's inline buttons.
-        self.prompt_registry: Dict[str, int] = {}
+        self.prompt_registry: Dict[str, List[int]] = {}
 
     async def get_client(self) -> httpx.AsyncClient:
         if self.http_client is None or self.http_client.is_closed:
@@ -104,23 +105,124 @@ class TelegramPollingRunner:
             logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
             return False
 
+    async def delete_message(self, chat_id: Union[int, str], message_id: int) -> bool:
+        """Deletes a single Telegram message (used to replace repeated /check responses)."""
+        if not message_id or not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            return True
+        try:
+            client = await self.get_client()
+            resp = await client.post(
+                f"https://api.telegram.org/bot{self.bot_token}/deleteMessage",
+                json={"chat_id": str(chat_id), "message_id": int(message_id)},
+                timeout=10.0,
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            logger.debug(f"Failed to delete message {message_id}: {e}")
+            return False
+
     async def clear_previous_prompt(self, key: str, chat_id: Union[int, str]) -> None:
-        """Removes inline buttons from the previous message for this content key."""
+        """Deletes the previous response (message or media group) for this content key."""
         previous = self.prompt_registry.pop(key, None)
         if not previous:
             return
-        try:
-            await self.edit_message_reply_markup(chat_id, previous, reply_markup={"inline_keyboard": []})
-        except Exception:
-            pass
+        ids = previous if isinstance(previous, list) else [previous]
+        for message_id in ids:
+            if message_id:
+                await self.delete_message(chat_id, message_id)
 
     async def send_tracked(self, key: str, chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None):
         """Sends a message, first stripping buttons from the previous message with the same key."""
         await self.clear_previous_prompt(key, chat_id)
         result = await self.send_message(chat_id, text, reply_markup=reply_markup, return_message=True)
         if isinstance(result, dict) and result.get("message_id"):
-            self.prompt_registry[key] = result["message_id"]
+            self.prompt_registry[key] = [result["message_id"]]
         return result
+
+    async def send_dossier_bundle(
+        self,
+        chat_id: Union[int, str],
+        key: str,
+        dossier: dict,
+        caption: str,
+        txt_bytes: bytes,
+        reply_markup: Optional[dict] = None,
+    ) -> bool:
+        """
+        Sends ONE response: all submission photos + the raw dossier .txt in a media
+        group, with the short caption (sub id + CTV) on the first item and the review
+        buttons attached to that item. Falls back to a document-only message.
+        """
+        await self.clear_previous_prompt(key, chat_id)
+        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            logger.info(f"[MOCK TG DISPATCH] dossier bundle for {dossier.get('submission_id')}: {caption}")
+            return True
+
+        files: Dict[str, Any] = {}
+        media: List[dict] = []
+        for idx, path in enumerate((dossier.get("photo_paths") or [])[:9]):
+            try:
+                with open(path, "rb") as fp:
+                    raw_b = fp.read()
+                if len(raw_b) > 300_000:
+                    try:
+                        im = Image.open(io.BytesIO(raw_b))
+                        if max(im.size) > 1200:
+                            im.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
+                        out_io = io.BytesIO()
+                        im.convert("RGB").save(out_io, format="JPEG", quality=82, optimize=True)
+                        raw_b = out_io.getvalue()
+                    except Exception:
+                        pass
+                files[f"photo_{idx}"] = (os.path.basename(path), raw_b, "image/jpeg")
+                media.append({"type": "photo", "media": f"attach://photo_{idx}"})
+            except Exception as e:
+                logger.warning(f"Failed reading dossier photo {path}: {e}")
+
+        sub_id = str(dossier.get("submission_id") or "submission")
+        files["dossier_txt"] = (f"{sub_id}.txt", txt_bytes, "text/plain")
+        media.append({"type": "document", "media": "attach://dossier_txt"})
+        if media and media[0]["type"] == "photo":
+            media[0]["caption"] = caption
+            media[0]["parse_mode"] = "HTML"
+
+        client = await self.get_client()
+        try:
+            if len(media) == 1:
+                resp = await client.post(
+                    f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
+                    data={
+                        "chat_id": str(chat_id),
+                        "caption": caption,
+                        "parse_mode": "HTML",
+                        **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {}),
+                    },
+                    files={"document": files["dossier_txt"]},
+                    timeout=30.0,
+                )
+                if resp.status_code != 200:
+                    logger.error(f"Dossier document send failed: {resp.status_code} {resp.text[:200]}")
+                    return False
+                result = resp.json().get("result") or {}
+                ids = [result.get("message_id")]
+            else:
+                resp = await client.post(
+                    f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup",
+                    data={"chat_id": str(chat_id), "media": json.dumps(media)},
+                    files=files,
+                    timeout=30.0,
+                )
+                if resp.status_code != 200:
+                    logger.error(f"Dossier media group send failed: {resp.status_code} {resp.text[:200]}")
+                    return False
+                ids = [m.get("message_id") for m in (resp.json().get("result") or [])]
+                if reply_markup and ids and ids[0]:
+                    await self.edit_message_reply_markup(chat_id, ids[0], reply_markup=reply_markup)
+            self.prompt_registry[key] = [mid for mid in ids if mid]
+            return True
+        except Exception as e:
+            logger.error(f"Failed sending dossier bundle: {e}")
+            return False
 
     async def answer_callback_query(
         self, callback_query_id: str, text: Optional[str] = None, show_alert: bool = False
@@ -237,51 +339,40 @@ class TelegramPollingRunner:
             await self.send_message(chat_id, f"❌ {dossier['error']}")
             return
 
-        photo_paths = dossier.get("photo_paths") or []
         cur_status = dossier.get("status", "PENDING")
-
-        # 1. Parallel loading: prepare media group payload AND format text card in parallel
-        async def load_photos():
-            if photo_paths:
-                return await asyncio.to_thread(self.prepare_media_group_payload, photo_paths)
-            return None
-
-        def load_card():
-            if cur_status in ("APPROVED", "REJECTED"):
-                status_text = "Đã DUYỆT (APPROVED)" if cur_status == "APPROVED" else "Đã TỪ CHỐI (REJECTED)"
-                buttons = {
-                    "inline_keyboard": [
-                        [
-                            {"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"},
-                        ],
-                    ]
-                }
-            else:
-                # First level buttons require confirmation!
-                buttons = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_req_approve:{clean_sub_id}"},
-                            {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_req_reject:{clean_sub_id}"},
-                        ],
-                    ]
-                }
-            text = render_dossier_message(dossier)
-            return text, buttons
-
-        # Bot waits for BOTH messages to be completely ready in memory before sending either!
-        media_payload, (report_text, review_buttons) = await asyncio.gather(
-            load_photos(),
-            asyncio.to_thread(load_card)
+        ctv = dossier.get("ctv_code") or dossier.get("collaborator_id") or "N/A"
+        caption = (
+            f"📋 <b>HỒ SƠ KHẢO SÁT #{html.escape(str(clean_sub_id))}</b>\n"
+            f"• <b>CTV:</b> <code>{html.escape(str(ctv))}</code>"
         )
+        raw_data = {k: v for k, v in dossier.items() if k != "photo_paths"}
+        txt_bytes = json.dumps(raw_data, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
-        # 2. Both are ready: dispatch photos followed immediately by review card with zero gap!
-        if media_payload:
-            await self.send_prepared_media_group(chat_id, media_payload)
-        elif dossier.get("image_url"):
-            await self.send_message(chat_id, f"📷 <b>Ảnh đính kèm:</b> <a href='{dossier['image_url']}'>Xem ảnh gốc trên Cloud</a>")
+        if cur_status in ("APPROVED", "REJECTED"):
+            status_text = "Đã DUYỆT (APPROVED)" if cur_status == "APPROVED" else "Đã TỪ CHỐI (REJECTED)"
+            buttons = {
+                "inline_keyboard": [
+                    [{"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"}],
+                ]
+            }
+        else:
+            buttons = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt (Approve)", "callback_data": f"admin_req_approve:{clean_sub_id}"},
+                        {"text": "❌ Từ chối (Reject)", "callback_data": f"admin_req_reject:{clean_sub_id}"},
+                    ],
+                ]
+            }
 
-        await self.send_tracked(f"dossier:{chat_id}:{dossier.get('submission_id')}", chat_id, report_text, reply_markup=review_buttons)
+        await self.send_dossier_bundle(
+            chat_id,
+            f"dossier:{chat_id}:{dossier.get('submission_id')}",
+            dossier,
+            caption,
+            txt_bytes,
+            reply_markup=buttons,
+        )
     async def log_chat_history(
         self,
         telegram_user_id: int,

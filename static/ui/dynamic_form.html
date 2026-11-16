@@ -3064,19 +3064,16 @@
                 if (q.type === 'camera_webrtc') {
                     const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
                     if (hasSlots) {
-                        let firstBlob = null;
                         q.image_slots.forEach((s, idx) => {
                             const b = answers[`${q.id}_${idx}`];
                             if (b instanceof Blob) {
-                                if (!firstBlob) firstBlob = b;
-                                formData.append(`survey_photo_${idx}`, b, `survey_slot_${idx}.webp`);
+                                // Unique key per question+slot: a shared survey_photo_<idx>
+                                // key made later camera questions overwrite earlier ones.
+                                formData.append(`${q.id}__file_${idx}`, b, `${q.id}_slot_${idx}.webp`);
                                 formData.append(`${q.id}_${idx}`, `uploaded_${idx}`);
                             }
                         });
-                        if (firstBlob && !formData.has('survey_photo')) {
-                            formData.append('survey_photo', firstBlob, 'survey_camera.webp');
-                        }
-                    } else if (answers[q.id] instanceof Blob && !formData.has('survey_photo')) {
+                    } else if (answers[q.id] instanceof Blob) {
                         formData.append('survey_photo', answers[q.id], 'survey_camera.webp');
                     }
                 }
