@@ -1015,15 +1015,6 @@
             <div id="subResultReason" style="font-size:0.88rem; color:#cbd5e1; line-height:1.5; background:rgba(15,23,42,0.6); padding:12px; border-radius:10px; border:1px solid #334155; word-break:break-word;">
                 Chi tiết kết quả duyệt...
             </div>
-            <div id="subResultAppealBox" style="display:none; flex-direction:column; gap:6px; margin-top:8px;">
-                <button type="button" id="btnRequestManualReview" onclick="requestManualReviewFromModal()" style="display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 14px; border-radius:10px; background:linear-gradient(135deg, #d97706, #b45309); color:#fff; font-weight:700; font-size:0.92rem; border:none; cursor:pointer; box-shadow:0 4px 12px rgba(217,119,6,0.3); transition:all 0.2s;">
-                    <svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-                    <span>Yêu cầu kiểm tra lại</span>
-                </button>
-                <div id="txtAppealQuotaHint" style="font-size:0.75rem; color:#fbbf24; text-align:center; line-height:1.4;">
-                    Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế
-                </div>
-            </div>
             <button type="button" id="btnSubResultHistory" onclick="closeSubmissionResultModal(); openHistoryModal();" style="display:none; align-items:center; justify-content:center; gap:8px; padding:12px 16px; border-radius:10px; background:linear-gradient(135deg, #0284c7, #0369a1); color:#fff; font-weight:700; font-size:0.95rem; box-shadow:0 4px 12px rgba(2,132,199,0.3); border:none; cursor:pointer;">
                 <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:currentColor;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
                 <span id="txtSubResultHistory">Tra cứu lịch sử nộp trên web</span>
@@ -2840,80 +2831,9 @@
                 }
             }
 
-            const appealBox = document.getElementById('subResultAppealBox');
-            if (appealBox) {
-                if (status === 'REJECTED') {
-                    appealBox.style.display = 'flex';
-                    const btnA = document.getElementById('btnRequestManualReview');
-                    if (btnA) {
-                        btnA.disabled = false;
-                        btnA.style.opacity = '1';
-                        btnA.style.background = 'linear-gradient(135deg, #d97706, #b45309)';
-                        btnA.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px; height:18px; fill:currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><span>Yêu cầu kiểm tra lại</span>';
-                    }
-                    const hint = document.getElementById('txtAppealQuotaHint');
-                    if (hint) hint.textContent = 'Giới hạn: Tối đa 3 lần yêu cầu kiểm tra trong vòng 8 giờ cho mỗi tài xế';
-                } else {
-                    appealBox.style.display = 'none';
-                }
-            }
             modal.style.display = 'flex';
         }
         let lastSubmittedData = null;
-        async function requestManualReviewFromModal() {
-            const btn = document.getElementById('btnRequestManualReview');
-            const hint = document.getElementById('txtAppealQuotaHint');
-            const subId = (lastSubmissionResult && lastSubmissionResult.submission_id) || '';
-            const phone = (answers && answers['driver_phone']) || '';
-
-            const confirmMsg = "Bạn có chắc chắn muốn yêu cầu người thật (điều phối viên) kiểm tra lại phiếu " + (subId ? "#" + subId : "") + " không?\\n\\n• Giới hạn chống spam: Tối đa 3 lần trong vòng 8 giờ.\\n• Quản trị viên sẽ trực tiếp đối soát ảnh gốc và phản hồi sớm.";
-            if (!confirm(confirmMsg)) {
-                return;
-            }
-
-            if (btn) {
-                btn.disabled = true;
-                btn.style.opacity = '0.6';
-                btn.innerHTML = '<span>Đang gửi yêu cầu...</span>';
-            }
-
-            try {
-                const resp = await fetch('/api/v1/survey/appeal', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        submission_id: subId,
-                        driver_phone: phone,
-                        reason: 'Tài xế yêu cầu người thật đối soát lại ảnh chụp trên web form'
-                    })
-                });
-                const data = await resp.json();
-                if (data.status === 'RATE_LIMITED') {
-                    if (btn) {
-                        btn.style.background = '#64748b';
-                        btn.innerHTML = '<span>Đã hết lượt khiếu nại</span>';
-                    }
-                    if (hint) hint.textContent = data.message || 'Bạn đã dùng hết 3 lượt khiếu nại trong 8 giờ này.';
-                    alert(data.message || 'Bạn đã dùng hết 3 lượt khiếu nại trong 8 giờ này.');
-                } else {
-                    if (btn) {
-                        btn.style.background = '#059669';
-                        btn.innerHTML = '<span>Đã gửi yêu cầu thành công!</span>';
-                    }
-                    const rem = data.remaining_appeals !== undefined ? data.remaining_appeals : 2;
-                    if (hint) hint.textContent = `Đã tiếp nhận! Bạn còn ${rem}/3 lượt khiếu nại trong phiên 8h này.`;
-                    alert(`Đã gửi yêu cầu kiểm tra lại thành công!\\n\\nBạn còn ${rem}/3 lượt trong vòng 8 giờ. Điều phối viên sẽ đối soát ảnh và phản hồi sớm.`);
-                }
-            } catch (err) {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.style.opacity = '1';
-                    btn.innerHTML = '<span>Lỗi kết nối, thử lại</span>';
-                }
-                alert('Không thể kết nối đến máy chủ: ' + err.message);
-            }
-        }
-
         function closeSubmissionResultModal() {
             const modal = document.getElementById('submissionResultModal');
             if (modal) modal.style.display = 'none';
