@@ -205,35 +205,45 @@ class TelegramPollingRunner:
                 result = resp.json().get("result") or {}
                 ids = [result.get("message_id")]
             else:
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup",
-                    data={"chat_id": str(chat_id), "media": json.dumps(media)},
-                    files=files,
-                    timeout=30.0,
+                # Telegram forbids mixing documents with photos in one media group.
+                # Both payloads are fully prepared above, so dispatch the image media
+                # group and the raw-data document together, in parallel.
+                photo_files = {k: v for k, v in files.items() if k != "dossier_txt"}
+
+                async def send_images():
+                    return await client.post(
+                        f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup",
+                        data={"chat_id": str(chat_id), "media": json.dumps(media)},
+                        files=photo_files,
+                        timeout=30.0,
+                    )
+
+                async def send_data():
+                    return await client.post(
+                        f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
+                        data={"chat_id": str(chat_id)},
+                        files={"document": files["dossier_txt"]},
+                        timeout=30.0,
+                    )
+
+                images_res, data_res = await asyncio.gather(
+                    send_images(), send_data(), return_exceptions=True
                 )
-                if resp.status_code != 200:
-                    logger.error(f"Dossier media group send failed: {resp.status_code} {resp.text[:200]}")
-                    return False
-                ids = [m.get("message_id") for m in (resp.json().get("result") or [])]
-                if reply_markup and ids and ids[0]:
-                    await self.edit_message_reply_markup(chat_id, ids[0], reply_markup=reply_markup)
-                # Telegram forbids mixing documents and photos in one media group;
-                # attach the raw-data txt as a reply to the photo group instead.
-                doc_resp = await client.post(
-                    f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
-                    data={
-                        "chat_id": str(chat_id),
-                        **({"reply_to_message_id": str(ids[0])} if ids and ids[0] else {}),
-                    },
-                    files={"document": files["dossier_txt"]},
-                    timeout=30.0,
-                )
-                if doc_resp.status_code != 200:
-                    logger.error(f"Dossier txt attach failed: {doc_resp.status_code} {doc_resp.text[:200]}")
+                ids = []
+                if isinstance(images_res, Exception) or getattr(images_res, "status_code", None) != 200:
+                    logger.error(f"Dossier media group send failed: {images_res}")
                 else:
-                    doc_msg = doc_resp.json().get("result") or {}
+                    ids = [m.get("message_id") for m in (images_res.json().get("result") or [])]
+                if isinstance(data_res, Exception) or getattr(data_res, "status_code", None) != 200:
+                    logger.error(f"Dossier txt send failed: {data_res}")
+                else:
+                    doc_msg = data_res.json().get("result") or {}
                     if doc_msg.get("message_id"):
                         ids.append(doc_msg["message_id"])
+                if not ids:
+                    return False
+                if reply_markup and ids[0]:
+                    await self.edit_message_reply_markup(chat_id, ids[0], reply_markup=reply_markup)
             self.prompt_registry[key] = [mid for mid in ids if mid]
             return True
         except Exception as e:

@@ -814,3 +814,59 @@ def test_admin_viewers_fetch_from_apis_instead_of_missing_placeholders():
     assert "await loadSubmissions();" in subs and "/api/v1/submissions" in subs
     assert "{logs_json}" not in audit
     assert "/api/v1/audit/logs" in audit and "filterData();" in audit
+
+
+@pytest.mark.asyncio
+async def test_dossier_bundle_dispatches_images_and_data_concurrently():
+    """Image media group + raw-data txt are both ready before dispatch and sent in parallel."""
+    import asyncio, json, os, tempfile
+    from PIL import Image
+    from services.telegram_polling import TelegramPollingRunner
+
+    calls = []
+    active = 0
+    max_active = 0
+
+    class Resp:
+        status_code = 200
+        text = ""
+        def __init__(self, payload): self._p = payload
+        def json(self): return {"result": self._p}
+
+    class Client:
+        async def post(self, url, data=None, files=None, json=None, timeout=None):
+            nonlocal active, max_active
+            method = url.rsplit("/", 1)[-1]
+            calls.append((method, data or {}))
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+            if method == "sendMediaGroup":
+                return Resp([{"message_id": 11}, {"message_id": 12}])
+            if method == "sendDocument":
+                return Resp({"message_id": 13})
+            return Resp(True)
+
+    runner = TelegramPollingRunner(bot_token="123:abc")
+    async def get_client(): return Client()
+    runner.get_client = get_client
+
+    tmp = tempfile.mkdtemp()
+    paths = []
+    for i in range(2):
+        p = os.path.join(tmp, f"slot_{i}.jpg")
+        Image.new("RGB", (40, 40), (i * 40, 90, 140)).save(p)
+        paths.append(p)
+
+    ok = await runner.send_dossier_bundle(
+        1, "k", {"submission_id": "VN-T", "photo_paths": paths}, "cap", b"{}",
+        {"inline_keyboard": [[{"text": "x", "callback_data": "x"}]]},
+    )
+    assert ok
+    assert max_active >= 2, "images and data were not dispatched concurrently"
+    methods = [c[0] for c in calls]
+    assert "sendMediaGroup" in methods and "sendDocument" in methods
+    data_call = [c for c in calls if c[0] == "sendDocument"][0]
+    assert "reply_to_message_id" not in data_call[1]
+    assert runner.prompt_registry["k"] == [11, 12, 13]
