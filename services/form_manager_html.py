@@ -28,14 +28,26 @@ def render_forms_list_html(
         env_subtext = "Hệ thống Cơ sở dữ liệu chính thức"
 
     unique_forms: Dict[str, Any] = {}
+    from core.ctv import extract_ctv_short_code, get_ctv_options_for_form
+
     for f in forms_registry.values():
+        ctv_options = []
+        seen_codes = set()
+        for option in get_ctv_options_for_form(f):
+            code = extract_ctv_short_code(str(option))
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            ctv_options.append({"code": code, "label": str(option)})
         unique_forms[f.form_id] = {
             "form_id": f.form_id,
             "title": f.title,
             "description": f.description or "",
             "question_count": len(f.questions),
             "is_test_mode": bool(f.settings and f.settings.is_test_mode),
-            "access_control": f.settings.access_control if f.settings else "public"
+            "access_control": f.settings.access_control if f.settings else "public",
+            "ctv_ref_enabled": bool(getattr(f.settings, "ctv_ref_enabled", True)) if f.settings else True,
+            "ctv_options": ctv_options,
         }
 
     all_forms = list(unique_forms.values())
@@ -57,7 +69,7 @@ def render_forms_list_html(
         title_esc = html.escape(f["title"])
 
         forms_cards_html += f"""
-        <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}">
+        <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}" data-ctv-options="{html.escape(json.dumps(f['ctv_options'], ensure_ascii=False), quote=True)}" data-ctv-ref-enabled="{'true' if f['ctv_ref_enabled'] else 'false'}">
             <div class="form-card-top">
                 <span class="{badge_cls}">{badge_txt}</span>
                 <span style="font-size:0.75rem; color:var(--muted); font-family:monospace;">ID: {html.escape(form_id_str)}</span>

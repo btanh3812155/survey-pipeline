@@ -621,6 +621,20 @@
                 <input type="text" id="adminQrShareUrlInput" class="url-box" readonly />
             </div>
 
+            <!-- CTV attribution -->
+            <div>
+                <label style="font-size:0.75rem; color:var(--muted); font-weight:700; margin-bottom:4px; display:block;">GẮN MÃ CTV (TÙY CHỌN)</label>
+                <div style="display:flex; gap:8px;">
+                    <select id="adminQrCtvSelect" class="url-box" style="flex:1; cursor:pointer;">
+                        <option value="">Không gắn CTV</option>
+                    </select>
+                    <button type="button" id="adminQrGenerateBtn" onclick="generateAdminQr()" class="btn-modal-action" style="flex:0 0 auto; background:#0ea5e9; color:#fff; padding:8px 14px;">
+                        <span>Tạo mã QR</span>
+                    </button>
+                </div>
+                <p id="adminQrCtvHint" style="font-size:0.72rem; color:var(--muted); margin:6px 0 0;"></p>
+            </div>
+
             <!-- Action Buttons -->
             <div class="modal-btn-grid">
                 <button type="button" onclick="copyAdminQrLink()" class="btn-modal-action" style="background:#2563eb; color:#fff;">
@@ -697,17 +711,39 @@
             window.location.href = url.toString();
         }
 
+        let currentAdminQrBaseUrl = "";
+
         function openAdminQrModal(formId, formTitle) {
             currentAdminQrFormId = formId;
+            currentAdminQrBaseUrl = window.location.origin + "/forms/" + encodeURIComponent(formId);
             document.getElementById("adminQrFormTitle").textContent = formTitle;
-            
-            // Canonical Form URL (No random subdomains)
-            const canonicalUrl = window.location.origin + "/forms/" + encodeURIComponent(formId);
-            document.getElementById("adminQrShareUrlInput").value = canonicalUrl;
-            
+
+            const card = Array.from(document.querySelectorAll(".form-item-card")).find(el => el.dataset.formId === formId);
+            const enabled = !card || card.dataset.ctvRefEnabled !== "false";
+            const options = card ? JSON.parse(card.dataset.ctvOptions || "[]") : [];
+            const select = document.getElementById("adminQrCtvSelect");
+            select.innerHTML = "";
+            select.appendChild(new Option("Không gắn CTV", ""));
+            options.forEach(opt => select.appendChild(new Option(`${opt.label} (${opt.code})`, opt.code)));
+            select.value = "";
+            select.disabled = !enabled;
+            document.getElementById("adminQrGenerateBtn").disabled = !enabled;
+            const hint = document.getElementById("adminQrCtvHint");
+            hint.textContent = !enabled
+                ? "Biểu mẫu này đã tắt link CTV trong phần cài đặt."
+                : (options.length ? "Chọn CTV rồi bấm Tạo mã QR để gắn ?ref=." : "Biểu mẫu chưa có danh sách CTV; mã QR sẽ dùng link chuẩn.");
+
+            document.getElementById("adminQrShareUrlInput").value = currentAdminQrBaseUrl;
             const modal = document.getElementById("adminQrModal");
             modal.style.display = "flex";
-            renderAdminQr(canonicalUrl);
+            renderAdminQr(currentAdminQrBaseUrl);
+        }
+
+        function generateAdminQr() {
+            const ref = document.getElementById("adminQrCtvSelect").value;
+            const url = ref ? `${currentAdminQrBaseUrl}?ref=${encodeURIComponent(ref)}` : currentAdminQrBaseUrl;
+            document.getElementById("adminQrShareUrlInput").value = url;
+            renderAdminQr(url);
         }
 
         function closeAdminQrModal() {
