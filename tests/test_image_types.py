@@ -30,9 +30,20 @@ def test_profile_screen_object_type_parses_gsm_profile_screen():
     assert extracted.is_authentic
 
 
-def test_profile_screen_object_type_defaults_are_safe():
+def test_profile_screen_object_type_defaults_are_unknown_not_invented():
+    """Absent labels must stay None/[] - never a fabricated tier, rank, or version."""
     extracted = ProfileScreenExtraction()
-    assert extracted.membership_type == "Tiêu chuẩn"
-    assert extracted.driver_rank == "Standard"
+    assert extracted.membership_type is None
+    assert extracted.membership_period is None
+    assert extracted.driver_rank is None
+    assert extracted.app_version is None
     assert extracted.utility_items == []
-    assert extracted.is_authentic is True
+    assert extracted.is_authentic is None
+
+
+def test_profile_screen_object_type_accepts_mostly_empty_screen():
+    """A collapsed/older profile screen with only a membership card still parses."""
+    extracted = ProfileScreenExtraction.model_validate({"membership_type": "Bạc"})
+    assert extracted.membership_type == "Bạc"
+    assert extracted.app_version is None
+    assert extracted.utility_items == []

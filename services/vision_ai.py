@@ -312,7 +312,10 @@ class DualModelVisionClient:
                     "wallet_visible, rewards_visible, trip_history_visible (booleans for the top shortcuts 'Ví tài xế', 'Chương trình thưởng', 'Lịch sử chuyến đi'), "
                     "utility_items (array of visible menu labels under 'Tiện ích bổ trợ', verbatim Vietnamese), "
                     "app_version (footer 'Phiên bản x.y.z' value, or null), "
-                    "is_authentic (true only if this is a real official driver app screen, false for mockups or edited screenshots). "
+                    "is_authentic (true only if this is a real official driver app screen, false for mockups, edited screenshots, or a screen that is not a driver profile screen). "
+                    "CRITICAL: only transcribe what is actually visible. If a tier card, period, partner code, "
+                    "shortcut, menu section, or the version footer is absent or unreadable, return null (or [] for "
+                    "utility_items) for that field. Never guess, infer, or substitute a default value. "
                     "Output strictly a single valid JSON object."
                 ),
             },

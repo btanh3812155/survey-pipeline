@@ -59,17 +59,20 @@ class ProfileScreenExtraction(BaseModel):
     "10/2026"), the utility menu (support map, safety check, my jobs, income
     stats, performance, shifts, debt), and the app version footer.
     """
-    app: str = "XANH_SM"
-    membership_type: str = "Tiêu chuẩn"
+    # Every descriptive field is optional: labels/cards may be absent from the
+    # captured screen (collapsed menus, older app builds, scrolled views).
+    # None means "not visible", never a fabricated default.
+    app: Optional[str] = None
+    membership_type: Optional[str] = None
     membership_period: Optional[str] = None
-    driver_rank: str = "Standard"
+    driver_rank: Optional[str] = None
     partner_id: Optional[str] = None
-    wallet_visible: bool = False
-    rewards_visible: bool = False
-    trip_history_visible: bool = False
+    wallet_visible: Optional[bool] = None
+    rewards_visible: Optional[bool] = None
+    trip_history_visible: Optional[bool] = None
     utility_items: List[str] = Field(default_factory=list)
     app_version: Optional[str] = None
-    is_authentic: bool = True
+    is_authentic: Optional[bool] = None
 
 
 class VehicleExteriorExtraction(BaseModel):

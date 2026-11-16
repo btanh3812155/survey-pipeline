@@ -675,7 +675,7 @@ async def submit_webrtc_survey(
                             if groups["profile"]
                             else (target_q.image_slots[0].get("role", "app_profile") if target_q.image_slots else "app_profile")
                         )
-                        membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else "Tiêu chuẩn"
+                        membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else None
                         primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
                         ocr_data = primary_ocr
                         weekly_incomes = {}
@@ -1011,7 +1011,7 @@ async def submit_webrtc_survey(
     monthly_income_range_val = str(form_data.get("monthly_income_range") or "")
     raw_policy = form_data.get("gsm_incentive_policy") or ""
     gsm_policy_val = "; ".join(str(x) for x in raw_policy) if isinstance(raw_policy, list) else str(raw_policy)
-    membership_type_val = ai_res.get("membership_type") or form_data.get("membership_type") or "Tiêu chuẩn"
+    membership_type_val = ai_res.get("membership_type") or form_data.get("membership_type") or "Chưa xác định"
 
     w_incomes = ai_res.get("weekly_incomes") or {}
     w1_g = int(w_incomes.get("week_1", {}).get("gross_revenue") or ai_res.get("gross_revenue") or gross_revenue or 0)
