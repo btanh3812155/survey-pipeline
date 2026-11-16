@@ -333,6 +333,21 @@ def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Option
     return None
 
 
+def _select_unique_check_index(target_q: Any, income_indices: List[int], image_count: int) -> Optional[int]:
+    """
+    Image index that must be globally unique. Profile/vehicle slots explicitly opt out
+    (require_unique=False) because the same driver reuses them across submissions;
+    the weekly income screens are the uniqueness-bearing objects.
+    """
+    if target_q and getattr(target_q, "image_slots", None):
+        for s_idx, slot in enumerate(target_q.image_slots):
+            if slot.get("require_unique") is not False and s_idx < image_count:
+                return s_idx
+    if income_indices:
+        return income_indices[0]
+    return None
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -922,20 +937,19 @@ async def submit_webrtc_survey(
                                 ai_res["duplicate_detected"] = True
                                 ai_res["duplicate_type"] = "INTRA_SUBMISSION"
                             else:
-                                # Pick primary image that requires uniqueness for inter-submission checking
+                                # Pick the uniqueness-bearing image (income screen), never a
+                                # reusable profile/vehicle photo. No candidate -> skip the check.
+                                check_idx = _select_unique_check_index(
+                                    target_q, matched_income_indices, len(raw_bytes_list)
+                                )
                                 check_im = None
-                                if target_q and getattr(target_q, "image_slots", None):
-                                    for s_idx, slot in enumerate(target_q.image_slots):
-                                        if slot.get("require_unique") is not False and s_idx < len(raw_bytes_list):
-                                            try:
-                                                _, s_im = sanitize_and_normalize_image(raw_bytes_list[s_idx], max_dimension=settings.IMAGE_MAX_DIMENSION)
-                                                if s_im is not None:
-                                                    check_im = s_im
-                                                    break
-                                            except Exception:
-                                                pass
-                                if check_im is None:
-                                    check_im = pil_im
+                                if check_idx is not None:
+                                    try:
+                                        _, check_im = sanitize_and_normalize_image(
+                                            raw_bytes_list[check_idx], max_dimension=settings.IMAGE_MAX_DIMENSION
+                                        )
+                                    except Exception:
+                                        check_im = None
 
                                 if check_im is not None:
                                     db_pool = get_db_pool()

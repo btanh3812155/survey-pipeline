@@ -396,3 +396,21 @@ def test_uploading_more_than_allowed_slots_clamps_gracefully():
     assert "const remainingSlots = uploadableSlots.length - startPos" in html
     assert "const maxFill = Math.min(files.length, remainingSlots)" in html
     assert "if (files.length > remainingSlots)" in html
+
+
+def test_unique_check_image_skips_profile_and_vehicle_photos():
+    """Inter-submission dupe checking must use the income screen, never reusable profile/vehicle shots."""
+    from types import SimpleNamespace
+    from routers.survey import _select_unique_check_index
+
+    profile_question = SimpleNamespace(image_slots=[
+        {"role": "app_profile", "require_unique": False},
+        {"role": "vehicle_exterior", "require_unique": False},
+    ])
+    assert _select_unique_check_index(profile_question, [2, 3, 4, 5, 6], 7) == 2
+    assert _select_unique_check_index(profile_question, [], 7) is None
+
+    income_question = SimpleNamespace(image_slots=[
+        {"role": "app_income", "require_unique": True},
+    ])
+    assert _select_unique_check_index(income_question, [4, 5], 7) == 0
