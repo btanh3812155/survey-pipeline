@@ -221,7 +221,10 @@ class TelegramPollingRunner:
                 async def send_data():
                     return await client.post(
                         f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
-                        data={"chat_id": str(chat_id)},
+                        data={
+                            "chat_id": str(chat_id),
+                            **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {}),
+                        },
                         files={"document": files["dossier_txt"]},
                         timeout=30.0,
                     )
@@ -242,8 +245,6 @@ class TelegramPollingRunner:
                         ids.append(doc_msg["message_id"])
                 if not ids:
                     return False
-                if reply_markup and ids[0]:
-                    await self.edit_message_reply_markup(chat_id, ids[0], reply_markup=reply_markup)
             self.prompt_registry[key] = [mid for mid in ids if mid]
             return True
         except Exception as e:

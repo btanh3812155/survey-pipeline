@@ -859,9 +859,13 @@ async def test_dossier_bundle_dispatches_images_and_data_concurrently():
         Image.new("RGB", (40, 40), (i * 40, 90, 140)).save(p)
         paths.append(p)
 
+    review_keyboard = {"inline_keyboard": [[
+        {"text": "✅ Duyệt (Approve)", "callback_data": "admin_req_approve:VN-T"},
+        {"text": "❌ Từ chối (Reject)", "callback_data": "admin_req_reject:VN-T"},
+    ]]}
     ok = await runner.send_dossier_bundle(
         1, "k", {"submission_id": "VN-T", "photo_paths": paths}, "cap", b"{}",
-        {"inline_keyboard": [[{"text": "x", "callback_data": "x"}]]},
+        review_keyboard,
     )
     assert ok
     assert max_active >= 2, "images and data were not dispatched concurrently"
@@ -869,4 +873,7 @@ async def test_dossier_bundle_dispatches_images_and_data_concurrently():
     assert "sendMediaGroup" in methods and "sendDocument" in methods
     data_call = [c for c in calls if c[0] == "sendDocument"][0]
     assert "reply_to_message_id" not in data_call[1]
+    # approve/reject keyboard must ride on the data message
+    assert "admin_req_approve" in data_call[1]["reply_markup"]
+    assert "admin_req_reject" in data_call[1]["reply_markup"]
     assert runner.prompt_registry["k"] == [11, 12, 13]
