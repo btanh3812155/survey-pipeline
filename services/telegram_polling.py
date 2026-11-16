@@ -826,6 +826,35 @@ class TelegramPollingRunner:
         collab_id = dossier.get("collaborator_id") or dossier.get("ctv_code")
         gross_rev = dossier.get("gross_income") or 0
         effective_reason = reason or dossier.get("rejection_reason") or ""
+        form_id = dossier.get("form_id")
+
+        # Resolve who receives the Telegram verdict for this form.
+        try:
+            from core.state import FORM_REGISTRY as _STATE_FORMS
+        except Exception:
+            _STATE_FORMS = {}
+        schema = (_STATE_FORMS.get(form_id) or FORM_REGISTRY.get(form_id)) if form_id else None
+        form_settings = getattr(schema, "settings", None) if schema else None
+        source = (getattr(form_settings, "tg_response_source", None) or "ctv").strip().lower()
+        recipient_kind = "ctv"
+        recipient = collab_id
+        if source == "none":
+            logger.info(f"TG response disabled for form '{form_id}'; skipping verdict for #{clean_sub_id}.")
+            return
+        if source == "question":
+            qid = getattr(form_settings, "tg_response_question_id", None)
+            raw = dossier.get("raw_data") or {}
+            answers = raw.get("form_data") if isinstance(raw, dict) else None
+            answers = answers or {}
+            recipient = answers.get(qid) if qid else None
+            if isinstance(recipient, list):
+                recipient = recipient[0] if recipient else None
+            recipient_kind = "driver"
+            if not recipient:
+                logger.info(
+                    f"TG response question '{qid}' has no answer for #{clean_sub_id}; nothing to notify."
+                )
+                return
 
         try:
             try:
@@ -837,10 +866,11 @@ class TelegramPollingRunner:
                 status_str=new_status,
                 driver_phone=driver_phone,
                 driver_name=driver_name,
-                collaborator_id=collab_id,
+                collaborator_id=recipient,
                 reason_str=effective_reason,
                 gross_revenue=gross_rev,
-                form_id=dossier.get("form_id"),
+                form_id=form_id,
+                recipient_kind=recipient_kind,
             )
             logger.info(f"Dispatched decision verdict for #{clean_sub_id} to CTV ({collab_id}) and driver ({driver_phone})")
         except Exception as e:

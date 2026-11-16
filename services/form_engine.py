@@ -154,6 +154,13 @@ class FormSettings(BaseModel):
     notify_email: Optional[str] = None
     decree13_required: bool = True
     ctv_ref_enabled: bool = True # allow ?ref=<ctv> attribution links for this form
+    # Who receives the Telegram verdict for a submission:
+    #   "none"     -> do not notify anyone
+    #   "ctv"      -> the collaborator/CTV recorded on the submission (default)
+    #   "question" -> the answer of tg_response_question_id (e.g. driver phone),
+    #                 resolved through authorized_users (phone -> telegram id)
+    tg_response_source: str = "ctv"
+    tg_response_question_id: Optional[str] = None
     is_test_mode: bool = False
     image_checks: ImageCheckConfig = Field(default_factory=ImageCheckConfig)
 

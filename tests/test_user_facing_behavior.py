@@ -877,3 +877,64 @@ async def test_dossier_bundle_dispatches_images_and_data_concurrently():
     assert "admin_req_approve" in data_call[1]["reply_markup"]
     assert "admin_req_reject" in data_call[1]["reply_markup"]
     assert runner.prompt_registry["k"] == [11, 12, 13]
+
+
+@pytest.mark.asyncio
+async def test_decision_recipient_follows_tg_response_source():
+    """Form setting chooses the Telegram verdict recipient: none, CTV, or a question's answer."""
+    from unittest.mock import patch
+    from main import FORM_REGISTRY
+    from services.form_engine import FormSchema, FormQuestion, FormSettings, QuestionType
+    from services.telegram_polling import TelegramPollingRunner
+
+    from core.state import FORM_REGISTRY as STATE_FORMS
+
+    def make_schema(source, qid=None):
+        schema = FormSchema(
+            form_id="SIM_TG_SRC", title="TG source",
+            settings=FormSettings(tg_response_source=source, tg_response_question_id=qid),
+            questions=[FormQuestion(id="phone_q", title="So dien thoai", type=QuestionType.TEXT)],
+        )
+        STATE_FORMS["SIM_TG_SRC"] = schema
+        return schema
+
+    calls = []
+    async def fake_dispatch(**kwargs):
+        calls.append(kwargs)
+    async def fake_dossier(sub_id, db_pool=None):
+        return {
+            "submission_id": sub_id, "form_id": "SIM_TG_SRC", "status": "APPROVED",
+            "collaborator_id": "CTV01", "driver_phone": "0912345678", "driver_name": "A",
+            "raw_data": {"form_data": {"phone_q": "0912345678"}},
+        }
+
+    runner = TelegramPollingRunner(bot_token="mock")
+    try:
+        with patch("services.telegram_polling.query_submission_dossier", side_effect=fake_dossier), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", side_effect=fake_dispatch):
+            FORM_REGISTRY["SIM_TG_SRC"] = make_schema("ctv")
+            await runner._notify_parties_of_decision("S1", "APPROVED")
+            assert calls[-1]["collaborator_id"] == "CTV01"
+
+            FORM_REGISTRY["SIM_TG_SRC"] = make_schema("question", "phone_q")
+            await runner._notify_parties_of_decision("S2", "APPROVED")
+            assert calls[-1]["collaborator_id"] == "0912345678"
+            assert calls[-1]["recipient_kind"] == "driver"
+
+            before = len(calls)
+            FORM_REGISTRY["SIM_TG_SRC"] = make_schema("none")
+            await runner._notify_parties_of_decision("S3", "APPROVED")
+            assert len(calls) == before
+    finally:
+        FORM_REGISTRY.pop("SIM_TG_SRC", None)
+        STATE_FORMS.pop("SIM_TG_SRC", None)
+
+
+def test_editor_exposes_tg_response_source_setting():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "static" / "ui" / "form_editor.html").read_text(encoding="utf-8")
+    assert 'id="tgResponseSource"' in src
+    assert 'id="tgResponseQuestion"' in src
+    assert 'value="none"' in src and 'value="ctv"' in src and 'value="question"' in src
+    assert "tg_response_source:" in src
+    assert "tg_response_question_id:" in src

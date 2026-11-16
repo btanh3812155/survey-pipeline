@@ -154,6 +154,7 @@ async def query_submission_dossier(
                                 "trips_count": r.get("total_trips", 0),
                                 "photo_paths": _collect_submission_photos(submission_id),
                                 "raw_data": r,
+                                "form_id": r.get("form_id"),
                             }
                 except Exception:
                     pass
@@ -236,6 +237,7 @@ async def query_submission_dossier(
                                         "weekly_incomes": r.get("weekly_incomes", {}),
                                         "photo_paths": _collect_submission_photos(submission_id),
                                         "raw_data": r,
+                                        "form_id": r.get("form_id"),
                                     }
                         except Exception:
                             pass

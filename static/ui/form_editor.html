@@ -321,6 +321,21 @@
                         </label>
                     </div>
 
+                    <div class="row-2" style="margin-top: 10px;">
+                        <div class="field-group">
+                            <label for="tgResponseSource">Nguồn nhận phản hồi Telegram</label>
+                            <select id="tgResponseSource" onchange="toggleTgResponseSource()">
+                                <option value="none">Không gửi phản hồi</option>
+                                <option value="ctv">Dựa trên CTV phụ trách</option>
+                                <option value="question">Theo một câu hỏi (SĐT)</option>
+                            </select>
+                        </div>
+                        <div class="field-group" id="tgResponseQuestionGroup" style="display:none;">
+                            <label for="tgResponseQuestion">Câu hỏi chứa SĐT nhận Telegram</label>
+                            <select id="tgResponseQuestion"></select>
+                        </div>
+                    </div>
+
                     <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
                         <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
@@ -384,6 +399,22 @@
         const INITIAL_SCHEMA = {schema_json_str};
         let questions = JSON.parse(JSON.stringify(INITIAL_SCHEMA.questions || []));
 
+        function refreshTgResponseQuestionOptions() {
+            const sel = document.getElementById('tgResponseQuestion');
+            if (!sel) return;
+            const current = sel.value;
+            sel.innerHTML = questions.map(q => {
+                const label = `${q.title || q.id} (${q.id})`;
+                return `<option value="${escapeHtml(q.id)}">${escapeHtml(label)}</option>`;
+            }).join('');
+            if (current && questions.some(q => q.id === current)) sel.value = current;
+        }
+        function toggleTgResponseSource() {
+            const src = (document.getElementById('tgResponseSource') || {}).value;
+            const group = document.getElementById('tgResponseQuestionGroup');
+            if (group) group.style.display = src === 'question' ? '' : 'none';
+            if (src === 'question') refreshTgResponseQuestionOptions();
+        }
         function switchTab(tabId) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -394,6 +425,8 @@
             } else if (tabId === 'options') {
                 document.getElementById('btnTabOptions').classList.add('active');
                 document.getElementById('tabOptions').classList.add('active');
+                refreshTgResponseQuestionOptions();
+                toggleTgResponseSource();
             } else if (tabId === 'questions') {
                 document.getElementById('btnTabQuestions').classList.add('active');
                 document.getElementById('tabQuestions').classList.add('active');
@@ -1241,6 +1274,8 @@
                     response_limit: parseInt(document.getElementById('responseLimit').value) || null,
                     access_control: document.getElementById('accessControl').value,
                     is_test_mode: document.getElementById('isTestMode').value === 'true',
+                    tg_response_source: (document.getElementById('tgResponseSource') || {}).value || 'ctv',
+                    tg_response_question_id: (document.getElementById('tgResponseQuestion') || {}).value || null,
                     ctv_ref_enabled: document.getElementById('globalEnableCtvRef') ? document.getElementById('globalEnableCtvRef').checked : true,
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
                     image_checks: {
@@ -1359,6 +1394,12 @@
             document.getElementById('accessControl').value = st.access_control || 'public';
             document.getElementById('isTestMode').value = st.is_test_mode ? 'true' : 'false';
             document.getElementById('globalEnableCtvRef').checked = st.ctv_ref_enabled !== false;
+            const tgSrcEl = document.getElementById('tgResponseSource');
+            if (tgSrcEl) tgSrcEl.value = st.tg_response_source || 'ctv';
+            refreshTgResponseQuestionOptions();
+            const tgQEl = document.getElementById('tgResponseQuestion');
+            if (tgQEl && st.tg_response_question_id) tgQEl.value = st.tg_response_question_id;
+            toggleTgResponseSource();
             const ic = st.image_checks || {};
             const checks = {
                 globalEnableBlurCheck: ['enable_blur_check', true],

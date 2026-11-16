@@ -1822,10 +1822,11 @@ async def dispatch_submission_telegram_notifications(
     reason_str: Optional[str] = None,
     gross_revenue: Optional[Union[str, int]] = None,
     form_id: Optional[str] = None,
+    recipient_kind: str = "ctv",
 ):
     """
-    Notifies the collaborator (CTV) who owns a submission. The Telegram flow is
-    CTV-facing; drivers are not messaged by this pipeline.
+    Notifies the configured Telegram recipient for a submission: the owning CTV
+    (default) or the driver identified by the configured phone question.
     """
     driver_bot_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
     if not driver_bot_token or driver_bot_token == "mock_tg_token":
@@ -1858,10 +1859,11 @@ async def dispatch_submission_telegram_notifications(
     if status_str == "REJECTED" and form_id:
         from core.ctv import extract_ctv_short_code
 
-        ref = extract_ctv_short_code(str(collaborator_id))
+        ref = extract_ctv_short_code(str(collaborator_id)) if recipient_kind != "driver" else ""
         link = f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
         collab_msg += f"\n\n🔁 <b>Nộp lại / mở biểu mẫu:</b> {link}"
-    collab_msg += "\n\n<i>Thông báo tự động dành cho Cộng tác viên phụ trách.</i>"
+    footer = "Tài xế" if recipient_kind == "driver" else "Cộng tác viên phụ trách"
+    collab_msg += f"\n\n<i>Thông báo tự động dành cho {footer}.</i>"
     await _send_direct(
         bot_token=driver_bot_token,
         chat_id=collab_tg_id,
