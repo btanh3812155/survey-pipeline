@@ -78,18 +78,14 @@ def render_ctv_selector_landing_html(
     escaped_title = html.escape(clean_title)
     escaped_desc = html.escape(schema.description or "Khảo sát và xác thực thông tin đối soát")
 
+    from core.ctv import normalize_ctv_code
+
     options_html = '<option value="">-- Vui lòng chọn CTV phụ trách --</option>'
     for opt in ctv_options:
-        clean = opt.strip()
-        parts = clean.split("_")
-        short_code = parts[0].lower() if parts[0].lower().startswith("ctv") else clean.lower()
-        if len(parts) >= 3:
-            label = f"{parts[0]} - {parts[1]} ({parts[2]})"
-        elif len(parts) == 2:
-            label = f"{parts[0]} - {parts[1]}"
-        else:
-            label = clean
-        options_html += f'<option value="{html.escape(short_code)}">{html.escape(label)}</option>'
+        code = normalize_ctv_code(str(opt))
+        if not code:
+            continue
+        options_html += f'<option value="{html.escape(code)}">{html.escape(code)}</option>'
 
     html_file = os.path.join(STATIC_DIR, "ui", "ctv_landing.html")
     if os.path.exists(html_file):

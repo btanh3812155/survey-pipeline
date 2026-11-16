@@ -1594,9 +1594,11 @@ class DriverBotRunner(TelegramPollingRunner):
         if cmd == "/start" or clean == "Bắt đầu":
             parts = clean.split(" ", 1)
             payload = parts[1].strip() if len(parts) > 1 else ""
-            if payload.lower().startswith("ctv"):
-                raw_code = re.sub(r"^ctv[_-]?", "", payload, flags=re.IGNORECASE).strip().lower() or "unknown"
-                ctv_code = raw_code if raw_code.startswith("ctv") else f"ctv{raw_code}"
+            from core.ctv import CTV_CODES, normalize_ctv_code
+
+            ctv_payload = normalize_ctv_code(re.sub(r"^ctv[_-]?", "", payload, flags=re.IGNORECASE))
+            if payload and (payload.lower().startswith("ctv") or ctv_payload in CTV_CODES):
+                ctv_code = ctv_payload or "UNKNOWN"
                 display = ((from_user.get("first_name") or "") + " " + (from_user.get("last_name") or "")).strip()
                 await self.bind_collaborator(user_id, from_user.get("username"), display or f"CTV {user_id}", ctv_code)
                 await self.send_message(

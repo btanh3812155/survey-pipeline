@@ -724,7 +724,7 @@
             const select = document.getElementById("adminQrCtvSelect");
             select.innerHTML = "";
             select.appendChild(new Option("Không gắn CTV", ""));
-            options.forEach(opt => select.appendChild(new Option(`${opt.label} (${opt.code})`, opt.code)));
+            options.forEach(opt => select.appendChild(new Option(opt.label === opt.code ? opt.label : `${opt.label} (${opt.code})`, opt.code)));
             select.value = "";
             select.disabled = !enabled;
             document.getElementById("adminQrGenerateBtn").disabled = !enabled;

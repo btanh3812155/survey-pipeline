@@ -497,17 +497,17 @@ def test_dynamic_form_qr_code_and_camera_tooltip_and_floating_buttons():
     resp = client.get("/forms/income_survey")
     assert resp.status_code == 200
     assert "ctvSelect" in resp.text
-    assert 'value="ctv001"' in resp.text
-    assert "CTV001 - Dũng" in resp.text
+    assert 'value="TUAN_LM_HCM_001"' in resp.text
+    assert "TUAN_LM_HCM_001" in resp.text
     assert "Mở Biểu Mẫu" in resp.text
 
     # 2. Form with short ?ref=ctv001 opens individual form with resolved and locked CTV
-    ref_resp = client.get("/forms/income_survey?ref=ctv001")
+    ref_resp = client.get("/forms/income_survey?ref=TUAN_LM_HCM_001")
     assert ref_resp.status_code == 200
     html_content = ref_resp.text
     assert "getFormShareUrl" in html_content
-    assert 'LOCKED_CTV_CODE = "CTV001_Dũng_HN"' in html_content
-    assert 'ACTIVE_REF_CODE = "ctv001"' in html_content
+    assert 'LOCKED_CTV_CODE = "TUAN_LM_HCM_001"' in html_content
+    assert 'ACTIVE_REF_CODE = "TUAN_LM_HCM_001"' in html_content
     # Verify clean text formatting without &amp; double escaping
     assert "Xe tự mua &amp; chạy" not in html_content
     assert "Xe tự mua & chạy" in html_content
@@ -519,11 +519,11 @@ def test_dynamic_form_qr_code_and_camera_tooltip_and_floating_buttons():
     assert "width: 170px" in html_content
 
     # 3. CTV Slug form backwards compatibility
-    ctv_resp = client.get("/forms/income-survey-59443eedf25522")
+    ctv_resp = client.get("/forms/income-survey-70652f26d42b71")
     assert ctv_resp.status_code == 200
     ctv_html = ctv_resp.text
-    assert 'const ACTIVE_CTV_SLUG = "income-survey-59443eedf25522";' in ctv_html
-    assert "CTV001_Dũng_HN" in ctv_html
+    assert 'const ACTIVE_CTV_SLUG = "income-survey-70652f26d42b71";' in ctv_html
+    assert "TUAN_LM_HCM_001" in ctv_html
     assert "getFormShareUrl" in ctv_html
 def test_multiple_choice_option_groups_and_mutual_exclusivity():
     """Verify multiple choice question option groups, mutual exclusivity, and compatibility."""
