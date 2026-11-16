@@ -360,6 +360,9 @@ async def submit_webrtc_survey(
     schema = FORM_REGISTRY.get(requested_form_id) if requested_form_id else None
     if requested_form_id and schema is None:
         logger.warning(f"[SUBMIT] form_id '{requested_form_id}' is not registered; schema validation skipped.")
+    if not question_id and schema:
+        first_camera = next((q for q in schema.questions if q.type == "camera_webrtc"), None)
+        question_id = first_camera.id if first_camera else None
     target_question_id = question_id or "camera_receipt"
     target_q = next((qu for qu in schema.questions if qu.id == target_question_id), None) if schema else None
 
@@ -409,7 +412,12 @@ async def submit_webrtc_survey(
         answers["driver_signature"] = signature_png
     is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
     if images_list:
-        if has_indexed_photos or len(images_list) > 1:
+        if target_q and target_q.image_slots:
+            uploaded = min(len(images_list), len(target_q.image_slots))
+            answers[target_question_id] = [f"uploaded_{i}" for i in range(uploaded)]
+            for slot_index in range(uploaded):
+                answers[f"{target_question_id}_{slot_index}"] = f"uploaded_{slot_index}"
+        elif has_indexed_photos or len(images_list) > 1:
             answers[target_question_id] = [f"uploaded_{i}" for i in range(len(images_list))]
         else:
             # Legacy single photo upload without indexed multi-image fields

@@ -2912,6 +2912,7 @@
                         formData.append('survey_photo', answers[k], 'survey_camera.webp');
                     }
                 } else if (Array.isArray(answers[k])) {
+                    if (answers[k].some(v => v instanceof Blob)) continue;
                     formData.append(k, answers[k].join(', '));
                 } else if (answers[k] !== undefined && answers[k] !== null) {
                     formData.append(k, answers[k]);
@@ -2929,6 +2930,7 @@
                             if (b instanceof Blob) {
                                 if (!firstBlob) firstBlob = b;
                                 formData.append(`survey_photo_${idx}`, b, `survey_slot_${idx}.webp`);
+                                formData.append(`${q.id}_${idx}`, `uploaded_${idx}`);
                             }
                         });
                         if (firstBlob && !formData.has('survey_photo')) {
