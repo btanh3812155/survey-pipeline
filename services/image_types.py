@@ -10,7 +10,7 @@ import re
 import logging
 from enum import Enum
 from datetime import date
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("services.image_types")
@@ -51,10 +51,24 @@ class WeeklyIncomeScreenExtraction(BaseModel):
 
 
 class ProfileScreenExtraction(BaseModel):
-    """Standardized contract for Driver App Profile screens."""
+    """
+    Standardized contract for the GSM / Xanh SM driver app profile screen.
+
+    Visual object: the driver app home/profile screen showing the wallet and
+    rewards shortcuts, the membership card (e.g. "Tài xế hạng Vàng", period
+    "10/2026"), the utility menu (support map, safety check, my jobs, income
+    stats, performance, shifts, debt), and the app version footer.
+    """
+    app: str = "XANH_SM"
     membership_type: str = "Tiêu chuẩn"
+    membership_period: Optional[str] = None
     driver_rank: str = "Standard"
     partner_id: Optional[str] = None
+    wallet_visible: bool = False
+    rewards_visible: bool = False
+    trip_history_visible: bool = False
+    utility_items: List[str] = Field(default_factory=list)
+    app_version: Optional[str] = None
     is_authentic: bool = True
 
 

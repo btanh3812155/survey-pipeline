@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 from services.normalizer import sanitize_and_normalize_image
 from services.income_layout import apply_layout_to_ocr
+from services.image_types import ProfileScreenExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ class DualModelVisionClient:
                 allowed_roles_desc.append(f"- '{r}': {t}")
         if not allowed_roles_desc:
             allowed_roles_desc = [
-                "- 'app_profile': driver ride-hailing app account menu, profile, driver wallet, settings",
+                "- 'app_profile': driver ride-hailing app profile/home screen, account menu, membership tier card ('Tài xế hạng ...'), driver wallet, rewards program, settings",
                 "- 'app_income': driver ride-hailing app earnings, income statistics, trips, revenue screen",
                 "- 'odometer': car instrument cluster, dashboard, speedometer, mileage display",
                 "- 'vehicle_exterior': vehicle body, license plate"
@@ -281,11 +282,19 @@ class DualModelVisionClient:
         Extracts driver profile details including membership tier/rank from app profile screen (Slot 0).
         """
         if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
-            return {
-                "membership_type": "Bạch Kim",
-                "driver_rank": "Platinum",
-                "is_authentic": True,
-            }
+            return ProfileScreenExtraction(
+                membership_type="Bạch Kim",
+                membership_period="10/2026",
+                driver_rank="Platinum",
+                wallet_visible=True,
+                rewards_visible=True,
+                trip_history_visible=True,
+                utility_items=[
+                    "Bản đồ hỗ trợ", "Kiểm tra an toàn vận doanh", "Công việc của tôi",
+                    "Thống kê thu nhập", "Hiệu suất hoạt động", "Ca làm việc", "Số công nợ",
+                ],
+                app_version="3.17.1",
+            ).model_dump()
 
         norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
         b64_img = base64.b64encode(norm_b).decode("utf-8")
@@ -294,10 +303,16 @@ class DualModelVisionClient:
                 "role": "system",
                 "content": (
                     "You are an expert OCR transcription engine for Vietnamese ride-hailing driver profiles (Xanh SM, GSM, Grab, Be). "
-                    "Extract the driver's membership tier or partner classification from this profile screen into a JSON object: "
-                    "membership_type (string, e.g. 'Bạch Kim', 'Vàng', 'Bạc', 'Kim Cương', 'Tiêu Chuẩn', 'Đối tác', or 'Standard'), "
-                    "driver_rank (string, English equivalent e.g. 'Platinum', 'Gold', 'Silver', 'Diamond', 'Standard', 'Partner'), "
-                    "is_authentic (boolean, true if authentically matching official driver profile UI). "
+                    "Classify this screen as the driver app profile screen and extract a JSON object: "
+                    "app ('XANH_SM', 'GRAB', 'BE', 'OTHER'), "
+                    "membership_type (the tier card text without the 'Tài xế hạng' prefix, e.g. 'Vàng', 'Bạch Kim', 'Kim Cương', 'Bạc', 'Tiêu chuẩn'), "
+                    "membership_period (the period printed on the tier card, e.g. '10/2026', or null), "
+                    "driver_rank (English equivalent: 'Gold', 'Platinum', 'Diamond', 'Silver', 'Standard'), "
+                    "partner_id (driver/partner code if visible, or null), "
+                    "wallet_visible, rewards_visible, trip_history_visible (booleans for the top shortcuts 'Ví tài xế', 'Chương trình thưởng', 'Lịch sử chuyến đi'), "
+                    "utility_items (array of visible menu labels under 'Tiện ích bổ trợ', verbatim Vietnamese), "
+                    "app_version (footer 'Phiên bản x.y.z' value, or null), "
+                    "is_authentic (true only if this is a real official driver app screen, false for mockups or edited screenshots). "
                     "Output strictly a single valid JSON object."
                 ),
             },
@@ -326,7 +341,7 @@ class DualModelVisionClient:
                 content = resp.choices[0].message.content or "{}"
                 res_data = robust_json_parse(content)
                 if res_data:
-                    return res_data
+                    return ProfileScreenExtraction.model_validate(res_data).model_dump()
             except Exception as e:
                 logger.error(f"[OCR PROFILE ERROR] DeepSeek profile OCR failed: {e}")
 
@@ -343,11 +358,11 @@ class DualModelVisionClient:
                     content = resp.choices[0].message.content or "{}"
                     res_data = robust_json_parse(content)
                     if res_data:
-                        return res_data
+                        return ProfileScreenExtraction.model_validate(res_data).model_dump()
                 except Exception:
                     continue
 
-        return {"membership_type": "Tiêu chuẩn", "driver_rank": "Standard", "is_authentic": True}
+        return ProfileScreenExtraction().model_dump()
 
     async def ocr_driver_app_income(self, image_bytes: bytes, week_idx: Optional[int] = None) -> Dict[str, Any]:
         """

@@ -364,7 +364,7 @@ def test_multi_image_upload_from_halfway_maintains_order():
 
     # Verifies startPos calculation based on currentSlotIdx
     assert "let startPos = uploadableSlots.findIndex(item => item.idx === currentSlotIdx)" in html
-    assert "selectCameraSlot(qid, uploadableSlots[startPos].idx, false)" in html
+    assert "advanceToNextUncapturedSlot(qid)" in html
 
 
 def test_uploading_more_than_allowed_slots_clamps_gracefully():
