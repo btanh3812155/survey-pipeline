@@ -190,29 +190,9 @@ def validate_extracted_weekly_period(
                 f"Biểu mẫu yêu cầu chụp riêng từng tuần!"
             )
 
-        # Check expected calendar week window
-        target = OCTOBER_2026_WEEKS.get(expected_week_num)
-        if target:
-            target_start = target["start"]
-            target_end = target["end"]
-
-            # If start date does NOT match target window, check if it matches a different week (swapped week!)
-            if abs((dt_start - target_start).days) > 2:
-                for other_w, other_cfg in OCTOBER_2026_WEEKS.items():
-                    if other_w != expected_week_num:
-                        if abs((dt_start - other_cfg["start"]).days) <= 2:
-                            return False, (
-                                f"Ảnh Tuần {expected_week_num}: Bạn đã nộp nhầm ảnh của {other_cfg['name']} ({other_cfg['label']}) "
-                                f"vào ô {target['name']} ({target['label']})! "
-                                f"Vui lòng chọn đúng ảnh của {target['name']}."
-                            )
-
-                # Out of survey scope
-                if dt_start < date(2026, 9, 20) or dt_start > date(2026, 11, 10):
-                    return False, (
-                        f"Ảnh Tuần {expected_week_num}: Kỳ báo cáo ({dt_start.strftime('%d/%m')} - {dt_end.strftime('%d/%m/%Y')}) "
-                        f"nằm ngoài khung thời gian Tháng 10/2026 của đợt khảo sát!"
-                    )
+        # Week placement is order-agnostic: screens are sorted by their detected
+        # period before mapping to slots, so a correct weekly statement is accepted
+        # in any upload slot. Only the statement TYPE is enforced below.
 
     # If text is present but no dash and contains 'hôm nay'
     if ("hôm nay" in raw_str or "ngày" in raw_str) and not any(s in raw_str for s in ["-", "–", "đến"]):

@@ -309,6 +309,30 @@ def _looks_like_income_statement(result: Any) -> bool:
     return any(int(result.get(key) or 0) for key in ("gross_revenue", "net_income", "total_trips"))
 
 
+def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Optional[dict]:
+    """Return a violation when two uploaded screens report the same week period."""
+    seen: Dict[Any, int] = {}
+    for idx_pos, result in income_pairs:
+        if not isinstance(result, dict):
+            continue
+        label = str(result.get("period") or result.get("period_raw_text") or "").strip()
+        if not label:
+            continue
+        start, end, _ = parse_date_range_from_text(label, default_year=2026)
+        key = (start, end) if start and end else label.lower()
+        if key in seen:
+            return {
+                "failed_slot": idx_pos,
+                "ocr_data": result,
+                "reason": (
+                    f"Ảnh Tuần bị trùng kỳ báo cáo ({label}) ở Ảnh {seen[key] + 1} và Ảnh {idx_pos + 1}. "
+                    "Vui lòng chụp đủ các tuần khác nhau (thứ tự ảnh không quan trọng)."
+                ),
+            }
+        seen[key] = idx_pos
+    return None
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -686,6 +710,7 @@ async def submit_webrtc_survey(
                             return (1, pair[0])
 
                         income_pairs.sort(key=_period_start)
+                        duplicate_week_violation = _find_duplicate_income_period(income_pairs)
                         matched_income_indices = [pair[0] for pair in income_pairs]
                         income_res_list = [pair[1] for pair in income_pairs]
 
@@ -701,7 +726,7 @@ async def submit_webrtc_survey(
                         tot_gross = 0
                         tot_net = 0
                         tot_trips = 0
-                        monthly_violation = coverage_violation
+                        monthly_violation = coverage_violation or duplicate_week_violation
                         math_violation = None
                         for w_i in range(5):
                             w_num = w_i + 1
@@ -776,6 +801,7 @@ async def submit_webrtc_survey(
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
 
                         # 1. Profile Verification (Slot 0)
+                        is_approved = False
                         if monthly_violation:
                             is_approved = False
                             status_str = "REJECTED"
@@ -797,6 +823,7 @@ async def submit_webrtc_survey(
                                 "ocr_data": math_violation["ocr_data"],
                             }
                         elif role_0 in ("app_income", "revenue_screen"):
+                            is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
                             ai_res = {

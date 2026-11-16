@@ -257,18 +257,35 @@ def test_temporal_validation_rejects_daily_statement_in_weekly_slot():
     assert "báo cáo thu nhập của 1 ngày" in err_b
 
 
-def test_temporal_validation_rejects_swapped_week_uploaded_to_wrong_slot():
-    """Uploading Week 1 statement into Week 4 slot is detected and rejected with swapped week notice."""
+def test_temporal_validation_accepts_weekly_statement_in_any_slot():
+    """Week screens are sorted by their period, so a valid weekly statement is accepted in any slot."""
     from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
 
-    # Driver uploaded Tuần 1 (28/09 - 04/10) into Tuần 4 slot
     hdr_w1 = PeriodHeaderMetadata(
         active_tab=TimeGranularity.WEEKLY,
         period_raw_text="28/09/2026 - 04/10/2026",
     )
     ok, err = validate_extracted_weekly_period(hdr_w1, expected_week_num=4)
-    assert ok is False
-    assert "nộp nhầm ảnh của Tuần 1 (28/09 - 04/10) vào ô Tuần 4" in err
+    assert ok is True, err
+
+
+def test_duplicate_week_periods_are_rejected():
+    """Two screens reporting the same week are rejected instead of relying on slot order."""
+    from routers.survey import _find_duplicate_income_period
+
+    same = [
+        (2, {"period": "03/10 - 09/10/2026"}),
+        (3, {"period": "03/10 - 09/10/2026"}),
+    ]
+    violation = _find_duplicate_income_period(same)
+    assert violation and "trùng kỳ báo cáo" in violation["reason"]
+    assert violation["failed_slot"] == 3
+
+    distinct = [
+        (2, {"period": "26/09 - 02/10/2026"}),
+        (3, {"period": "03/10 - 09/10/2026"}),
+    ]
+    assert _find_duplicate_income_period(distinct) is None
 
 
 def test_temporal_validation_accepts_valid_october_week_ranges():
