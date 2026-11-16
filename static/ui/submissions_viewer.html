@@ -1175,6 +1175,58 @@
             if (e.target.id === 'detailModal') closeModal();
         }
 
+        async function renderSubmissionImages(r) {
+            const mBody = document.getElementById('modalBody');
+            if (!mBody) return;
+            mBody.innerHTML = '<div style="color:#64748b;">Đang tải ảnh đã nộp...</div>';
+            let photos = [];
+            try {
+                const resp = await fetch(`/api/v1/submissions/${encodeURIComponent(r.submission_id)}/photos`, { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    photos = data.photos || [];
+                }
+            } catch (e) {
+                console.error('load submission photos failed', e);
+            }
+            const activeTab = document.getElementById('mtab_images');
+            if (!activeTab || !activeTab.classList.contains('active')) return;
+
+            let imgCards = photos.map((url, idx) => `
+                <div class="img-card">
+                    <img src="${url}" alt="Anh ${idx + 1}" loading="lazy" onclick="window.open(this.src, '_blank')">
+                    <div class="img-title">Ảnh ${idx + 1}</div>
+                </div>
+            `).join('');
+
+            if (!imgCards) {
+                const fData = r.form_data || {};
+                Object.keys(fData).forEach(k => {
+                    const imgVal = fData[k];
+                    if (typeof imgVal === 'string' && (imgVal.startsWith('http') || imgVal.startsWith('data:image'))) {
+                        imgCards += `
+                            <div class="img-card">
+                                <img src="${imgVal}" alt="${escapeHtml(k)}" onclick="window.open(this.src, '_blank')">
+                                <div class="img-title">${escapeHtml(k)}</div>
+                            </div>
+                        `;
+                    }
+                });
+                if (r.image_r2_url) {
+                    imgCards += `
+                        <div class="img-card">
+                            <img src="${r.image_r2_url}" alt="Cloudflare R2" onclick="window.open(this.src, '_blank')">
+                            <div class="img-title">Ảnh R2 Storage</div>
+                        </div>
+                    `;
+                }
+            }
+            mBody.innerHTML = `
+                <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Thư Viện Ảnh Đã Nộp</h4>
+                <div class="img-grid">${imgCards || '<div style="color:#64748b;">Không có hình ảnh nào được lưu cho phiếu này.</div>'}</div>
+            `;
+        }
+
         function switchModalTab(tabName) {
             document.querySelectorAll('.modal-tab-btn').forEach(b => b.classList.remove('active'));
             const activeTabBtn = document.getElementById(`mtab_${tabName}`);
@@ -1244,33 +1296,7 @@
                     <div class="qa-list">${qaRows || '<div style="color:#64748b;">Không có dữ liệu câu trả lời dạng văn bản.</div>'}</div>
                 `;
             } else if (tabName === 'images') {
-                const fData = r.form_data || {};
-                let imgCards = '';
-                Object.keys(fData).forEach(k => {
-                    if (k.startsWith('survey_photo') || k === 'signature_png') {
-                        const imgVal = fData[k];
-                        if (typeof imgVal === 'string' && (imgVal.startsWith('http') || imgVal.startsWith('data:image'))) {
-                            imgCards += `
-                                <div class="img-card">
-                                    <img src="${imgVal}" alt="${k}" onclick="window.open(this.src, '_blank')">
-                                    <div class="img-title">${escapeHtml(k)}</div>
-                                </div>
-                            `;
-                        }
-                    }
-                });
-                if (r.image_r2_url) {
-                    imgCards += `
-                        <div class="img-card">
-                            <img src="${r.image_r2_url}" alt="Cloudflare R2" onclick="window.open(this.src, '_blank')">
-                            <div class="img-title">Ảnh R2 Storage</div>
-                        </div>
-                    `;
-                }
-                mBody.innerHTML = `
-                    <h4 style="font-size:0.85rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Thư Viện Ảnh Đã Nộp</h4>
-                    <div class="img-grid">${imgCards || '<div style="color:#64748b;">Không có hình ảnh nào được lưu trữ trực tiếp dưới dạng Data URI.</div>'}</div>
-                `;
+                renderSubmissionImages(r);
             } else if (tabName === 'ai') {
                 const ai = r.ai_result || {};
                 mBody.innerHTML = `

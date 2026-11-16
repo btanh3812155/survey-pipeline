@@ -6,6 +6,7 @@ and temporary dev test persistence.
 """
 
 import os
+import re
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, status
@@ -70,6 +71,33 @@ async def get_all_submissions_api(
             "manual_review": sum(1 for s in subs if s.get("status") in ("MANUAL_REVIEW", "APPEAL_PENDING")),
         },
     }
+
+
+@router.get("/api/v1/submissions/{sub_id}/photos")
+async def list_submission_photos(sub_id: str, admin_user: str = Depends(verify_admin_auth)):
+    """Lists stored photos for one submission (all camera questions)."""
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", sub_id)
+    base = os.path.join(os.getcwd(), "data", "submission_photos", safe_id)
+    if not os.path.isdir(base):
+        return {"photos": []}
+    exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+    names = sorted(
+        name for name in os.listdir(base)
+        if os.path.isfile(os.path.join(base, name)) and name.lower().endswith(exts)
+    )
+    return {"photos": [f"/admin/submissions/{safe_id}/photos/{name}" for name in names]}
+
+
+@router.get("/admin/submissions/{sub_id}/photos/{filename}")
+async def serve_submission_photo(sub_id: str, filename: str, admin_user: str = Depends(verify_admin_auth)):
+    """Serves a stored submission photo to the admin viewer."""
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", sub_id)
+    safe_name = os.path.basename(filename)
+    base = os.path.realpath(os.path.join(os.getcwd(), "data", "submission_photos", safe_id))
+    target = os.path.realpath(os.path.join(base, safe_name))
+    if not target.startswith(base + os.sep) or not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="Ảnh không tồn tại")
+    return FileResponse(target)
 
 
 @router.get("/api/v1/dev/submissions")

@@ -1,6 +1,7 @@
 import os
 import io
 import csv
+import mimetypes
 import glob
 import json
 import logging
@@ -14,6 +15,28 @@ from services.storage_r2 import r2_client
 
 logger = logging.getLogger("google_drive_delivery")
 
+def _guess_mime(filename: str) -> str:
+    """Correct MIME for Drive uploads; .jpg/.webp must not go up as octet-stream."""
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or "application/octet-stream"
+
+
+
+
+async def _list_remote_file_names(client, token: str, folder_id: str) -> set:
+    """Names of non-trashed files already inside a Drive folder."""
+    try:
+        resp = await client.get(
+            "https://www.googleapis.com/drive/v3/files",
+            params={"q": f"'{folder_id}' in parents and trashed = false", "fields": "files(name)", "pageSize": 1000},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code != 200:
+            return set()
+        return {f.get("name") for f in (resp.json().get("files") or []) if f.get("name")}
+    except Exception as e:
+        logger.warning(f"Could not list Drive folder {folder_id}: {e}")
+        return set()
 # Base directory for local deliverables mirror
 LOCAL_DELIVERABLES_DIR = os.path.join(os.getcwd(), "data", "google_drive_deliverables")
 LOCAL_IMAGES_DIR = os.path.join(LOCAL_DELIVERABLES_DIR, "Images")
@@ -878,8 +901,7 @@ class GoogleDriveClient:
                     fname = img.get("filename") or f"slot_{idx}.webp"
                     raw_bytes = img.get("bytes")
                     if raw_bytes:
-                        mtype = "image/webp" if fname.endswith(".webp") else "application/octet-stream"
-                        await self.upload_file(client, token, fname, raw_bytes, mtype, target_folder)
+                        await self.upload_file(client, token, fname, raw_bytes, _guess_mime(fname), target_folder)
 
             logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into Images/{submission_id} finished successfully.")
             return True
@@ -1115,23 +1137,37 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
                     if approved_ids and sub_id not in approved_ids:
                         continue
 
-                    # Diff check: If folder already exists on Google Drive, skip it!
-                    if sub_id in remote_subfolders:
-                        skipped_count += 1
-                        continue
-
                     files = [f for f in glob.glob(os.path.join(s_dir, "*.*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
                     if not files:
                         continue
 
-                    sub_folder_id = await client.create_folder(http_client, token, sub_id, images_parent_id)
+                    # Diff per file, not per folder: a folder whose earlier upload
+                    # partially failed must still receive the missing images.
+                    if sub_id in remote_subfolders:
+                        sub_folder_id = remote_subfolders[sub_id]
+                        remote_names = await _list_remote_file_names(http_client, token, sub_folder_id)
+                        skipped_count += 1
+                    else:
+                        sub_folder_id = await client.get_or_create_folder(http_client, token, sub_id, images_parent_id)
+                        remote_names = set()
+                        if sub_folder_id:
+                            remote_subfolders[sub_id] = sub_folder_id
+                    if not sub_folder_id:
+                        continue
+
                     for fpath in files:
                         fname = os.path.basename(fpath)
+                        if fname in remote_names:
+                            continue
                         with open(fpath, "rb") as img_f:
                             img_bytes = img_f.read()
-                        mtype = "image/webp" if fname.endswith(".webp") else "application/octet-stream"
-                        await client.upload_file(http_client, token, fname, img_bytes, mtype, sub_folder_id)
-                        uploaded_count += 1
+                        file_id = await client.upload_file(
+                            http_client, token, fname, img_bytes, _guess_mime(fname), sub_folder_id
+                        )
+                        if file_id:
+                            uploaded_count += 1
+                        else:
+                            logger.warning(f"[AUTO DRIVE SYNC] Upload failed for {sub_id}/{fname}; will retry next sync.")
                 logger.info(f"🖼️ [AUTO DRIVE SYNC] Diffed image dirs: {skipped_count} folders up-to-date (skipped); synced {uploaded_count} new files across new subfolders.")
             except Exception as e:
                 logger.error(f"[AUTO DRIVE SYNC] Failed to sync image subfolders: {e}")
