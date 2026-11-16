@@ -169,7 +169,7 @@ def test_api_upload_and_render_arbitrary_form():
     assert resp.json()["form_id"] == "customer_feedback_v1"
 
     # 2. Render form HTML dynamically
-    html_resp = client.get("/forms/customer_feedback_v1")
+    html_resp = client.get("/forms/customer_feedback_v1?ref=ctv001")
     assert html_resp.status_code == 200
     assert "Khảo Sát Ý Kiến Khách Hàng" in html_resp.text
     assert "Đánh giá độ hài lòng" in html_resp.text
@@ -635,3 +635,31 @@ def test_submit_validates_against_submitted_form_only(monkeypatch):
     legacy = client.post("/api/v1/survey/submit-webrtc", data=common)
     legacy_reason = legacy.json().get("reason") or ""
     assert "Cam kết thông tin" not in legacy_reason
+
+
+def test_ctv_tracking_requirement_and_phone_inference():
+    """Direct form links must identify the CTV, and the phone answer must reach driver_phone."""
+    from fastapi.testclient import TestClient
+    from config import settings
+    from main import app
+    from routers.survey import _infer_driver_phone
+    from services.form_engine import FormQuestion, QuestionType
+
+    client = TestClient(app)
+    selector = client.get("/forms/TB_GSM_2026_Nov_Test")
+    assert selector.status_code == 200
+    assert 'id="ctvSelect"' in selector.text
+    assert "const SCHEMA =" not in selector.text
+
+    form = client.get("/forms/TB_GSM_2026_Nov_Test?ref=ctv001")
+    assert form.status_code == 200
+    assert 'const LOCKED_CTV_CODE = "CTV001"' in form.text
+
+    questions = [
+        FormQuestion(id="cau_2_26", title="Nhập số điện thoại / Zalo của tài xế", type=QuestionType.TEXT),
+    ]
+    phone = _infer_driver_phone(
+        type("S", (), {"questions": questions})(),
+        {"cau_2_26": "0961281310"},
+    )
+    assert phone == "0961281310"

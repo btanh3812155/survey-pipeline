@@ -91,10 +91,10 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
         active_slug = None
         active_ref = None
 
-    has_ctv_tracking = ctv_ref_enabled and (
-        effective_form_id in ("income_survey", "default", "camera-form")
-        or any(q.id in ("ctv_code", "collaborator_id") for q in schema.questions)
-    )
+    # ctv_ref_enabled is the per-form switch: when on, a direct link without ?ref=
+    # must ask for the CTV first, otherwise submissions carry no collaborator and
+    # approval verdicts have nowhere to go.
+    has_ctv_tracking = ctv_ref_enabled
 
     # 4. If accessed WITHOUT ?ref= on a CTV-tracked form, show CTV selection dropdown!
     if not matched_ctv and has_ctv_tracking:
@@ -348,6 +348,29 @@ def _select_unique_check_index(target_q: Any, income_indices: List[int], image_c
     return None
 
 
+_VN_PHONE_RE = re.compile(r"(?:\+?84|0)(?:\d[ .-]?){8,10}\d")
+
+
+def _infer_driver_phone(schema, answers: Dict[str, Any]) -> Optional[str]:
+    """Find the driver phone in schema answers when the legacy field is absent."""
+    if not isinstance(answers, dict):
+        return None
+    best = None
+    for q in (getattr(schema, "questions", None) or []):
+        value = answers.get(q.id)
+        if not isinstance(value, str):
+            continue
+        match = _VN_PHONE_RE.search(value.strip())
+        if not match:
+            continue
+        label = f"{q.id} {getattr(q, 'title', '')}".lower()
+        score = 2 if any(t in label for t in ("phone", "điện thoại", "dien thoai", "sđt", "sdt", "zalo")) else 1
+        candidate = (score, value.strip())
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best[1] if best else None
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -401,6 +424,7 @@ async def submit_webrtc_survey(
     collab_param = (
         collaborator_id
         or form_data.get("collaborator_id")
+        or form_data.get("ctv_code")
         or form_data.get("ctv_id")
         or form_data.get("collaborator_tg_id")
         or request.query_params.get("collaborator_id")
@@ -428,7 +452,9 @@ async def submit_webrtc_survey(
     answers: Dict[str, Any] = {
         k: v for k, v in form_data.multi_items() if not hasattr(v, "read")
     }
-    if "driver_phone" not in answers:
+    if not driver_phone:
+        driver_phone = _infer_driver_phone(schema, answers)
+    if not answers.get("driver_phone"):
         answers["driver_phone"] = driver_phone
     if "driver_name" not in answers and driver_name:
         answers["driver_name"] = driver_name
