@@ -181,14 +181,13 @@ class TelegramPollingRunner:
 
         sub_id = str(dossier.get("submission_id") or "submission")
         files["dossier_txt"] = (f"{sub_id}.txt", txt_bytes, "text/plain")
-        media.append({"type": "document", "media": "attach://dossier_txt"})
-        if media and media[0]["type"] == "photo":
+        if media:
             media[0]["caption"] = caption
             media[0]["parse_mode"] = "HTML"
 
         client = await self.get_client()
         try:
-            if len(media) == 1:
+            if not media:
                 resp = await client.post(
                     f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
                     data={
@@ -218,6 +217,23 @@ class TelegramPollingRunner:
                 ids = [m.get("message_id") for m in (resp.json().get("result") or [])]
                 if reply_markup and ids and ids[0]:
                     await self.edit_message_reply_markup(chat_id, ids[0], reply_markup=reply_markup)
+                # Telegram forbids mixing documents and photos in one media group;
+                # attach the raw-data txt as a reply to the photo group instead.
+                doc_resp = await client.post(
+                    f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
+                    data={
+                        "chat_id": str(chat_id),
+                        **({"reply_to_message_id": str(ids[0])} if ids and ids[0] else {}),
+                    },
+                    files={"document": files["dossier_txt"]},
+                    timeout=30.0,
+                )
+                if doc_resp.status_code != 200:
+                    logger.error(f"Dossier txt attach failed: {doc_resp.status_code} {doc_resp.text[:200]}")
+                else:
+                    doc_msg = doc_resp.json().get("result") or {}
+                    if doc_msg.get("message_id"):
+                        ids.append(doc_msg["message_id"])
             self.prompt_registry[key] = [mid for mid in ids if mid]
             return True
         except Exception as e:

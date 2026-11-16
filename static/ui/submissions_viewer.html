@@ -746,10 +746,10 @@
     </div>
 
     <script>
-        // Injected data payload from FastAPI backend
+        // Loaded from /api/v1/submissions at startup
         let RAW_SUBMISSIONS = [];
-        const FORMS_REGISTRY = {forms_json};
-        let currentFormId = {active_form_id_str};
+        let FORMS_REGISTRY = {};
+        let currentFormId = 'all';
 
         // Application State
         let filteredSubmissions = [];
@@ -761,11 +761,24 @@
         let currentModalRecord = null;
 
         // Initialize Dashboard
-        window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadSubmissions();
             buildFormTabs();
             populateCtvFilter();
             applyFilters();
         });
+
+        async function loadSubmissions() {
+            try {
+                const resp = await fetch('/api/v1/submissions', { credentials: 'include' });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                RAW_SUBMISSIONS = data.submissions || [];
+                FORMS_REGISTRY = data.forms || {};
+            } catch (e) {
+                console.error('loadSubmissions failed', e);
+            }
+        }
 
         function buildFormTabs() {
             const tabsBar = document.getElementById('formTabsBar');

@@ -295,6 +295,20 @@ async def pre_check_image_slot(
     except Exception as e:
         logger.warning(f"Pre-check error: {e}")
         return {"status": "PASS", "is_sharp": True, "message": "Đã ghi nhận ảnh."}
+def _looks_like_income_statement(result: Any) -> bool:
+    """True when an OCR result actually looks like a revenue statement, not a menu/profile screen."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("layout_matched"):
+        return True
+    if result.get("period_tabs"):
+        return True
+    labels = [str(x).lower() for x in (result.get("field_labels") or [])]
+    if any(token in label for label in labels for token in ("tổng thu nhập", "doanh số", "thu nhập ròng", "chiết khấu")):
+        return True
+    return any(int(result.get(key) or 0) for key in ("gross_revenue", "net_income", "total_trips"))
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -655,8 +669,13 @@ async def submit_webrtc_survey(
                         facts_res = all_results[1]
                         income_res_list = all_results[2:]
 
-                        # Order-agnostic weeks: sort income screens by detected period start
+                        # Order-agnostic weeks: drop images whose OCR is clearly not an
+                        # income statement (e.g. the profile menu listing "Thống kê thu nhập"
+                        # as a row), then sort by detected period start.
                         income_pairs = list(zip(matched_income_indices, income_res_list))
+                        income_only = [pair for pair in income_pairs if _looks_like_income_statement(pair[1])]
+                        if income_only:
+                            income_pairs = income_only
 
                         def _period_start(pair):
                             result = pair[1]

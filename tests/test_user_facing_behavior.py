@@ -795,3 +795,22 @@ def test_multi_camera_questions_store_all_images():
         if sub_id:
             shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
         FORM_REGISTRY.pop(fid, None)
+
+
+def test_description_media_path_linkifier_does_not_rewrite_inside_absolute_urls():
+    """A /media path inside an absolute image URL must not be wrapped in a nested anchor."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "static" / "ui" / "dynamic_form.html").read_text(encoding="utf-8")
+    assert "raw = raw.replace(/(^|[\\s(])(\\/media\\/[^\\s<)\"']+)/g" in src
+    assert "(^|[^\"'])(\\/media\\/" not in src
+
+
+def test_admin_viewers_fetch_from_apis_instead_of_missing_placeholders():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "static" / "ui"
+    subs = (root / "submissions_viewer.html").read_text(encoding="utf-8")
+    audit = (root / "audit_viewer.html").read_text(encoding="utf-8")
+    assert "{forms_json}" not in subs and "{active_form_id_str}" not in subs
+    assert "await loadSubmissions();" in subs and "/api/v1/submissions" in subs
+    assert "{logs_json}" not in audit
+    assert "/api/v1/audit/logs" in audit and "filterData();" in audit

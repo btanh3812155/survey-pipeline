@@ -220,6 +220,10 @@ class DualModelVisionClient:
                     "You are a specialized mobile survey image classifier.\n"
                     "Analyze the provided image and classify its primary content into exactly one of the allowed categories:\n"
                     f"{prompt_roles}\n"
+                    "Hard disambiguation rules:\n"
+                    "- A screen listing menu rows or shortcuts (Ví tài xế, Chương trình thưởng, Lịch sử chuyến đi, Tiện ích hỗ trợ, Ca làm việc, Sổ công nợ) is 'app_profile', even when one row is labeled 'Thống kê thu nhập'.\n"
+                    "- An income statement shows numeric amounts in VNĐ/đ (revenue, discount, net income, trips) and period tabs (dates or Ngày/Tuần/Tháng). A screen with no numeric amounts is never 'app_income'.\n"
+                    "- A vehicle exterior/interior/steering wheel is 'vehicle_exterior', never 'app_profile'.\n"
                     "- 'unknown': desk, table, room, furniture, person, arm, computer, ceiling, or any photo that does not match the required categories.\n"
                     "Output strictly a JSON object: {\"role\": \"<matched_role>\" | \"unknown\"}."
                 ),

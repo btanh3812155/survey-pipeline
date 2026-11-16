@@ -47,3 +47,28 @@ def test_profile_screen_object_type_accepts_mostly_empty_screen():
     assert extracted.membership_type == "Bạc"
     assert extracted.app_version is None
     assert extracted.utility_items == []
+
+
+def test_income_statement_guard_ignores_profile_menu_screens():
+    """A profile menu that lists 'Thống kê thu nhập' must not be treated as an income statement."""
+    from routers.survey import _looks_like_income_statement
+
+    menu_ocr = {
+        "layout_matched": False,
+        "period_tabs": [],
+        "field_labels": ["Thống kê thu nhập", "Hiệu suất hoạt động", "Công việc của tôi", "Sổ công nợ"],
+        "gross_revenue": 0, "net_income": 0, "total_trips": 0,
+    }
+    assert _looks_like_income_statement(menu_ocr) is False
+
+    income_ocr = {
+        "layout_matched": True,
+        "period_tabs": ["31 - 06", "07 - 13", "14 - 20"],
+        "field_labels": ["Tổng thu nhập", "Doanh số", "Thu nhập ròng"],
+        "gross_revenue": 2_838_000, "net_income": 2_329_512, "total_trips": 51,
+    }
+    assert _looks_like_income_statement(income_ocr) is True
+
+    # Layout detector may miss the teal pill on a photographed screen; numeric evidence still counts.
+    assert _looks_like_income_statement({"layout_matched": False, "gross_revenue": 2_838_000}) is True
+    assert _looks_like_income_statement(None) is False

@@ -630,7 +630,7 @@
     </div>
 
     <script>
-        const RAW_DATA = {logs_json};
+        let RAW_DATA = [];
 
         function formatDate(dStr) {
             if (!dStr) return "-";
@@ -746,7 +746,16 @@
                 return matchQuery && matchComp && matchEntity;
             });
 
+            updateKpis();
             renderRows(filteredItems);
+        }
+
+        function updateKpis() {
+            const comp = item => (item.component_name || "").toUpperCase();
+            document.getElementById("statTotal").textContent = RAW_DATA.length.toLocaleString();
+            document.getElementById("statIngress").textContent = RAW_DATA.filter(i => ["INGRESS", "NORMALIZER"].includes(comp(i))).length.toLocaleString();
+            document.getElementById("statFraud").textContent = RAW_DATA.filter(i => ["AI_VISION", "ANTI_FRAUD"].includes(comp(i))).length.toLocaleString();
+            document.getElementById("statPersistence").textContent = RAW_DATA.filter(i => !["INGRESS", "NORMALIZER", "AI_VISION", "ANTI_FRAUD"].includes(comp(i))).length.toLocaleString();
         }
 
         function openDetail(idx) {
@@ -813,8 +822,20 @@
             a.click();
         }
 
-        // Initial render
-        renderRows(filteredItems);
+        // Initial load + render
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const resp = await fetch('/api/v1/audit/logs', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    RAW_DATA = data.logs || [];
+                }
+            } catch (e) {
+                console.error('loadAuditLogs failed', e);
+            }
+            filteredItems = [...RAW_DATA];
+            filterData();
+        });
     </script>
 </body>
 </html>

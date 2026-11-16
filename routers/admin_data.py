@@ -62,6 +62,7 @@ async def get_all_submissions_api(
     return {
         "count": len(subs),
         "submissions": subs,
+        "forms": {fid: {"title": schema.title} for fid, schema in FORM_REGISTRY.items()},
         "summary": {
             "total": len(subs),
             "approved": sum(1 for s in subs if s.get("status") == "APPROVED"),

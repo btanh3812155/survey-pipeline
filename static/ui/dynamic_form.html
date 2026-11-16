@@ -1276,7 +1276,7 @@
             });
 
             // 4. Raw media paths served by this app
-            raw = raw.replace(/(^|[^"'])(\/media\/[^\s<)"']+)/g, (match, prefix, url) => {
+            raw = raw.replace(/(^|[\s(])(\/media\/[^\s<)"']+)/g, (match, prefix, url) => {
                 if (isImageUrl(url)) return `${prefix}${imageLinkHtml(url, escapeHtml(url))}`;
                 return match;
             });
