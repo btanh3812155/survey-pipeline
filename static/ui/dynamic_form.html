@@ -1233,6 +1233,14 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function isNullLabel(label) {
+            return String(label || '').trim().toLowerCase() === 'null';
+        }
+
+        function inlineImageHtml(url) {
+            return `<img src="${escapeHtml(url)}" alt="" class="desc-inline-preview" loading="lazy" onclick="openImageFullView(this.src)">`;
+        }
+
         function isImageUrl(url) {
             if (!url) return false;
             const clean = String(url).split('#')[0].split('?')[0];
@@ -1249,13 +1257,17 @@
             if (!text) return '';
             let raw = String(text);
 
-            // 1. Markdown Images: ![alt](url) -> inline, click opens full view
+            // 1. Markdown Images: ![alt](url) -> inline, click opens full view.
+            //    alt="null" renders the image with no visible caption text.
             raw = raw.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (match, alt, url) => {
+                if (isNullLabel(alt)) return inlineImageHtml(url);
                 return `<img src="${url}" alt="${escapeHtml(alt || '')}" class="q-desc-img" style="cursor:zoom-in;" loading="lazy" onclick="openImageFullView(this.src)">`;
             });
 
-            // 2. Markdown Links: image links expand inline, other links keep new-tab behavior
+            // 2. Markdown Links: image links expand on click, except label "null"
+            //    which embeds the image immediately with no text.
             raw = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label, url) => {
+                if (isImageUrl(url) && isNullLabel(label)) return inlineImageHtml(url);
                 if (isImageUrl(url)) return imageLinkHtml(url, escapeHtml(label));
                 return `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
             });
