@@ -312,6 +312,15 @@
                         </div>
                     </div>
 
+                    <div class="field-group" style="margin-top: 10px;">
+                        <label>Link giới thiệu CTV (?ref=...)</label>
+                        <label class="toggle-switch" style="margin-top:6px;">
+                            <input type="checkbox" id="globalEnableCtvRef">
+                            <span class="toggle-slider"></span>
+                            <span style="color:#38bdf8; font-size:0.8rem;">Bật gắn mã CTV qua ?ref= và màn hình chọn CTV</span>
+                        </label>
+                    </div>
+
                     <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
                         <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
@@ -1153,6 +1162,7 @@
                     response_limit: parseInt(document.getElementById('responseLimit').value) || null,
                     access_control: document.getElementById('accessControl').value,
                     is_test_mode: document.getElementById('isTestMode').value === 'true',
+                    ctv_ref_enabled: document.getElementById('globalEnableCtvRef') ? document.getElementById('globalEnableCtvRef').checked : true,
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
                     image_checks: {
                         ...((INITIAL_SCHEMA.settings || {}).image_checks || {}),
@@ -1251,6 +1261,7 @@
             document.getElementById('notifyChatId').value = st.notify_telegram_chat_id != null ? st.notify_telegram_chat_id : '';
             document.getElementById('accessControl').value = st.access_control || 'public';
             document.getElementById('isTestMode').value = st.is_test_mode ? 'true' : 'false';
+            document.getElementById('globalEnableCtvRef').checked = st.ctv_ref_enabled !== false;
             const ic = st.image_checks || {};
             const checks = {
                 globalEnableBlurCheck: ['enable_blur_check', true],

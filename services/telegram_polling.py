@@ -54,6 +54,9 @@ class TelegramPollingRunner:
         self.db_pool = db_pool
         self.backoff_delay = 1.0
         self.max_backoff = 60.0
+        # Chat-scoped registry of the last prompt message per logical content key,
+        # so a new instance can strip the old one's inline buttons.
+        self.prompt_registry: Dict[str, int] = {}
 
     async def get_client(self) -> httpx.AsyncClient:
         if self.http_client is None or self.http_client.is_closed:
@@ -71,11 +74,12 @@ class TelegramPollingRunner:
         text: str,
         parse_mode: str = "HTML",
         reply_markup: Optional[dict] = None,
-    ) -> bool:
+        return_message: bool = False,
+    ):
         """Dispatches an HTML or text message to a given chat_id via Telegram Bot API."""
         if not self.bot_token or self.bot_token == "mock_tg_token":
             logger.info(f"[MOCK TG {self.role.upper()} DISPATCH] to {chat_id}:\n{text}")
-            return True
+            return {"message_id": None} if return_message else True
 
         client = await self.get_client()
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
@@ -91,10 +95,32 @@ class TelegramPollingRunner:
             resp = await client.post(url, json=payload)
             if resp.status_code == 429:
                 logger.warning("Telegram rate limit 429 encountered during polling dispatch")
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return False
+            if not return_message:
+                return True
+            return resp.json().get("result") or {}
         except Exception as e:
             logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
             return False
+
+    async def clear_previous_prompt(self, key: str, chat_id: Union[int, str]) -> None:
+        """Removes inline buttons from the previous message for this content key."""
+        previous = self.prompt_registry.pop(key, None)
+        if not previous:
+            return
+        try:
+            await self.edit_message_reply_markup(chat_id, previous, reply_markup={"inline_keyboard": []})
+        except Exception:
+            pass
+
+    async def send_tracked(self, key: str, chat_id: Union[int, str], text: str, reply_markup: Optional[dict] = None):
+        """Sends a message, first stripping buttons from the previous message with the same key."""
+        await self.clear_previous_prompt(key, chat_id)
+        result = await self.send_message(chat_id, text, reply_markup=reply_markup, return_message=True)
+        if isinstance(result, dict) and result.get("message_id"):
+            self.prompt_registry[key] = result["message_id"]
+        return result
 
     async def answer_callback_query(
         self, callback_query_id: str, text: Optional[str] = None, show_alert: bool = False
@@ -255,7 +281,7 @@ class TelegramPollingRunner:
         elif dossier.get("image_url"):
             await self.send_message(chat_id, f"📷 <b>Ảnh đính kèm:</b> <a href='{dossier['image_url']}'>Xem ảnh gốc trên Cloud</a>")
 
-        await self.send_message(chat_id, report_text, reply_markup=review_buttons)
+        await self.send_tracked(f"dossier:{chat_id}:{dossier.get('submission_id')}", chat_id, report_text, reply_markup=review_buttons)
     async def log_chat_history(
         self,
         telegram_user_id: int,
@@ -391,19 +417,6 @@ class TelegramPollingRunner:
                 "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
-        elif cmd in ("/forms", "/form"):
-            lines = ["📝 <b>Biểu Mẫu Khảo Sát Đang Mở:</b>\n"]
-            try:
-                from main import FORM_REGISTRY
-                if FORM_REGISTRY:
-                    for fid, schema in FORM_REGISTRY.items():
-                        title = getattr(schema, "title", fid)
-                        lines.append(f"• <b>{title}</b>:\n  🔗 https://survey.trustbridgevn.com/forms/{fid}")
-                else:
-                    lines.append("• <b>Khảo Sát Thu Nhập (income_survey)</b>:\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
-            except Exception:
-                lines.append("• <b>Khảo Sát Thu Nhập (income_survey)</b>:\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
-            await self.send_message(chat_id, "\n".join(lines))
         else:
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
@@ -709,6 +722,7 @@ class TelegramPollingRunner:
                 collaborator_id=collab_id,
                 reason_str=effective_reason,
                 gross_revenue=gross_rev,
+                form_id=dossier.get("form_id"),
             )
             logger.info(f"Dispatched decision verdict for #{clean_sub_id} to CTV ({collab_id}) and driver ({driver_phone})")
         except Exception as e:
@@ -1006,9 +1020,8 @@ class DriverBotRunner(TelegramPollingRunner):
         return {
             "keyboard": [
                 [{"text": "📱 Xác Thực Số Điện Thoại", "request_contact": True}],
-                [{"text": "📋 Khảo Sát Của Tôi"}, {"text": "📝 Nộp Form Mới"}],
-                [{"text": "🆘 Yêu Cầu Hỗ Trợ"}, {"text": "🛡️ Quyền Riêng Tư"}],
-                [{"text": "❓ Trợ Giúp"}],
+                [{"text": "📋 Khảo Sát Của Tôi"}],
+                [{"text": "🆘 Yêu Cầu Hỗ Trợ"}, {"text": "❓ Trợ Giúp"}],
             ],
             "resize_keyboard": True,
             "one_time_keyboard": False,
@@ -1067,6 +1080,28 @@ class DriverBotRunner(TelegramPollingRunner):
                     await conn.commit()
             except Exception as e:
                 logger.error(f"Failed to bind driver phone in database: {e}")
+
+    async def bind_collaborator(self, telegram_user_id: int, username: str, full_name: str, ctv_code: str) -> None:
+        """Links a Telegram account to a collaborator (CTV) code."""
+        if not self.db_pool:
+            return
+        try:
+            async with self.db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO authorized_users (telegram_user_id, username, full_name, role, is_active)
+                        VALUES (%s, %s, %s, 'COLLABORATOR', TRUE)
+                        ON CONFLICT (telegram_user_id) DO UPDATE SET
+                            username = EXCLUDED.username,
+                            full_name = EXCLUDED.full_name,
+                            role = 'COLLABORATOR';
+                        """,
+                        (telegram_user_id, ctv_code, full_name),
+                    )
+                await conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to bind collaborator {ctv_code}: {e}")
 
     async def download_telegram_photo(self, file_id: str) -> bytes:
         """Downloads high-res photo bytes from Telegram Bot API."""
@@ -1259,11 +1294,10 @@ class DriverBotRunner(TelegramPollingRunner):
             if st == "REJECTED":
                 buttons.append([
                     {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:slot_photo"},
-                    {"text": f"⚖️ Phúc khảo #{sub_id}", "callback_data": f"driver_appeal:{sub_id}"},
                 ])
 
         inline_markup = {"inline_keyboard": buttons} if buttons else None
-        await self.send_message(chat_id, "\n\n".join(lines), reply_markup=inline_markup)
+        await self.send_tracked(f"surveys:{user_id}", chat_id, "\n\n".join(lines), reply_markup=inline_markup)
 
     async def handle_driver_appeal(self, chat_id: int, user_id: int, sub_id: str) -> None:
         """Handles driver appeal request with 2-hour rate limit (max 5) and active guard."""
@@ -1354,24 +1388,6 @@ class DriverBotRunner(TelegramPollingRunner):
                 await client.post(url, json=payload)
             except Exception as e:
                 logger.error(f"Failed to alert admin group about appeal: {e}")
-
-    async def handle_decree13_scrub(self, chat_id: int, user_id: int) -> None:
-        """Handles Decree 13 right to erasure."""
-        confirm_markup = {
-            "inline_keyboard": [
-                [
-                    {"text": "⚠️ Xác Nhận Xóa Vĩnh Viễn", "callback_data": "driver_confirm_scrub"},
-                    {"text": "❌ Hủy Bỏ", "callback_data": "driver_cancel_scrub"},
-                ]
-            ]
-        }
-        msg = (
-            "🛡️ <b>Quyền Riêng Tư & Xóa Dữ Liệu Cá Nhân (Nghị định 13/2023/NĐ-CP):</b>\n\n"
-            "Bạn có quyền yêu cầu xóa bỏ hoàn toàn số điện thoại, danh tính và lịch sử liên kết tài khoản khỏi hệ thống Trust Bridge.\n\n"
-            "⚠️ <b>Lưu ý:</b> Sau khi xóa, bạn sẽ không nhận được thông báo giải ngân tiền thưởng và không thể tra cứu lại các phiếu cũ.\n\n"
-            "Bạn có chắc chắn muốn xóa không?"
-        )
-        await self.send_message(chat_id, msg, reply_markup=confirm_markup)
 
     async def handle_admin_help_request(
         self, chat_id: int, user_id: int, message_text: str, from_user: dict
@@ -1577,8 +1593,21 @@ class DriverBotRunner(TelegramPollingRunner):
 
         if cmd == "/start" or clean == "Bắt đầu":
             parts = clean.split(" ", 1)
-            if len(parts) > 1 and parts[1].startswith("support"):
-                sub_ref = parts[1][7:].lstrip("_")
+            payload = parts[1].strip() if len(parts) > 1 else ""
+            if payload.lower().startswith("ctv"):
+                raw_code = re.sub(r"^ctv[_-]?", "", payload, flags=re.IGNORECASE).strip().lower() or "unknown"
+                ctv_code = raw_code if raw_code.startswith("ctv") else f"ctv{raw_code}"
+                display = ((from_user.get("first_name") or "") + " " + (from_user.get("last_name") or "")).strip()
+                await self.bind_collaborator(user_id, from_user.get("username"), display or f"CTV {user_id}", ctv_code)
+                await self.send_message(
+                    chat_id,
+                    f"✅ <b>Đã liên kết Cộng tác viên <code>{ctv_code}</code> với tài khoản Telegram này.</b>\n\n"
+                    "Từ giờ mọi kết quả duyệt / từ chối phiếu do bạn giới thiệu sẽ được thông báo tại đây.",
+                    reply_markup=self.get_driver_reply_keyboard(),
+                )
+                return
+            if payload.startswith("support"):
+                sub_ref = payload[7:].lstrip("_")
                 ref_text = f" (cho phiếu <code>#{sub_ref}</code>)" if sub_ref else ""
                 self.pending_support[chat_id] = True
                 prompt = (
@@ -1589,9 +1618,9 @@ class DriverBotRunner(TelegramPollingRunner):
                 await self.send_message(chat_id, prompt, reply_markup=self.get_driver_reply_keyboard())
                 return
 
-            if len(parts) > 1 and parts[1].startswith("fix_"):
+            if payload.startswith("fix_"):
                 # Deep link: /start fix_<sub_id>_<slot>
-                fix_data = parts[1][4:].split("_", 1)
+                fix_data = payload[4:].split("_", 1)
                 sub_id = fix_data[0]
                 slot_name = fix_data[1] if len(fix_data) > 1 else "slot_photo"
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
@@ -1604,30 +1633,18 @@ class DriverBotRunner(TelegramPollingRunner):
                 )
                 return
             welcome_text = (
-                "👋 <b>Chào mừng bạn đến với Kênh Hỗ Trợ Khảo Sát Trust Bridge!</b>\n\n"
-                "Kênh thông tin và hỗ trợ tự động dành cho Tài xế và Cộng tác viên:\n"
-                "• Nhận thông báo kết quả duyệt phiếu tức thì\n"
-                "• Bổ sung ảnh mờ trực tiếp trong chat để kiểm tra lại\n"
-                "• Tra cứu lịch sử khảo sát & yêu cầu phúc khảo\n"
+                "👋 <b>Kênh Hỗ Trợ Khảo Sát Trust Bridge (CTV)</b>\n\n"
+                "Kênh thông tin và hỗ trợ dành cho <b>Cộng tác viên</b>:\n"
+                "• Nhận kết quả duyệt / từ chối phiếu do bạn giới thiệu\n"
+                "• Bổ sung ảnh chưa đạt trực tiếp trong chat để kiểm tra lại\n"
+                "• Tra cứu phiếu và gửi phúc khảo bằng <code>/appeal &lt;mã_phiếu&gt;</code>\n"
                 "• Kết nối trực tiếp với Ban Quản Trị\n\n"
-                "👉 <i>Vui lòng bấm nút <b>[📱 Xác Thực Số Điện Thoại]</b> bên dưới để bắt đầu.</i>"
+                "👉 <i>Nếu chưa liên kết, hãy mở link mời CTV (dạng <code>...?start=ctv_&lt;mã_ctv&gt;</code>) hoặc bấm nút <b>[📱 Xác Thực Số Điện Thoại]</b> bên dưới.</i>"
             )
             await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
         elif cmd in ("/surveys", "/my_surveys", "/tracuu") or clean == "📋 Khảo Sát Của Tôi":
             await self.handle_driver_surveys_lookup(chat_id, user_id)
-
-        elif cmd in ("/forms", "/form") or clean == "📝 Nộp Form Mới":
-            lines = ["📝 <b>Biểu Mẫu Khảo Sát Đang Mở:</b>\n"]
-            reg = FORM_REGISTRY
-            pass
-            if reg:
-                for fid, schema in reg.items():
-                    title = getattr(schema, "title", fid)
-                    lines.append(f"• <b>{title}</b>:\n  🔗 https://survey.trustbridgevn.com/forms/{fid}")
-            else:
-                lines.append("• <b>Khảo Sát Thu Nhập</b>:\n  🔗 https://survey.trustbridgevn.com/forms/income_survey")
-            await self.send_message(chat_id, "\n".join(lines), reply_markup=self.get_driver_reply_keyboard())
 
         elif cmd in ("/support", "/hotro", "/help_admin", "/lienhe") or "hỗ trợ" in clean.lower():
             if clean.startswith("/"):
@@ -1637,8 +1654,6 @@ class DriverBotRunner(TelegramPollingRunner):
                 msg_body = ""
             await self.handle_admin_help_request(chat_id, user_id, msg_body, from_user)
 
-        elif cmd in ("/privacy", "/scrub_my_data") or clean == "🛡️ Quyền Riêng Tư":
-            await self.handle_decree13_scrub(chat_id, user_id)
         elif cmd in ("/cancel", "/huy", "/cancel_request") or clean == "❌ Hủy Yêu Cầu":
             parts = clean.split(" ", 1)
             target = parts[1].strip() if len(parts) > 1 else ""
@@ -1647,14 +1662,13 @@ class DriverBotRunner(TelegramPollingRunner):
 
         elif cmd in ("/help", "/trogiup") or clean == "❓ Trợ Giúp":
             help_text = (
-                "❓ <b>Hướng Dẫn Sử Dụng (Dành Cho Tài Xế & Cộng Tác Viên):</b>\n\n"
-                "1. <b>Xác thực SĐT:</b> Bấm [📱 Xác Thực Số Điện Thoại] để liên kết tài khoản.\n"
-                "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi].\n"
-                "3. <b>Nộp phiếu mới:</b> Bấm [📝 Nộp Form Mới] để nhận link khảo sát.\n"
-                "4. <b>Bổ sung ảnh mờ:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
-                "5. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"
-                "6. <b>Cần trợ giúp:</b> Gõ <code>/support &lt;nội dung&gt;</code> hoặc bấm [🆘 Yêu Cầu Hỗ Trợ].\n"
-                "7. <b>Quyền riêng tư:</b> Bấm [🛡️ Quyền Riêng Tư] để xóa dữ liệu cá nhân theo Nghị định 13."
+                "❓ <b>Hướng Dẫn Sử Dụng (Dành Cho Cộng Tác Viên):</b>\n\n"
+                "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
+                "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
+                "3. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
+                "4. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"
+                "5. <b>Cần trợ giúp:</b> Gõ <code>/support &lt;nội dung&gt;</code> hoặc bấm [🆘 Yêu Cầu Hỗ Trợ].\n"
+                "6. <b>Kết thúc phiên hỗ trợ:</b> Gõ <code>/close</code> khi đã trao đổi xong với Ban Quản Trị."
             )
             await self.send_message(chat_id, help_text, reply_markup=self.get_driver_reply_keyboard())
 
@@ -1744,12 +1758,7 @@ class DriverBotRunner(TelegramPollingRunner):
             chat_id = cq_msg.get("chat", {}).get("id")
             user_id = cq.get("from", {}).get("id", chat_id)
 
-            if data.startswith("driver_appeal:"):
-                sub_id = data.split(":", 1)[1]
-                await self.handle_driver_appeal(chat_id, user_id, sub_id)
-                await self.answer_callback_query(cq_id, f"Đã gửi phúc khảo #{sub_id}")
-
-            elif data.startswith("driver_fix:"):
+            if data.startswith("driver_fix:"):
                 parts = data.split(":")
                 sub_id = parts[1]
                 slot_name = parts[2] if len(parts) > 2 else "slot_photo"
@@ -1768,44 +1777,6 @@ class DriverBotRunner(TelegramPollingRunner):
                     chat_id, user_id, f"Cần hỗ trợ về phiếu khảo sát #{sub_id}", cq.get("from", {})
                 )
                 await self.answer_callback_query(cq_id, f"Đã gửi yêu cầu hỗ trợ cho #{sub_id}")
-            elif data == "driver_confirm_scrub":
-                phone = await self.get_driver_phone(user_id)
-                if self.db_pool and phone:
-                    try:
-                        async with self.db_pool.connection() as conn:
-                            async with conn.cursor() as cur:
-                                await cur.execute(
-                                    """
-                                    UPDATE driver_identity_vault 
-                                    SET driver_name = '[SCRUBBED]', is_scrubbed = TRUE, scrubbed_at = NOW()
-                                    WHERE driver_phone = %s;
-                                    """,
-                                    (phone,),
-                                )
-                                await cur.execute(
-                                    "UPDATE authorized_users SET driver_phone = NULL WHERE telegram_user_id = %s;",
-                                    (user_id,),
-                                )
-                            await conn.commit()
-                    except Exception as e:
-                        logger.error(f"Failed to scrub driver data: {e}")
-
-                await self.send_message(
-                    chat_id,
-                    "🛡️ <b>Dữ liệu cá nhân của bạn đã được xóa hoàn toàn!</b>\n\n"
-                    "Mọi thông tin liên kết số điện thoại đã được hủy theo Nghị định 13/2023/NĐ-CP.",
-                    reply_markup=self.get_driver_reply_keyboard(),
-                )
-                await self.answer_callback_query(cq_id, "Đã xóa dữ liệu")
-
-            elif data == "driver_cancel_scrub":
-                await self.send_message(
-                    chat_id,
-                    "Đã hủy yêu cầu xóa dữ liệu.",
-                    reply_markup=self.get_driver_reply_keyboard(),
-                )
-                await self.answer_callback_query(cq_id, "Đã hủy")
-
             else:
                 await self.answer_callback_query(cq_id)
 

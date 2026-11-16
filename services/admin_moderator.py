@@ -175,7 +175,7 @@ async def query_submission_dossier(
                        total_gross_revenue, total_net_income, total_trips,
                        vehicle_type, car_model, form_data,
                        income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross,
-                       collaborator_id, ctv_code
+                       collaborator_id, ctv_code, form_id
                 FROM survey_submissions
                 WHERE submission_id = %s;
             """,
@@ -287,6 +287,7 @@ async def query_submission_dossier(
                 "photo_paths": photo_paths,
                 "collaborator_id": sub[28] if len(sub) > 28 and sub[28] else (form_data.get("collaborator_id") if isinstance(form_data, dict) else None),
                 "ctv_code": sub[29] if len(sub) > 29 and sub[29] else (form_data.get("ctv_code") if isinstance(form_data, dict) else None),
+                "form_id": sub[30] if len(sub) > 30 and sub[30] else None,
             }
 
 

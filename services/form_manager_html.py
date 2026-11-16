@@ -113,6 +113,7 @@ def render_form_editor_html(
             "response_limit": 0,
             "access_control": "public",
             "is_test_mode": False,
+            "ctv_ref_enabled": True,
             "enable_screen_photo_check": True,
             "enable_ai_vision": True,
             "enable_vehicle_match": True,

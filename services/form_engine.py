@@ -153,6 +153,7 @@ class FormSettings(BaseModel):
     notify_telegram_chat_id: Optional[int] = None
     notify_email: Optional[str] = None
     decree13_required: bool = True
+    ctv_ref_enabled: bool = True # allow ?ref=<ctv> attribution links for this form
     is_test_mode: bool = False
     image_checks: ImageCheckConfig = Field(default_factory=ImageCheckConfig)
 

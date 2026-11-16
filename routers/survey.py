@@ -83,7 +83,15 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
     effective_form_id = form_id if form_id in FORM_REGISTRY else "income_survey"
     schema = FORM_REGISTRY.get(effective_form_id) or next(iter(FORM_REGISTRY.values()))
 
-    has_ctv_tracking = (
+    # Per-form switch: when disabled, ignore ?ref= and skip the CTV selector
+    ctv_ref_enabled = bool(getattr(schema.settings, "ctv_ref_enabled", True))
+    if not ctv_ref_enabled:
+        ref_param = None
+        matched_ctv = None
+        active_slug = None
+        active_ref = None
+
+    has_ctv_tracking = ctv_ref_enabled and (
         effective_form_id in ("income_survey", "default", "camera-form")
         or any(q.id in ("ctv_code", "collaborator_id") for q in schema.questions)
     )
@@ -1308,6 +1316,7 @@ async def submit_webrtc_survey(
             collaborator_id=collab_param,
             reason_str=reason_str,
             gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
+            form_id=active_form_id,
         )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
@@ -1570,41 +1579,29 @@ async def lookup_telegram_user_by_phone(phone: str) -> Optional[int]:
 
 
 async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> Optional[int]:
-    """Resolves collaborator identifier to telegram_user_id (supports ID, phone, or username)."""
-    collab_str = str(collab_id).strip()
-    if collab_str.isdigit():
-        val = int(collab_str)
-        db_pool = get_db_pool()
-        if db_pool:
-            try:
-                async with db_pool.connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            "SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id = %s AND is_active = TRUE LIMIT 1;",
-                            (val,),
-                        )
-                        row = await cur.fetchone()
-                        if row and row[0]:
-                            return int(row[0])
-            except Exception:
-                pass
-        return val
+    """Resolves a collaborator code / full CTV id to a telegram_user_id."""
+    from core.ctv import extract_ctv_short_code
 
-    clean_user = collab_str.lstrip("@")
+    collab_str = str(collab_id).strip()
+    candidates = {collab_str.lower(), extract_ctv_short_code(collab_str).lower()}
     db_pool = get_db_pool()
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT telegram_user_id FROM authorized_users WHERE (username = %s OR driver_phone = %s) AND is_active = TRUE LIMIT 1;",
-                        (clean_user, collab_str),
+                        "SELECT telegram_user_id FROM authorized_users "
+                        "WHERE is_active = TRUE AND (LOWER(username) = ANY(%s) OR LOWER(driver_phone) = ANY(%s)) "
+                        "LIMIT 1;",
+                        (list(candidates), list(candidates)),
                     )
                     row = await cur.fetchone()
                     if row and row[0]:
                         return int(row[0])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"DB lookup failed for collaborator {collab_str}: {e}")
+    if collab_str.isdigit():
+        return int(collab_str)
     return None
 
 
@@ -1703,60 +1700,50 @@ async def dispatch_submission_telegram_notifications(
     collaborator_id: Optional[Union[str, int]] = None,
     reason_str: Optional[str] = None,
     gross_revenue: Optional[Union[str, int]] = None,
+    form_id: Optional[str] = None,
 ):
     """
-    Asynchronously notifies driver and collaborator in Telegram direct message.
+    Notifies the collaborator (CTV) who owns a submission. The Telegram flow is
+    CTV-facing; drivers are not messaged by this pipeline.
     """
     driver_bot_token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
     if not driver_bot_token or driver_bot_token == "mock_tg_token":
-        logger.info(f"[MOCK TG NOTIFY PARTIES] sub={submission_id} status={status_str} driver={driver_phone} collaber={collaborator_id}")
+        logger.info(f"[MOCK TG NOTIFY CTV] sub={submission_id} status={status_str} collab={collaborator_id}")
         return
 
     import sys
     main_mod = sys.modules.get("main")
     _send_direct = getattr(main_mod, "send_telegram_direct_message", send_telegram_direct_message) if main_mod else send_telegram_direct_message
-    _lookup_phone = getattr(main_mod, "lookup_telegram_user_by_phone", lookup_telegram_user_by_phone) if main_mod else lookup_telegram_user_by_phone
     _lookup_collab = getattr(main_mod, "lookup_telegram_user_for_collaborator", lookup_telegram_user_for_collaborator) if main_mod else lookup_telegram_user_for_collaborator
 
-    # 1. Notify Driver if linked
-    if driver_phone:
-        driver_tg_id = await _lookup_phone(driver_phone)
-        if driver_tg_id:
-            msg_text, reply_markup = render_driver_submission_verdict_message(
-                submission_id=submission_id,
-                status_str=status_str,
-                driver_name=driver_name,
-                reason_str=reason_str,
-                gross_revenue=gross_revenue,
-            )
-            await _send_direct(
-                bot_token=driver_bot_token,
-                chat_id=driver_tg_id,
-                text=msg_text,
-                reply_markup=reply_markup,
-            )
-        else:
-            logger.debug(f"Driver phone {driver_phone} not yet linked to Telegram chat ID.")
+    if not collaborator_id:
+        logger.info(f"Submission #{submission_id} has no collaborator; nothing to notify.")
+        return
 
-    # 2. Notify Collaborator if linked
-    if collaborator_id:
-        collab_tg_id = await _lookup_collab(collaborator_id)
-        if collab_tg_id:
-            status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
-            clean_phone = driver_phone or "N/A"
-            masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
-            collab_msg = (
-                f"📋 <b>Cập Nhật Khảo Sát #{submission_id}</b>\n\n"
-                f"• <b>Đối tác / Khách hàng:</b> {driver_name or 'Tài xế'} (<code>{masked_phone}</code>)\n"
-                f"• <b>Trạng thái:</b> {status_emoji} <b>{status_str}</b>\n"
-                f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}\n\n"
-                f"<i>Thông báo tự động dành cho Cộng tác viên phụ trách.</i>"
-            )
-            await _send_direct(
-                bot_token=driver_bot_token,
-                chat_id=collab_tg_id,
-                text=collab_msg,
-            )
-        else:
-            logger.info(f"Collaborator '{collaborator_id}' not yet linked to Telegram chat ID (will link later).")
+    collab_tg_id = await _lookup_collab(collaborator_id)
+    if not collab_tg_id:
+        logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
+        return
+
+    status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
+    clean_phone = driver_phone or "N/A"
+    masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
+    collab_msg = (
+        f"📋 <b>Cập Nhật Khảo Sát #{submission_id}</b>\n\n"
+        f"• <b>Đối tác / Khách hàng:</b> {driver_name or 'Tài xế'} (<code>{masked_phone}</code>)\n"
+        f"• <b>Trạng thái:</b> {status_emoji} <b>{status_str}</b>\n"
+        f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}"
+    )
+    if status_str == "REJECTED" and form_id:
+        from core.ctv import extract_ctv_short_code
+
+        ref = extract_ctv_short_code(str(collaborator_id))
+        link = f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
+        collab_msg += f"\n\n🔁 <b>Nộp lại / mở biểu mẫu:</b> {link}"
+    collab_msg += "\n\n<i>Thông báo tự động dành cho Cộng tác viên phụ trách.</i>"
+    await _send_direct(
+        bot_token=driver_bot_token,
+        chat_id=collab_tg_id,
+        text=collab_msg,
+    )
 
