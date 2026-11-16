@@ -424,37 +424,39 @@
                 sample_response: '',
                 options: []
             });
+            initializeConditionUids();
             renderQuestions();
         }
-        function renameConditionalParents(oldId, newId) {
+        function newQuestionUid() {
+            let uid;
+            do {
+                uid = 'q_' + Math.random().toString(36).slice(2, 10);
+            } while (questions.some(q => q.__uid === uid));
+            return uid;
+        }
+        function initializeConditionUids() {
+            questions.forEach(q => { if (!q.__uid) q.__uid = newQuestionUid(); });
+            const idToUid = new Map(questions.filter(q => q.id).map(q => [q.id, q.__uid]));
             questions.forEach(q => eachCondition(q, rule => {
-                if (rule.depends_on_question_id === oldId) rule.depends_on_question_id = newId;
+                if (!rule.depends_on_uid || !questions.some(p => p.__uid === rule.depends_on_uid)) {
+                    rule.depends_on_uid = idToUid.get(rule.depends_on_question_id) || '';
+                }
             }));
         }
         function updateQuestionId(idx, newId) {
             const q = questions[idx];
             if (!q) return;
-            const oldId = q.id || '';
-            const trimmed = (newId || '').trim();
-            // Remember the first id of this question. Typing after select-all/clear
-            // produces an empty intermediate id; without the original we would lose
-            // track of the condition references that still point at the old id.
-            if (!q.__originalId) q.__originalId = oldId;
-            q.id = trimmed;
-            if (!trimmed) return;
-            if (oldId && oldId !== trimmed) renameConditionalParents(oldId, trimmed);
-            if (q.__originalId && q.__originalId !== trimmed) renameConditionalParents(q.__originalId, trimmed);
+            // Conditions are wired by __uid, so the visible id can change freely.
+            q.id = (newId || '').trim();
         }
         function syncQuestionId(idx) {
             const q = questions[idx];
             if (!q) return;
-            const oldId = q.id;
             const titleSlug = slugifyText(q.title);
             if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {
                 q.id = `${titleSlug}_${idx + 1}`;
                 const idInput = document.getElementById(`qid_${idx}`);
                 if (idInput) idInput.value = q.id;
-                if (oldId && q.id !== oldId) renameConditionalParents(oldId, q.id);
             }
         }
         function removeQuestion(idx) {
@@ -464,7 +466,7 @@
                 questions.forEach(q => {
                     if (Array.isArray(q.condition_groups)) {
                         q.condition_groups = q.condition_groups
-                            .map(group => group.filter(rule => rule.depends_on_question_id !== removed.id))
+                            .map(group => group.filter(rule => rule.depends_on_uid !== removed.__uid))
                             .filter(group => group.length > 0);
                     }
                 });
@@ -493,7 +495,7 @@
         }
         function normalizeSignatureRules() {
             questions.forEach(q => eachCondition(q, rule => {
-                const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                const parent = questions.find(p => p.__uid === rule.depends_on_uid);
                 if (parent && parent.type === 'signature') {
                     rule.operator = 'not_empty';
                     rule.expected_value = [];
@@ -516,6 +518,7 @@
         }
         function defaultConditionRow(parent) {
             return {
+                depends_on_uid: parent.__uid,
                 depends_on_question_id: parent.id,
                 operator: parent.type === 'signature' ? 'not_empty' : 'equals',
                 expected_value: parent.type === 'signature' ? [] : (questionHasOptions(parent) ? [firstOptionValue(parent)] : [])
@@ -553,8 +556,8 @@
         function setConditionalParent(idx, gidx, cidx, value) {
             const rule = questions[idx]?.condition_groups?.[gidx]?.[cidx];
             if (!rule) return;
-            rule.depends_on_question_id = value;
-            const parent = questions.find(p => p.id === value);
+            rule.depends_on_uid = value;
+            const parent = questions.find(p => p.__uid === value);
             if (parent && parent.type === 'signature') {
                 rule.operator = 'not_empty';
                 rule.expected_value = [];
@@ -606,7 +609,7 @@
             q.consent_accept_values = String(text).split('\n').map(v => v.trim()).filter(v => v !== '');
         }
         function renderConditionalRowHtml(idx, gidx, rule, cidx, priorQuestions) {
-            const parentQ = questions.find(p => p.id === rule.depends_on_question_id);
+            const parentQ = questions.find(p => p.__uid === rule.depends_on_uid);
             const isSignatureParent = Boolean(parentQ && parentQ.type === 'signature');
             const op = isSignatureParent ? 'not_empty' : (rule.operator || 'equals');
             const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
@@ -645,7 +648,7 @@
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Câu hỏi phụ thuộc</label>
                         <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${gidx}, ${cidx}, this.value)">
                             ${priorQuestions.map((p, pIdx) => `
-                                <option value="${escapeHtml(p.id)}" ${p.id === rule.depends_on_question_id ? 'selected' : ''}>${escapeHtml(p.title || p.id)}</option>
+                                <option value="${escapeHtml(p.__uid)}" ${p.__uid === rule.depends_on_uid ? 'selected' : ''}>${escapeHtml(p.title || p.id)}</option>
                             `).join('')}
                         </select>
                     </div>
@@ -1184,14 +1187,14 @@
         }
 
         function collectDanglingConditionRefs() {
-            const ids = new Set(questions.map(q => (q.id || '').trim()).filter(Boolean));
+            const uids = new Set(questions.map(q => q.__uid).filter(Boolean));
             const dangling = [];
             questions.forEach(q => {
                 (q.condition_groups || []).forEach(group => {
                     (group || []).forEach(rule => {
-                        const parentId = rule && rule.depends_on_question_id;
-                        if (parentId && !ids.has(parentId)) {
-                            dangling.push({ questionId: q.id || '(chua dat ma)', missingId: parentId });
+                        const parentUid = rule && rule.depends_on_uid;
+                        if (parentUid && !uids.has(parentUid)) {
+                            dangling.push({ questionId: q.id || '(chua dat ma)' });
                         }
                     });
                 });
@@ -1222,8 +1225,8 @@
             }
             const dangling = collectDanglingConditionRefs();
             if (dangling.length) {
-                const detail = dangling.slice(0, 5).map(d => `câu '${d.questionId}' -> '${d.missingId}'`).join('; ');
-                alert("Điều kiện hiển thị đang trỏ tới câu hỏi không tồn tại: " + detail +
+                const detail = dangling.slice(0, 5).map(d => `câu '${d.questionId}'`).join('; ');
+                alert("Điều kiện hiển thị đang trỏ tới câu hỏi không còn tồn tại (có thể đã bị xóa): " + detail +
                       ". Vui lòng chọn lại câu hỏi phụ thuộc hoặc xóa điều kiện rồi lưu lại.");
                 switchTab('questions');
                 return;
@@ -1254,27 +1257,30 @@
                 },
                 questions: questions.map(q => {
                     const cleanQ = { ...q, required: q.required !== false };
+                    const uidToId = new Map(questions.map(p => [p.__uid, (p.id || '').trim()]));
                     const groups = (q.condition_groups || [])
                         .map(group => group
-                            .filter(rule => rule.depends_on_question_id)
                             .map(rule => {
-                                const parent = questions.find(p => p.id === rule.depends_on_question_id);
+                                const parentId = uidToId.get(rule.depends_on_uid) || '';
+                                if (!parentId) return null;
+                                const parent = questions.find(p => p.__uid === rule.depends_on_uid);
                                 if (parent && parent.type === 'signature') {
-                                    return { depends_on_question_id: rule.depends_on_question_id, operator: 'not_empty', expected_value: null };
+                                    return { depends_on_question_id: parentId, operator: 'not_empty', expected_value: null };
                                 }
                                 return {
-                                    depends_on_question_id: rule.depends_on_question_id,
+                                    depends_on_question_id: parentId,
                                     operator: rule.operator || 'equals',
                                     expected_value: (rule.operator === 'empty' || rule.operator === 'not_empty')
                                         ? null
                                         : (Array.isArray(rule.expected_value) ? rule.expected_value : [])
                                 };
-                            }))
+                            })
+                            .filter(Boolean))
                         .filter(group => group.length > 0);
                     if (groups.length) cleanQ.condition_groups = groups; else delete cleanQ.condition_groups;
                     delete cleanQ.conditionals;
                     delete cleanQ.conditional;
-                    delete cleanQ.__originalId;
+                    delete cleanQ.__uid;
                     if (cleanQ.is_consent_gate) {
                         cleanQ.consent_accept_values = (q.type === 'signature' ? [] : (q.consent_accept_values || []))
                             .map(v => String(v).trim())
@@ -1385,6 +1391,7 @@
                         else if (typeof values === 'string') values = op === 'in' ? values.split(',') : values.split('\n');
                         else values = [String(values)];
                         return {
+                            depends_on_uid: rule.depends_on_uid || '',
                             depends_on_question_id: rule.depends_on_question_id || '',
                             operator: op,
                             expected_value: values.map(v => String(v).trim()).filter(v => v !== '')
@@ -1401,6 +1408,8 @@
         window.addEventListener('DOMContentLoaded', () => {
             applyEditorI18n();
             normalizeConditionals();
+            initializeConditionUids();
+            normalizeSignatureRules();
             hydrateEditorFromSchema();
             renderQuestions();
         });
