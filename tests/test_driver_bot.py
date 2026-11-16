@@ -22,7 +22,7 @@ async def test_driver_bot_start_standard(driver_runner):
         mock_send.assert_awaited_once()
         text = mock_send.await_args[0][1]
         markup = mock_send.await_args[1].get("reply_markup", {})
-        assert "Chào mừng bạn" in text
+        assert "Kênh Hỗ Trợ Khảo Sát" in text
         assert "keyboard" in markup
         assert any(btn.get("request_contact") for row in markup["keyboard"] for btn in row)
         assert any("Hỗ Trợ" in btn.get("text", "") for row in markup["keyboard"] for btn in row)
@@ -133,33 +133,29 @@ async def test_driver_bot_prevent_duplicate_active_and_cancel(driver_runner):
         assert 601 not in driver_runner.active_appeals
 
 @pytest.mark.asyncio
-async def test_driver_bot_privacy_scrub_prompt(driver_runner):
-    """Driver /privacy prompt displays Decree 13 notice and confirmation buttons."""
+async def test_driver_bot_removed_privacy_command_falls_back(driver_runner):
+    """The /privacy command was removed from the CTV bot."""
     mock_send = AsyncMock()
     with patch.object(driver_runner, "send_message", mock_send):
-        await driver_runner.handle_decree13_scrub(chat_id=666, user_id=666)
+        await driver_runner.handle_driver_command(
+            chat_id=666, user_id=666, text="/privacy", from_user={"first_name": "CTV"}
+        )
         mock_send.assert_awaited_once()
-        text = mock_send.await_args[0][1]
-        markup = mock_send.await_args[1].get("reply_markup", {})
-        assert "Nghị định 13/2023/NĐ-CP" in text
-        assert "inline_keyboard" in markup
-        assert any(btn.get("callback_data") == "driver_confirm_scrub" for row in markup["inline_keyboard"] for btn in row)
+        assert "Nghị định 13" not in mock_send.await_args[0][1]
+        assert "Bạn cần hỗ trợ gì?" in mock_send.await_args[0][1]
+
 
 @pytest.mark.asyncio
-async def test_driver_bot_forms_clean_no_promo_bullets(driver_runner):
-    """Forms command provides clean links without promotional feature advertising."""
+async def test_driver_bot_removed_forms_command_falls_back(driver_runner):
+    """The /forms command was removed from the CTV bot."""
     mock_send = AsyncMock()
     with patch.object(driver_runner, "send_message", mock_send):
         await driver_runner.handle_driver_command(
             chat_id=777, user_id=777, text="/forms", from_user={"first_name": "CTV Test"}
         )
         mock_send.assert_awaited_once()
-        text = mock_send.await_args[0][1]
-        assert "Biểu Mẫu Khảo Sát Đang Mở" in text
-        assert "https://survey.trustbridgevn.com/forms/" in text
-        # Must NOT contain advertising marketing bullets
-        assert "chống rung" not in text
-        assert "tính cước bằng AI" not in text
+        assert "Biểu Mẫu Khảo Sát Đang Mở" not in mock_send.await_args[0][1]
+        assert "Bạn cần hỗ trợ gì?" in mock_send.await_args[0][1]
 
 
 @pytest.mark.asyncio

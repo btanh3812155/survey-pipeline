@@ -229,20 +229,27 @@ class TelegramPollingRunner:
                         timeout=30.0,
                     )
 
-                images_res, data_res = await asyncio.gather(
-                    send_images(), send_data(), return_exceptions=True
-                )
+                # Strict order: images first, then the data message so the
+                # approve/reject buttons always sit under the data response.
                 ids = []
-                if isinstance(images_res, Exception) or getattr(images_res, "status_code", None) != 200:
-                    logger.error(f"Dossier media group send failed: {images_res}")
-                else:
-                    ids = [m.get("message_id") for m in (images_res.json().get("result") or [])]
-                if isinstance(data_res, Exception) or getattr(data_res, "status_code", None) != 200:
-                    logger.error(f"Dossier txt send failed: {data_res}")
-                else:
-                    doc_msg = data_res.json().get("result") or {}
-                    if doc_msg.get("message_id"):
-                        ids.append(doc_msg["message_id"])
+                try:
+                    images_res = await send_images()
+                    if getattr(images_res, "status_code", None) != 200:
+                        logger.error(f"Dossier media group send failed: {images_res}")
+                    else:
+                        ids = [m.get("message_id") for m in (images_res.json().get("result") or [])]
+                except Exception as images_err:
+                    logger.error(f"Dossier media group send failed: {images_err}")
+                try:
+                    data_res = await send_data()
+                    if getattr(data_res, "status_code", None) != 200:
+                        logger.error(f"Dossier txt send failed: {data_res}")
+                    else:
+                        doc_msg = data_res.json().get("result") or {}
+                        if doc_msg.get("message_id"):
+                            ids.append(doc_msg["message_id"])
+                except Exception as data_err:
+                    logger.error(f"Dossier txt send failed: {data_err}")
                 if not ids:
                     return False
             self.prompt_registry[key] = [mid for mid in ids if mid]
@@ -872,7 +879,10 @@ class TelegramPollingRunner:
                 form_id=form_id,
                 recipient_kind=recipient_kind,
             )
-            logger.info(f"Dispatched decision verdict for #{clean_sub_id} to CTV ({collab_id}) and driver ({driver_phone})")
+            logger.info(
+                f"Dispatched decision verdict for #{clean_sub_id} to {recipient_kind} "
+                f"({recipient}) and driver ({driver_phone}); collab on record: {collab_id}"
+            )
         except Exception as e:
             logger.error(f"Failed to dispatch decision notification for #{clean_sub_id}: {e}")
     async def close_active_support(
@@ -1114,9 +1124,33 @@ class TelegramPollingRunner:
             await asyncio.sleep(3.0)
             return 0
 
+    async def configure_bot_commands(self) -> None:
+        """Registers the CTV bot command menu (no /forms, no /privacy)."""
+        if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
+            return
+        commands = [
+            {"command": "start", "description": "Bắt đầu / liên kết CTV"},
+            {"command": "surveys", "description": "Khảo sát của tôi"},
+            {"command": "appeal", "description": "Phúc khảo một phiếu"},
+            {"command": "support", "description": "Yêu cầu hỗ trợ"},
+            {"command": "help", "description": "Hướng dẫn sử dụng"},
+            {"command": "close", "description": "Kết thúc phiên hỗ trợ"},
+        ]
+        try:
+            client = await self.get_client()
+            await client.post(
+                f"https://api.telegram.org/bot{self.bot_token}/setMyCommands",
+                json={"commands": commands},
+                timeout=10.0,
+            )
+        except Exception as e:
+            logger.debug(f"setMyCommands failed: {e}")
+
     async def start_polling(self) -> None:
         """Main long-polling loop."""
         self.is_running = True
+        if self.role == "driver":
+            await self.configure_bot_commands()
         masked = f"{self.bot_token[:8]}...{self.bot_token[-4:]}" if self.bot_token and len(self.bot_token) > 12 else "(none)"
         logger.info(f"[{self.role.upper()} BOT] Long-polling runner started (token={masked})")
         try:
@@ -1929,6 +1963,18 @@ class DriverBotRunner(TelegramPollingRunner):
                 await self.answer_callback_query(cq_id, f"Đã gửi yêu cầu hỗ trợ cho #{sub_id}")
             else:
                 await self.answer_callback_query(cq_id)
+
+
+async def configure_driver_bot_menu() -> None:
+    """Registers the CTV bot command menu at app startup (webhook deployment path)."""
+    token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
+    if not token or token.lower() in ("mock_tg_token", "mock", "none", ""):
+        return
+    runner = DriverBotRunner(bot_token=token)
+    try:
+        await runner.configure_bot_commands()
+    finally:
+        await runner.aclose()
 
 
 async def run_polling_loop() -> None:

@@ -131,6 +131,13 @@ async def lifespan(app: FastAPI):
     # 4. Seed media directory
     seed_media_storage()
 
+    # 5. Register the CTV bot command menu (webhook mode never calls start_polling)
+    try:
+        from services.telegram_polling import configure_driver_bot_menu
+        await configure_driver_bot_menu()
+    except Exception as e:
+        logger.debug(f"Driver bot command menu setup failed: {e}")
+
     yield
 
     # Teardown resources

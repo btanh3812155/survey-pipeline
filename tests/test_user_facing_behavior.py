@@ -620,7 +620,7 @@ def test_description_image_links_embed_preview_and_open_fullscreen_view():
 
     # Inline preview is scaled down and appended below the link's text line
     assert ".desc-inline-preview" in html
-    assert "max-height: 180px" in html
+    assert "height: 180px" in html
     assert "lineBreak.parentElement.insertBefore(img, lineBreak.nextSibling);" in html
 
     # Full view has a back button and closes on backdrop click
@@ -817,8 +817,8 @@ def test_admin_viewers_fetch_from_apis_instead_of_missing_placeholders():
 
 
 @pytest.mark.asyncio
-async def test_dossier_bundle_dispatches_images_and_data_concurrently():
-    """Image media group + raw-data txt are both ready before dispatch and sent in parallel."""
+async def test_dossier_bundle_sends_data_after_images():
+    """Images go first, then the data message, so buttons always sit at the bottom."""
     import asyncio, json, os, tempfile
     from PIL import Image
     from services.telegram_polling import TelegramPollingRunner
@@ -868,9 +868,9 @@ async def test_dossier_bundle_dispatches_images_and_data_concurrently():
         review_keyboard,
     )
     assert ok
-    assert max_active >= 2, "images and data were not dispatched concurrently"
+    assert max_active == 1, "images and data must be sent sequentially"
     methods = [c[0] for c in calls]
-    assert "sendMediaGroup" in methods and "sendDocument" in methods
+    assert methods.index("sendMediaGroup") < methods.index("sendDocument")
     data_call = [c for c in calls if c[0] == "sendDocument"][0]
     assert "reply_to_message_id" not in data_call[1]
     # approve/reject keyboard must ride on the data message
@@ -938,3 +938,78 @@ def test_editor_exposes_tg_response_source_setting():
     assert 'value="none"' in src and 'value="ctv"' in src and 'value="question"' in src
     assert "tg_response_source:" in src
     assert "tg_response_question_id:" in src
+
+
+@pytest.mark.asyncio
+async def test_ctv_bot_command_menu_excludes_forms_and_privacy():
+    from services.telegram_polling import DriverBotRunner
+
+    runner = DriverBotRunner(bot_token="123:abc")
+    payloads = []
+    class Resp:
+        status_code = 200
+        text = ""
+        def json(self): return {"ok": True}
+    class Client:
+        async def post(self, url, json=None, timeout=None):
+            payloads.append((url, json))
+            return Resp()
+    async def get_client(): return Client()
+    runner.get_client = get_client
+
+    await runner.configure_bot_commands()
+    url, payload = payloads[0]
+    names = [c["command"] for c in payload["commands"]]
+    assert url.endswith("/setMyCommands")
+    assert "forms" not in names and "privacy" not in names
+    assert {"start", "surveys", "appeal", "support", "help", "close"} == set(names)
+
+
+@pytest.mark.asyncio
+async def test_submission_notification_uses_configured_question_source():
+    import io, os, shutil
+    from unittest.mock import AsyncMock, patch
+    from PIL import Image
+    from main import FORM_REGISTRY
+    from services.form_engine import (
+        FormSchema, FormQuestion, FormSettings, QuestionType, ImageCheckConfig,
+    )
+
+    fid = "SIM_TG_SUBMIT_SRC"
+    FORM_REGISTRY[fid] = FormSchema(
+        form_id=fid, title="TG submit source", settings=FormSettings(
+            decree13_required=False, is_test_mode=True,
+            tg_response_source="question", tg_response_question_id="phone_q",
+            image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=False)),
+        questions=[
+            FormQuestion(id="phone_q", title="So dien thoai", type=QuestionType.TEXT, required=False),
+            FormQuestion(id="cam", title="Anh", type=QuestionType.CAMERA_WEBRTC, required=True,
+                image_slots=[{"slot": 0, "title": "A", "required": True}],
+                min_images=1, max_images=1, exact_image_count=1),
+        ],
+    )
+    buf = io.BytesIO(); Image.new("RGB", (80, 80), (20, 90, 150)).save(buf, format="JPEG")
+
+    captured = {}
+    async def fake_dispatch(**kwargs):
+        captured.update(kwargs)
+
+    sub_id = None
+    try:
+        with patch("routers.survey.dispatch_submission_telegram_notifications", side_effect=fake_dispatch), \
+             patch("main.dispatch_submission_telegram_notifications", side_effect=fake_dispatch), \
+             patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
+            body = TestClient(app).post(
+                "/api/v1/survey/submit-webrtc",
+                data={"form_id": fid, "is_test_mode": "true", "bypass_img_check": "true",
+                      "phone_q": "0961281310", "cam_0": "uploaded_0"},
+                files={"cam__file_0": ("a.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")},
+            ).json()
+        sub_id = body.get("submission_id") or (body.get("data") or {}).get("submission_id")
+        assert captured.get("collaborator_id") == "0961281310", captured
+        assert captured.get("recipient_kind") == "driver"
+    finally:
+        if sub_id:
+            shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
+        FORM_REGISTRY.pop(fid, None)

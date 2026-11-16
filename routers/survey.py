@@ -1423,22 +1423,38 @@ async def submit_webrtc_survey(
         except Exception as tg_err:
             logger.error(f"Failed to dispatch Telegram notification to admin group: {tg_err}")
 
-    # 5. Direct Telegram DMs to Driver / Collaborator if linked
+    # 5. Direct Telegram DMs to the configured verdict recipient
+    #    (none / owning CTV / answer of a chosen question such as driver phone)
     try:
-        import sys
-        main_mod = sys.modules.get("main")
-        _dispatch_fn = getattr(main_mod, "dispatch_submission_telegram_notifications", dispatch_submission_telegram_notifications) if main_mod else dispatch_submission_telegram_notifications
-        background_tasks.add_task(
-            _dispatch_fn,
-            submission_id=submission_id,
-            status_str=status_str,
-            driver_phone=driver_phone,
-            driver_name=driver_name,
-            collaborator_id=collab_param,
-            reason_str=reason_str,
-            gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
-            form_id=active_form_id,
-        )
+        notify_schema = FORM_REGISTRY.get(active_form_id)
+        notify_settings = getattr(notify_schema, "settings", None) if notify_schema else None
+        notify_source = (getattr(notify_settings, "tg_response_source", None) or "ctv").lower()
+        notify_recipient = collab_param
+        notify_kind = "ctv"
+        if notify_source == "question":
+            notify_qid = getattr(notify_settings, "tg_response_question_id", None)
+            notify_recipient = answers.get(notify_qid) if notify_qid else None
+            notify_kind = "driver"
+        if notify_source == "none":
+            logger.info(f"TG response disabled for form '{active_form_id}'; skipping submission notification for #{submission_id}.")
+        elif not notify_recipient:
+            logger.info(f"No TG response recipient for #{submission_id} (source={notify_source}); skipping.")
+        else:
+            import sys
+            main_mod = sys.modules.get("main")
+            _dispatch_fn = getattr(main_mod, "dispatch_submission_telegram_notifications", dispatch_submission_telegram_notifications) if main_mod else dispatch_submission_telegram_notifications
+            background_tasks.add_task(
+                _dispatch_fn,
+                submission_id=submission_id,
+                status_str=status_str,
+                driver_phone=driver_phone,
+                driver_name=driver_name,
+                collaborator_id=notify_recipient,
+                reason_str=reason_str,
+                gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
+                form_id=active_form_id,
+                recipient_kind=notify_kind,
+            )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
     resp_data = {
@@ -1864,9 +1880,19 @@ async def dispatch_submission_telegram_notifications(
         collab_msg += f"\n\n🔁 <b>Nộp lại / mở biểu mẫu:</b> {link}"
     footer = "Tài xế" if recipient_kind == "driver" else "Cộng tác viên phụ trách"
     collab_msg += f"\n\n<i>Thông báo tự động dành cho {footer}.</i>"
-    await _send_direct(
+    sent = await _send_direct(
         bot_token=driver_bot_token,
         chat_id=collab_tg_id,
         text=collab_msg,
     )
+    if sent:
+        logger.info(
+            f"TG verdict sent for #{submission_id} to {recipient_kind} telegram_id={collab_tg_id} "
+            f"(recipient={collaborator_id}, status={status_str})."
+        )
+    else:
+        logger.error(
+            f"TG verdict send FAILED for #{submission_id} to {recipient_kind} telegram_id={collab_tg_id} "
+            f"(recipient={collaborator_id}); user may not have started the driver bot."
+        )
 
