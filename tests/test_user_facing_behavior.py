@@ -63,7 +63,7 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
         json.dump(dev_records, f)
 
     sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None):
+    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
         sent_msgs.append({"text": text, "reply_markup": reply_markup})
     runner.send_message = mock_send
 
@@ -472,14 +472,16 @@ async def test_simulated_user_bypass_checkbox_toggle_not_sticky(monkeypatch):
     assert resp_unbypassed.json().get("status") == "REJECTED"
 
 
-def test_simulated_user_multi_image_upload_stays_on_slot_without_camera():
+def test_simulated_user_gallery_upload_keeps_camera_off_and_advances_slot():
     """
-    Simulates user choosing file from gallery:
-    Verifies that slot selection keeps camera off and stays on slot (no auto-jump, no camera turn-on).
+    Simulates user choosing files from the gallery:
+    slot selection keeps the camera off (shouldActivateCamera = false) and advances
+    to the next uncaptured slot instead of auto-starting the camera.
     """
     html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
-    assert "selectCameraSlot(qid, targetIdx, false)" in html
     assert "shouldActivateCamera = false" in html
+    assert "function advanceToNextUncapturedSlot(qid)" in html
+    assert "activeSlotByQId[qid] = targetIdx;" in html
 
 
 def test_simulated_user_ctv_draft_isolation_client_only():
@@ -510,7 +512,7 @@ async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
         json.dump([{"submission_id": "VN-SWIPE-99", "status": "MANUAL_REVIEW"}], f)
 
     sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None):
+    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
         sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
     runner.send_message = mock_send
 
@@ -535,7 +537,7 @@ async def test_simulated_admin_menu_check_alone_prefills_input_box():
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
 
     sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None):
+    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
         sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
     runner.send_message = mock_send
 
@@ -594,3 +596,120 @@ async def test_simulated_admin_decision_cancel_flow():
     with open(dev_storage_file, "r", encoding="utf-8") as f:
         recs = json.load(f)
     assert recs[0]["status"] == "MANUAL_REVIEW"
+
+
+# ==============================================================================
+# 6. Image links: inline preview + fullscreen viewer (no new tab / download)
+# ==============================================================================
+
+def test_description_image_links_embed_preview_and_open_fullscreen_view():
+    """Image URLs in a description expand inline; clicking the preview opens a full-viewport viewer."""
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    # Image URLs are rendered as expandable links, not new-tab downloads
+    assert "function isImageUrl(url)" in html
+    assert 'onclick="return showInlineDescriptionImage(event, this)"' in html
+    assert "data-img-src" in html
+    assert "target=\"_blank\"" in html  # non-image links keep new-tab behavior
+    assert "if (isImageUrl(url)) return imageLinkHtml(url, escapeHtml(label));" in html
+
+    # Inline preview is scaled down and appended below the link's text line
+    assert ".desc-inline-preview" in html
+    assert "max-height: 180px" in html
+    assert "lineBreak.parentElement.insertBefore(img, lineBreak.nextSibling);" in html
+
+    # Full view has a back button and closes on backdrop click
+    assert "function openImageFullView(src)" in html
+    assert "function closeImageFullView()" in html
+    assert "img-fullview-back" in html
+    assert "e.target === overlay" in html
+
+
+# ==============================================================================
+# 7. Upload auto-advance and list-based choice option editing
+# ==============================================================================
+
+def test_photo_upload_advances_to_next_uncaptured_slot():
+    """Uploading photos advances the active slot like live camera capture does."""
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    assert "function advanceToNextUncapturedSlot(qid)" in html
+    # Definition + single-file branch + multi-file branch
+    assert html.count("advanceToNextUncapturedSlot(") >= 3
+    assert "activeSlotByQId[qid] = targetIdx;" in html
+    assert "uploadableSlots[startPos + maxFill - 1].idx" in html
+
+
+def test_editor_choice_options_use_add_remove_list():
+    """single_choice/dropdown options are edited as rows, not a comma-separated string."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "static" / "ui" / "form_editor.html").read_text(encoding="utf-8")
+    assert "renderChoiceOptionsBuilder(q, idx)" in src
+    assert "function addChoiceOption(idx)" in src
+    assert "function removeChoiceOption(idx, oi)" in src
+    assert "split(',').map(s=>s.trim())" not in src
+    assert "phân cách bằng dấu phẩy" not in src
+
+
+# ==============================================================================
+# 8. Order-agnostic image object coverage
+# ==============================================================================
+
+def test_image_object_coverage_is_order_agnostic():
+    """Profile/income objects are matched by role, not upload position."""
+    import io
+    from unittest.mock import AsyncMock, patch
+    from PIL import Image
+    from main import FORM_REGISTRY
+    from services.form_engine import (
+        FormSchema, FormQuestion, FormSettings, QuestionType, ImageCheckConfig,
+    )
+
+    def jpeg_bytes():
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 300), (30, 160, 180)).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    form_id = "SIM-COVERAGE-ORDER"
+    FORM_REGISTRY[form_id] = FormSchema(
+        form_id=form_id,
+        title="Coverage Order Simulation",
+        settings=FormSettings(
+            decree13_required=False,
+            is_test_mode=True,
+            image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=True),
+        ),
+        questions=[FormQuestion(
+            id="q_cam", title="Anh", type=QuestionType.CAMERA_WEBRTC, required=True,
+            image_slots=[
+                {"slot": 0, "title": "Ho so", "role": "app_profile", "required": True},
+                {"slot": 1, "title": "Thu nhap", "role": "app_income", "required": True},
+            ],
+            min_images=2, max_images=2, exact_image_count=2,
+        )],
+    )
+
+    client = TestClient(app)
+    data = {"form_id": form_id, "is_test_mode": "true", "bypass_img_check": "false",
+            "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
+    with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+         patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+         patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+         patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
+        try:
+            # Profile/income uploaded in reverse order must still pass coverage
+            reversed_files = [
+                ("survey_photo_0", ("income.jpg", io.BytesIO(jpeg_bytes()), "image/jpeg")),
+                ("survey_photo_1", ("profile.jpg", io.BytesIO(jpeg_bytes()), "image/jpeg")),
+            ]
+            body = client.post("/api/v1/survey/submit-webrtc", data=data, files=reversed_files).json()
+            assert "Thiếu ảnh" not in (body.get("reason") or ""), body
+
+            # Two income shots and no profile must fail coverage by object type
+            missing_files = [
+                ("survey_photo_0", ("income.jpg", io.BytesIO(jpeg_bytes()), "image/jpeg")),
+                ("survey_photo_1", ("income2.jpg", io.BytesIO(jpeg_bytes()), "image/jpeg")),
+            ]
+            body = client.post("/api/v1/survey/submit-webrtc", data=data, files=missing_files).json()
+            assert "Thiếu ảnh đúng loại" in (body.get("reason") or ""), body
+        finally:
+            FORM_REGISTRY.pop(form_id, None)

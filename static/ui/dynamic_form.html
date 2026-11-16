@@ -307,6 +307,54 @@
             border: 1px solid var(--border);
             display: block;
         }
+        .desc-inline-preview {
+            max-width: 100%;
+            max-height: 180px;
+            width: auto;
+            object-fit: contain;
+            display: block;
+            margin: 8px 0;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #0b1220;
+            cursor: zoom-in;
+        }
+        .img-fullview {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(2, 6, 23, 0.94);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .img-fullview img {
+            max-width: 96vw;
+            max-height: 92vh;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            border-radius: 6px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        }
+        .img-fullview-back {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 10001;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 14px;
+            border-radius: 999px;
+            border: 1px solid #38bdf8;
+            background: rgba(15, 23, 42, 0.9);
+            color: #7dd3fc;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
         .q-tooltip-circle-btn {
             display: inline-flex;
             align-items: center;
@@ -1194,26 +1242,102 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function isImageUrl(url) {
+            if (!url) return false;
+            const clean = String(url).split('#')[0].split('?')[0];
+            if (/\/media\//.test(clean)) return true;
+            return /\.(png|jpe?g|webp|gif|bmp|avif|svg|heic|heif)$/i.test(clean);
+        }
+
+        function imageLinkHtml(url, label) {
+            const safeUrl = escapeHtml(url);
+            return `<a href="${safeUrl}" class="desc-img-link" data-img-src="${safeUrl}" onclick="return showInlineDescriptionImage(event, this)">${label}</a>`;
+        }
+
         function formatRichDescription(text) {
             if (!text) return '';
             let raw = String(text);
-            
-            // 1. Markdown Images: ![alt](url) -> <img ...>
+
+            // 1. Markdown Images: ![alt](url) -> inline, click opens full view
             raw = raw.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (match, alt, url) => {
-                return `<img src="${url}" alt="${escapeHtml(alt || '')}" class="q-desc-img" loading="lazy">`;
+                return `<img src="${url}" alt="${escapeHtml(alt || '')}" class="q-desc-img" style="cursor:zoom-in;" loading="lazy" onclick="openImageFullView(this.src)">`;
             });
 
-            // 2. Markdown Links: [label](url) -> <a ...>
+            // 2. Markdown Links: image links expand inline, other links keep new-tab behavior
             raw = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label, url) => {
+                if (isImageUrl(url)) return imageLinkHtml(url, escapeHtml(label));
                 return `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
             });
 
             // 3. Raw URLs (not already part of an href or src)
             raw = raw.replace(/(^|[^"'])(https?:\/\/[^\s<)]+)/g, (match, prefix, url) => {
+                if (isImageUrl(url)) return `${prefix}${imageLinkHtml(url, escapeHtml(url))}`;
                 return `${prefix}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
             });
 
+            // 4. Raw media paths served by this app
+            raw = raw.replace(/(^|[^"'])(\/media\/[^\s<)"']+)/g, (match, prefix, url) => {
+                if (isImageUrl(url)) return `${prefix}${imageLinkHtml(url, escapeHtml(url))}`;
+                return match;
+            });
+
             return raw;
+        }
+
+        function showInlineDescriptionImage(event, link) {
+            if (event) { event.preventDefault(); event.stopPropagation(); }
+            const src = link.getAttribute('data-img-src') || link.getAttribute('href');
+            if (!src) return false;
+            const container = link.closest('.q-desc') || link.parentElement;
+            if (!container) return false;
+            const previous = container.querySelector('.desc-inline-preview');
+            if (previous) previous.remove();
+            const img = document.createElement('img');
+            img.className = 'desc-inline-preview';
+            img.src = src;
+            img.alt = link.textContent || 'Anh';
+            img.loading = 'lazy';
+            img.onclick = (e) => { e.stopPropagation(); openImageFullView(src); };
+            let lineBreak = null;
+            for (const br of container.querySelectorAll('br')) {
+                if (link.compareDocumentPosition(br) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                    lineBreak = br;
+                    break;
+                }
+            }
+            if (lineBreak) {
+                lineBreak.parentElement.insertBefore(img, lineBreak.nextSibling);
+            } else {
+                container.appendChild(img);
+            }
+            return false;
+        }
+
+        function openImageFullView(src) {
+            if (!src) return;
+            closeImageFullView();
+            const overlay = document.createElement('div');
+            overlay.id = 'imgFullView';
+            overlay.className = 'img-fullview';
+            overlay.innerHTML = `
+                <button type="button" class="img-fullview-back" onclick="closeImageFullView()" aria-label="Quay lai">&#8592; Quay lai</button>
+                <img src="${escapeHtml(src)}" alt="Anh xem toan man hinh">
+            `;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeImageFullView(); });
+            document.body.appendChild(overlay);
+            document.body.style.overflow = 'hidden';
+            document.addEventListener('keydown', imageFullViewEscHandler);
+        }
+
+        function imageFullViewEscHandler(e) {
+            if (e.key === 'Escape') closeImageFullView();
+        }
+
+        function closeImageFullView() {
+            const overlay = document.getElementById('imgFullView');
+            if (overlay) overlay.remove();
+            document.body.style.overflow = '';
+            document.removeEventListener('keydown', imageFullViewEscHandler);
         }
 
         function applyI18n() {
