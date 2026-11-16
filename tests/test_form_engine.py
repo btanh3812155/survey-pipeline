@@ -606,3 +606,32 @@ def test_multiple_choice_option_groups_and_mutual_exclusivity():
     is_valid, err = validate_submission_against_schema(custom_schema, incompat_answers_2)
     assert is_valid is False
     assert "Các lựa chọn thuộc nhóm đối lập không thể cùng được chọn!" in err
+
+
+def test_submit_validates_against_submitted_form_only(monkeypatch):
+    """A submission must never be validated against the default form's questions."""
+    monkeypatch.setenv("MOCK_AI", "1")
+    from main import app, FORM_REGISTRY
+    from services.form_engine import FormSchema as _FS, FormQuestion as _FQ, FormSettings as _FSet, QuestionType as _QT
+
+    form_id = "unit_required_form"
+    FORM_REGISTRY[form_id] = _FS(
+        form_id=form_id,
+        title="Unit Required Form",
+        settings=_FSet(decree13_required=False, is_test_mode=True),
+        questions=[_FQ(id="q_req", title="Bắt buộc thử", type=_QT.TEXT, required=True)],
+    )
+    client = TestClient(app)
+    common = {"is_test_mode": "true", "bypass_img_check": "true"}
+
+    resp = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={"form_id": form_id, **common},
+    )
+    body = resp.json()
+    assert "Bắt buộc thử" in (body.get("reason") or ""), body
+    assert "Cam kết thông tin" not in (body.get("reason") or "")
+
+    legacy = client.post("/api/v1/survey/submit-webrtc", data=common)
+    legacy_reason = legacy.json().get("reason") or ""
+    assert "Cam kết thông tin" not in legacy_reason

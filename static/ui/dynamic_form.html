@@ -2941,6 +2941,7 @@
             });
 
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
+            formData.append('form_id', SCHEMA.form_id || 'income_survey');
             clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             formData.append('idempotency_key', clientSubmissionId);
             formData.append('bypass_img_check', shouldBypass ? 'true' : 'false');

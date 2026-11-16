@@ -353,8 +353,13 @@ async def submit_webrtc_survey(
         or request.query_params.get("collaborator_id")
         or request.query_params.get("ctv")
     )
-    active_form_id = form_id or "income_survey"
-    schema = FORM_REGISTRY.get(active_form_id)
+    requested_form_id = (form_id or "").strip()
+    active_form_id = requested_form_id or "income_survey"
+    # Only validate against the schema the client actually submitted. A missing or
+    # unknown form_id must not silently validate against the default form.
+    schema = FORM_REGISTRY.get(requested_form_id) if requested_form_id else None
+    if requested_form_id and schema is None:
+        logger.warning(f"[SUBMIT] form_id '{requested_form_id}' is not registered; schema validation skipped.")
     target_question_id = question_id or "camera_receipt"
     target_q = next((qu for qu in schema.questions if qu.id == target_question_id), None) if schema else None
 
