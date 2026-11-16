@@ -432,10 +432,18 @@
             }));
         }
         function updateQuestionId(idx, newId) {
-            const oldId = questions[idx].id;
-            newId = (newId || '').trim();
-            questions[idx].id = newId;
-            if (oldId && newId && oldId !== newId) renameConditionalParents(oldId, newId);
+            const q = questions[idx];
+            if (!q) return;
+            const oldId = q.id || '';
+            const trimmed = (newId || '').trim();
+            // Remember the first id of this question. Typing after select-all/clear
+            // produces an empty intermediate id; without the original we would lose
+            // track of the condition references that still point at the old id.
+            if (!q.__originalId) q.__originalId = oldId;
+            q.id = trimmed;
+            if (!trimmed) return;
+            if (oldId && oldId !== trimmed) renameConditionalParents(oldId, trimmed);
+            if (q.__originalId && q.__originalId !== trimmed) renameConditionalParents(q.__originalId, trimmed);
         }
         function syncQuestionId(idx) {
             const q = questions[idx];
@@ -1175,12 +1183,49 @@
             });
         }
 
+        function collectDanglingConditionRefs() {
+            const ids = new Set(questions.map(q => (q.id || '').trim()).filter(Boolean));
+            const dangling = [];
+            questions.forEach(q => {
+                (q.condition_groups || []).forEach(group => {
+                    (group || []).forEach(rule => {
+                        const parentId = rule && rule.depends_on_question_id;
+                        if (parentId && !ids.has(parentId)) {
+                            dangling.push({ questionId: q.id || '(chua dat ma)', missingId: parentId });
+                        }
+                    });
+                });
+            });
+            return dangling;
+        }
+
         async function saveForm() {
             const formId = document.getElementById('formId').value.trim();
             const formTitle = document.getElementById('formTitle').value.trim();
             if (!formId || !formTitle) {
                 alert("Vui lòng nhập Mã Form ID và Tên biểu mẫu!");
                 switchTab('common');
+                return;
+            }
+            const ids = questions.map(q => (q.id || '').trim());
+            const emptyIdIdx = ids.findIndex(id => !id);
+            if (emptyIdIdx !== -1) {
+                alert(`Câu hỏi số ${emptyIdIdx + 1} chưa có Mã Question ID. Vui lòng nhập mã trước khi lưu.`);
+                switchTab('questions');
+                return;
+            }
+            const duplicateIds = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+            if (duplicateIds.length) {
+                alert("Mã câu hỏi bị trùng: " + duplicateIds.join(', ') + ". Vui lòng đổi mã trước khi lưu.");
+                switchTab('questions');
+                return;
+            }
+            const dangling = collectDanglingConditionRefs();
+            if (dangling.length) {
+                const detail = dangling.slice(0, 5).map(d => `câu '${d.questionId}' -> '${d.missingId}'`).join('; ');
+                alert("Điều kiện hiển thị đang trỏ tới câu hỏi không tồn tại: " + detail +
+                      ". Vui lòng chọn lại câu hỏi phụ thuộc hoặc xóa điều kiện rồi lưu lại.");
+                switchTab('questions');
                 return;
             }
 
@@ -1229,6 +1274,7 @@
                     if (groups.length) cleanQ.condition_groups = groups; else delete cleanQ.condition_groups;
                     delete cleanQ.conditionals;
                     delete cleanQ.conditional;
+                    delete cleanQ.__originalId;
                     if (cleanQ.is_consent_gate) {
                         cleanQ.consent_accept_values = (q.type === 'signature' ? [] : (q.consent_accept_values || []))
                             .map(v => String(v).trim())
@@ -1254,7 +1300,21 @@
                     alert(`Biểu mẫu '${formTitle}' đã được lưu thành công!`);
                     window.location.href = '/admin/forms';
                 } else {
-                    alert("Lỗi lưu: " + (res.detail || JSON.stringify(res)));
+                    let detailText = '';
+                    try {
+                        const errBody = await resp.json();
+                        if (Array.isArray(errBody.detail)) {
+                            detailText = errBody.detail.map(d => (d && d.msg) ? d.msg : JSON.stringify(d)).join('; ');
+                        } else if (typeof errBody.detail === 'string') {
+                            detailText = errBody.detail;
+                        } else {
+                            detailText = JSON.stringify(errBody.detail !== undefined ? errBody.detail : errBody);
+                        }
+                    } catch (e) {
+                        try { detailText = await resp.text(); } catch (e2) { detailText = ''; }
+                    }
+                    alert("Lỗi lưu (HTTP " + resp.status + "): " + (detailText || "Không rõ nguyên nhân"));
+                    switchTab('questions');
                 }
             } catch(e) {
                 alert("Lỗi kết nối máy chủ!");

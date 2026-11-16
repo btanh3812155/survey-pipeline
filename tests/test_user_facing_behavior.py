@@ -713,3 +713,28 @@ def test_image_object_coverage_is_order_agnostic():
             assert "Thiếu ảnh đúng loại" in (body.get("reason") or ""), body
         finally:
             FORM_REGISTRY.pop(form_id, None)
+
+
+def test_editor_id_rename_repairs_conditions_and_surfaces_save_errors():
+    """
+    Simulated id edit: clearing then typing a new id must retarget dependent conditions
+    (not leave them pointing at the old id, which made the server reject the save).
+    Server validation failures must be shown, not masked as a connection error.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "static" / "ui" / "form_editor.html").read_text(encoding="utf-8")
+
+    # original id is remembered across the empty intermediate state
+    assert "q.__originalId" in src
+    assert "if (q.__originalId && q.__originalId !== trimmed) renameConditionalParents(q.__originalId, trimmed);" in src
+
+    # pre-save checks: empty/duplicate ids and dangling condition targets
+    assert "chưa có Mã Question ID" in src
+    assert "Mã câu hỏi bị trùng" in src
+    assert "function collectDanglingConditionRefs()" in src
+    assert "trỏ tới câu hỏi không tồn tại" in src
+
+    # server detail is surfaced with the HTTP status
+    assert "Lỗi lưu (HTTP " in src
+    assert "await resp.json()" in src
+    assert "res.detail" not in src
