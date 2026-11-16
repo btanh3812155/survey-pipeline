@@ -2866,13 +2866,11 @@
                 });
             }
 
+            evaluateConditionals();
             for (let q of SCHEMA.questions) {
-                if (q.conditional) {
-                    const pVal = answers[q.conditional.depends_on_question_id];
-                    if (q.conditional.operator === 'equals' && pVal !== q.conditional.expected_value) continue;
-                }
+                const card = document.getElementById(`card_${q.id}`);
+                if (card && card.classList.contains('hidden')) continue;
 
-                // Check multi-slot camera requirements
                 // Check multi-slot camera requirements: exact count check on submit
                 if (q.type === 'camera_webrtc') {
                     const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
