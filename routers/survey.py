@@ -1088,6 +1088,7 @@ async def submit_webrtc_survey(
                 if hasattr(cur_res, "__await__"):
                     cur_res = await cur_res
                 cur = await cur_res.__aenter__() if hasattr(cur_res, "__aenter__") else cur_res
+                vault_driver_id = None
                 try:
                     if not is_dissent and persisted_phone:
                         await cur.execute(
@@ -1096,10 +1097,17 @@ async def submit_webrtc_survey(
                                 driver_id, driver_phone, driver_name
                             ) VALUES (%s, %s, %s)
                             ON CONFLICT (driver_phone) DO UPDATE
-                            SET driver_id = EXCLUDED.driver_id, driver_name = EXCLUDED.driver_name;
+                            SET driver_name = EXCLUDED.driver_name;
                             """,
                             (driver_tag, persisted_phone, persisted_name),
                         )
+                        await cur.execute(
+                            "SELECT driver_id FROM driver_identity_vault WHERE driver_phone = %s;",
+                            (persisted_phone,),
+                        )
+                        vault_row = await cur.fetchone()
+                        if vault_row and vault_row[0]:
+                            vault_driver_id = vault_row[0]
                     effective_ctv = str(collab_param or answers.get("ctv_code") or "").strip() or None
                     consent_val = str(answers.get("consent_choice") or "Tôi đồng ý")
                     calc_dhash = compute_image_dhash_str(pil_im) if pil_im is not None else None
@@ -1116,7 +1124,7 @@ async def submit_webrtc_survey(
                         reason_str if not is_approved else None,
                         json.dumps(clean_form_data),
                         json.dumps(ai_res),
-                        driver_tag if not is_dissent else None,
+                        vault_driver_id,
                         calc_dhash,
                         calc_emb_str,
                         consent_val,
@@ -1205,7 +1213,7 @@ async def submit_webrtc_survey(
                                 reason_str if not is_approved else None,
                                 json.dumps(clean_form_data),
                                 json.dumps(ai_res),
-                                driver_tag if not is_dissent else None,
+                                vault_driver_id,
                             ),
                         )
                     if license_plate and not is_dissent:
