@@ -1231,7 +1231,7 @@ async def upload_to_google_drive(
     # 3. Individual surveys are NOT uploaded directly to Google Drive.
     # Deliverables are synchronized via sync_all_approved_to_drive and scripts/sync_to_drive.py,
     # which ensures only the master data sheet and image folder are synced to Google Drive.
-    logger.info(f"📁 [DRIVE DELIVERABLES MIRROR] #{submission_id} recorded in Sheets/Master_Survey_Deliverables.csv and Images/{submission_id} (individual surveys not uploaded directly; only data sheet and image folder are synced).")
+    logger.info(f"📁 [DRIVE DELIVERABLES MIRROR] #{submission_id} recorded in Sheets/Master_Survey_Deliverables.csv, Sheets/forms/<form_id>.csv and Images/<form_id>/submissions/{submission_id} (individual surveys not uploaded directly; only data sheets and image folders are synced).")
     return True
 
 async def _sync_form_sheet(
