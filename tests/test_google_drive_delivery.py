@@ -256,7 +256,7 @@ class _FakeDriveClient:
         return None
 
     async def upload_file(self, client, token, filename, content_bytes, mime_type="application/octet-stream", parent_id=None):
-        self.uploads.append((parent_id, filename, content_bytes))
+        self.uploads.append((parent_id, filename, content_bytes, mime_type))
         return f"file_{len(self.uploads)}"
 
     async def import_csv_as_sheet(self, client, token, sheet_name, csv_bytes, parent_id=None):
@@ -294,10 +294,17 @@ def _patch_sync_env(monkeypatch, tmp_path):
         with open(gd.DEV_SUBMISSIONS_FILE, "w", encoding="utf-8") as f:
             json.dump(records, f)
 
-    def add_photo(sub_id, name="slot_0.jpg"):
+    def add_photo(sub_id, name="slot_0.jpg", image_format="WEBP"):
+        import io
+        from PIL import Image
+
         photo_dir = tmp_path / "photos" / sub_id
         photo_dir.mkdir(parents=True, exist_ok=True)
-        (photo_dir / name).write_bytes(b"photo-bytes")
+        buffer = io.BytesIO()
+        Image.new("RGB", (4, 4), (10, 20, 30)).save(buffer, format=image_format)
+        payload = buffer.getvalue()
+        (photo_dir / name).write_bytes(payload)
+        return payload
 
     return gd, write_dev, add_photo
 
@@ -314,15 +321,20 @@ def test_sync_backfills_missing_mirror_images_and_uploads_them(monkeypatch, tmp_
         "form_data": {"car_model": "VF 8"},
     }
     write_dev([record])
-    add_photo("VN-BACKFILL-OK")
+    photo_bytes = add_photo("VN-BACKFILL-OK", name="slot_0.jpg", image_format="WEBP")
 
     assert asyncio.run(gd.sync_all_approved_to_drive()) is True
 
-    mirrored = tmp_path / "Images" / "form_alpha" / "submissions" / "VN-BACKFILL-OK" / "slot_0.jpg"
-    assert mirrored.read_bytes() == b"photo-bytes"
+    mirrored = tmp_path / "Images" / "form_alpha" / "submissions" / "VN-BACKFILL-OK" / "slot_0.webp"
+    assert mirrored.read_bytes() == photo_bytes
+    assert gd.detect_image_mime(mirrored.read_bytes()) == "image/webp"
+    assert not (mirrored.parent / "slot_0.jpg").exists()
 
     client = _FakeDriveClient.instances[0]
-    assert any(name == "slot_0.jpg" and data == b"photo-bytes" for _, name, data in client.uploads)
+    assert any(
+        name == "slot_0.webp" and data == photo_bytes and mime == "image/webp"
+        for _, name, data, mime in client.uploads
+    )
     form_folder_id = client.folders[("form_alpha", "root_folder")]
     assert ("submissions", form_folder_id) in client.folders
 
@@ -342,7 +354,7 @@ def test_sync_backfill_skips_rejected_and_test_submissions(monkeypatch, tmp_path
     assert asyncio.run(gd.sync_all_approved_to_drive()) is True
 
     base = tmp_path / "Images" / "form_alpha" / "submissions"
-    assert (base / "VN-BACKFILL-APPROVED" / "slot_0.jpg").exists()
+    assert (base / "VN-BACKFILL-APPROVED" / "slot_0.webp").exists()
     assert not (base / "VN-BACKFILL-REJECTED").exists()
     assert not (base / "VN-BACKFILL-TEST").exists()
 
@@ -512,3 +524,88 @@ async def test_cleanup_protected_names_are_never_deleted():
 
     assert deleted == 1
     assert http_client.deleted == ["d1"]
+
+
+def test_unknown_form_duplicate_moves_to_real_form_and_is_not_uploaded(monkeypatch, tmp_path):
+    import asyncio
+    import io
+    from PIL import Image
+
+    gd, write_dev, add_photo = _patch_sync_env(monkeypatch, tmp_path)
+    write_dev([{"submission_id": "VN-DUP-1", "form_id": "form_alpha", "status": "APPROVED"}])
+    add_photo("VN-DUP-1", name="slot_0.jpg", image_format="WEBP")
+
+    unknown_dir = tmp_path / "Images" / "unknown_form" / "submissions" / "VN-DUP-1"
+    unknown_dir.mkdir(parents=True)
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(buffer, format="JPEG")
+    (unknown_dir / "slot_0.webp").write_bytes(buffer.getvalue())
+
+    assert asyncio.run(gd.sync_all_approved_to_drive()) is True
+
+    assert not (tmp_path / "Images" / "unknown_form").exists()
+    merged = tmp_path / "Images" / "form_alpha" / "submissions" / "VN-DUP-1" / "slot_0.webp"
+    assert gd.detect_image_mime(merged.read_bytes()) == "image/webp"
+
+    client = _FakeDriveClient.instances[0]
+    assert all(name != "unknown_form" for name, _ in client.folders)
+    assert sum(1 for _, name, _, _ in client.uploads if name == "slot_0.webp") == 1
+
+
+def test_extract_income_uses_raw_facts_when_week_columns_zero():
+    import services.google_drive_delivery as gd
+
+    weeks = {
+        f"week_{n}": {"gross_revenue": 100 * n, "net_income": 50 * n, "total_trips": n}
+        for n in range(1, 6)
+    }
+    record = {
+        "submission_id": "VN-INCOME-RAW",
+        "form_id": "form_alpha",
+        "status": "APPROVED",
+        "income_week_1_gross": 0,
+        "income_week_1_net": 0,
+        "income_week_1_trips": 0,
+        "total_gross_revenue": 0,
+        "total_net_income": 0,
+        "total_trips": 0,
+        "raw_extracted_facts": {"weekly_incomes": weeks},
+    }
+    row = gd.extract_survey_row_data(record)
+
+    def col(name):
+        return row[gd.CSV_HEADERS.index(name)]
+
+    assert col("Doanh Thu Tuần 1 (28/09 - 04/10)") == 100
+    assert col("Doanh Thu Tuần 5 (26/10 - 01/11)") == 500
+    assert col("Thực Nhận Tuần 5") == 250
+    assert col("Số Chuyến Tuần 5") == 5
+    assert col("Tổng Doanh Thu 5 Tuần") == 1500
+    assert col("Tổng Thực Nhận 5 Tuần") == 750
+    assert col("Tổng Số Chuyến 5 Tuần") == 15
+    assert row[-1] == "VN-INCOME-RAW"
+
+
+def test_extract_income_prefers_populated_db_columns():
+    import services.google_drive_delivery as gd
+
+    record = {
+        "submission_id": "VN-INCOME-DB",
+        "status": "APPROVED",
+        "income_week_1_gross": 9999,
+        "income_week_1_net": 8888,
+        "income_week_1_trips": 77,
+        "raw_extracted_facts": {
+            "weekly_incomes": {
+                "week_1": {"gross_revenue": 100, "net_income": 50, "total_trips": 1}
+            }
+        },
+    }
+    row = gd.extract_survey_row_data(record)
+
+    def col(name):
+        return row[gd.CSV_HEADERS.index(name)]
+
+    assert col("Doanh Thu Tuần 1 (28/09 - 04/10)") == 9999
+    assert col("Thực Nhận Tuần 1") == 8888
+    assert col("Số Chuyến Tuần 1") == 77

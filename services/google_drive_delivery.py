@@ -22,6 +22,87 @@ def _guess_mime(filename: str) -> str:
     return guessed or "application/octet-stream"
 
 
+def _open_image(raw_bytes: bytes):
+    """Opens image bytes with Pillow, registering HEIF support when available."""
+    from PIL import Image
+
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except Exception:
+        pass
+    return Image.open(io.BytesIO(raw_bytes))
+
+
+def detect_image_mime(raw_bytes: bytes) -> Optional[str]:
+    """MIME from the actual image bytes, independent of the filename extension."""
+    if not raw_bytes:
+        return None
+    try:
+        with _open_image(raw_bytes) as image:
+            fmt = (image.format or "").upper()
+    except Exception:
+        return None
+    return {
+        "JPEG": "image/jpeg",
+        "JPG": "image/jpeg",
+        "PNG": "image/png",
+        "WEBP": "image/webp",
+        "HEIF": "image/heic",
+        "HEIC": "image/heic",
+    }.get(fmt)
+
+
+def normalize_image_bytes(raw_bytes: bytes, quality: int = 90) -> Optional[bytes]:
+    """
+    Returns WebP bytes for any decodable image, or None when the bytes are not an image.
+
+    Already-WebP bytes are returned unchanged; JPEG/PNG/HEIC are re-encoded to WebP
+    so the mirror filename, MIME and payload always agree.
+    """
+    if not raw_bytes:
+        return None
+    try:
+        with _open_image(raw_bytes) as image:
+            if (image.format or "").upper() == "WEBP":
+                return raw_bytes
+            has_alpha = "A" in image.getbands() or "transparency" in image.info
+            converted = image.convert("RGBA" if has_alpha else "RGB")
+            out = io.BytesIO()
+            converted.save(out, format="WEBP", quality=quality, method=4)
+            return out.getvalue()
+    except Exception as e:
+        logger.warning(f"Could not normalize image bytes ({len(raw_bytes)} bytes): {e}")
+        return None
+
+
+def normalized_image_name(filename: str) -> str:
+    """Stem of the supplied filename with a .webp extension."""
+    stem = os.path.splitext(os.path.basename(filename or "image"))[0] or "image"
+    return f"{stem}.webp"
+
+
+async def _list_remote_files(client, token: str, folder_id: str) -> Dict[str, str]:
+    """Map of non-trashed file name -> id inside a Drive folder."""
+    try:
+        resp = await client.get(
+            "https://www.googleapis.com/drive/v3/files",
+            params={"q": f"'{folder_id}' in parents and trashed = false", "fields": "files(id,name)", "pageSize": 1000},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code != 200:
+            return {}
+        return {
+            f["name"]: f["id"]
+            for f in (resp.json().get("files") or [])
+            if f.get("name") and f.get("id")
+        }
+    except Exception as e:
+        logger.warning(f"Could not list Drive folder {folder_id}: {e}")
+        return {}
+
+
 
 
 async def _list_remote_file_names(client, token: str, folder_id: str) -> set:
@@ -165,6 +246,19 @@ def extract_survey_row_data(record: Dict[str, Any]) -> List[Any]:
 
     weekly_incomes = record.get("weekly_incomes") or ai_res.get("weekly_incomes") or {}
 
+    # Older DB rows have zeroed income_week_* columns; their real values live in
+    # raw_extracted_facts (written even when the extended INSERT was incomplete).
+    raw_facts = record.get("raw_extracted_facts") or {}
+    if isinstance(raw_facts, str):
+        try:
+            raw_facts = json.loads(raw_facts)
+        except Exception:
+            raw_facts = {}
+    if not isinstance(raw_facts, dict):
+        raw_facts = {}
+    if not weekly_incomes:
+        weekly_incomes = raw_facts.get("weekly_incomes") or {}
+
     # 1. Thời Gian Nộp
     thoi_gian_nop = record.get("submitted_at") or record.get("created_at") or datetime.now(timezone.utc).isoformat()
 
@@ -236,9 +330,13 @@ def extract_survey_row_data(record: Dict[str, Any]) -> List[Any]:
     computed_tot_net = w1_net + w2_net + w3_net + w4_net + w5_net
     computed_tot_trips = w1_trips + w2_trips + w3_trips + w4_trips + w5_trips
 
-    tot_gross = record.get("total_gross_revenue") or (computed_tot_gross if computed_tot_gross > 0 else legacy_gross)
-    tot_net = record.get("total_net_income") or (computed_tot_net if computed_tot_net > 0 else legacy_net)
-    tot_trips = record.get("total_trips") or (computed_tot_trips if computed_tot_trips > 0 else legacy_trips)
+    raw_tot_gross = raw_facts.get("total_gross_revenue") or 0
+    raw_tot_net = raw_facts.get("total_net_income") or 0
+    raw_tot_trips = raw_facts.get("total_trips") or 0
+
+    tot_gross = record.get("total_gross_revenue") or (computed_tot_gross if computed_tot_gross > 0 else (raw_tot_gross or legacy_gross))
+    tot_net = record.get("total_net_income") or (computed_tot_net if computed_tot_net > 0 else (raw_tot_net or legacy_net))
+    tot_trips = record.get("total_trips") or (computed_tot_trips if computed_tot_trips > 0 else (raw_tot_trips or legacy_trips))
 
     # 12. Tọa độ định vị & Trạng thái
     vi_do = record.get("gps_latitude")
@@ -998,8 +1096,13 @@ class GoogleDriveClient:
                 for idx, img in enumerate(images):
                     fname = img.get("filename") or f"slot_{idx}.webp"
                     raw_bytes = img.get("bytes")
-                    if raw_bytes:
-                        await self.upload_file(client, token, fname, raw_bytes, _guess_mime(fname), target_folder)
+                    if not raw_bytes:
+                        continue
+                    normalized = normalize_image_bytes(raw_bytes)
+                    payload = normalized if normalized is not None else raw_bytes
+                    out_name = normalized_image_name(fname) if normalized is not None else os.path.basename(fname)
+                    mime_type = detect_image_mime(payload) or _guess_mime(out_name)
+                    await self.upload_file(client, token, out_name, payload, mime_type, target_folder)
 
             # Refresh the per-form CSV and native Google Sheet for approved submissions
             if (
@@ -1158,11 +1261,18 @@ def save_submission_images_locally(
     for idx, img in enumerate(images):
         fname = img.get("filename") or f"slot_{idx}.webp"
         raw_bytes = img.get("bytes")
-        if raw_bytes:
-            out_file = os.path.join(subfolder_path, fname)
-            with open(out_file, "wb") as f:
-                f.write(raw_bytes)
-            saved_paths.append(out_file)
+        if not raw_bytes:
+            continue
+        normalized = normalize_image_bytes(raw_bytes)
+        if normalized is None:
+            # Undecodable payload: keep original bytes/name rather than corrupting the slot.
+            payload, out_name = raw_bytes, os.path.basename(fname)
+        else:
+            payload, out_name = normalized, normalized_image_name(fname)
+        out_file = os.path.join(subfolder_path, out_name)
+        with open(out_file, "wb") as f:
+            f.write(payload)
+        saved_paths.append(out_file)
 
     if not saved_paths and os.path.exists(subfolder_path):
         try:
@@ -1177,42 +1287,138 @@ def save_submission_images_locally(
 
 def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, Any]]) -> int:
     """
-    Copies raw submission photos into Images/<form_id>/submissions/<submission_id>/
-    for approved submissions that were never written to the deliverables mirror.
+    Normalizes the mirror's images and fills missing slots from the raw photo store.
 
-    Idempotent: skips submissions whose mirror folder already contains files and
-    never overwrites existing mirror files. Returns the number of copied files.
+    Every mirror image is decoded and stored as WebP under Images/<form_id>/submissions/
+    <submission_id>/, so filename, payload and MIME always agree. Missing slots are copied
+    from data/submission_photos/<submission_id>/ and normalized too. Idempotent; returns
+    the number of files created or rewritten.
     """
-    copied = 0
+    changed = 0
     for submission_id, record in records.items():
         form_id = str(record.get("form_id") or "unknown_form")
         target_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions", submission_id)
-        if os.path.isdir(target_dir) and any(os.path.isfile(p) for p in glob.glob(os.path.join(target_dir, "*"))):
-            continue
-
         source_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
-        if not os.path.isdir(source_dir):
-            continue
-        source_files = [
-            p for p in glob.glob(os.path.join(source_dir, "*"))
-            if os.path.isfile(p)
-            and os.path.splitext(p)[1].lower() in IMAGE_FILE_EXTENSIONS
-            and os.path.getsize(p) > 0
+
+        existing_files = [
+            path for path in glob.glob(os.path.join(target_dir, "*"))
+            if os.path.isfile(path) and os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
         ]
-        if not source_files:
+        source_files = [
+            path for path in glob.glob(os.path.join(source_dir, "*"))
+            if os.path.isfile(path)
+            and os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
+            and os.path.getsize(path) > 0
+        ]
+        if not existing_files and not source_files:
             continue
 
         os.makedirs(target_dir, exist_ok=True)
-        for src in source_files:
-            dest = os.path.join(target_dir, os.path.basename(src))
-            if os.path.exists(dest):
-                continue
-            shutil.copy2(src, dest)
-            copied += 1
+        present_stems = set()
 
-    if copied:
-        logger.info(f"📁 [DRIVE IMAGES MIRROR] Backfilled {copied} image files from {SUBMISSION_PHOTOS_DIR}")
-    return copied
+        # Normalize what is already mirrored (fixes legacy .jpg-with-WebP-bytes and vice versa).
+        for path in existing_files:
+            stem = os.path.splitext(os.path.basename(path))[0]
+            present_stems.add(stem)
+            try:
+                with open(path, "rb") as f:
+                    raw_bytes = f.read()
+            except OSError:
+                continue
+            normalized = normalize_image_bytes(raw_bytes)
+            if normalized is None:
+                continue
+            target_path = os.path.join(target_dir, normalized_image_name(path))
+            if os.path.abspath(target_path) != os.path.abspath(path):
+                with open(target_path, "wb") as f:
+                    f.write(normalized)
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                changed += 1
+            elif normalized != raw_bytes:
+                with open(target_path, "wb") as f:
+                    f.write(normalized)
+                changed += 1
+
+        # Copy missing slots from the raw store.
+        for src in source_files:
+            stem = os.path.splitext(os.path.basename(src))[0]
+            if stem in present_stems:
+                continue
+            try:
+                with open(src, "rb") as f:
+                    raw_bytes = f.read()
+            except OSError:
+                continue
+            normalized = normalize_image_bytes(raw_bytes)
+            if normalized is None:
+                logger.warning(f"Skipping undecodable raw photo {src}")
+                continue
+            dest = os.path.join(target_dir, normalized_image_name(src))
+            with open(dest, "wb") as f:
+                f.write(normalized)
+            present_stems.add(stem)
+            changed += 1
+
+    if changed:
+        logger.info(f"📁 [DRIVE IMAGES MIRROR] Normalized/backfilled {changed} images from {SUBMISSION_PHOTOS_DIR}")
+    return changed
+
+
+def migrate_unknown_form_mirror(submission_forms: Dict[str, str]) -> int:
+    """
+    Moves known submissions out of Images/unknown_form/submissions into their real form
+    folder so the fallback bucket is not uploaded twice. Leaves unknown submissions in
+    place and never deletes data that has no known form mapping.
+    """
+    unknown_submissions_dir = os.path.join(LOCAL_IMAGES_DIR, "unknown_form", "submissions")
+    if not os.path.isdir(unknown_submissions_dir):
+        return 0
+
+    moved = 0
+    for sub_id in os.listdir(unknown_submissions_dir):
+        form_id = submission_forms.get(sub_id)
+        if not form_id or form_id == "unknown_form":
+            continue
+        src_dir = os.path.join(unknown_submissions_dir, sub_id)
+        if not os.path.isdir(src_dir):
+            continue
+        dest_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions", sub_id)
+        os.makedirs(dest_dir, exist_ok=True)
+        for src in glob.glob(os.path.join(src_dir, "*")):
+            if not os.path.isfile(src):
+                continue
+            dest = os.path.join(dest_dir, os.path.basename(src))
+            if not os.path.exists(dest):
+                shutil.copy2(src, dest)
+                moved += 1
+                os.remove(src)
+            else:
+                try:
+                    same = open(src, "rb").read() == open(dest, "rb").read()
+                except OSError:
+                    same = False
+                if same:
+                    os.remove(src)
+                else:
+                    # Keep the distinct legacy file in unknown_form rather than losing data.
+                    logger.warning(f"Keeping distinct legacy file {src} (target {dest} differs)")
+        try:
+            os.rmdir(src_dir)
+        except OSError:
+            pass
+
+    for empty_dir in (unknown_submissions_dir, os.path.join(LOCAL_IMAGES_DIR, "unknown_form")):
+        try:
+            os.rmdir(empty_dir)
+        except OSError:
+            pass
+
+    if moved:
+        logger.info(f"📁 [DRIVE IMAGES MIRROR] Moved {moved} files out of unknown_form to their real form folders")
+    return moved
 
 
 def migrate_local_deliverables_layout(submission_forms: Optional[Dict[str, str]] = None) -> None:
@@ -1518,6 +1724,7 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         os.path.splitext(os.path.basename(path))[0]
         for path in glob.glob(os.path.join(LOCAL_FORMS_SHEETS_DIR, "*.csv"))
     )
+    protected_form_names.add("_legacy_unknown")
     try:
         from core.state import FORM_REGISTRY
 
@@ -1549,6 +1756,33 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         except Exception as e:
             logger.warning(f"Failed to cleanup clutter from Google Drive: {e}")
 
+        # Quarantine the legacy unknown_form bucket; data is preserved under _legacy_unknown.
+        try:
+            unknown_folder_id = await client.find_file_or_folder(
+                http_client, token, "unknown_form", root_id, "application/vnd.google-apps.folder"
+            )
+            if unknown_folder_id:
+                legacy_folder_id = await client.find_file_or_folder(
+                    http_client, token, "_legacy_unknown", root_id, "application/vnd.google-apps.folder"
+                )
+                if legacy_folder_id:
+                    logger.info("🗂️ [AUTO DRIVE SYNC] _legacy_unknown already exists; leaving unknown_form untouched.")
+                else:
+                    rename_resp = await http_client.patch(
+                        f"https://www.googleapis.com/drive/v3/files/{unknown_folder_id}",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={"name": "_legacy_unknown"},
+                    )
+                    if rename_resp.status_code == 200:
+                        logger.info("🗂️ [AUTO DRIVE SYNC] Renamed unknown_form -> _legacy_unknown (quarantined)")
+                    else:
+                        logger.warning(
+                            f"[AUTO DRIVE SYNC] Could not quarantine unknown_form: "
+                            f"HTTP {rename_resp.status_code} {rename_resp.text[:200]}"
+                        )
+        except Exception as e:
+            logger.warning(f"[AUTO DRIVE SYNC] unknown_form quarantine failed: {e}")
+
         # 1. Upload Master Sheet (global, kept at root for backwards compatibility)
         if os.path.exists(MASTER_CSV_FILE):
             try:
@@ -1567,7 +1801,13 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         except Exception as e:
             logger.warning(f"[AUTO DRIVE SYNC] Legacy deliverables migration failed: {e}")
 
-        # 1c. Backfill raw submission photos for older approved submissions never mirrored
+        # 1c. Move known submissions out of the unknown_form fallback bucket
+        try:
+            migrate_unknown_form_mirror(submission_forms)
+        except Exception as e:
+            logger.warning(f"[AUTO DRIVE SYNC] unknown_form migration failed: {e}")
+
+        # 1d. Normalize mirrored images and backfill raw photos for older approved submissions
         try:
             backfill_mirror_images_from_submission_photos(approved_records)
         except Exception as e:
@@ -1610,6 +1850,9 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
             # CSV/Sheet-only forms still need their Drive folder and submissions/ container.
             for csv_file in glob.glob(os.path.join(LOCAL_FORMS_SHEETS_DIR, "*.csv")):
                 form_ids.add(os.path.splitext(os.path.basename(csv_file))[0])
+            # unknown_form is a legacy fallback bucket: known submissions are migrated to
+            # their real form, and the remainder must not be uploaded as a duplicate form.
+            form_ids.discard("unknown_form")
 
             for form_id in sorted(form_ids):
                 form_folder_id = await client.get_or_create_folder(
@@ -1655,14 +1898,39 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                         continue
                     files = [
                         f for f in glob.glob(os.path.join(sub_dir, "*.*"))
-                        if os.path.isfile(f) and os.path.getsize(f) > 0
+                        if os.path.isfile(f)
+                        and os.path.getsize(f) > 0
+                        and os.path.splitext(f)[1].lower() in IMAGE_FILE_EXTENSIONS
                     ]
                     if not files:
                         continue
 
                     if sub_id in remote_subfolders:
                         sub_folder_id = remote_subfolders[sub_id]
-                        remote_names = await _list_remote_file_names(http_client, token, sub_folder_id)
+                        remote_files = await _list_remote_files(http_client, token, sub_folder_id)
+                        local_names = {os.path.basename(f) for f in files}
+                        local_stems = {os.path.splitext(name)[0] for name in local_names}
+                        stale_remote = [
+                            (name, file_id)
+                            for name, file_id in remote_files.items()
+                            if os.path.splitext(name)[1].lower() in IMAGE_FILE_EXTENSIONS
+                            and os.path.splitext(name)[0] in local_stems
+                            and name not in local_names
+                        ]
+                        for stale_name, stale_id in stale_remote:
+                            del_resp = await http_client.delete(f"{url_files}/{stale_id}", headers=headers)
+                            if del_resp.status_code in (200, 204):
+                                logger.info(
+                                    f"🗑️ [AUTO DRIVE SYNC] Removed stale format variant "
+                                    f"{form_id}/submissions/{sub_id}/{stale_name}"
+                                )
+                                remote_files.pop(stale_name, None)
+                            else:
+                                logger.warning(
+                                    f"[AUTO DRIVE SYNC] Could not remove stale {stale_name}: "
+                                    f"HTTP {del_resp.status_code}"
+                                )
+                        remote_names = set(remote_files)
                         skipped_count += 1
                     else:
                         sub_folder_id = await client.get_or_create_folder(
@@ -1680,8 +1948,9 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                             continue
                         with open(fpath, "rb") as img_f:
                             img_bytes = img_f.read()
+                        mime_type = detect_image_mime(img_bytes) or _guess_mime(fname)
                         file_id = await client.upload_file(
-                            http_client, token, fname, img_bytes, _guess_mime(fname), sub_folder_id
+                            http_client, token, fname, img_bytes, mime_type, sub_folder_id
                         )
                         if file_id:
                             uploaded_count += 1
