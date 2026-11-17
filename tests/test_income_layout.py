@@ -186,3 +186,51 @@ def test_validator_rejects_monthly_and_daily_but_accepts_weekly():
     assert weekly["period_days"] == 7 and weekly["active_tab"] == "WEEKLY"
     ok, err = validate_extracted_weekly_period(weekly_hdr, expected_week_num=2)
     assert ok is True, err
+
+
+def test_detail_date_corrects_adjacent_week_misread():
+    """Regression: VN-F1821C38AB8611BC week 17-23 was OCR'd as 10-16 (dark neighbour label).
+
+    The 'Chi tiết' list starts on the selected week's first day, so it must win over an
+    adjacent-week tab misread instead of producing two screens with the same period.
+    """
+    data = {
+        "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 -"],
+        "selected_period_label": "10 - 16",
+        "selected_period_index": 2,
+        "period_month": "10/2026",
+        "first_detail_date": "Thứ bảy, 17/10/2026",
+        "field_labels": list(INCOME_FIELD_LABELS),
+    }
+    applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
+    assert applied["period"] == "17/10 - 23/10/2026"
+    assert applied["period_days"] == 7
+    assert applied["active_tab_index"] == 3
+    assert any("corrected" in note for note in applied["layout_notes"])
+
+
+def test_detail_date_inside_selected_period_leaves_period_untouched():
+    data = {
+        "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 - 23"],
+        "selected_period_label": "10 - 16",
+        "selected_period_index": 2,
+        "period_month": "10/2026",
+        "first_detail_date": "10/10/2026",
+        "field_labels": list(INCOME_FIELD_LABELS),
+    }
+    applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
+    assert applied["period"] == "10/10 - 16/10/2026"
+    assert applied["active_tab_index"] == 2
+
+
+def test_detail_date_far_from_selected_period_does_not_override():
+    data = {
+        "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 - 23"],
+        "selected_period_label": "10 - 16",
+        "selected_period_index": 2,
+        "period_month": "10/2026",
+        "first_detail_date": "17/12/2026",
+        "field_labels": list(INCOME_FIELD_LABELS),
+    }
+    applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
+    assert applied["period"] == "10/10 - 16/10/2026"

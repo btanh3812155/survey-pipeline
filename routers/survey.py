@@ -311,9 +311,27 @@ def _looks_like_income_statement(result: Any) -> bool:
     return any(int(result.get(key) or 0) for key in ("gross_revenue", "net_income", "total_trips"))
 
 
+def _income_fingerprint(result: Any) -> Optional[Tuple[int, int, int]]:
+    """Financial identity of a weekly screen, or None when OCR read nothing usable."""
+    if not isinstance(result, dict):
+        return None
+    gross = int(result.get("gross_revenue") or 0)
+    net = int(result.get("net_income") or 0)
+    trips = int(result.get("total_trips") or 0)
+    if gross <= 0 and net <= 0 and trips <= 0:
+        return None
+    return (gross, net, trips)
+
+
 def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Optional[dict]:
-    """Return a violation when two uploaded screens report the same week period."""
-    seen: Dict[Any, int] = {}
+    """Return a violation when two uploaded screens report the same week period.
+
+    Period text alone is not proof: the vision model periodically misreads which
+    teal tab is active (e.g. week 17-23 read as 10-16), which would reject five
+    genuinely distinct weeks. Two screens of the same physical week always show
+    the same money, so a duplicate also requires matching financials.
+    """
+    seen: Dict[Any, Tuple[int, Any]] = {}
     for idx_pos, result in income_pairs:
         if not isinstance(result, dict):
             continue
@@ -322,16 +340,25 @@ def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Option
             continue
         start, end, _ = parse_date_range_from_text(label, default_year=2026)
         key = (start, end) if start and end else label.lower()
+        fingerprint = _income_fingerprint(result)
         if key in seen:
+            first_idx, first_result = seen[key]
+            first_fingerprint = _income_fingerprint(first_result)
+            if fingerprint is None or first_fingerprint is None or fingerprint != first_fingerprint:
+                logger.info(
+                    f"[DUPLICATE PERIOD] Ảnh {first_idx + 1} and Ảnh {idx_pos + 1} share the OCR period "
+                    f"'{label}' but have different financials {first_fingerprint} vs {fingerprint}; not a duplicate."
+                )
+                continue
             return {
                 "failed_slot": idx_pos,
                 "ocr_data": result,
                 "reason": (
-                    f"Ảnh Tuần bị trùng kỳ báo cáo ({label}) ở Ảnh {seen[key] + 1} và Ảnh {idx_pos + 1}. "
+                    f"Ảnh Tuần bị trùng kỳ báo cáo ({label}) ở Ảnh {first_idx + 1} và Ảnh {idx_pos + 1}. "
                     "Vui lòng chụp đủ các tuần khác nhau (thứ tự ảnh không quan trọng)."
                 ),
             }
-        seen[key] = idx_pos
+        seen[key] = (idx_pos, result)
     return None
 
 
@@ -341,12 +368,17 @@ def _select_unique_check_index(target_q: Any, income_indices: List[int], image_c
     (require_unique=False) because the same driver reuses them across submissions;
     the weekly income screens are the uniqueness-bearing objects.
     """
+    # income_indices are GLOBAL image positions (all camera questions are flattened
+    # into one list); target_q slot numbers are question-local and only line up with
+    # the global list when this question's uploads start at index 0.
+    if income_indices:
+        first = income_indices[0]
+        if 0 <= first < image_count:
+            return first
     if target_q and getattr(target_q, "image_slots", None):
         for s_idx, slot in enumerate(target_q.image_slots):
             if slot.get("require_unique") is not False and s_idx < image_count:
                 return s_idx
-    if income_indices:
-        return income_indices[0]
     return None
 
 
@@ -1193,7 +1225,8 @@ async def submit_webrtc_survey(
                         if is_approved and should_check_fraud:
                             # 3. Anti-Fraud: Intra-submission duplicate check across weekly income slots (Meta DINOv2 + dHash + numbers)
                             intra_dup, intra_reason = check_intra_submission_duplicates(
-                                raw_bytes_list, target_q, weekly_incomes, pil_cache=pil_cache
+                                raw_bytes_list, target_q, weekly_incomes,
+                                income_indices=matched_income_indices, pil_cache=pil_cache
                             )
                             if intra_dup:
                                 is_approved = False

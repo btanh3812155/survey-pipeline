@@ -87,26 +87,48 @@ def compute_image_dhash_str(pil_img: Image.Image) -> str:
     h_int = compute_dhash_int(pil_img)
     return format(h_int, "064b")
 
+def _week_money(weekly_incomes: Optional[Dict[str, Any]], week_num: int) -> Optional[Tuple[int, int, int]]:
+    """(gross, net, trips) for a week, or None when OCR read nothing usable."""
+    if not weekly_incomes or not isinstance(weekly_incomes, dict):
+        return None
+    week = weekly_incomes.get(f"week_{week_num}") or {}
+    gross = int(week.get("gross_revenue") or 0)
+    net = int(week.get("net_income") or 0)
+    trips = int(week.get("total_trips") or 0)
+    if gross <= 0 and net <= 0 and trips <= 0:
+        return None
+    return (gross, net, trips)
+
+
 def check_intra_submission_duplicates(
     raw_bytes_list: List[bytes],
     target_q: Optional[Any] = None,
     weekly_incomes: Optional[Dict[str, Any]] = None,
+    income_indices: Optional[List[int]] = None,
     pil_cache: Optional[Dict[int, Image.Image]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Verifies that no two weekly income statement images within the same submission
     are identical or duplicate photos of the same week.
     Checks:
-    1. Perceptual dHash Hamming distance <= 8
-    2. Meta DINOv2 dense visual embedding cosine similarity >= 0.88
+    1. Perceptual dHash Hamming distance <= 4
+    2. Meta DINOv2 dense visual embedding cosine similarity >= 0.985
     3. Identical non-zero revenue, trips, and period across multiple weeks
+
+    income_indices are GLOBAL positions (in upload order) of the income screens,
+    already sorted by detected period, so position i is week_(i+1). They must be
+    used instead of target_q.image_slots, whose indices are question-local and do
+    not line up once another camera question's photos precede them.
     """
     if not raw_bytes_list or len(raw_bytes_list) < 2:
         return False, None
 
-    # Identify slots that require uniqueness (skips slots where require_unique is False, e.g. censored profiles)
+    # Identify slots that require uniqueness. Income screens are the uniqueness-bearing
+    # objects; profile/vehicle slots explicitly opt out (require_unique=False).
     unique_slot_indices = []
-    if target_q and getattr(target_q, "image_slots", None):
+    if income_indices:
+        unique_slot_indices = [i for i in income_indices if 0 <= i < len(raw_bytes_list)]
+    elif target_q and getattr(target_q, "image_slots", None):
         for s_idx, slot in enumerate(target_q.image_slots):
             if slot.get("require_unique") is False:
                 continue
@@ -145,37 +167,19 @@ def check_intra_submission_duplicates(
             week_i_num = i + 1
             week_j_num = j + 1
 
-            # Check if OCR extracted distinct financial metrics for these two weeks.
-            # Real-world driver photos of the same physical phone (cracked screen, identical LED odometer on desk)
-            # have high visual embedding similarity. If OCR numbers differ, OCR MUST OVERRIDE visual similarity!
-            has_different_ocr = False
-            if weekly_incomes and isinstance(weekly_incomes, dict):
-                wi = weekly_incomes.get(f"week_{week_i_num}", {})
-                wj = weekly_incomes.get(f"week_{week_j_num}", {})
-                gi = int(wi.get("gross_revenue") or 0)
-                gj = int(wj.get("gross_revenue") or 0)
-                ni = int(wi.get("net_income") or 0)
-                nj = int(wj.get("net_income") or 0)
-                ti = int(wi.get("total_trips") or 0)
-                tj = int(wj.get("total_trips") or 0)
-                pi = str(wi.get("period") or "").strip().lower()
-                pj = str(wj.get("period") or "").strip().lower()
-
-                # If ANY financial or operational metric differs AT ALL, they are NOT duplicate photos!
-                if gi > 0 and gj > 0 and gi != gj:
-                    has_different_ocr = True
-                elif ni > 0 and nj > 0 and ni != nj:
-                    has_different_ocr = True
-                elif ti > 0 and tj > 0 and ti != tj:
-                    has_different_ocr = True
-                elif pi and pj and pi != pj and not ("tuần" in pi and "tuần" in pj and pi == pj):
-                    has_different_ocr = True
-
-            if has_different_ocr:
-                logger.info(
-                    f"✅ [OCR OVERRIDE] Visual similarity between Week {week_i_num} and Week {week_j_num} overridden by distinct OCR data. "
-                    f"Allowing submission!"
-                )
+            # Visual similarity alone is not proof: every weekly screen of the same
+            # driver/app shares the same layout (measured dHash distance is 0-4
+            # between genuinely different weeks on the same phone). Only a pair
+            # whose OCR money matches can be the same week; different or unreadable
+            # financials mean these are two different statements.
+            money_i = _week_money(weekly_incomes, week_i_num)
+            money_j = _week_money(weekly_incomes, week_j_num)
+            if money_i is None or money_j is None or money_i != money_j:
+                if money_i is not None and money_j is not None:
+                    logger.info(
+                        f"✅ [OCR OVERRIDE] Visual similarity between Week {week_i_num} and Week {week_j_num} "
+                        f"overridden by distinct OCR data {money_i} vs {money_j}. Allowing submission!"
+                    )
                 continue
 
             # Check dHash (tightened to <= 4 to avoid false positives on same-phone app chrome)

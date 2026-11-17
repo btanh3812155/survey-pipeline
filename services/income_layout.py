@@ -20,7 +20,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -219,6 +219,55 @@ def parse_tab_period(label: str, month_label: str = "", reference_year: int = 20
     )
 
 
+_DETAIL_DATE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})(?:\s*/\s*(\d{2,4}))?")
+
+
+def _parse_detail_date(value: str, reference_year: int) -> Optional[date]:
+    """Parse the first 'Chi tiết' date (e.g. 'Thứ bảy, 17/10/2026') into a date."""
+    match = _DETAIL_DATE.search(value or "")
+    if not match:
+        return None
+    day, month = int(match.group(1)), int(match.group(2))
+    year = int(match.group(3)) if match.group(3) else reference_year
+    if year < 100:
+        year += 2000
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _correct_period_from_detail_date(
+    detail_date: date,
+    tabs: Sequence[str],
+    month_label: str,
+    reference_year: int,
+) -> Tuple[Optional[PeriodInfo], Optional[int]]:
+    """Restate the selected period using the selected week's first daily breakdown date.
+
+    The vision model occasionally anchors on the dark date text of a neighbouring
+    (unselected) tab, reporting the previous week. The 'Chi tiết' list always starts
+    on the selected week's first day, so it is the reliable anchor.
+    """
+    for tab_index, tab in enumerate(tabs):
+        candidate = parse_tab_period(tab, month_label, reference_year)
+        if candidate.start and candidate.end and candidate.start <= detail_date <= candidate.end:
+            return candidate, tab_index
+    week_end = detail_date + timedelta(days=6)
+    fallback = parse_tab_period(
+        f"{detail_date.strftime('%d/%m')} - {week_end.strftime('%d/%m')}",
+        month_label,
+        reference_year,
+    )
+    # A tab clipped at the screen edge ("17 -") cannot be parsed as a range, but its
+    # leading day still identifies which tab is active.
+    for tab_index, tab in enumerate(tabs):
+        day_match = re.match(r"\s*(\d{1,2})", tab)
+        if day_match and int(day_match.group(1)) == detail_date.day:
+            return fallback, tab_index
+    return fallback, None
+
+
 def analyse_income_layout(
     image_bytes: bytes,
     model_data: Optional[Dict[str, Any]],
@@ -253,6 +302,29 @@ def analyse_income_layout(
         if month_match:
             month_label = month_match.group(0)
     period = parse_tab_period(selected, month_label, reference_year)
+
+    # Cross-check the tab read against the selected week's first 'Chi tiết' date.
+    # Only correct an adjacent-week misread (<= 8 days off) so a hallucinated or
+    # unrelated date can never rewrite the period.
+    detail_date = _parse_detail_date(str(data.get("first_detail_date") or ""), reference_year)
+    if (
+        detail_date
+        and period.start
+        and period.end
+        and not (period.start <= detail_date <= period.end)
+        and abs((detail_date - period.start).days) <= 8
+    ):
+        corrected, corrected_index = _correct_period_from_detail_date(
+            detail_date, tabs, month_label, reference_year
+        )
+        if corrected and corrected.start and corrected.end and corrected.start <= detail_date <= corrected.end:
+            result.notes.append(
+                f"period corrected via Chi tiết date {detail_date.strftime('%d/%m/%Y')}: "
+                f"{period.label or period.normalized} -> {corrected.normalized}"
+            )
+            period = corrected
+            if corrected_index is not None:
+                index = corrected_index
 
     labels = [_normalize(str(item)) for item in (data.get("field_labels") or [])]
     joined = "".join(labels)

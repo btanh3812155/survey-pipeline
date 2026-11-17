@@ -270,22 +270,94 @@ def test_temporal_validation_accepts_weekly_statement_in_any_slot():
 
 
 def test_duplicate_week_periods_are_rejected():
-    """Two screens reporting the same week are rejected instead of relying on slot order."""
+    """Two screens reporting the same week ARE rejected once the money also matches."""
     from routers.survey import _find_duplicate_income_period
 
     same = [
-        (2, {"period": "03/10 - 09/10/2026"}),
-        (3, {"period": "03/10 - 09/10/2026"}),
+        (2, {"period": "03/10 - 09/10/2026", "gross_revenue": 5184500, "net_income": 1243078, "total_trips": 61}),
+        (3, {"period": "03/10 - 09/10/2026", "gross_revenue": 5184500, "net_income": 1243078, "total_trips": 61}),
     ]
     violation = _find_duplicate_income_period(same)
     assert violation and "trùng kỳ báo cáo" in violation["reason"]
     assert violation["failed_slot"] == 3
 
     distinct = [
-        (2, {"period": "26/09 - 02/10/2026"}),
-        (3, {"period": "03/10 - 09/10/2026"}),
+        (2, {"period": "26/09 - 02/10/2026", "gross_revenue": 5160500, "net_income": 1210380, "total_trips": 62}),
+        (3, {"period": "03/10 - 09/10/2026", "gross_revenue": 5184500, "net_income": 1243078, "total_trips": 61}),
     ]
     assert _find_duplicate_income_period(distinct) is None
+
+
+def test_same_ocr_period_with_different_money_is_not_a_duplicate():
+    """Regression: VN-F1821C38AB8611BC (week 10-16 vs 17-23 both OCR'd as 10-16).
+
+    The vision model misread the active tab of the 17-23 screenshot, so both screens
+    claimed the same period. The real financials (and the images) are distinct, so the
+    submission must not be rejected as a duplicate week.
+    """
+    from routers.survey import _find_duplicate_income_period
+
+    slot_5_week3 = {
+        "period": "10/10 - 16/10/2026",
+        "gross_revenue": 4659500,
+        "net_income": 1097313,
+        "total_trips": 48,
+        "online_hours": "79h 57m",
+        "first_detail_date": "10/10/2026",
+    }
+    slot_6_week4 = {
+        "period": "10/10 - 16/10/2026",  # misread tab; detail list says 17/10/2026
+        "gross_revenue": 6014500,
+        "net_income": 1410830,
+        "total_trips": 60,
+        "online_hours": "95h 7m",
+        "first_detail_date": "17/10/2026",
+    }
+    assert _find_duplicate_income_period([(5, slot_5_week3), (6, slot_6_week4)]) is None
+
+
+def test_intra_duplicate_check_uses_global_income_indices_and_money():
+    """The check must compare the income screens by global upload index, never target_q slot numbers."""
+    from services.form_engine import DEFAULT_TRUST_BRIDGE_SCHEMA
+
+    with open("tests/fixtures/user_phone_test/slot2_week1.png", "rb") as f:
+        week1 = f.read()
+    with open("tests/fixtures/user_phone_test/slot3_week2.png", "rb") as f:
+        week2 = f.read()
+    with open("tests/fixtures/user_phone_test/slot0_profile.png", "rb") as f:
+        profile = f.read()
+
+    # Photos 1-2 are the profile question; income screens start at global index 2.
+    raw_bytes = [profile, profile, week1, week2, week1, week2, week1]
+    income_indices = [2, 3, 4, 5, 6]
+    distinct_money = {
+        f"week_{n}": {"gross_revenue": 4_000_000 + n, "net_income": 1_000_000 + n, "total_trips": 40 + n}
+        for n in range(1, 6)
+    }
+    is_dup, reason = check_intra_submission_duplicates(
+        raw_bytes, None, distinct_money, income_indices=income_indices
+    )
+    assert is_dup is False, reason
+
+    # Same image at two income positions AND the same money = genuine duplicate.
+    raw_bytes[5] = week1
+    same_money = dict(distinct_money)
+    same_money["week_4"] = dict(distinct_money["week_1"])
+    is_dup, reason = check_intra_submission_duplicates(
+        raw_bytes, None, same_money, income_indices=income_indices
+    )
+    assert is_dup is True
+    assert "trùng lặp" in reason
+
+
+def test_unique_check_index_skips_preceding_profile_photos():
+    """Inter-submission uniqueness must hash an income screen, not the profile photo at index 0."""
+    from routers.survey import _select_unique_check_index
+
+    target_q = next(q for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions if q.id == "camera_receipt")
+    assert _select_unique_check_index(target_q, [2, 3, 4, 5, 6], 7) == 2
+    # Legacy fallback: first require_unique slot (slot 3 = index 2), never the profile slot.
+    assert _select_unique_check_index(target_q, [], 7) == 2
 
 
 def test_temporal_validation_accepts_valid_october_week_ranges():
@@ -413,7 +485,9 @@ def test_unique_check_image_skips_profile_and_vehicle_photos():
     income_question = SimpleNamespace(image_slots=[
         {"role": "app_income", "require_unique": True},
     ])
-    assert _select_unique_check_index(income_question, [4, 5], 7) == 0
+    # target_q slot numbers are question-local; the flagged image must be the GLOBAL
+    # index of the first income screen, which can sit after profile photos.
+    assert _select_unique_check_index(income_question, [4, 5], 7) == 4
 
 
 def test_generic_camera_slot_roles_are_inferred_from_titles():
