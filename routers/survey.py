@@ -1507,6 +1507,7 @@ async def submit_webrtc_survey(
             blur_var=blur_var,
             is_test_mode=is_test_mode,
             raw_bytes_list=raw_bytes_list,
+            form_id=active_form_id,
         )
     except Exception as act_err:
         logger.error(f"Failed to dispatch action checklist task: {act_err}")

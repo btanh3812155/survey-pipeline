@@ -246,6 +246,7 @@ async def dispatch_action_checklist(
     blur_var: Optional[float] = None,
     is_test_mode: bool = False,
     raw_bytes_list: Optional[list] = None,
+    form_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Executes all 5 downstream side-effects asynchronously with individual
@@ -331,6 +332,7 @@ async def dispatch_action_checklist(
                         sample_imgs.append({"filename": "slot_0.webp", "bytes": raw_bytes})
                     record = {
                         "submission_id": submission_id,
+                        "form_id": form_id,
                         "status": "APPROVED",
                         "gross_revenue": tot_gross,
                         "net_income": tot_net,

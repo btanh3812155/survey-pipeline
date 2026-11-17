@@ -41,11 +41,18 @@ async def _list_remote_file_names(client, token: str, folder_id: str) -> set:
 LOCAL_DELIVERABLES_DIR = os.path.join(os.getcwd(), "data", "google_drive_deliverables")
 LOCAL_IMAGES_DIR = os.path.join(LOCAL_DELIVERABLES_DIR, "Images")
 LOCAL_SHEETS_DIR = os.path.join(LOCAL_DELIVERABLES_DIR, "Sheets")
+LOCAL_FORMS_SHEETS_DIR = os.path.join(LOCAL_SHEETS_DIR, "forms")
 
 os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 os.makedirs(LOCAL_SHEETS_DIR, exist_ok=True)
+os.makedirs(LOCAL_FORMS_SHEETS_DIR, exist_ok=True)
 
 MASTER_CSV_FILE = os.path.join(LOCAL_SHEETS_DIR, "Master_Survey_Deliverables.csv")
+
+
+def local_form_csv_path(form_id: str) -> str:
+    """Per-form CSV mirror path: Sheets/forms/<form_id>.csv."""
+    return os.path.join(LOCAL_FORMS_SHEETS_DIR, f"{form_id}.csv")
 
 CSV_HEADERS = [
     # 1. Metadata
@@ -519,7 +526,13 @@ def create_signed_jwt(sa_info: Dict[str, Any], scopes: List[str]) -> str:
 async def get_google_access_token(sa_info: Dict[str, Any], client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
     """Exchanges signed JWT for Google OAuth2 access token."""
     token_uri = sa_info.get("token_uri", "https://oauth2.googleapis.com/token")
-    jwt_token = create_signed_jwt(sa_info, ["https://www.googleapis.com/auth/drive"])
+    jwt_token = create_signed_jwt(
+        sa_info,
+        [
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/spreadsheets",
+        ],
+    )
     data = {
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         "assertion": jwt_token,
@@ -733,6 +746,56 @@ class GoogleDriveClient:
             logger.error(f"Failed to upload '{filename}' to Google Drive: {e}")
             return None
 
+    async def import_csv_as_sheet(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        sheet_name: str,
+        csv_bytes: bytes,
+        parent_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Creates a native Google Sheet from CSV bytes via Drive import conversion."""
+        url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+        metadata: Dict[str, Any] = {
+            "name": sheet_name,
+            "mimeType": "application/vnd.google-apps.spreadsheet",
+        }
+        if parent_id:
+            metadata["parents"] = [parent_id]
+        files = {
+            "data": ("metadata", json.dumps(metadata), "application/json; charset=UTF-8"),
+            "file": (f"{sheet_name}.csv", csv_bytes, "text/csv; charset=UTF-8"),
+        }
+        try:
+            resp = await client.post(url, files=files, headers={"Authorization": f"Bearer {token}"})
+            resp.raise_for_status()
+            sheet_id = resp.json().get("id")
+            logger.info(f"📊 [GOOGLE DRIVE] Created Google Sheet '{sheet_name}' (ID: {sheet_id})")
+            return sheet_id
+        except Exception as e:
+            logger.error(f"Failed to create Google Sheet '{sheet_name}': {e}")
+            return None
+
+    async def update_sheet_values(
+        self, client: httpx.AsyncClient, token: str, sheet_id: str, rows: List[List[Any]]
+    ) -> bool:
+        """Overwrites a Google Sheet from A1 with CSV rows via Sheets API v4 (RAW)."""
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/A1"
+        try:
+            resp = await client.put(
+                url,
+                params={"valueInputOption": "RAW"},
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"values": rows},
+            )
+            if resp.status_code == 200:
+                logger.info(f"📊 [GOOGLE DRIVE] Updated Google Sheet {sheet_id} with {len(rows)} rows")
+                return True
+            logger.warning(f"Failed to update Google Sheet {sheet_id}: {resp.status_code} {resp.text[:200]}")
+        except Exception as e:
+            logger.error(f"Failed to update Google Sheet {sheet_id}: {e}")
+        return False
+
     async def cleanup_drive_clutter(
         self, client: httpx.AsyncClient, token: str
     ) -> int:
@@ -880,23 +943,22 @@ class GoogleDriveClient:
         record: Dict[str, Any],
         images: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
-        """Executes upload of images subfolder under Images/ to Google Drive."""
+        """Executes upload of a submission's images under <root>/<form_id>/submissions/<submission_id>/."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             token = await self.get_token(client)
             if not token:
                 logger.error("Could not obtain Google Drive access token.")
                 return False
 
-            # Structure: <root>/<form_id>/<submission_id>/...
+            # Structure: <root>/<form_id>/submissions/<submission_id>/...
             parent_id = self.root_folder_id if self.root_folder_id else None
             form_folder_name = str(record.get("form_id") or "unknown_form")
             form_folder_id = await self.get_or_create_folder(client, token, form_folder_name, parent_id)
+            submissions_folder_id = await self.get_or_create_folder(client, token, "submissions", form_folder_id)
+            sub_folder_id = await self.get_or_create_folder(client, token, submission_id, submissions_folder_id)
+            target_folder = sub_folder_id or submissions_folder_id
 
-            # 2. Create or resolve submission folder under the form folder
-            sub_folder_id = await self.get_or_create_folder(client, token, submission_id, form_folder_id)
-            target_folder = sub_folder_id or form_folder_id
-
-            # 3. Upload images into <form_id>/{submission_id}/
+            # Upload images into <form_id>/submissions/{submission_id}/
             if images:
                 for idx, img in enumerate(images):
                     fname = img.get("filename") or f"slot_{idx}.webp"
@@ -904,42 +966,64 @@ class GoogleDriveClient:
                     if raw_bytes:
                         await self.upload_file(client, token, fname, raw_bytes, _guess_mime(fname), target_folder)
 
-            logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into {form_folder_name}/{submission_id} finished successfully.")
+            logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into {form_folder_name}/submissions/{submission_id} finished successfully.")
             return True
 
+def _read_csv_rows(path: str) -> List[List[str]]:
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return []
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.reader(f))
+
+
+def _ensure_csv_schema(path: str) -> None:
+    """Creates the CSV with CSV_HEADERS or upgrades a legacy header row in place."""
+    rows = _read_csv_rows(path)
+    if rows and rows[0] == CSV_HEADERS:
+        return
+    migrated_rows = [CSV_HEADERS]
+    for old_row in (rows[1:] if rows else []):
+        if len(old_row) < len(CSV_HEADERS):
+            old_row = old_row + [""] * (len(CSV_HEADERS) - len(old_row))
+        elif len(old_row) > len(CSV_HEADERS):
+            old_row = old_row[: len(CSV_HEADERS)]
+        migrated_rows.append(old_row)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows(migrated_rows)
+
+
+def append_row_to_csv(path: str, row: List[Any]) -> bool:
+    """
+    Appends one row, skipping rows already present so repeated syncs stay idempotent.
+
+    CSV_HEADERS deliberately has no submission id, so a row is considered a duplicate
+    when it matches exactly or matches every column except the volatile timestamp
+    ("Thời Gian Nộp" is the first column and falls back to sync time when absent).
+    """
+    _ensure_csv_schema(path)
+    target = [str(cell) if cell is not None else "" for cell in row]
+    for existing in _read_csv_rows(path)[1:]:
+        if existing == target or existing[1:] == target[1:]:
+            return False
+    with open(path, "a", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerow(row)
+    return True
+
+
 def append_to_local_sheets_mirror(record: Dict[str, Any]) -> None:
-    """Appends submission record to the Master_Survey_Deliverables spreadsheet mirror."""
+    """Appends an approved record to the Master CSV and its per-form CSV mirror."""
     if record.get("status") != "APPROVED":
         logger.debug(f"Skipping local sheets mirror for non-approved submission #{record.get('submission_id')} (status: {record.get('status')})")
         return
 
-    file_exists = os.path.exists(MASTER_CSV_FILE) and os.path.getsize(MASTER_CSV_FILE) > 0
-    if file_exists:
-        try:
-            with open(MASTER_CSV_FILE, "r", encoding="utf-8-sig") as f:
-                reader = list(csv.reader(f))
-            if reader and reader[0] != CSV_HEADERS:
-                # Upgrade header and existing rows to match new CSV_HEADERS schema
-                migrated_rows = [CSV_HEADERS]
-                for old_row in reader[1:]:
-                    if len(old_row) < len(CSV_HEADERS):
-                        old_row = old_row + [""] * (len(CSV_HEADERS) - len(old_row))
-                    elif len(old_row) > len(CSV_HEADERS):
-                        old_row = old_row[:len(CSV_HEADERS)]
-                    migrated_rows.append(old_row)
-                with open(MASTER_CSV_FILE, "w", encoding="utf-8-sig", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerows(migrated_rows)
-        except Exception as mig_e:
-            logger.debug(f"Header migration notice: {mig_e}")
-
+    row = extract_survey_row_data(record)
     try:
-        with open(MASTER_CSV_FILE, "a", encoding="utf-8-sig", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(CSV_HEADERS)
-            writer.writerow(extract_survey_row_data(record))
-        logger.info(f"📊 [DRIVE SHEETS MIRROR] Appended #{record.get('submission_id')} to {MASTER_CSV_FILE}")
+        appended = append_row_to_csv(MASTER_CSV_FILE, row)
+        form_id = str(record.get("form_id") or "unknown_form")
+        form_appended = append_row_to_csv(local_form_csv_path(form_id), row)
+        if appended or form_appended:
+            logger.info(f"📊 [DRIVE SHEETS MIRROR] Appended #{record.get('submission_id')} to {MASTER_CSV_FILE} and {form_id}.csv")
     except Exception as e:
         logger.error(f"Failed to append to local sheets mirror: {e}")
 
@@ -949,14 +1033,14 @@ def save_submission_images_locally(
     form_id: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Saves all photos for a submission into Images/<form_id>/<submission_id>/.
+    Saves all photos for a submission into Images/<form_id>/submissions/<submission_id>/.
     Only saves to deliverables mirror if not a dev/test/mock submission and images is not empty!
     """
     if is_test_submission(submission_id) or not images:
         logger.debug(f"Skipping deliverables mirror save for dev/test or empty images submission #{submission_id}")
         return None
     form_folder = str(form_id or "unknown_form")
-    subfolder_path = os.path.join(LOCAL_IMAGES_DIR, form_folder, submission_id)
+    subfolder_path = os.path.join(LOCAL_IMAGES_DIR, form_folder, "submissions", submission_id)
     os.makedirs(subfolder_path, exist_ok=True)
 
     saved_paths = []
@@ -980,8 +1064,54 @@ def save_submission_images_locally(
     return subfolder_path
 
 
+def migrate_local_deliverables_layout(submission_forms: Optional[Dict[str, str]] = None) -> None:
+    """
+    Migrates legacy local layouts to Images/<form_id>/submissions/<submission_id>/.
+
+    Legacy layouts:
+    - Images/<submission_id>/... (flat, resolved to a form via submission_forms)
+    - Images/<form_id>/<submission_id>/... (pre-submissions per-form level)
+    """
+    if not os.path.isdir(LOCAL_IMAGES_DIR):
+        return
+    submission_forms = submission_forms or {}
+    for entry in os.listdir(LOCAL_IMAGES_DIR):
+        entry_path = os.path.join(LOCAL_IMAGES_DIR, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        child_dirs = [d for d in os.listdir(entry_path) if os.path.isdir(os.path.join(entry_path, d))]
+        if not child_dirs:
+            # Flat submission folder, only migratable when its form is known.
+            if not any(os.path.isfile(os.path.join(entry_path, f)) for f in os.listdir(entry_path)):
+                continue
+            form_id = submission_forms.get(entry)
+            dest = os.path.join(LOCAL_IMAGES_DIR, form_id or "", "submissions", entry)
+            if not form_id or os.path.exists(dest):
+                continue
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.move(entry_path, dest)
+                logger.info(f"📁 [DRIVE IMAGES MIRROR] Migrated flat folder {entry} -> {form_id}/submissions/{entry}")
+            except Exception as e:
+                logger.warning(f"Failed to migrate flat folder {entry}: {e}")
+            continue
+        if "submissions" in child_dirs:
+            continue  # already migrated
+        dest_parent = os.path.join(entry_path, "submissions")
+        for child in child_dirs:
+            src = os.path.join(entry_path, child)
+            dest = os.path.join(dest_parent, child)
+            if os.path.exists(dest):
+                continue
+            try:
+                os.makedirs(dest_parent, exist_ok=True)
+                shutil.move(src, dest)
+            except Exception as e:
+                logger.warning(f"Failed to migrate submission folder {entry}/{child}: {e}")
+
+
 def rename_local_form_folder(old_form_id: str, new_form_id: str) -> None:
-    """Mirror a form-id rename in the local Drive deliverable mirror."""
+    """Mirror a form-id rename in the local Drive deliverable mirror (images + CSV)."""
     old_dir = os.path.join(LOCAL_IMAGES_DIR, old_form_id)
     new_dir = os.path.join(LOCAL_IMAGES_DIR, new_form_id)
     if os.path.isdir(old_dir) and not os.path.exists(new_dir):
@@ -989,9 +1119,36 @@ def rename_local_form_folder(old_form_id: str, new_form_id: str) -> None:
         shutil.move(old_dir, new_dir)
         logger.info(f"📁 [DRIVE IMAGES MIRROR] Renamed local folder {old_form_id} -> {new_form_id}")
 
+    old_csv = local_form_csv_path(old_form_id)
+    new_csv = local_form_csv_path(new_form_id)
+    if os.path.isfile(old_csv) and not os.path.exists(new_csv):
+        os.makedirs(os.path.dirname(new_csv), exist_ok=True)
+        shutil.move(old_csv, new_csv)
+        logger.info(f"📊 [DRIVE SHEETS MIRROR] Renamed local CSV {old_form_id}.csv -> {new_form_id}.csv")
+
+
+async def _rename_drive_file(
+    http_client: httpx.AsyncClient, token: str, parent_id: str, old_name: str, new_name: str
+) -> bool:
+    """Renames one direct child file of a Drive folder, if present."""
+    client = GoogleDriveClient()
+    file_id = await client.find_file_or_folder(http_client, token, old_name, parent_id)
+    if not file_id:
+        return False
+    resp = await http_client.patch(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": new_name},
+    )
+    if resp.status_code == 200:
+        logger.info(f"📄 [GOOGLE DRIVE] Renamed file {old_name} -> {new_name}")
+        return True
+    logger.warning(f"Failed to rename Drive file {old_name}: {resp.status_code} {resp.text[:200]}")
+    return False
+
 
 async def rename_form_folder(old_form_id: str, new_form_id: str) -> bool:
-    """Renames the Drive form folder when a form's id changes."""
+    """Renames the Drive form folder plus its per-form CSV and Google Sheet."""
     if not has_google_credentials():
         return False
     client = GoogleDriveClient()
@@ -1010,11 +1167,13 @@ async def rename_form_folder(old_form_id: str, new_form_id: str) -> bool:
             headers={"Authorization": f"Bearer {token}"},
             json={"name": new_form_id},
         )
-        if resp.status_code == 200:
-            logger.info(f"📁 [GOOGLE DRIVE] Renamed form folder {old_form_id} -> {new_form_id}")
-            return True
-        logger.error(f"Failed to rename Drive folder {old_form_id}: {resp.status_code} {resp.text[:200]}")
-        return False
+        if resp.status_code != 200:
+            logger.error(f"Failed to rename Drive folder {old_form_id}: {resp.status_code} {resp.text[:200]}")
+            return False
+        logger.info(f"📁 [GOOGLE DRIVE] Renamed form folder {old_form_id} -> {new_form_id}")
+        await _rename_drive_file(http_client, token, folder_id, f"{old_form_id}.csv", f"{new_form_id}.csv")
+        await _rename_drive_file(http_client, token, folder_id, old_form_id, new_form_id)
+        return True
 
 
 def has_google_credentials() -> bool:
@@ -1026,17 +1185,23 @@ async def upload_to_google_drive(
     submission_id: str,
     record: Dict[str, Any],
     images: Optional[List[Dict[str, Any]]] = None,
+    form_id: Optional[str] = None,
 ) -> bool:
     """
     Orchestrates delivery to Google Drive & Google Sheets:
     1. ONLY status == 'APPROVED' submissions may be included in the Google Drive delivery!
        If record.get("status") != "APPROVED", immediately skip.
     2. Writes to the local structured deliverables mirror:
-       - Images/{submission_id}/ (1 subfolder per submission containing all images)
-       - Sheets/Master_Survey_Deliverables.csv (Spreadsheet containing all info fields)
+       - Images/<form_id>/submissions/<submission_id>/ (all images for the submission)
+       - Sheets/Master_Survey_Deliverables.csv (global master)
+       - Sheets/forms/<form_id>.csv (per-form spreadsheet mirror)
     3. Individual surveys are NOT uploaded directly to Google Drive upon submission.
-       Only the master data sheet and image folder are synced in batch (via sync_all_approved_to_drive / scripts/sync_to_drive.py).
+       Only the master/per-form data sheets and image folders are synced in batch
+       (via sync_all_approved_to_drive / scripts/sync_to_drive.py).
     """
+    if form_id and not record.get("form_id"):
+        record = dict(record, form_id=form_id)
+
     if record.get("status") != "APPROVED":
         logger.info(f"🚫 [GOOGLE DRIVE DELIVERY] Skipping #{submission_id} because status is '{record.get('status')}' (only 'APPROVED' accepted).")
         return False
@@ -1069,9 +1234,32 @@ async def upload_to_google_drive(
     logger.info(f"📁 [DRIVE DELIVERABLES MIRROR] #{submission_id} recorded in Sheets/Master_Survey_Deliverables.csv and Images/{submission_id} (individual surveys not uploaded directly; only data sheet and image folder are synced).")
     return True
 
+async def _sync_form_sheet(
+    client: GoogleDriveClient,
+    http_client: httpx.AsyncClient,
+    token: str,
+    form_id: str,
+    form_folder_id: str,
+    csv_path: str,
+) -> bool:
+    """Creates or updates the native Google Sheet named <form_id> inside its form folder."""
+    rows = _read_csv_rows(csv_path) or [CSV_HEADERS]
+    sheet_id = await client.find_file_or_folder(http_client, token, form_id, form_folder_id)
+    if sheet_id:
+        return await client.update_sheet_values(http_client, token, sheet_id, rows)
+    with open(csv_path, "rb") as f:
+        csv_bytes = f.read()
+    return await client.import_csv_as_sheet(
+        http_client, token, form_id, csv_bytes, form_folder_id
+    ) is not None
+
+
 async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
     """
-    Pushes the updated Master CSV and image folders for approved submissions to Google Drive.
+    Pushes the Master CSV, per-form CSVs/Sheets and submission images to Google Drive.
+
+    Remote layout: <root>/<form_id>/submissions/<submission_id>/*, <root>/<form_id>/<form_id>.csv
+    and a native Google Sheet named <form_id> inside <root>/<form_id>/.
     """
     # Archive master sheet to R2 on every sync execution
     if os.path.exists(MASTER_CSV_FILE) and os.path.getsize(MASTER_CSV_FILE) > 0:
@@ -1089,35 +1277,48 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
         logger.debug("No Google Drive credentials configured; skipping drive sync.")
         return False
 
-    # Find approved submission IDs
-    approved_ids = set()
-    submission_forms: Dict[str, str] = {}
+    # Collect approved, non-test records from dev storage and the database
+    approved_records: Dict[str, Dict[str, Any]] = {}
+
+    def _collect(record: Dict[str, Any]) -> None:
+        submission_id = record.get("submission_id")
+        if not submission_id or record.get("status") != "APPROVED" or is_test_submission(submission_id):
+            return
+        approved_records[str(submission_id)] = record
+
     # 1. Dev storage
     dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
     if os.path.exists(dev_storage_file):
         try:
             with open(dev_storage_file, "r", encoding="utf-8") as f:
-                dev_records = json.load(f)
-            for r in dev_records:
-                if r.get("status") == "APPROVED" and r.get("submission_id"):
-                    approved_ids.add(r.get("submission_id"))
-                    submission_forms[r.get("submission_id")] = r.get("form_id") or "unknown_form"
+                for r in json.load(f):
+                    if isinstance(r, dict):
+                        _collect(r)
         except Exception as e:
-            logger.debug(f"Could not read dev storage for approved IDs: {e}")
+            logger.debug(f"Could not read dev storage for approved records: {e}")
 
     # 2. Database
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute("SELECT submission_id, form_id FROM survey_submissions WHERE status = 'APPROVED';")
-                    rows = await cur.fetchall()
-                    for row in rows:
-                        if row[0]:
-                            approved_ids.add(row[0])
-                            submission_forms[row[0]] = row[1] or "unknown_form"
+                    await cur.execute("SELECT * FROM survey_submissions WHERE status = 'APPROVED';")
+                    for row in await cur.fetchall():
+                        try:
+                            _collect(dict(row))
+                        except Exception:
+                            continue
         except Exception as e:
-            logger.debug(f"Could not query DB for approved IDs: {e}")
+            logger.debug(f"Could not query DB for approved records: {e}")
+
+    submission_forms = {
+        sid: str(rec.get("form_id") or "unknown_form") for sid, rec in approved_records.items()
+    }
+    approved_ids = set(approved_records)
+
+    # Backfill the local master + per-form CSV mirrors idempotently
+    for record in approved_records.values():
+        append_to_local_sheets_mirror(record)
 
     client = GoogleDriveClient()
     async with httpx.AsyncClient(timeout=45.0) as http_client:
@@ -1128,13 +1329,13 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
 
         root_id = client.root_folder_id or None
 
-        # Clean up any DEV-* or TEST-* folders from Google Drive
         # Clean up test folders, duplicate CSVs, and summary files from Google Drive
         try:
             await client.cleanup_drive_clutter(http_client, token)
         except Exception as e:
             logger.warning(f"Failed to cleanup clutter from Google Drive: {e}")
-        # 1. Upload Master Sheet
+
+        # 1. Upload Master Sheet (global, kept at root for backwards compatibility)
         if os.path.exists(MASTER_CSV_FILE):
             try:
                 with open(MASTER_CSV_FILE, "rb") as f:
@@ -1146,31 +1347,16 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
             except Exception as e:
                 logger.error(f"[AUTO DRIVE SYNC] Failed to upload Master CSV: {e}")
 
-        # 1b. Migrate legacy Images/<submission_id>/ dirs into Images/<form_id>/<submission_id>/
+        # 1b. Migrate legacy local dirs into Images/<form_id>/submissions/<submission_id>/
         try:
-            for entry in os.listdir(LOCAL_IMAGES_DIR):
-                entry_path = os.path.join(LOCAL_IMAGES_DIR, entry)
-                if not os.path.isdir(entry_path):
-                    continue
-                child_dirs = [d for d in os.listdir(entry_path) if os.path.isdir(os.path.join(entry_path, d))]
-                if child_dirs:
-                    continue  # already a form folder
-                form_id = submission_forms.get(entry)
-                if not form_id:
-                    continue
-                dest_dir = os.path.join(LOCAL_IMAGES_DIR, form_id)
-                os.makedirs(dest_dir, exist_ok=True)
-                dest = os.path.join(dest_dir, entry)
-                if not os.path.exists(dest):
-                    shutil.move(entry_path, dest)
+            migrate_local_deliverables_layout(submission_forms)
         except Exception as e:
-            logger.warning(f"[AUTO DRIVE SYNC] Legacy image dir migration failed: {e}")
+            logger.warning(f"[AUTO DRIVE SYNC] Legacy deliverables migration failed: {e}")
 
-        # 2. Upload approved submissions under <root>/<form_id>/<submission_id>/
+        # 2. Upload approved submissions under <root>/<form_id>/submissions/<submission_id>/
         uploaded_count = 0
         skipped_count = 0
         try:
-            root_id = client.root_folder_id or None
             headers = {"Authorization": f"Bearer {token}"}
             url_files = "https://www.googleapis.com/drive/v3/files"
 
@@ -1196,17 +1382,47 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
                         break
                 return found
 
-            form_dirs = [p for p in glob.glob(os.path.join(LOCAL_IMAGES_DIR, "*")) if os.path.isdir(p)]
-            for form_dir in form_dirs:
-                form_folder_name = os.path.basename(form_dir)
+            form_ids = set(submission_forms.values())
+            for entry in os.listdir(LOCAL_IMAGES_DIR):
+                entry_path = os.path.join(LOCAL_IMAGES_DIR, entry)
+                if os.path.isdir(os.path.join(entry_path, "submissions")):
+                    form_ids.add(entry)
+
+            for form_id in sorted(form_ids):
                 form_folder_id = await client.get_or_create_folder(
-                    http_client, token, form_folder_name, root_id
+                    http_client, token, form_id, root_id
                 )
                 if not form_folder_id:
                     continue
-                remote_subfolders = await list_remote_folders(form_folder_id)
 
-                for sub_dir in glob.glob(os.path.join(form_dir, "*")):
+                # Per-form CSV + native Google Sheet inside the form folder
+                csv_path = local_form_csv_path(form_id)
+                if os.path.isfile(csv_path):
+                    try:
+                        with open(csv_path, "rb") as f:
+                            csv_bytes = f.read()
+                        await client.upload_file(
+                            http_client, token, f"{form_id}.csv", csv_bytes,
+                            "text/csv; charset=UTF-8", form_folder_id,
+                        )
+                    except Exception as e:
+                        logger.error(f"[AUTO DRIVE SYNC] Failed to upload CSV for {form_id}: {e}")
+                    try:
+                        await _sync_form_sheet(client, http_client, token, form_id, form_folder_id, csv_path)
+                    except Exception as e:
+                        logger.error(f"[AUTO DRIVE SYNC] Failed to sync Google Sheet for {form_id}: {e}")
+
+                submissions_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions")
+                if not os.path.isdir(submissions_dir):
+                    continue
+                submissions_folder_id = await client.get_or_create_folder(
+                    http_client, token, "submissions", form_folder_id
+                )
+                if not submissions_folder_id:
+                    continue
+                remote_subfolders = await list_remote_folders(submissions_folder_id)
+
+                for sub_dir in glob.glob(os.path.join(submissions_dir, "*")):
                     if not os.path.isdir(sub_dir):
                         continue
                     sub_id = os.path.basename(sub_dir)
@@ -1227,7 +1443,7 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
                         skipped_count += 1
                     else:
                         sub_folder_id = await client.get_or_create_folder(
-                            http_client, token, sub_id, form_folder_id
+                            http_client, token, sub_id, submissions_folder_id
                         )
                         remote_names = set()
                         if sub_folder_id:
@@ -1247,13 +1463,13 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
                         if file_id:
                             uploaded_count += 1
                         else:
-                            logger.warning(f"[AUTO DRIVE SYNC] Upload failed for {form_folder_name}/{sub_id}/{fname}; will retry next sync.")
+                            logger.warning(f"[AUTO DRIVE SYNC] Upload failed for {form_id}/submissions/{sub_id}/{fname}; will retry next sync.")
 
             logger.info(
                 f"🖼️ [AUTO DRIVE SYNC] Synced {uploaded_count} new image files across "
                 f"form folders under root {root_id}; {skipped_count} submission folders already existed."
             )
         except Exception as e:
-            logger.error(f"[AUTO DRIVE SYNC] Failed to sync image subfolders: {e}")
+            logger.error(f"[AUTO DRIVE SYNC] Failed to sync form folders: {e}")
 
         return True

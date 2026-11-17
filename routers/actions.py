@@ -57,5 +57,6 @@ async def retry_submission_actions_endpoint(
         reason_str=rec.get("rejection_reason"),
         is_test_mode=rec.get("mode") == "TEST_DEV_MODE",
         raw_bytes_list=[],
+        form_id=rec.get("form_id"),
     )
     return {"status": "retry_dispatched", "submission_id": submission_id}

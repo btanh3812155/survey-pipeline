@@ -63,6 +63,7 @@ async def test_google_drive_delivery_structure():
     sub_id = "VN-REAL-8F2A1C90"
     sample_record = {
         "submission_id": sub_id,
+        "form_id": "income_survey",
         "status": "APPROVED",
         "driver_phone": "0988555666",
         "driver_name": "Phan Văn C",
@@ -138,8 +139,8 @@ async def test_google_drive_delivery_structure():
         )
         assert ok is True
 
-        # 1. Check subfolder in Images for production ID
-        sub_folder = os.path.join(LOCAL_IMAGES_DIR, sub_id)
+        # 1. Check subfolder in Images/<form_id>/submissions for production ID
+        sub_folder = os.path.join(LOCAL_IMAGES_DIR, "income_survey", "submissions", sub_id)
         assert os.path.exists(sub_folder)
         assert os.path.exists(os.path.join(sub_folder, "slot_0_app_profile.webp"))
         assert os.path.exists(os.path.join(sub_folder, "slot_1_vehicle.webp"))
@@ -158,7 +159,7 @@ async def test_google_drive_delivery_structure():
         assert "CTV001_Dũng_HN" not in content
         assert "VN-REAL-8F2A1C90" not in content
     finally:
-        sub_folder = os.path.join(LOCAL_IMAGES_DIR, sub_id)
+        sub_folder = os.path.join(LOCAL_IMAGES_DIR, "income_survey", "submissions", sub_id)
         if os.path.exists(sub_folder):
             import shutil
             shutil.rmtree(sub_folder, ignore_errors=True)
@@ -169,6 +170,7 @@ async def test_google_drive_delivery_5_weeks_and_membership():
     sub_id = "VN-5WEEK-OCT2026"
     record = {
         "submission_id": sub_id,
+        "form_id": "income_survey",
         "status": "APPROVED",
         "driver_phone": "0912345678",
         "driver_name": "Nguyễn Văn Test",
@@ -234,7 +236,7 @@ async def test_google_drive_delivery_5_weeks_and_membership():
         assert "Nghị Định 13" not in csv_text
         assert "Tôi đồng ý" not in csv_text
     finally:
-        shutil.rmtree(os.path.join(LOCAL_IMAGES_DIR, sub_id), ignore_errors=True)
+        shutil.rmtree(os.path.join(LOCAL_IMAGES_DIR, "income_survey", "submissions", sub_id), ignore_errors=True)
 
 def test_submit_form_optional_phone(monkeypatch):
     """Submitting survey without phone number succeeds gracefully without crashing."""
