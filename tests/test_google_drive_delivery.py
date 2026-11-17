@@ -422,3 +422,93 @@ def test_legacy_csv_header_migration_adds_empty_submission_id(monkeypatch, tmp_p
     assert rows[0] == gd.CSV_HEADERS
     assert len(rows[1]) == len(gd.CSV_HEADERS)
     assert rows[1][-1] == ""
+
+
+class _CleanupResponse:
+    def __init__(self, data=None, status_code=200):
+        self._data = data or {}
+        self.status_code = status_code
+        self.text = ""
+
+    def json(self):
+        return self._data
+
+    def raise_for_status(self):
+        return None
+
+
+class _CleanupHttpClient:
+    def __init__(self, folders):
+        self.folders = folders
+        self.deleted = []
+
+    async def get(self, url, params=None, headers=None):
+        query = (params or {}).get("q", "")
+        if "name = 'Images'" in query:
+            return _CleanupResponse({"files": []})
+        if "mimeType = 'application/vnd.google-apps.folder'" in query:
+            return _CleanupResponse({"files": list(self.folders)})
+        return _CleanupResponse({"files": []})
+
+    async def delete(self, url, headers=None):
+        self.deleted.append(url.rsplit("/", 1)[-1])
+        return _CleanupResponse({}, 204)
+
+
+def test_explicit_test_folder_matcher_keeps_real_form_ids():
+    import services.google_drive_delivery as gd
+
+    assert gd.is_explicit_test_folder("TEST-old")
+    assert gd.is_explicit_test_folder("TEST_old")
+    assert gd.is_explicit_test_folder("DEV-foo")
+    assert gd.is_explicit_test_folder("MOCK-x")
+    assert gd.is_explicit_test_folder("SAMPLE-y")
+    assert gd.is_explicit_test_folder("DEMO-z")
+    assert gd.is_explicit_test_folder("VN-DRIVE-TEST-01")
+    assert not gd.is_explicit_test_folder("TB_GSM_2026_Nov_Test")
+    assert not gd.is_explicit_test_folder("income_survey")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_only_explicit_test_folders():
+    import services.google_drive_delivery as gd
+
+    folders = [
+        {"id": "tb", "name": "TB_GSM_2026_Nov_Test"},
+        {"id": "t1", "name": "TEST-old"},
+        {"id": "d1", "name": "DEV-foo"},
+        {"id": "m1", "name": "MOCK-x"},
+        {"id": "s1", "name": "SAMPLE-y"},
+        {"id": "de1", "name": "DEMO-z"},
+        {"id": "v1", "name": "VN-DRIVE-TEST-01"},
+        {"id": "real", "name": "income_survey"},
+    ]
+    http_client = _CleanupHttpClient(folders)
+    client = gd.GoogleDriveClient(root_folder_id="root_folder")
+
+    deleted = await client.cleanup_drive_clutter(http_client, "token")
+
+    assert deleted == 6
+    assert set(http_client.deleted) == {"t1", "d1", "m1", "s1", "de1", "v1"}
+    assert "tb" not in http_client.deleted
+    assert "real" not in http_client.deleted
+
+
+@pytest.mark.asyncio
+async def test_cleanup_protected_names_are_never_deleted():
+    import services.google_drive_delivery as gd
+
+    folders = [
+        {"id": "tb", "name": "TB_GSM_2026_Nov_Test"},
+        {"id": "t1", "name": "TEST-old"},
+        {"id": "d1", "name": "DEV-foo"},
+    ]
+    http_client = _CleanupHttpClient(folders)
+    client = gd.GoogleDriveClient(root_folder_id="root_folder")
+
+    deleted = await client.cleanup_drive_clutter(
+        http_client, "token", {"TB_GSM_2026_Nov_Test", "TEST-old"}
+    )
+
+    assert deleted == 1
+    assert http_client.deleted == ["d1"]

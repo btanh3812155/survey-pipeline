@@ -112,6 +112,26 @@ def is_test_submission(submission_id: Any) -> bool:
     sub_upper = str(submission_id).upper()
     return any(tag in sub_upper for tag in ("TEST", "DEV", "MOCK", "SAMPLE", "DEMO"))
 
+
+_TEST_FOLDER_PREFIXES = ("DEV-", "TEST-", "TEST_", "MOCK-", "SAMPLE-", "DEMO-")
+_TEST_FOLDER_SEGMENTS = (
+    "_TEST_", "_DEV_", "_MOCK_", "_SAMPLE_", "_DEMO_",
+    "-TEST-", "-DEV-", "-MOCK-", "-SAMPLE-", "-DEMO-",
+)
+
+
+def is_explicit_test_folder(name: Any) -> bool:
+    """
+    True only for unambiguous test folders (e.g. DEV-foo, TEST-old, MOCK-x,
+    VN-DRIVE-TEST-01). Real form ids such as TB_GSM_2026_Nov_Test are not matched.
+    """
+    if not name:
+        return False
+    upper = str(name).upper()
+    if upper.startswith(_TEST_FOLDER_PREFIXES):
+        return True
+    return any(segment in upper for segment in _TEST_FOLDER_SEGMENTS)
+
 def extract_survey_row_data(record: Dict[str, Any]) -> List[Any]:
     """
     Extracts deliverable survey columns following the form fields:
@@ -812,17 +832,19 @@ class GoogleDriveClient:
         return False
 
     async def cleanup_drive_clutter(
-        self, client: httpx.AsyncClient, token: str
+        self, client: httpx.AsyncClient, token: str, protected_names: Optional[set] = None
     ) -> int:
         """
         Remote Google Drive cleanup routine:
-        1. Search and delete any folders whose name contains TEST, DEV, MOCK, SAMPLE (including VN-DRIVE-TEST*)
-           in root and Images parent folder.
+        1. Delete only explicit test folders (DEV-*, TEST-*, MOCK-*, SAMPLE-*, DEMO-*,
+           or names containing _TEST_/_DEV_/-TEST-/-DEV- segments) in root and Images.
+           Names in protected_names (active form ids) are never deleted.
         2. Search for duplicate Master_Survey_Deliverables.csv files in the root folder.
            If multiple exist, delete all except the latest one!
         3. Search and delete any submission_*_summary.csv files on Google Drive.
         """
         root_id = self.root_folder_id or None
+        protected = {str(name) for name in (protected_names or set())}
         folder_ids_to_check = [root_id] if root_id else [None]
         if root_id:
             try:
@@ -837,9 +859,8 @@ class GoogleDriveClient:
         deleted_count = 0
         headers = {"Authorization": f"Bearer {token}"}
         url = "https://www.googleapis.com/drive/v3/files"
-        test_tags = ("TEST", "DEV", "MOCK", "SAMPLE", "DEMO")
 
-        # 1. Clean up dev/test folders in root and Images
+        # 1. Clean up explicit dev/test folders in root and Images
         for p_id in folder_ids_to_check:
             query_parts = [
                 "mimeType = 'application/vnd.google-apps.folder'",
@@ -865,8 +886,7 @@ class GoogleDriveClient:
                     for f in files:
                         fname = f.get("name", "")
                         fid = f.get("id")
-                        fname_upper = fname.upper()
-                        if fid and any(tag in fname_upper for tag in test_tags):
+                        if fid and fname not in protected and is_explicit_test_folder(fname):
                             del_resp = await client.delete(f"{url}/{fid}", headers=headers)
                             if del_resp.status_code in (200, 204):
                                 logger.info(f"🗑️ [GOOGLE DRIVE] Deleted dev/test folder '{fname}' (ID: {fid})")
@@ -947,9 +967,9 @@ class GoogleDriveClient:
 
     # Backwards compatibility alias
     async def cleanup_dev_folders_from_drive(
-        self, client: httpx.AsyncClient, token: str
+        self, client: httpx.AsyncClient, token: str, protected_names: Optional[set] = None
     ) -> int:
-        return await self.cleanup_drive_clutter(client, token)
+        return await self.cleanup_drive_clutter(client, token, protected_names)
 
 
     async def execute_delivery(
@@ -1486,6 +1506,25 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
     }
     approved_ids = set(approved_records)
 
+    # Active form ids must survive test-folder cleanup even if their names look testy.
+    protected_form_names = set(submission_forms.values())
+    try:
+        for entry in os.listdir(LOCAL_IMAGES_DIR):
+            if os.path.isdir(os.path.join(LOCAL_IMAGES_DIR, entry)):
+                protected_form_names.add(entry)
+    except OSError:
+        pass
+    protected_form_names.update(
+        os.path.splitext(os.path.basename(path))[0]
+        for path in glob.glob(os.path.join(LOCAL_FORMS_SHEETS_DIR, "*.csv"))
+    )
+    try:
+        from core.state import FORM_REGISTRY
+
+        protected_form_names.update(str(form_id) for form_id in FORM_REGISTRY.keys())
+    except Exception as e:
+        logger.debug(f"Could not read form registry for cleanup protection: {e}")
+
     # Rebuild the Master + per-form CSVs from the full approved record set.
     # Atomic writes guarantee one row per submission_id and no half-written files.
     try:
@@ -1506,7 +1545,7 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
 
         # Clean up test folders, duplicate CSVs, and summary files from Google Drive
         try:
-            await client.cleanup_drive_clutter(http_client, token)
+            await client.cleanup_drive_clutter(http_client, token, protected_form_names)
         except Exception as e:
             logger.warning(f"Failed to cleanup clutter from Google Drive: {e}")
 
