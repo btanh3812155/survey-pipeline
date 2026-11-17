@@ -30,6 +30,7 @@ import httpx
 from services.google_drive_delivery import GoogleDriveClient, has_google_credentials
 
 DEFAULT_SHAREE_EMAIL = "buitheanh1003@gmail.com"
+DEFAULT_SERVICE_ACCOUNT_EMAIL = "drive-worker@trust-bridge-514111.iam.gserviceaccount.com"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 
 TOKEN_PERMISSION_FIELDS = "id,type,role,emailAddress,displayName"
@@ -49,7 +50,7 @@ async def _resolve_folder_id(http_client, headers, folder_id):  # noqa: ANN001
     return body.get("id"), body.get("name")
 
 
-async def share_folder(sharee_email: str, folder_id: str) -> int:
+async def share_folder(sharee_emails: list, folder_id: str) -> int:
     if not has_google_credentials():
         print("No Google Drive credentials configured.", file=sys.stderr)
         return 1
@@ -72,40 +73,44 @@ async def share_folder(sharee_email: str, folder_id: str) -> int:
             return 1
         print(f"Target folder: {folder_name} ({resolved_id})")
 
-        payload = {
-            "type": "user",
-            "role": "writer",
-            "emailAddress": sharee_email,
-            "sendNotificationEmail": True,
-        }
-        resp = await http_client.post(
-            f"{DRIVE_FILES_URL}/{resolved_id}/permissions",
-            headers=headers,
-            json=payload,
-            params={"fields": TOKEN_PERMISSION_FIELDS, "sendNotificationEmail": "true"},
-        )
-        if resp.status_code not in (200, 201):
-            # Service accounts cannot always trigger notification emails; retry silently.
-            print(
-                f"Permission create with notification failed (HTTP {resp.status_code}); "
-                f"retrying without notification email.",
-                file=sys.stderr,
-            )
-            payload.pop("sendNotificationEmail", None)
+        for sharee_email in sharee_emails:
+            payload = {
+                "type": "user",
+                "role": "writer",
+                "emailAddress": sharee_email,
+                "sendNotificationEmail": True,
+            }
             resp = await http_client.post(
                 f"{DRIVE_FILES_URL}/{resolved_id}/permissions",
                 headers=headers,
                 json=payload,
-                params={"fields": TOKEN_PERMISSION_FIELDS},
+                params={"fields": TOKEN_PERMISSION_FIELDS, "sendNotificationEmail": "true"},
             )
-        if resp.status_code in (200, 201):
-            print(f"Granted writer access on {folder_name} to {sharee_email}")
-        else:
-            print(
-                f"Failed to grant access: HTTP {resp.status_code} {resp.text[:300]}",
-                file=sys.stderr,
-            )
-            return 1
+            if resp.status_code not in (200, 201):
+                # Service accounts cannot always trigger notification emails; retry silently.
+                print(
+                    f"Permission create for {sharee_email} failed (HTTP {resp.status_code}); "
+                    f"retrying without notification email.",
+                    file=sys.stderr,
+                )
+                payload.pop("sendNotificationEmail", None)
+                resp = await http_client.post(
+                    f"{DRIVE_FILES_URL}/{resolved_id}/permissions",
+                    headers=headers,
+                    json=payload,
+                    params={"fields": TOKEN_PERMISSION_FIELDS},
+                )
+            if resp.status_code in (200, 201):
+                print(f"Granted writer access on {folder_name} to {sharee_email}")
+            elif "already" in resp.text.lower():
+                print(f"{sharee_email} already has access to {folder_name}")
+            else:
+                print(
+                    f"Failed to grant access to {sharee_email}: "
+                    f"HTTP {resp.status_code} {resp.text[:300]}",
+                    file=sys.stderr,
+                )
+                return 1
 
         listing = await http_client.get(
             f"{DRIVE_FILES_URL}/{resolved_id}/permissions",
@@ -120,25 +125,26 @@ async def share_folder(sharee_email: str, folder_id: str) -> int:
             return 1
         permissions = listing.json().get("permissions", [])
         print(json.dumps(permissions, ensure_ascii=False, indent=2))
-        granted = any(
-            p.get("emailAddress", "").lower() == sharee_email.lower()
-            and p.get("role") in ("writer", "owner")
+        writers = {
+            p.get("emailAddress", "").lower()
             for p in permissions
-        )
-        if not granted:
-            print(f"Verification failed: {sharee_email} is not a writer on {resolved_id}.", file=sys.stderr)
+            if p.get("role") in ("writer", "owner")
+        }
+        missing = [e for e in sharee_emails if e.lower() not in writers]
+        if missing:
+            print(f"Verification failed: not writer on {resolved_id}: {', '.join(missing)}", file=sys.stderr)
             return 1
-        print(f"Verified: {sharee_email} has writer access on {resolved_id}")
+        print(f"Verified writers on {resolved_id}: {', '.join(sharee_emails)}")
         return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Share a Google Drive folder for the delivery pipeline")
     parser.add_argument(
-        "email",
-        nargs="?",
-        default=os.environ.get("GOOGLE_DRIVE_SHARE_EMAIL", DEFAULT_SHAREE_EMAIL),
-        help="Google account email to grant writer access to",
+        "emails",
+        nargs="*",
+        help="Google account emails to grant writer access to "
+        f"(default: {DEFAULT_SHAREE_EMAIL} and {DEFAULT_SERVICE_ACCOUNT_EMAIL})",
     )
     parser.add_argument(
         "--folder-id",
@@ -146,7 +152,11 @@ def main() -> int:
         help="Folder id to share (defaults to GOOGLE_DRIVE_ROOT_FOLDER_ID; 'root' = caller's My Drive)",
     )
     args = parser.parse_args()
-    return asyncio.run(share_folder(args.email, args.folder_id))
+    emails = args.emails or [
+        os.environ.get("GOOGLE_DRIVE_SHARE_EMAIL", DEFAULT_SHAREE_EMAIL),
+        DEFAULT_SERVICE_ACCOUNT_EMAIL,
+    ]
+    return asyncio.run(share_folder(emails, args.folder_id))
 
 
 if __name__ == "__main__":
