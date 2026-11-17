@@ -16,6 +16,7 @@ import hashlib
 import secrets
 import logging
 import asyncio
+import functools
 from typing import Optional, Dict, Any, Union, List, Tuple
 from datetime import datetime, timezone
 
@@ -454,7 +455,78 @@ def _classification_slots(schema: Any, target_q: Any) -> List[dict]:
     return slots
 
 
+INTERRUPTED_CHECK_REASON = (
+    "Hệ thống gián đoạn trong quá trình kiểm tra; ảnh đã nhận, cần kiểm tra lại."
+)
+
+
+async def _persist_interrupted_submission(request: Request) -> None:
+    """Writes the one-shot interruption row when checks/verdict/persist died."""
+    pending = getattr(getattr(request, "state", None), "pending_submission", None)
+    if not pending or pending.get("final_written"):
+        return
+    if pending.get("is_test_mode") or not pending.get("db_pool"):
+        pending["final_written"] = True
+        return
+    submission_id = pending.get("submission_id")
+    try:
+        async with pending["db_pool"].connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO survey_submissions (
+                    submission_id, form_id, ctv_code, driver_phone, driver_name,
+                    receipt_serial_no, status, rejection_reason, form_data
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'MANUAL_REVIEW', %s, %s)
+                ON CONFLICT (submission_id) DO NOTHING;
+                """,
+                (
+                    submission_id,
+                    pending.get("form_id"),
+                    pending.get("ctv_code"),
+                    pending.get("driver_phone"),
+                    pending.get("driver_name"),
+                    f"SN-{pending.get('license_plate') or 'AUTO'}",
+                    INTERRUPTED_CHECK_REASON,
+                    json.dumps({
+                        "status": "INTERRUPTED",
+                        "interrupted_at": datetime.now(timezone.utc).isoformat(),
+                    }),
+                ),
+            )
+        pending["final_written"] = True
+        logger.warning(f"[SUBMIT] Persisted interruption row for #{submission_id}")
+    except Exception as e:
+        logger.error(f"[SUBMIT] Failed to persist interruption row for #{submission_id}: {e}")
+
+
+def _submission_crash_guard(endpoint):
+    """
+    Guarantees a reviewable row if an unexpected exception, worker cancellation or
+    client disconnect aborts the handler AFTER the photos were written but BEFORE
+    the final verdict row exists. The shielded write survives task cancellation;
+    normal verdicts are untouched (the guard is a no-op once final_written is set).
+    """
+    @functools.wraps(endpoint)
+    async def _wrapped(*args, **kwargs):
+        request = kwargs.get("request")
+        if request is None:
+            request = next((a for a in args if isinstance(a, Request)), None)
+        try:
+            return await endpoint(*args, **kwargs)
+        except asyncio.CancelledError:
+            if request is not None:
+                await asyncio.shield(_persist_interrupted_submission(request))
+            raise
+        except Exception:
+            if request is not None:
+                await asyncio.shield(_persist_interrupted_submission(request))
+            raise
+
+    return _wrapped
+
+
 @router.post("/api/v1/survey/submit-webrtc")
+@_submission_crash_guard
 async def submit_webrtc_survey(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -599,35 +671,21 @@ async def submit_webrtc_survey(
 
     raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
 
-    # Persist the accepted submission BEFORE the AI verdict. If the vision stage
-    # crashes, the client disconnects, or the worker is restarted mid-processing,
-    # the submission still exists for manual review instead of vanishing (nothing
-    # was stored before this point even though the photos were already on disk).
-    # The final upsert below upgrades this row with the real verdict.
-    if db_pool and not is_test_mode:
-        try:
-            async with db_pool.connection() as early_conn:
-                await early_conn.execute(
-                    """
-                    INSERT INTO survey_submissions (
-                        submission_id, form_id, ctv_code, driver_phone, driver_name,
-                        receipt_serial_no, status, rejection_reason, form_data
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'MANUAL_REVIEW', %s, %s)
-                    ON CONFLICT (submission_id) DO NOTHING;
-                    """,
-                    (
-                        submission_id,
-                        active_form_id,
-                        str(collab_param or "").strip() or None,
-                        clean_phone,
-                        driver_name,
-                        f"SN-{license_plate or 'AUTO'}",
-                        "Hồ sơ đã nhận ảnh, đang chờ hệ thống xác thực tự động.",
-                        json.dumps({"status": "PROCESSING"}),
-                    ),
-                )
-        except Exception as early_err:
-            logger.error(f"[SUBMIT] Early persistence failed for #{submission_id}: {early_err}")
+    # Crash safety WITHOUT a premature row: nothing is written to the DB while the
+    # checks run (a CTV/admin must never see a placeholder "processing" verdict).
+    # If the checks/verdict/persist stage dies after the photos are already on disk,
+    # _submission_crash_guard writes a single interruption row from this snapshot.
+    request.state.pending_submission = {
+        "submission_id": submission_id,
+        "form_id": active_form_id,
+        "ctv_code": str(collab_param or "").strip() or None,
+        "driver_phone": clean_phone,
+        "driver_name": driver_name,
+        "license_plate": license_plate,
+        "db_pool": db_pool,
+        "is_test_mode": bool(is_test_mode),
+        "final_written": False,
+    }
 
     if not is_schema_valid:
         status_str = "REJECTED"
@@ -1352,6 +1410,7 @@ async def submit_webrtc_survey(
         }
         append_dev_submission(dev_record)
         logger.info(f"[DEV TEST MODE] Saved #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
+        request.state.pending_submission["final_written"] = True
     elif db_pool:
         try:
             async with db_pool.connection() as conn:
@@ -1535,7 +1594,12 @@ async def submit_webrtc_survey(
                     if hasattr(cur_res, "__aexit__"):
                         await cur_res.__aexit__(None, None, None)
         except Exception as e:
+            # Re-raise so the crash guard writes the interruption row instead of
+            # answering 200 with nothing persisted (silent-loss bug 2026-11-16).
             logger.error(f"failed to persist survey to DB: {e}")
+            raise
+
+    request.state.pending_submission["final_written"] = True
 
     # 4. Dispatch Idempotent Downstream Action Checklist
     try:

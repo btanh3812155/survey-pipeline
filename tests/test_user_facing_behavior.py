@@ -820,16 +820,57 @@ def test_image_object_coverage_is_order_agnostic():
             FORM_REGISTRY.pop(form_id, None)
 
 
-def test_accepted_submission_gets_early_row_even_if_final_insert_fails():
+class _FakeSubmissionDB:
     """
-    Photos on disk must never outlive a missing DB row. The handler stores a
-    MANUAL_REVIEW placeholder before the AI verdict; even when the rich insert
-    fails (simulated FK violation), the FK-safe fallback keeps the row instead of
-    returning 200 with nothing persisted (5 submissions were lost this way on
-    2026-11-16, leaving orphan photo dirs).
+    In-memory stand-in for the asyncpg pool used by submit persistence.
+
+    Records only survey_submissions writes: status/reason per submission id, so
+    tests can assert what is visible (or NOT visible) while checks run.
     """
+
+    def __init__(self, fail_rich_insert=False):
+        self.fail_rich_insert = fail_rich_insert
+        self.executed = []
+        self.stored = {}
+
+    def reset(self):
+        self.executed.clear()
+        self.stored.clear()
+
+    def connection(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def cursor(self):
+        return self
+
+    async def execute(self, query, params=None):
+        self.executed.append(query)
+        if "INSERT INTO survey_submissions" not in query:
+            return None
+        if "image_dhash" in query:
+            if self.fail_rich_insert:
+                raise RuntimeError("simulated foreign key violation")
+            self.stored[params[0]] = {"status": params[6], "reason": params[7]}
+        elif "'MANUAL_REVIEW'" in query:
+            self.stored[params[0]] = {"status": "MANUAL_REVIEW", "reason": params[6]}
+        else:
+            self.stored[params[0]] = {"status": params[6], "reason": params[7]}
+
+    async def fetchone(self):
+        return None
+
+    async def commit(self):
+        return None
+
+
+def _register_persist_probe_form(form_id: str):
     import io
-    from unittest.mock import AsyncMock
     from PIL import Image
     from main import FORM_REGISTRY
     from services.form_engine import (
@@ -841,52 +882,9 @@ def test_accepted_submission_gets_early_row_even_if_final_insert_fails():
         Image.new("RGB", (200, 260), color).save(buf, format="JPEG")
         return buf.getvalue()
 
-    executed = []
-    stored = {}
-
-    class FakeCursor:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def execute(self, query, params=None):
-            executed.append(query)
-            if "INSERT INTO survey_submissions" in query:
-                if "image_dhash" in query:
-                    raise RuntimeError("simulated foreign key violation")
-                stored[params[0]] = "MANUAL_REVIEW" if "MANUAL_REVIEW" in query else params[6]
-
-        async def fetchone(self):
-            return None
-
-    class FakeConn:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def execute(self, query, params=None):
-            executed.append(query)
-            if "INSERT INTO survey_submissions" in query:
-                stored[params[0]] = "MANUAL_REVIEW"
-
-        def cursor(self):
-            return FakeCursor()
-
-        async def commit(self):
-            return None
-
-    class FakePool:
-        def connection(self):
-            return FakeConn()
-
-    form_id = "SIM-EARLY-PERSIST"
     FORM_REGISTRY[form_id] = FormSchema(
         form_id=form_id,
-        title="Early Persist Simulation",
+        title="Persistence Probe",
         settings=FormSettings(
             decree13_required=False,
             is_test_mode=False,
@@ -901,8 +899,6 @@ def test_accepted_submission_gets_early_row_even_if_final_insert_fails():
             min_images=2, max_images=2, exact_image_count=2,
         )],
     )
-
-    client = TestClient(app)
     data = {"form_id": form_id, "is_test_mode": "false", "bypass_img_check": "false",
             "driver_phone": "0988111222", "driver_name": "Nguyen Van A",
             "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
@@ -910,48 +906,132 @@ def test_accepted_submission_gets_early_row_even_if_final_insert_fails():
         ("survey_photo_0", ("profile.jpg", io.BytesIO(jpeg_bytes((20, 60, 200))), "image/jpeg")),
         ("survey_photo_1", ("income.jpg", io.BytesIO(jpeg_bytes((220, 40, 40))), "image/jpeg")),
     ]
+    return data, files
+
+
+def test_no_row_is_visible_while_checks_run_and_one_final_row_after():
+    """A slow AI must not expose a placeholder row; the single row appears with the verdict."""
+    import asyncio
+    import threading
+    import time
+    from unittest.mock import AsyncMock
+
+    db = _FakeSubmissionDB()
+    form_id = "SIM-VERDICT-FIRST"
+    data, files = _register_persist_probe_form(form_id)
+
+    async def slow_classify(image_bytes, filename=None, expected_slots=None):
+        classify_calls.append(1)
+        await asyncio.sleep(0.8)
+        return "app_profile" if "profile" in (filename or "") else "app_income"
+
+    async def fake_profile(image_bytes):
+        return {"membership_type": "Xanh SM"}
+
+    async def fake_facts(image_bytes):
+        return {}
+
+    async def fake_income(image_bytes, week_idx=None):
+        return {"gross_revenue": 1000000, "net_income": 800000, "discount_and_tax": 0,
+                "total_trips": 10, "online_hours": "10h", "period": "Tuần 1",
+                "period_tabs": ["Tuần 1"], "is_legible": True, "confidence_score": 0.9,
+                "detected_app": "XANH_SM", "is_authentic_gsm_ui": True}
+
+    result = {}
+    classify_calls = []
+
+    def run_request():
+        client = TestClient(app)
+        result["resp"] = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+
     try:
         with patch.dict(os.environ, {"MOCK_AI": "1"}), \
-             patch("routers.survey.get_db_pool", return_value=FakePool()), \
+             patch("routers.survey.get_db_pool", return_value=db), \
+             patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
+             patch("main.vision_client.classify_image_role", new=slow_classify), \
+             patch("main.vision_client.ocr_driver_app_profile", new=fake_profile), \
+             patch("main.vision_client.extract_facts", new=fake_facts), \
+             patch("main.vision_client.ocr_driver_app_income", new=fake_income):
+            worker = threading.Thread(target=run_request)
+            worker.start()
+            time.sleep(0.35)  # mid-AI: nothing may be visible yet
+            assert db.stored == {}, f"placeholder leaked while checks ran: {db.stored}"
+            worker.join(15)
+
+        body = result["resp"].json()
+        assert result["resp"].status_code == 200
+        assert classify_calls, "slow AI stub was not exercised"
+        assert len(db.stored) == 1, f"expected exactly one final row, got {db.stored}"
+        row = db.stored[body["submission_id"]]
+        assert row["status"] == body["status"]
+        expected_reason = None if body["status"] == "APPROVED" else body.get("reason")
+        assert row["reason"] == expected_reason
+        assert not any("'MANUAL_REVIEW'" in q for q in db.executed), "no placeholder insert allowed"
+    finally:
+        from main import FORM_REGISTRY
+        FORM_REGISTRY.pop(form_id, None)
+
+
+def test_fk_failure_fallback_still_persists_the_final_verdict_row():
+    """Rich insert failure (FK) falls back to an FK-safe row carrying the real verdict."""
+    from unittest.mock import AsyncMock
+
+    db = _FakeSubmissionDB(fail_rich_insert=True)
+    form_id = "SIM-FK-FALLBACK"
+    data, files = _register_persist_probe_form(form_id)
+    try:
+        with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+             patch("routers.survey.get_db_pool", return_value=db), \
              patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
              patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
              patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
-            resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+            resp = TestClient(app).post("/api/v1/survey/submit-webrtc", data=data, files=files)
 
-        assert resp.status_code == 200
         body = resp.json()
-        sub_id = body["submission_id"]
-        assert sub_id in stored, "accepted submission must always have a DB row"
+        assert resp.status_code == 200
+        assert len(db.stored) == 1
+        row = db.stored[body["submission_id"]]
+        assert row["status"] == body["status"]
+        assert row["status"] != "MANUAL_REVIEW" or body["status"] == "MANUAL_REVIEW"
 
-        early_idx = next(i for i, q in enumerate(executed)
-                         if "INSERT INTO survey_submissions" in q and "MANUAL_REVIEW" in q)
-        rich_idx = next(i for i, q in enumerate(executed)
-                        if "INSERT INTO survey_submissions" in q and "MANUAL_REVIEW" not in q)
-        assert early_idx < rich_idx, "placeholder must be written before the final upsert"
-
-        fallback = next(q for q in executed
-                        if "INSERT INTO survey_submissions" in q
-                        and "image_dhash" not in q and "MANUAL_REVIEW" not in q)
+        fallback = next(q for q in db.executed
+                        if "INSERT INTO survey_submissions" in q and "image_dhash" not in q)
         assert "driver_id" not in fallback, "fallback insert must stay FK-safe"
+    finally:
+        from main import FORM_REGISTRY
+        FORM_REGISTRY.pop(form_id, None)
 
-        # Phase 2: the verdict stage explodes (worker kill / client disconnect).
-        # The already-written placeholder must survive instead of the photos
-        # becoming an orphan directory with no row.
-        stored.clear()
-        executed.clear()
-        crash_client = TestClient(app, raise_server_exceptions=False)
+
+def test_verdict_crash_writes_exactly_one_interruption_row():
+    """Crash after photos are saved still leaves one MANUAL_REVIEW row, never zero."""
+    from unittest.mock import AsyncMock
+    from routers.survey import INTERRUPTED_CHECK_REASON
+
+    db = _FakeSubmissionDB()
+    form_id = "SIM-CRASH-GUARD"
+    data, files = _register_persist_probe_form(form_id)
+    try:
         with patch.dict(os.environ, {"MOCK_AI": "1"}), \
-             patch("routers.survey.get_db_pool", return_value=FakePool()), \
+             patch("routers.survey.get_db_pool", return_value=db), \
              patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
              patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
              patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
              patch("routers.survey._classification_slots", side_effect=RuntimeError("vision stage crashed")):
-            crash_resp = crash_client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+            resp = TestClient(app, raise_server_exceptions=False).post(
+                "/api/v1/survey/submit-webrtc", data=data, files=files
+            )
 
-        assert crash_resp.status_code == 500
-        assert len(stored) == 1, "placeholder row must exist even when the verdict crashes"
-        assert list(stored.values()) == ["MANUAL_REVIEW"]
+        assert resp.status_code == 500
+        assert len(db.stored) == 1, f"expected one interruption row, got {db.stored}"
+        row = next(iter(db.stored.values()))
+        assert row["status"] == "MANUAL_REVIEW"
+        assert row["reason"] == INTERRUPTED_CHECK_REASON
+        inserts = [q for q in db.executed if "INSERT INTO survey_submissions" in q]
+        assert len(inserts) == 1
     finally:
+        from main import FORM_REGISTRY
         FORM_REGISTRY.pop(form_id, None)
 
 
