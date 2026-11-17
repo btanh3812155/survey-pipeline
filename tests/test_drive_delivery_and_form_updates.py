@@ -153,11 +153,11 @@ async def test_google_drive_delivery_structure():
         assert "1500000" in content
         assert "1200000" in content
         assert "21.0285" in content
-        # Ensure excluded fields (driver_phone, driver_name, collaborator_id, submission_id) are NOT in CSV row
+        # Ensure excluded PII fields are NOT in CSV row; submission id is now an explicit column
         assert "0988555666" not in content
         assert "Phan Văn C" not in content
         assert "CTV001_Dũng_HN" not in content
-        assert "VN-REAL-8F2A1C90" not in content
+        assert "VN-REAL-8F2A1C90" in content
     finally:
         sub_folder = os.path.join(LOCAL_IMAGES_DIR, "income_survey", "submissions", sub_id)
         if os.path.exists(sub_folder):
@@ -229,7 +229,7 @@ async def test_google_drive_delivery_5_weeks_and_membership():
         assert "0912345678" not in csv_text
         assert "Nguyễn Văn Test" not in csv_text
         assert "CTV002_SG" not in csv_text
-        assert "VN-5WEEK-OCT2026" not in csv_text
+        assert "VN-5WEEK-OCT2026" in csv_text
         # Verify status and consent are omitted
         assert "Trạng Thái" not in csv_text
         assert "APPROVED" not in csv_text

@@ -345,3 +345,80 @@ def test_sync_backfill_skips_rejected_and_test_submissions(monkeypatch, tmp_path
     assert (base / "VN-BACKFILL-APPROVED" / "slot_0.jpg").exists()
     assert not (base / "VN-BACKFILL-REJECTED").exists()
     assert not (base / "VN-BACKFILL-TEST").exists()
+
+    import csv
+
+    with open(tmp_path / "Sheets" / "forms" / "form_alpha.csv", "r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == gd.CSV_HEADERS
+    assert [row[-1] for row in rows[1:]] == ["VN-BACKFILL-APPROVED"]
+
+
+def test_csv_keeps_distinct_submissions_with_identical_answers(monkeypatch, tmp_path):
+    import csv
+    import services.google_drive_delivery as gd
+
+    forms_dir = tmp_path / "forms"
+    monkeypatch.setattr(gd, "MASTER_CSV_FILE", str(tmp_path / "Master.csv"))
+    monkeypatch.setattr(gd, "LOCAL_FORMS_SHEETS_DIR", str(forms_dir))
+
+    first = _approved_record("VN-IDENTICAL-1", "form_alpha", "2026-11-17T09:00:00Z")
+    second = dict(first, submission_id="VN-IDENTICAL-2")
+    gd.append_to_local_sheets_mirror(first)
+    gd.append_to_local_sheets_mirror(second)
+    gd.append_to_local_sheets_mirror(first)  # same id again: no new row
+
+    with (forms_dir / "form_alpha.csv").open("r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows[0][-1] == "Mã Phiếu"
+    assert len(rows) == 3
+    assert [row[-1] for row in rows[1:]] == ["VN-IDENTICAL-1", "VN-IDENTICAL-2"]
+
+
+def test_rebuild_local_csvs_writes_one_row_per_submission(monkeypatch, tmp_path):
+    import csv
+    import services.google_drive_delivery as gd
+
+    forms_dir = tmp_path / "forms"
+    monkeypatch.setattr(gd, "MASTER_CSV_FILE", str(tmp_path / "Master.csv"))
+    monkeypatch.setattr(gd, "LOCAL_FORMS_SHEETS_DIR", str(forms_dir))
+
+    base = _approved_record("VN-REBUILD-1", "form_alpha", "2026-11-17T09:00:00Z")
+    records = {
+        "VN-REBUILD-1": base,
+        "VN-REBUILD-2": dict(base, submission_id="VN-REBUILD-2"),
+        "VN-REBUILD-3": _approved_record("VN-REBUILD-3", "form_beta", "2026-11-17T10:00:00Z"),
+    }
+
+    assert gd.rebuild_local_csvs(records) == 3
+    assert gd.rebuild_local_csvs(records) == 3  # idempotent rewrite
+
+    with (tmp_path / "Master.csv").open("r", encoding="utf-8-sig", newline="") as f:
+        master = list(csv.reader(f))
+    assert master[0] == gd.CSV_HEADERS
+    assert [row[-1] for row in master[1:]] == ["VN-REBUILD-1", "VN-REBUILD-2", "VN-REBUILD-3"]
+
+    with (forms_dir / "form_alpha.csv").open("r", encoding="utf-8-sig", newline="") as f:
+        alpha = list(csv.reader(f))
+    with (forms_dir / "form_beta.csv").open("r", encoding="utf-8-sig", newline="") as f:
+        beta = list(csv.reader(f))
+    assert [row[-1] for row in alpha[1:]] == ["VN-REBUILD-1", "VN-REBUILD-2"]
+    assert [row[-1] for row in beta[1:]] == ["VN-REBUILD-3"]
+
+
+def test_legacy_csv_header_migration_adds_empty_submission_id(monkeypatch, tmp_path):
+    import csv
+    import services.google_drive_delivery as gd
+
+    path = tmp_path / "legacy.csv"
+    old_headers = gd.CSV_HEADERS[:-1]
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows([old_headers, ["x"] * len(old_headers)])
+
+    gd._ensure_csv_schema(str(path))
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == gd.CSV_HEADERS
+    assert len(rows[1]) == len(gd.CSV_HEADERS)
+    assert rows[1][-1] == ""

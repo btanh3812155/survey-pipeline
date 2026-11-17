@@ -7,6 +7,7 @@ import json
 import logging
 import asyncio
 import shutil
+import tempfile
 from typing import Optional, Union, Dict, Any, List, Tuple
 from datetime import datetime, timezone
 import httpx
@@ -98,6 +99,8 @@ CSV_HEADERS = [
     # 6. Tọa độ định vị
     "Tọa Độ Vĩ Độ",
     "Tọa Độ Kinh Độ",
+    # 7. Mã phiếu (stable dedupe key, always last)
+    "Mã Phiếu",
 ]
 def is_test_submission(submission_id: Any) -> bool:
     """
@@ -256,6 +259,7 @@ def extract_survey_row_data(record: Dict[str, Any]) -> List[Any]:
         tot_trips,
         vi_do,
         kinh_do,
+        record.get("submission_id") or "",
     ]
 # Google Auth configurations
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or getattr(settings, "GOOGLE_SERVICE_ACCOUNT_JSON", "")
@@ -1006,39 +1010,96 @@ def _read_csv_rows(path: str) -> List[List[str]]:
         return list(csv.reader(f))
 
 
+def _write_csv_atomic(path: str, rows: List[List[Any]]) -> None:
+    """Writes a CSV via a temp file in the same directory then atomically replaces it."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".csv-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows(rows)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _ensure_csv_schema(path: str) -> None:
     """Creates the CSV with CSV_HEADERS or upgrades a legacy header row in place."""
     rows = _read_csv_rows(path)
     if rows and rows[0] == CSV_HEADERS:
         return
+    id_index = len(CSV_HEADERS) - 1
     migrated_rows = [CSV_HEADERS]
     for old_row in (rows[1:] if rows else []):
-        if len(old_row) < len(CSV_HEADERS):
-            old_row = old_row + [""] * (len(CSV_HEADERS) - len(old_row))
-        elif len(old_row) > len(CSV_HEADERS):
-            old_row = old_row[: len(CSV_HEADERS)]
+        old_row = list(old_row)[:id_index]
+        if len(old_row) < id_index:
+            old_row += [""] * (id_index - len(old_row))
+        old_row.append("")  # legacy rows predate the submission id column
         migrated_rows.append(old_row)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        csv.writer(f).writerows(migrated_rows)
+    _write_csv_atomic(path, migrated_rows)
 
 
 def append_row_to_csv(path: str, row: List[Any]) -> bool:
     """
-    Appends one row, skipping rows already present so repeated syncs stay idempotent.
+    Appends one row, skipping a row with the same submission id.
 
-    CSV_HEADERS deliberately has no submission id, so a row is considered a duplicate
-    when it matches exactly or matches every column except the volatile timestamp
-    ("Thời Gian Nộp" is the first column and falls back to sync time when absent).
+    The submission id is the last CSV column. Legacy rows with an empty id fall back
+    to the previous content match (exact, or every column except the volatile
+    timestamp) so they are not duplicated before the next full rebuild.
     """
     _ensure_csv_schema(path)
-    target = [str(cell) if cell is not None else "" for cell in row]
-    for existing in _read_csv_rows(path)[1:]:
-        if existing == target or existing[1:] == target[1:]:
+    normalized = [str(cell) if cell is not None else "" for cell in row]
+    id_index = len(CSV_HEADERS) - 1
+    target_id = normalized[id_index].strip() if len(normalized) > id_index else ""
+    existing_rows = _read_csv_rows(path)[1:]
+    for existing in existing_rows:
+        existing_id = existing[id_index].strip() if len(existing) > id_index else ""
+        if target_id:
+            if existing_id == target_id:
+                return False
+        elif not existing_id and (existing == normalized or existing[1:] == normalized[1:]):
             return False
     with open(path, "a", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerow(row)
     return True
+
+
+def rebuild_local_csvs(records: Dict[str, Dict[str, Any]]) -> int:
+    """
+    Atomically rebuilds the Master CSV and every per-form CSV from the complete
+    approved record set, guaranteeing exactly one row per submission_id.
+
+    Returns the number of records written.
+    """
+    ordered = [
+        record
+        for _, record in sorted(
+            records.items(),
+            key=lambda item: (
+                str(item[1].get("submitted_at") or item[1].get("created_at") or ""),
+                str(item[0]),
+            ),
+        )
+    ]
+    rows = [extract_survey_row_data(record) for record in ordered]
+    _write_csv_atomic(MASTER_CSV_FILE, [CSV_HEADERS] + rows)
+
+    rows_by_form: Dict[str, List[List[Any]]] = {}
+    for record, row in zip(ordered, rows):
+        form_id = str(record.get("form_id") or "unknown_form")
+        rows_by_form.setdefault(form_id, []).append(row)
+    for form_id, form_rows in rows_by_form.items():
+        _write_csv_atomic(local_form_csv_path(form_id), [CSV_HEADERS] + form_rows)
+
+    logger.info(
+        f"📊 [DRIVE SHEETS MIRROR] Rebuilt {len(ordered)} rows across "
+        f"{len(rows_by_form)} per-form CSVs and the Master CSV"
+    )
+    return len(ordered)
 
 
 def append_to_local_sheets_mirror(record: Dict[str, Any]) -> None:
@@ -1425,9 +1486,14 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
     }
     approved_ids = set(approved_records)
 
-    # Backfill the local master + per-form CSV mirrors idempotently
-    for record in approved_records.values():
-        append_to_local_sheets_mirror(record)
+    # Rebuild the Master + per-form CSVs from the full approved record set.
+    # Atomic writes guarantee one row per submission_id and no half-written files.
+    try:
+        rebuild_local_csvs(approved_records)
+    except Exception as e:
+        logger.error(f"[AUTO DRIVE SYNC] CSV rebuild failed ({e}); falling back to per-record append.")
+        for record in approved_records.values():
+            append_to_local_sheets_mirror(record)
 
     client = GoogleDriveClient()
     async with httpx.AsyncClient(timeout=45.0) as http_client:
