@@ -17,7 +17,7 @@ from services.admin_moderator import (
     query_submission_dossier,
     render_dossier_message,
 )
-from services.normalizer import compute_laplacian_blur_score
+from services.normalizer import compute_laplacian_blur_score, normalize_image_to_webp
 
 logger = logging.getLogger("telegram_polling")
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
@@ -1347,6 +1347,32 @@ class DriverBotRunner(TelegramPollingRunner):
         )
         await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
+    async def _store_replacement_photo(self, sub_id: str, slot_name: str, raw_bytes: bytes) -> None:
+        """
+        Persists a Telegram-replaced photo into the raw store as WebP.
+
+        Telegram always delivers JPEG, so the bytes are normalized before they hit
+        disk. Only a concrete `slot_<n>` target can be replaced; the generic
+        `slot_photo` placeholder carries no index and is left unpersisted.
+        """
+        match = re.fullmatch(r"slot_(\d+)", str(slot_name or ""))
+        if not match:
+            return
+        webp_bytes = await asyncio.to_thread(normalize_image_to_webp, raw_bytes)
+        if not webp_bytes:
+            return
+        target_dir = os.path.join(os.getcwd(), "data", "submission_photos", sub_id)
+        os.makedirs(target_dir, exist_ok=True)
+        slot_idx = match.group(1)
+        for name in os.listdir(target_dir):
+            if re.fullmatch(rf"slot_{slot_idx}\.[A-Za-z0-9]+", name):
+                try:
+                    os.remove(os.path.join(target_dir, name))
+                except OSError:
+                    pass
+        with open(os.path.join(target_dir, f"slot_{slot_idx}.webp"), "wb") as f:
+            f.write(webp_bytes)
+
     async def handle_photo_upload(self, chat_id: int, user_id: int, photos: list) -> None:
         """Handles in-chat replacement of blurry survey photos."""
         highest_res = photos[-1]
@@ -1374,6 +1400,7 @@ class DriverBotRunner(TelegramPollingRunner):
 
             # Image is sharp! Update the record
             if sub_id:
+                await self._store_replacement_photo(sub_id, slot_name, photo_bytes)
                 await self._update_submission_status(
                     sub_id, "APPROVED", reason=f"Bổ sung ảnh đạt chuẩn qua Telegram DM (Độ nét: {blur_score:.1f})"
                 )

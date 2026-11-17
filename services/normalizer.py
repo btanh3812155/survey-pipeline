@@ -153,6 +153,60 @@ def sanitize_and_normalize_image(
     return webp_bytes, im
 
 
+def normalize_image_to_webp(
+    raw_bytes: bytes,
+    quality: int = 85,
+    max_dimension: Optional[int] = None,
+) -> Optional[bytes]:
+    """
+    Format-only ingress normalizer: guarantees stored bytes are WebP.
+
+    Unlike sanitize_and_normalize_image this does NOT downscale by default, so the
+    raw photo store keeps the full-resolution evidence for appeals and re-checks.
+    WebP input that already fits is returned untouched to avoid double encoding.
+    Returns None for undecodable payloads (caller decides how to preserve them).
+    """
+    if not raw_bytes:
+        return None
+    try:
+        probe = Image.open(io.BytesIO(raw_bytes))
+        already_webp = probe.format == "WEBP"
+        if already_webp and (max_dimension is None or max(probe.size) <= max_dimension):
+            return raw_bytes
+        raw_exif = probe.info.get("exif")
+        probe.load()
+    except Exception as e:
+        logger.warning(f"normalize_image_to_webp: undecodable upload ({e})")
+        return None
+
+    im = probe
+    try:
+        im = ImageOps.exif_transpose(im)
+    except Exception:
+        pass
+
+    has_alpha = im.mode in ("RGBA", "LA") or (
+        im.mode == "P" and "transparency" in im.info
+    )
+    if has_alpha:
+        alpha_img = im.convert("RGBA")
+        canvas = Image.new("RGB", alpha_img.size, (255, 255, 255))
+        canvas.paste(alpha_img, mask=alpha_img.split()[3])
+        im = canvas
+    elif im.mode != "RGB":
+        im = im.convert("RGB")
+
+    if max_dimension and max(im.size) > max_dimension:
+        im.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+    output_buf = io.BytesIO()
+    save_kwargs = {"format": "WEBP", "quality": quality, "method": 4}
+    if raw_exif:
+        save_kwargs["exif"] = raw_exif
+    im.save(output_buf, **save_kwargs)
+    return output_buf.getvalue()
+
+
 def compute_laplacian_blur_score(
     pil_img: Image.Image, threshold: float = 40.0
 ) -> Tuple[bool, float]:

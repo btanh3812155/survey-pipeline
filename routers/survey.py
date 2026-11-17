@@ -30,7 +30,7 @@ from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
 from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone, hash_plate, generate_driver_tag
-from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation
+from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation, normalize_image_to_webp
 from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.duplicate_detector import compute_image_dhash_str, compute_dinov2_embedding, check_intra_submission_duplicates, check_inter_submission_duplicates
 from services.vehicle_tracker import VehiclePersistenceTracker, normalize_license_plate
@@ -525,6 +525,34 @@ def _submission_crash_guard(endpoint):
     return _wrapped
 
 
+def _store_submission_photos(sub_photo_dir: str, raw_bytes_list: List[bytes]) -> None:
+    """
+    Single write boundary for the raw photo store.
+
+    Every slot is re-encoded to WebP (unless it already is WebP, which is copied
+    untouched), so filename, bytes and MIME always agree no matter which client,
+    script or test posted the upload. Undecodable payloads are kept as .bin for
+    forensics instead of being mislabeled as images.
+    """
+    try:
+        os.makedirs(sub_photo_dir, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Cannot create photo dir {sub_photo_dir}: {e}")
+        return
+    for i_idx, r_b in enumerate(raw_bytes_list):
+        target = os.path.join(sub_photo_dir, f"slot_{i_idx}.webp")
+        try:
+            webp_bytes = normalize_image_to_webp(r_b)
+            if webp_bytes is None:
+                target = os.path.join(sub_photo_dir, f"slot_{i_idx}.bin")
+                webp_bytes = r_b
+                logger.warning(f"Undecodable slot {i_idx} upload; stored raw bytes at {target}")
+            with open(target, "wb") as fp:
+                fp.write(webp_bytes)
+        except Exception as e:
+            logger.warning(f"Failed to store slot {i_idx} photo: {e}")
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 @_submission_crash_guard
 async def submit_webrtc_survey(
@@ -661,13 +689,7 @@ async def submit_webrtc_survey(
 
     # Save photos locally so admin Telegram bot can send them in /check response
     sub_photo_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
-    os.makedirs(sub_photo_dir, exist_ok=True)
-    for i_idx, r_b in enumerate(raw_bytes_list):
-        try:
-            with open(os.path.join(sub_photo_dir, f"slot_{i_idx}.jpg"), "wb") as fp:
-                fp.write(r_b)
-        except Exception:
-            pass
+    _store_submission_photos(sub_photo_dir, raw_bytes_list)
 
     raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
 
