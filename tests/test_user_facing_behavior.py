@@ -84,6 +84,7 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
     assert "SIM-TEST-01" in review_bundles[-1]["caption"]
     assert "Số Liệu" not in review_bundles[-1]["caption"]
     assert '"submission_id"' in review_bundles[-1]["txt"]
+    assert '"raw_data"' not in review_bundles[-1]["txt"]
     rev_btns = review_bundles[-1]["reply_markup"]["inline_keyboard"]
     assert any("admin_req_approve:SIM-TEST-01" in b.get("callback_data", "") for row in rev_btns for b in row)
 

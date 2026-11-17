@@ -414,3 +414,17 @@ def test_unique_check_image_skips_profile_and_vehicle_photos():
         {"role": "app_income", "require_unique": True},
     ])
     assert _select_unique_check_index(income_question, [4, 5], 7) == 0
+
+
+def test_generic_camera_slot_roles_are_inferred_from_titles():
+    """custom_object slots must still enforce profile/income/vehicle checks via their titles."""
+    from routers.survey import _infer_slot_role, _normalize_vehicle_type
+
+    assert _infer_slot_role({"role": "custom_object", "title": "Ảnh 1: Màn hình chính / profile của app tài xế GSM"}) == "app_profile"
+    assert _infer_slot_role({"role": "custom_object", "title": "Ảnh 1: Tuần thu nhập Tháng 10 / 2026"}) == "app_income"
+    assert _infer_slot_role({"role": "custom_object", "title": "Ảnh 2: Thân xe / đầu xe máy của tài xế"}) == "vehicle_exterior"
+    assert _infer_slot_role({"role": "app_income", "title": "anything"}) == "app_income"
+
+    assert _normalize_vehicle_type("Xe máy") == "BIKE"
+    assert _normalize_vehicle_type("Xe ô tô") == "CAR"
+    assert _normalize_vehicle_type("VF5") == "CAR"

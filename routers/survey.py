@@ -12,6 +12,7 @@ import html
 import re
 import json
 import time
+import hashlib
 import secrets
 import logging
 import asyncio
@@ -385,6 +386,56 @@ def _build_retry_form_link(
     return f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
 
 
+def _infer_slot_role(slot: Any) -> str:
+    """Resolve generic/custom slot roles from their titles (profile/income/vehicle)."""
+    if not isinstance(slot, dict):
+        return "unknown"
+    role = str(slot.get("role") or "").strip().lower()
+    title = str(slot.get("title") or "").lower()
+    if role and role not in ("custom_object", "custom", "unknown", "slot", "other"):
+        return role
+    if "hồ sơ" in title or "profile" in title or "màn hình chính" in title:
+        return "app_profile"
+    if "thu nhập" in title or "income" in title or "tuần" in title:
+        return "app_income"
+    if "thân xe" in title or "đầu xe" in title or "vô lăng" in title or "phương tiện" in title:
+        return "vehicle_exterior"
+    return role or "unknown"
+
+
+def _normalized_image_slots(slots: Any) -> List[dict]:
+    return [{**slot, "role": _infer_slot_role(slot)} for slot in (slots or []) if isinstance(slot, dict)]
+
+
+def _answer_by_title_keywords(schema: Any, answers: Dict[str, Any], keywords: tuple) -> Optional[str]:
+    """First non-empty textual answer whose question title matches any keyword."""
+    for question in (getattr(schema, "questions", None) or []):
+        title = str(getattr(question, "title", "") or "").lower()
+        if not any(keyword in title for keyword in keywords):
+            continue
+        value = answers.get(getattr(question, "id", ""))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_vehicle_type(value: Optional[str]) -> str:
+    """Vehicle type is only ever CAR or BIKE."""
+    text = str(value or "").upper()
+    if "BIKE" in text or "MÁY" in text or "XE MAY" in text:
+        return "BIKE"
+    return "CAR"
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -675,7 +726,7 @@ async def submit_webrtc_survey(
                             vision_client.classify_image_role(
                                 norm_bytes_list[s_idx],
                                 filename=getattr(images_list[s_idx], "filename", "") or "",
-                                expected_slots=target_q.image_slots,
+                                expected_slots=_normalized_image_slots(target_q.image_slots),
                             )
                             for s_idx in range(len(raw_bytes_list))
                         ]
@@ -700,10 +751,12 @@ async def submit_webrtc_survey(
                             if group in groups:
                                 groups[group].append(idx)
 
-                        required_slots = [slot for slot in target_q.image_slots if slot.get("required", True)]
+                        required_slots = [
+                            slot for slot in (target_q.image_slots or []) if slot.get("required", True)
+                        ]
                         required_counts = {"profile": 0, "vehicle": 0, "income": 0}
                         for slot in required_slots:
-                            group = _role_group(slot.get("role", ""))
+                            group = _role_group(_infer_slot_role(slot))
                             if group in required_counts:
                                 required_counts[group] += 1
 
@@ -711,7 +764,7 @@ async def submit_webrtc_survey(
                         for group, needed in required_counts.items():
                             if len(groups[group]) < needed:
                                 for slot in required_slots:
-                                    if _role_group(slot.get("role", "")) == group:
+                                    if _role_group(_infer_slot_role(slot)) == group:
                                         missing_titles.append(str(slot.get("title") or slot.get("role") or group))
                                         break
 
@@ -756,6 +809,26 @@ async def submit_webrtc_survey(
                         if income_only:
                             income_pairs = income_only
 
+                        income_required = 0
+                        for question in (getattr(schema, "questions", None) or []):
+                            if getattr(question, "type", None) != "camera_webrtc" or not getattr(question, "image_slots", None):
+                                continue
+                            count_income = sum(
+                                1 for slot in question.image_slots
+                                if _infer_slot_role(slot) == "app_income"
+                            )
+                            income_required = max(income_required, count_income)
+                        short_income_violation = None
+                        if income_required and len(income_pairs) < income_required:
+                            short_income_violation = {
+                                "failed_slot": matched_income_indices[0] if matched_income_indices else 0,
+                                "ocr_data": {},
+                                "reason": (
+                                    f"Thiếu ảnh thu nhập hợp lệ: chỉ nhận diện được {len(income_pairs)}/{income_required} tuần. "
+                                    "Vui lòng chụp đủ các tuần thu nhập được yêu cầu (thứ tự ảnh không quan trọng)."
+                                ),
+                            }
+
                         def _period_start(pair):
                             result = pair[1]
                             if isinstance(result, dict):
@@ -765,7 +838,7 @@ async def submit_webrtc_survey(
                             return (1, pair[0])
 
                         income_pairs.sort(key=_period_start)
-                        duplicate_week_violation = _find_duplicate_income_period(income_pairs)
+                        duplicate_week_violation = short_income_violation or _find_duplicate_income_period(income_pairs)
                         matched_income_indices = [pair[0] for pair in income_pairs]
                         income_res_list = [pair[1] for pair in income_pairs]
 
@@ -852,7 +925,7 @@ async def submit_webrtc_survey(
                                     "reason": f"Số học tổng 5 tuần không khớp: Tổng thực nhận ({tot_net:,}đ) vượt quá tổng doanh thu ({tot_gross:,}đ)!",
                                     "ocr_data": ocr_data,
                                 }
-                        slot_0_role = target_q.image_slots[0].get("role", "app_profile") if len(target_q.image_slots) > 0 else "app_profile"
+                        slot_0_role = _infer_slot_role(target_q.image_slots[0]) if target_q.image_slots else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
 
                         # 1. Profile Verification (Slot 0)
@@ -1102,16 +1175,33 @@ async def submit_webrtc_survey(
     persisted_name = None if is_dissent else (driver_name or "Tài xế")
 
     # Form specific metrics and 5-week income extractions
-    vehicle_type_val = str(form_data.get("vehicle_type") or vehicle_type or "Xe điện GSM")
-    car_model_val = str(form_data.get("car_model") or "")
-    gsm_duration_val = str(form_data.get("gsm_duration") or "")
-    gsm_contract_type_val = str(form_data.get("gsm_contract_type") or "")
+    vehicle_type_val = _normalize_vehicle_type(
+        form_data.get("vehicle_type")
+        or vehicle_type
+        or _answer_by_title_keywords(schema, answers, ("phương tiện", "dòng xe", "loại xe"))
+        or "CAR"
+    )
+    car_model_val = str(form_data.get("car_model") or "").strip() or (
+        _answer_by_title_keywords(schema, answers, ("dòng xe ô tô điện", "dòng xe máy điện", "model", "dòng xe"))
+        or ""
+    )
+    gsm_duration_val = str(form_data.get("gsm_duration") or "").strip() or (
+        _answer_by_title_keywords(schema, answers, ("bao lâu",)) or ""
+    )
+    gsm_contract_type_val = str(form_data.get("gsm_contract_type") or "").strip() or (
+        _answer_by_title_keywords(schema, answers, ("hình thức hợp tác",)) or ""
+    )
     raw_daily_trips = form_data.get("daily_trips")
     daily_trips_val = int(raw_daily_trips) if raw_daily_trips is not None and str(raw_daily_trips).isdigit() else None
     monthly_income_range_val = str(form_data.get("monthly_income_range") or "")
     raw_policy = form_data.get("gsm_incentive_policy") or ""
     gsm_policy_val = "; ".join(str(x) for x in raw_policy) if isinstance(raw_policy, list) else str(raw_policy)
-    membership_type_val = ai_res.get("membership_type") or form_data.get("membership_type") or "Chưa xác định"
+    membership_type_val = (
+        ai_res.get("membership_type")
+        or form_data.get("membership_type")
+        or _answer_by_title_keywords(schema, answers, ("hạng thành viên", "hạng"))
+        or "Chưa xác định"
+    )
 
     w_incomes = ai_res.get("weekly_incomes") or {}
     w1_g = int(w_incomes.get("week_1", {}).get("gross_revenue") or ai_res.get("gross_revenue") or gross_revenue or 0)
@@ -1227,6 +1317,35 @@ async def submit_webrtc_survey(
                     calc_dhash = compute_image_dhash_str(pil_im) if pil_im is not None else None
                     calc_emb = compute_dinov2_embedding(pil_im) if pil_im is not None else None
                     calc_emb_str = ("[" + ",".join(str(x) for x in calc_emb) + "]") if calc_emb else None
+                    gps_lat = _to_float(answers.get("gps_latitude") or form_data.get("gps_latitude"))
+                    gps_lng = _to_float(answers.get("gps_longitude") or form_data.get("gps_longitude"))
+                    gps_acc = _to_float(
+                        answers.get("gps_accuracy")
+                        or answers.get("gps_accuracy_meters")
+                        or form_data.get("gps_accuracy")
+                    )
+                    audit_seal_hash = hashlib.sha256(
+                        f"{submission_id}:{persisted_phone}:{status_str}:"
+                        f"{json.dumps(clean_form_data, sort_keys=True, default=str)}".encode()
+                    ).hexdigest()
+
+                    insert_cols = [
+                        "submission_id", "form_id", "ctv_code", "driver_phone", "driver_name",
+                        "receipt_serial_no", "status", "rejection_reason", "form_data",
+                        "raw_extracted_facts", "driver_id", "image_dhash", "embedding",
+                        "consent_choice", "vehicle_type", "car_model", "gsm_duration",
+                        "gsm_contract_type", "daily_trips", "monthly_income_range",
+                        "gsm_incentive_policy", "membership_type", "gps_latitude",
+                        "gps_longitude", "gps_accuracy_meters", "signature_r2_url",
+                        "image_r2_url", "audit_seal_hash",
+                        "income_week_1_gross", "income_week_1_net", "income_week_1_trips",
+                        "income_week_2_gross", "income_week_2_net", "income_week_2_trips",
+                        "income_week_3_gross", "income_week_3_net", "income_week_3_trips",
+                        "income_week_4_gross", "income_week_4_net", "income_week_4_trips",
+                        "income_week_5_gross", "income_week_5_net", "income_week_5_trips",
+                        "total_gross_revenue", "total_net_income", "total_trips",
+                        "action_status",
+                    ]
                     insert_vals_full = (
                         submission_id,
                         active_form_id,
@@ -1250,64 +1369,33 @@ async def submit_webrtc_survey(
                         monthly_income_range_val,
                         gsm_policy_val,
                         membership_type_val,
+                        gps_lat,
+                        gps_lng,
+                        gps_acc,
+                        None,
+                        None,
+                        audit_seal_hash,
+                        w1_g, w1_n, w1_t,
+                        w2_g, w2_n, w2_t,
+                        w3_g, w3_n, w3_t,
+                        w4_g, w4_n, w4_t,
+                        w5_g, w5_n, w5_t,
                         tot_gross_val, tot_net_val, tot_trips_val,
                         json.dumps(action_checklist_init),
                     )
+                    placeholders = ", ".join(["%s"] * len(insert_cols))
+                    update_cols = ", ".join(
+                        f"{col} = EXCLUDED.{col}" for col in insert_cols if col != "submission_id"
+                    )
+                    insert_query = (
+                        f"INSERT INTO survey_submissions ({', '.join(insert_cols)}) "
+                        f"VALUES ({placeholders}) "
+                        f"ON CONFLICT (submission_id) DO UPDATE SET {update_cols};"
+                    )
                     try:
-                        await cur.execute(
-                            """
-                            INSERT INTO survey_submissions (
-                                submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
-                                status, rejection_reason, form_data, raw_extracted_facts, driver_id,
-                                image_dhash, embedding,
-                                consent_choice, vehicle_type, car_model, gsm_duration, gsm_contract_type, daily_trips,
-                                monthly_income_range, gsm_incentive_policy, membership_type,
-                                total_gross_revenue, total_net_income, total_trips,
-                                action_status
-                            ) VALUES (
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s,
-                                %s
-                            )
-                            ON CONFLICT (submission_id) DO UPDATE SET
-                                action_status = EXCLUDED.action_status,
-                                image_dhash = EXCLUDED.image_dhash,
-                                embedding = EXCLUDED.embedding,
-                                consent_choice = EXCLUDED.consent_choice,
-                                vehicle_type = EXCLUDED.vehicle_type,
-                                car_model = EXCLUDED.car_model,
-                                gsm_duration = EXCLUDED.gsm_duration,
-                                gsm_contract_type = EXCLUDED.gsm_contract_type,
-                                daily_trips = EXCLUDED.daily_trips,
-                                monthly_income_range = EXCLUDED.monthly_income_range,
-                                gsm_incentive_policy = EXCLUDED.gsm_incentive_policy,
-                                membership_type = EXCLUDED.membership_type,
-                                income_week_1_gross = EXCLUDED.income_week_1_gross,
-                                income_week_1_net = EXCLUDED.income_week_1_net,
-                                income_week_1_trips = EXCLUDED.income_week_1_trips,
-                                income_week_2_gross = EXCLUDED.income_week_2_gross,
-                                income_week_2_net = EXCLUDED.income_week_2_net,
-                                income_week_2_trips = EXCLUDED.income_week_2_trips,
-                                income_week_3_gross = EXCLUDED.income_week_3_gross,
-                                income_week_3_net = EXCLUDED.income_week_3_net,
-                                income_week_3_trips = EXCLUDED.income_week_3_trips,
-                                income_week_4_gross = EXCLUDED.income_week_4_gross,
-                                income_week_4_net = EXCLUDED.income_week_4_net,
-                                income_week_4_trips = EXCLUDED.income_week_4_trips,
-                                income_week_5_gross = EXCLUDED.income_week_5_gross,
-                                income_week_5_net = EXCLUDED.income_week_5_net,
-                                income_week_5_trips = EXCLUDED.income_week_5_trips,
-                                total_gross_revenue = EXCLUDED.total_gross_revenue,
-                                total_net_income = EXCLUDED.total_net_income,
-                                total_trips = EXCLUDED.total_trips;
-                            """,
-                            insert_vals_full,
-                        )
+                        await cur.execute(insert_query, insert_vals_full)
                     except Exception as ins_err:
-                        logger.debug(f"Extended column insert fallback: {ins_err}")
+                        logger.warning(f"Extended column insert failed for #{submission_id}: {ins_err}")
                         await cur.execute(
                             """
                             INSERT INTO survey_submissions (
@@ -1405,7 +1493,8 @@ async def submit_webrtc_survey(
     auto_verdict = ai_res.get("status", "MANUAL_REVIEW") if isinstance(ai_res, dict) else "MANUAL_REVIEW"
     auto_reason = ai_res.get("reason", "") if isinstance(ai_res, dict) else ""
     auto_emoji = "✅" if str(auto_verdict).upper() == "APPROVED" else "❌"
-    vehicle_type_val = vehicle_type or (ai_res.get("vehicle_type") if isinstance(ai_res, dict) else None) or "Chưa xác định"
+    _raw_vehicle = vehicle_type or (ai_res.get("vehicle_type") if isinstance(ai_res, dict) else None)
+    vehicle_type_val = _normalize_vehicle_type(_raw_vehicle) if _raw_vehicle else "Chưa xác định"
     driver_info_line = (
         f"• <b>Tài xế:</b> <b>{html.escape(driver_name)}</b> (<code>{driver_phone or 'N/A'}</code>)"
         if driver_name and driver_name not in ("Tài xế", "Tài xế Bí Mật", "N/A", "[SCRUBBED]")

@@ -379,7 +379,8 @@ class TelegramPollingRunner:
             f"📋 <b>HỒ SƠ KHẢO SÁT #{html.escape(str(clean_sub_id))}</b>\n"
             f"• <b>CTV:</b> <code>{html.escape(str(ctv))}</code>"
         )
-        raw_data = {k: v for k, v in dossier.items() if k != "photo_paths"}
+        # Raw nested facts duplicate the rest of the dossier; keep the txt focused.
+        raw_data = {k: v for k, v in dossier.items() if k not in ("photo_paths", "raw_data")}
         txt_bytes = json.dumps(raw_data, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
         if cur_status in ("APPROVED", "REJECTED"):
