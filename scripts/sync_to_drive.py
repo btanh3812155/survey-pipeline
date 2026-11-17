@@ -20,8 +20,7 @@ import sys
 import glob
 import logging
 import argparse
-from typing import Optional, Dict, Any
-from datetime import datetime, timezone
+from typing import Optional
 
 # Ensure project root is in path
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,17 +28,12 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from services.storage_r2 import r2_client
 from services.google_drive_delivery import (
-    GoogleDriveClient,
     get_google_oauth_credentials,
     get_google_service_account_info,
-    has_google_credentials,
-    LOCAL_DELIVERABLES_DIR,
+    sync_all_approved_to_drive,
     LOCAL_IMAGES_DIR,
     MASTER_CSV_FILE,
-    CSV_HEADERS,
-    extract_survey_row_data,
     GOOGLE_ADMIN_EMAIL,
     is_test_submission,
 )
@@ -109,13 +103,13 @@ def summarize_deliverables(approved_ids: Optional[set] = None):
         with open(MASTER_CSV_FILE, "r", encoding="utf-8-sig", errors="ignore") as f:
             csv_rows = sum(1 for line in f if line.strip()) - 1
 
-    submission_dirs = glob.glob(os.path.join(LOCAL_IMAGES_DIR, "*"))
+    submission_dirs = glob.glob(os.path.join(LOCAL_IMAGES_DIR, "*", "submissions", "*"))
     filtered_sub_dirs = []
     image_files = []
     for d in submission_dirs:
         if os.path.isdir(d):
             sub_id = os.path.basename(d)
-            if sub_id.startswith(("DEV-", "TEST-", "MOCK-")):
+            if is_test_submission(sub_id):
                 continue
             files = [f for f in glob.glob(os.path.join(d, "*.*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
             if not files:
@@ -152,94 +146,11 @@ async def main():
         logger.info("    python3 scripts/setup_drive_oauth.py")
         return 0
 
-    import httpx
-    client = GoogleDriveClient()
-    async with httpx.AsyncClient(timeout=45.0) as http_client:
-        token = await client.get_token(http_client)
-        if not token:
-            logger.error("Failed to obtain Google Drive access token.")
-            logger.info("Please run: python3 scripts/setup_drive_oauth.py")
-            return 1
-
-        logger.info("Successfully obtained Google Drive OAuth2 token. Starting sync...")
-        root_id = client.root_folder_id or None
-        # Clean up test folders, duplicate CSVs, and summary files from Google Drive
-        try:
-            await client.cleanup_drive_clutter(http_client, token)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup clutter from Google Drive: {e}")
-
-        # 1. Upload Master Sheet
-        if os.path.exists(MASTER_CSV_FILE):
-            with open(MASTER_CSV_FILE, "rb") as f:
-                content = f.read()
-            file_id = await client.upload_file(
-                http_client, token, "Master_Survey_Deliverables.csv", content, "text/csv; charset=UTF-8", root_id
-            )
-            logger.info(f"📊 Uploaded Master CSV to Drive. File ID: {file_id}")
-            # Archive last sheet to R2
-            try:
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                archive_name = f"Master_Survey_Deliverables_{timestamp}.csv"
-                await r2_client.archive_sheet(archive_name, content)
-                logger.info(f"📦 [R2 SHEET ARCHIVE] Archived last sheet to R2 as archives/sheets/{archive_name}")
-            except Exception as e:
-                logger.error(f"Failed to archive master sheet to R2: {e}")
-
-        # 2. Upload image subfolders with directory diffing
-        if sub_dirs:
-            # Create or resolve top-level "Images" folder on Drive
-            images_parent_id = await client.get_or_create_folder(http_client, token, "Images", root_id)
-
-            # Query all existing remote folders in Drive Images/ in a single fast call
-            remote_subfolders = {}
-            q_sub = f"'{images_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-            url_files = "https://www.googleapis.com/drive/v3/files"
-            headers = {"Authorization": f"Bearer {token}"}
-            params = {"q": q_sub, "fields": "nextPageToken, files(id, name)", "pageSize": 1000}
-            page_tok = None
-            while True:
-                if page_tok:
-                    params["pageToken"] = page_tok
-                resp_sub = await http_client.get(url_files, params=params, headers=headers)
-                if resp_sub.status_code != 200:
-                    break
-                d_sub = resp_sub.json()
-                for f in d_sub.get("files", []):
-                    remote_subfolders[f["name"]] = f["id"]
-                page_tok = d_sub.get("nextPageToken")
-                if not page_tok:
-                    break
-
-            uploaded_count = 0
-            skipped_count = 0
-            for s_dir in sub_dirs:
-                if not os.path.isdir(s_dir):
-                    continue
-                sub_id = os.path.basename(s_dir)
-                if is_test_submission(sub_id):
-                    continue
-
-                # Diff check: If folder already exists on Google Drive, skip it!
-                if sub_id in remote_subfolders:
-                    skipped_count += 1
-                    continue
-
-                files = [f for f in glob.glob(os.path.join(s_dir, "*.*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
-                if not files:
-                    continue
-                sub_folder_id = await client.create_folder(http_client, token, sub_id, images_parent_id)
-
-                for fpath in files:
-                    fname = os.path.basename(fpath)
-                    with open(fpath, "rb") as img_f:
-                        img_bytes = img_f.read()
-                    mtype = "image/webp" if fname.endswith(".webp") else "application/octet-stream"
-                    await client.upload_file(http_client, token, fname, img_bytes, mtype, sub_folder_id)
-                    uploaded_count += 1
-            logger.info(f"🖼️ Diffed image dirs: {skipped_count} folders up-to-date (skipped); synced {uploaded_count} new files across new subfolders.")
-        logger.info(f"✅ Deliverables synced successfully for administrative account: {GOOGLE_ADMIN_EMAIL}")
-
+    ok = await sync_all_approved_to_drive()
+    if not ok:
+        logger.error("Google Drive sync failed (see errors above).")
+        return 1
+    logger.info(f"✅ Deliverables synced successfully for administrative account: {GOOGLE_ADMIN_EMAIL}")
     return 0
 
 
