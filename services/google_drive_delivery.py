@@ -43,11 +43,19 @@ LOCAL_IMAGES_DIR = os.path.join(LOCAL_DELIVERABLES_DIR, "Images")
 LOCAL_SHEETS_DIR = os.path.join(LOCAL_DELIVERABLES_DIR, "Sheets")
 LOCAL_FORMS_SHEETS_DIR = os.path.join(LOCAL_SHEETS_DIR, "forms")
 
+# Raw per-submission photo store written at submission time (source for mirror backfill).
+SUBMISSION_PHOTOS_DIR = os.environ.get("SUBMISSION_PHOTOS_DIR") or os.path.join(
+    os.getcwd(), "data", "submission_photos"
+)
+DEV_SUBMISSIONS_FILE = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
+
 os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 os.makedirs(LOCAL_SHEETS_DIR, exist_ok=True)
 os.makedirs(LOCAL_FORMS_SHEETS_DIR, exist_ok=True)
 
 MASTER_CSV_FILE = os.path.join(LOCAL_SHEETS_DIR, "Master_Survey_Deliverables.csv")
+
+IMAGE_FILE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 
 
 def local_form_csv_path(form_id: str) -> str:
@@ -1086,6 +1094,46 @@ def save_submission_images_locally(
     return subfolder_path
 
 
+def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, Any]]) -> int:
+    """
+    Copies raw submission photos into Images/<form_id>/submissions/<submission_id>/
+    for approved submissions that were never written to the deliverables mirror.
+
+    Idempotent: skips submissions whose mirror folder already contains files and
+    never overwrites existing mirror files. Returns the number of copied files.
+    """
+    copied = 0
+    for submission_id, record in records.items():
+        form_id = str(record.get("form_id") or "unknown_form")
+        target_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions", submission_id)
+        if os.path.isdir(target_dir) and any(os.path.isfile(p) for p in glob.glob(os.path.join(target_dir, "*"))):
+            continue
+
+        source_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
+        if not os.path.isdir(source_dir):
+            continue
+        source_files = [
+            p for p in glob.glob(os.path.join(source_dir, "*"))
+            if os.path.isfile(p)
+            and os.path.splitext(p)[1].lower() in IMAGE_FILE_EXTENSIONS
+            and os.path.getsize(p) > 0
+        ]
+        if not source_files:
+            continue
+
+        os.makedirs(target_dir, exist_ok=True)
+        for src in source_files:
+            dest = os.path.join(target_dir, os.path.basename(src))
+            if os.path.exists(dest):
+                continue
+            shutil.copy2(src, dest)
+            copied += 1
+
+    if copied:
+        logger.info(f"📁 [DRIVE IMAGES MIRROR] Backfilled {copied} image files from {SUBMISSION_PHOTOS_DIR}")
+    return copied
+
+
 def migrate_local_deliverables_layout(submission_forms: Optional[Dict[str, str]] = None) -> None:
     """
     Migrates legacy local layouts to Images/<form_id>/submissions/<submission_id>/.
@@ -1351,10 +1399,9 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         approved_records[str(submission_id)] = record
 
     # 1. Dev storage
-    dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
-    if os.path.exists(dev_storage_file):
+    if os.path.exists(DEV_SUBMISSIONS_FILE):
         try:
-            with open(dev_storage_file, "r", encoding="utf-8") as f:
+            with open(DEV_SUBMISSIONS_FILE, "r", encoding="utf-8") as f:
                 for r in json.load(f):
                     if isinstance(r, dict):
                         _collect(r)
@@ -1415,6 +1462,12 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         except Exception as e:
             logger.warning(f"[AUTO DRIVE SYNC] Legacy deliverables migration failed: {e}")
 
+        # 1c. Backfill raw submission photos for older approved submissions never mirrored
+        try:
+            backfill_mirror_images_from_submission_photos(approved_records)
+        except Exception as e:
+            logger.warning(f"[AUTO DRIVE SYNC] Photo mirror backfill failed: {e}")
+
         # 2. Upload approved submissions under <root>/<form_id>/submissions/<submission_id>/
         uploaded_count = 0
         skipped_count = 0
@@ -1449,6 +1502,9 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                 entry_path = os.path.join(LOCAL_IMAGES_DIR, entry)
                 if os.path.isdir(os.path.join(entry_path, "submissions")):
                     form_ids.add(entry)
+            # CSV/Sheet-only forms still need their Drive folder and submissions/ container.
+            for csv_file in glob.glob(os.path.join(LOCAL_FORMS_SHEETS_DIR, "*.csv")):
+                form_ids.add(os.path.splitext(os.path.basename(csv_file))[0])
 
             for form_id in sorted(form_ids):
                 form_folder_id = await client.get_or_create_folder(
@@ -1456,6 +1512,11 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                 )
                 if not form_folder_id:
                     continue
+
+                # Every form folder gets a submissions/ container, even CSV-only forms.
+                submissions_folder_id = await client.get_or_create_folder(
+                    http_client, token, "submissions", form_folder_id
+                )
 
                 # Per-form CSV + native Google Sheet inside the form folder
                 csv_path = local_form_csv_path(form_id)
@@ -1475,12 +1536,7 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                         logger.error(f"[AUTO DRIVE SYNC] Failed to sync Google Sheet for {form_id}: {e}")
 
                 submissions_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions")
-                if not os.path.isdir(submissions_dir):
-                    continue
-                submissions_folder_id = await client.get_or_create_folder(
-                    http_client, token, "submissions", form_folder_id
-                )
-                if not submissions_folder_id:
+                if not os.path.isdir(submissions_dir) or not submissions_folder_id:
                     continue
                 remote_subfolders = await list_remote_folders(submissions_folder_id)
 

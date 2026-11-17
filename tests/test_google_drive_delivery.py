@@ -210,3 +210,138 @@ async def test_drive_sync_daemon_disabled_when_interval_is_zero():
     import workers.outbox_worker as ow
 
     assert await ow.run_drive_sync_daemon("postgresql://unused", 0) is None
+
+
+class _FakeHttpResponse:
+    status_code = 200
+
+    def json(self):
+        return {"files": []}
+
+
+class _FakeHttpClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, *args, **kwargs):
+        return _FakeHttpResponse()
+
+
+class _FakeDriveClient:
+    instances = []
+    root_folder_id = "root_folder"
+
+    def __init__(self, *args, **kwargs):
+        self.folders = {}
+        self.uploads = []
+        self.sheet_imports = []
+        _FakeDriveClient.instances.append(self)
+
+    async def get_token(self, client=None):
+        return "fake-token"
+
+    async def get_or_create_folder(self, client, token, name, parent=None):
+        key = (name, parent)
+        if key not in self.folders:
+            self.folders[key] = f"folder_{len(self.folders)}"
+        return self.folders[key]
+
+    async def find_file_or_folder(self, *args, **kwargs):
+        return None
+
+    async def upload_file(self, client, token, filename, content_bytes, mime_type="application/octet-stream", parent_id=None):
+        self.uploads.append((parent_id, filename, content_bytes))
+        return f"file_{len(self.uploads)}"
+
+    async def import_csv_as_sheet(self, client, token, sheet_name, csv_bytes, parent_id=None):
+        self.sheet_imports.append((parent_id, sheet_name))
+        return "sheet_1"
+
+    async def update_sheet_values(self, *args, **kwargs):
+        return True
+
+    async def cleanup_drive_clutter(self, *args, **kwargs):
+        return 0
+
+
+def _patch_sync_env(monkeypatch, tmp_path):
+    import json
+    import types
+    import services.google_drive_delivery as gd
+
+    _FakeDriveClient.instances = []
+    monkeypatch.setattr(gd, "LOCAL_IMAGES_DIR", str(tmp_path / "Images"))
+    monkeypatch.setattr(gd, "LOCAL_FORMS_SHEETS_DIR", str(tmp_path / "Sheets" / "forms"))
+    monkeypatch.setattr(gd, "MASTER_CSV_FILE", str(tmp_path / "Sheets" / "Master.csv"))
+    monkeypatch.setattr(gd, "SUBMISSION_PHOTOS_DIR", str(tmp_path / "photos"))
+    monkeypatch.setattr(gd, "DEV_SUBMISSIONS_FILE", str(tmp_path / "dev.json"))
+    monkeypatch.setattr(gd, "has_google_credentials", lambda: True)
+    monkeypatch.setattr(gd, "GoogleDriveClient", _FakeDriveClient)
+    monkeypatch.setattr(gd, "httpx", types.SimpleNamespace(AsyncClient=_FakeHttpClient))
+
+    async def archive_sheet(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(gd, "r2_client", types.SimpleNamespace(archive_sheet=archive_sheet))
+
+    def write_dev(records):
+        with open(gd.DEV_SUBMISSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(records, f)
+
+    def add_photo(sub_id, name="slot_0.jpg"):
+        photo_dir = tmp_path / "photos" / sub_id
+        photo_dir.mkdir(parents=True, exist_ok=True)
+        (photo_dir / name).write_bytes(b"photo-bytes")
+
+    return gd, write_dev, add_photo
+
+
+def test_sync_backfills_missing_mirror_images_and_uploads_them(monkeypatch, tmp_path):
+    import asyncio
+
+    gd, write_dev, add_photo = _patch_sync_env(monkeypatch, tmp_path)
+    record = {
+        "submission_id": "VN-BACKFILL-OK",
+        "form_id": "form_alpha",
+        "status": "APPROVED",
+        "submitted_at": "2026-11-17T09:00:00Z",
+        "form_data": {"car_model": "VF 8"},
+    }
+    write_dev([record])
+    add_photo("VN-BACKFILL-OK")
+
+    assert asyncio.run(gd.sync_all_approved_to_drive()) is True
+
+    mirrored = tmp_path / "Images" / "form_alpha" / "submissions" / "VN-BACKFILL-OK" / "slot_0.jpg"
+    assert mirrored.read_bytes() == b"photo-bytes"
+
+    client = _FakeDriveClient.instances[0]
+    assert any(name == "slot_0.jpg" and data == b"photo-bytes" for _, name, data in client.uploads)
+    form_folder_id = client.folders[("form_alpha", "root_folder")]
+    assert ("submissions", form_folder_id) in client.folders
+
+
+def test_sync_backfill_skips_rejected_and_test_submissions(monkeypatch, tmp_path):
+    import asyncio
+
+    gd, write_dev, add_photo = _patch_sync_env(monkeypatch, tmp_path)
+    write_dev([
+        {"submission_id": "VN-BACKFILL-APPROVED", "form_id": "form_alpha", "status": "APPROVED"},
+        {"submission_id": "VN-BACKFILL-REJECTED", "form_id": "form_alpha", "status": "REJECTED"},
+        {"submission_id": "VN-BACKFILL-TEST", "form_id": "form_alpha", "status": "APPROVED"},
+    ])
+    for sid in ("VN-BACKFILL-APPROVED", "VN-BACKFILL-REJECTED", "VN-BACKFILL-TEST"):
+        add_photo(sid)
+
+    assert asyncio.run(gd.sync_all_approved_to_drive()) is True
+
+    base = tmp_path / "Images" / "form_alpha" / "submissions"
+    assert (base / "VN-BACKFILL-APPROVED" / "slot_0.jpg").exists()
+    assert not (base / "VN-BACKFILL-REJECTED").exists()
+    assert not (base / "VN-BACKFILL-TEST").exists()
