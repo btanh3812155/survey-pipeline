@@ -966,6 +966,25 @@ class GoogleDriveClient:
                     if raw_bytes:
                         await self.upload_file(client, token, fname, raw_bytes, _guess_mime(fname), target_folder)
 
+            # Refresh the per-form CSV and native Google Sheet for approved submissions
+            if (
+                form_folder_id
+                and record.get("status") == "APPROVED"
+                and not is_test_submission(submission_id)
+            ):
+                append_to_local_sheets_mirror(dict(record, form_id=form_folder_name))
+                csv_path = local_form_csv_path(form_folder_name)
+                if os.path.isfile(csv_path):
+                    with open(csv_path, "rb") as csv_f:
+                        csv_bytes = csv_f.read()
+                    await self.upload_file(
+                        client, token, f"{form_folder_name}.csv", csv_bytes,
+                        "text/csv; charset=UTF-8", form_folder_id,
+                    )
+                    await _sync_form_sheet(
+                        self, client, token, form_folder_name, form_folder_id, csv_path
+                    )
+
             logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into {form_folder_name}/submissions/{submission_id} finished successfully.")
             return True
 

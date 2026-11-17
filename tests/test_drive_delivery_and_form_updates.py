@@ -525,7 +525,7 @@ async def test_upload_file_patch_when_existing():
 
 @pytest.mark.asyncio
 async def test_execute_delivery_no_summary_csv(monkeypatch):
-    """Tests that execute_delivery only uploads images and never uploads submission_*_summary.csv."""
+    """execute_delivery uploads images plus per-form CSV/Sheet, never submission_*_summary.csv."""
     from services.google_drive_delivery import GoogleDriveClient
     import httpx
 
@@ -560,12 +560,15 @@ async def test_execute_delivery_no_summary_csv(monkeypatch):
     monkeypatch.setattr(gdrive, "get_token", mock_token)
     success = await gdrive.execute_delivery(
         submission_id="VN-LIVE-12345",
-        record={"submission_id": "VN-LIVE-12345", "status": "APPROVED"},
+        record={"submission_id": "VN-LIVE-12345", "status": "APPROVED", "form_id": "income_survey"},
         images=[{"filename": "slot_0.webp", "bytes": b"slot0_bytes"}],
     )
-    assert len(uploaded_files) == 1
-    assert "slot_0.webp" in uploaded_files[0]
-    assert not any("summary.csv" in u for u in uploaded_files)
+    assert success is True
+    assert len(uploaded_files) == 3
+    assert any("slot_0.webp" in body for body in uploaded_files)
+    assert any('filename="income_survey.csv"' in body for body in uploaded_files)
+    assert any("application/vnd.google-apps.spreadsheet" in body for body in uploaded_files)
+    assert not any("summary.csv" in body for body in uploaded_files)
 
 def test_manual_drive_sync_endpoint(monkeypatch):
     """Tests POST /api/v1/admin/sync-drive endpoint triggers sync background task."""
