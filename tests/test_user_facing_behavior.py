@@ -46,6 +46,17 @@ def test_signature_modal_button_event_wiring_and_cooldown():
     assert "sigModalCooldown" in html
 
 
+def test_submit_button_recovers_from_hung_request():
+    """
+    A stalled submit must abort instead of leaving "Đang gửi..." disabled forever:
+    the fetch carries an AbortSignal and the abort path shows a retryable message.
+    """
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+    assert "AbortController" in html
+    assert "controller.abort()" in html
+    assert "submit_timeout" in html
+
+
 # ==============================================================================
 # 2. Admin Decision Buttons & Two-Step Confirmation
 # ==============================================================================
@@ -719,6 +730,73 @@ def test_image_object_coverage_is_order_agnostic():
             assert "Thiếu ảnh đúng loại" in (body.get("reason") or ""), body
         finally:
             FORM_REGISTRY.pop(form_id, None)
+
+
+def test_multi_image_submit_decodes_each_upload_once():
+    """
+    Every uploaded image is decoded/downscaled exactly once per submission.
+    The old flow decoded each image up to four times (target frame, blur loop,
+    AI normalisation pass, duplicate detector), which added seconds of CPU-bound
+    work to every submit before the AI verdict could even start.
+    """
+    import io
+    from unittest.mock import AsyncMock
+    from PIL import Image
+    from main import FORM_REGISTRY
+    from services.form_engine import (
+        FormSchema, FormQuestion, FormSettings, QuestionType, ImageCheckConfig,
+    )
+    from services import normalizer as normalizer_mod
+
+    def jpeg_bytes(color):
+        buf = io.BytesIO()
+        Image.new("RGB", (240, 320), color).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    form_id = "SIM-DECODE-ONCE"
+    FORM_REGISTRY[form_id] = FormSchema(
+        form_id=form_id,
+        title="Decode Once Simulation",
+        settings=FormSettings(
+            decree13_required=False,
+            is_test_mode=True,
+            image_checks=ImageCheckConfig(enable_blur_check=True, enable_ai_vision=True),
+        ),
+        questions=[FormQuestion(
+            id="q_cam", title="Anh", type=QuestionType.CAMERA_WEBRTC, required=True,
+            image_slots=[
+                {"slot": 0, "title": "Ho so", "role": "app_profile", "required": True},
+                {"slot": 1, "title": "Thu nhap", "role": "app_income", "required": True},
+            ],
+            min_images=2, max_images=2, exact_image_count=2,
+        )],
+    )
+
+    real_sanitize = normalizer_mod.sanitize_and_normalize_image
+    decode_calls = []
+
+    def counting_sanitize(*args, **kwargs):
+        decode_calls.append(1)
+        return real_sanitize(*args, **kwargs)
+
+    client = TestClient(app)
+    data = {"form_id": form_id, "is_test_mode": "true", "bypass_img_check": "false",
+            "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
+    files = [
+        ("survey_photo_0", ("profile.jpg", io.BytesIO(jpeg_bytes((20, 60, 200))), "image/jpeg")),
+        ("survey_photo_1", ("income.jpg", io.BytesIO(jpeg_bytes((220, 40, 40))), "image/jpeg")),
+    ]
+    try:
+        with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+             patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
+             patch("routers.survey.sanitize_and_normalize_image", side_effect=counting_sanitize):
+            resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+        assert resp.status_code == 200
+        assert len(decode_calls) == 2, f"expected 1 decode per upload, got {len(decode_calls)}"
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
 
 
 def test_editor_conditions_use_hidden_constant_uids():

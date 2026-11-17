@@ -1136,6 +1136,7 @@
                 verdict_approved: "BÁO CÁO HỢP LỆ! Khảo sát đã được ghi nhận thành công.",
                 verdict_rejected: "CẦN KIỂM TRA LẠI!",
                 server_err: "Lỗi kết nối máy chủ. Vui lòng thử lại sau.",
+                submit_timeout: "Máy chủ phản hồi quá lâu. Vui lòng kiểm tra kết nối và thử gửi lại.",
                 status_approved: "Đã duyệt",
                 status_manual_review: "Chờ kiểm tra",
                 status_rejected: "Cần kiểm tra lại",
@@ -1199,6 +1200,7 @@
                 verdict_approved: "REPORT APPROVED! Survey submitted successfully.",
                 verdict_rejected: "VERIFICATION FAILED!",
                 server_err: "Server connection error. Please try again later.",
+                submit_timeout: "The server took too long to respond. Check your connection and try again.",
                 status_approved: "Approved",
                 status_manual_review: "Manual Review",
                 status_rejected: "Rejected",
@@ -2967,8 +2969,6 @@
             }
 
             const btn = document.getElementById('btnSubmitForm');
-            btn.disabled = true;
-            btn.textContent = t.btn_submitting;
 
             const formData = new FormData();
             for (let k in answers) {
@@ -3023,8 +3023,20 @@
                 formData.append('gps_latitude', gpsCoordinates.latitude);
                 formData.append('gps_longitude', gpsCoordinates.longitude);
             }
+
+            btn.disabled = true;
+            btn.textContent = t.btn_submitting;
+
+            // A hung upstream must never leave the button spinning forever: hard-cap
+            // the request (upload + AI verdict) and surface a retryable error instead.
+            const controller = new AbortController();
+            const submitTimer = setTimeout(() => controller.abort(), 120000);
             try {
-                const resp = await fetch('/api/v1/survey/submit-webrtc', { method: 'POST', body: formData });
+                const resp = await fetch('/api/v1/survey/submit-webrtc', {
+                    method: 'POST',
+                    body: formData,
+                    signal: controller.signal
+                });
                 if (!resp.ok) {
                     const errBody = await resp.text();
                     let errDetail = errBody || 'Failed';
@@ -3047,9 +3059,10 @@
                 showSubmissionResultModal({
                     status: 'REJECTED',
                     submission_id: 'NET-ERR',
-                    reason: t.server_err
+                    reason: e && e.name === 'AbortError' ? t.submit_timeout : t.server_err
                 });
             } finally {
+                clearTimeout(submitTimer);
                 btn.disabled = false;
                 btn.textContent = t.btn_submit;
             }

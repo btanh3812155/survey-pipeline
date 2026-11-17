@@ -17,11 +17,14 @@ MODEL_PATH_CANDIDATES = [
 ]
 
 _dinov2_session = None
+_dinov2_load_failed = False
 
 def get_dinov2_session():
-    global _dinov2_session
+    global _dinov2_session, _dinov2_load_failed
     if _dinov2_session is not None:
         return _dinov2_session
+    if _dinov2_load_failed:
+        return None
     try:
         import onnxruntime as ort
         for p in MODEL_PATH_CANDIDATES:
@@ -32,7 +35,11 @@ def get_dinov2_session():
                 _dinov2_session = ort.InferenceSession(p, sess_options=opts, providers=["CPUExecutionProvider"])
                 logger.info(f"🚀 [DINOv2] Loaded quantized Meta DINOv2 model from {p}")
                 return _dinov2_session
+        _dinov2_load_failed = True
     except Exception as e:
+        # Cache the failure: retrying a missing onnxruntime/model on every image and
+        # every pair burned ~1s of the request and spammed the log per submission.
+        _dinov2_load_failed = True
         logger.warning(f"Could not load DINOv2 ONNX model: {e}")
     return None
 
@@ -84,6 +91,7 @@ def check_intra_submission_duplicates(
     raw_bytes_list: List[bytes],
     target_q: Optional[Any] = None,
     weekly_incomes: Optional[Dict[str, Any]] = None,
+    pil_cache: Optional[Dict[int, Image.Image]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Verifies that no two weekly income statement images within the same submission
@@ -117,7 +125,9 @@ def check_intra_submission_duplicates(
     for s_idx in unique_slot_indices:
         b = raw_bytes_list[s_idx]
         try:
-            _, p_im = sanitize_and_normalize_image(b, max_dimension=settings.IMAGE_MAX_DIMENSION)
+            p_im = pil_cache.get(s_idx) if pil_cache else None
+            if p_im is None:
+                _, p_im = sanitize_and_normalize_image(b, max_dimension=settings.IMAGE_MAX_DIMENSION)
             pil_images.append(p_im)
             dhashes.append(compute_dhash_int(p_im))
             embeddings.append(compute_dinov2_embedding(p_im))

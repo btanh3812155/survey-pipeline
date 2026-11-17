@@ -639,20 +639,40 @@ async def submit_webrtc_survey(
                 status_str = "APPROVED"
                 reason_str = "Chế độ thử nghiệm: Đã bỏ qua kiểm tra ảnh để đẩy nhanh luồng dữ liệu mẫu."
         else:
-            # For facts extraction, select the app revenue screen if multi-image
-            target_raw_bytes = raw_bytes
-            if len(raw_bytes_list) >= 2:
-                target_raw_bytes = raw_bytes_list[1]
+            # Decode + downscale every upload exactly ONCE, in worker threads.
+            # The previous flow decoded each image up to four times (target frame,
+            # blur loop, AI normalisation pass, duplicate detector) synchronously on
+            # the event loop, so a single submission froze the whole uvicorn worker
+            # for seconds and the client sat on a dead "Đang gửi..." button.
+            norm_results = await asyncio.gather(
+                *[
+                    asyncio.to_thread(
+                        sanitize_and_normalize_image,
+                        b,
+                        max_dimension=settings.IMAGE_MAX_DIMENSION,
+                    )
+                    for b in raw_bytes_list
+                ],
+                return_exceptions=True,
+            )
+            norm_bytes_cache: Dict[int, bytes] = {}
+            pil_cache: Dict[int, Any] = {}
+            for _idx, _res in enumerate(norm_results):
+                if isinstance(_res, tuple) and _res[1] is not None:
+                    norm_bytes_cache[_idx] = _res[0]
+                    pil_cache[_idx] = _res[1]
 
-            try:
-                norm_bytes, pil_im = sanitize_and_normalize_image(
-                    target_raw_bytes, max_dimension=settings.IMAGE_MAX_DIMENSION
-                )
-            except Exception as e:
+            # For facts extraction, select the app revenue screen if multi-image
+            target_idx = 1 if len(raw_bytes_list) >= 2 else 0
+            target_norm = norm_results[target_idx] if 0 <= target_idx < len(norm_results) else None
+            if isinstance(target_norm, tuple) and target_norm[1] is not None:
+                norm_bytes, pil_im = target_norm
+            else:
+                decode_err = target_norm if isinstance(target_norm, Exception) else "unreadable image"
                 norm_bytes, pil_im = None, None
                 is_approved = False
                 status_str = "REJECTED"
-                reason_str = f"Không thể giải mã ảnh: {str(e)}"
+                reason_str = f"Không thể giải mã ảnh: {str(decode_err)}"
                 ai_res = {}
 
             if pil_im is not None:
@@ -682,8 +702,12 @@ async def submit_webrtc_survey(
                         if stitle:
                             slot_name = f"Ảnh {idx + 1} ({stitle})"
                     try:
-                        _, p_im = sanitize_and_normalize_image(img_b, max_dimension=settings.IMAGE_MAX_DIMENSION)
-                        sharp, b_var = compute_laplacian_blur_score(p_im, threshold=slot_blur_thresh)
+                        p_im = pil_cache.get(idx)
+                        if p_im is None:
+                            raise ValueError("unreadable image stream")
+                        sharp, b_var = await asyncio.to_thread(
+                            compute_laplacian_blur_score, p_im, slot_blur_thresh
+                        )
                         if not sharp:
                             is_sharp = False
                             blur_var = b_var
@@ -728,15 +752,10 @@ async def submit_webrtc_survey(
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
                     if target_q and target_q.image_slots and len(images_list) >= 2:
-                        # 1. Parallel threadpool normalization: downscale each image ONCE concurrently!
-                        norm_tasks = [
-                            asyncio.to_thread(sanitize_and_normalize_image, b, settings.IMAGE_MAX_DIMENSION)
-                            for b in raw_bytes_list
-                        ]
-                        norm_results = await asyncio.gather(*norm_tasks, return_exceptions=True)
+                        # 1. Reuse the single decode pass done for the blur check.
                         norm_bytes_list = [
-                            res[0] if (isinstance(res, tuple) and res[0]) else raw_bytes_list[i]
-                            for i, res in enumerate(norm_results)
+                            norm_bytes_cache.get(i, raw_bytes_list[i])
+                            for i in range(len(raw_bytes_list))
                         ]
 
                         # 2. Parallel role classification across all normalized images.
@@ -1062,7 +1081,9 @@ async def submit_webrtc_survey(
                         should_check_fraud = bool(getattr(checks, "enable_anti_fraud", True) and getattr(checks, "require_unique", True))
                         if is_approved and should_check_fraud:
                             # 3. Anti-Fraud: Intra-submission duplicate check across weekly income slots (Meta DINOv2 + dHash + numbers)
-                            intra_dup, intra_reason = check_intra_submission_duplicates(raw_bytes_list, target_q, weekly_incomes)
+                            intra_dup, intra_reason = check_intra_submission_duplicates(
+                                raw_bytes_list, target_q, weekly_incomes, pil_cache=pil_cache
+                            )
                             if intra_dup:
                                 is_approved = False
                                 status_str = "REJECTED"
@@ -1077,14 +1098,7 @@ async def submit_webrtc_survey(
                                 check_idx = _select_unique_check_index(
                                     target_q, matched_income_indices, len(raw_bytes_list)
                                 )
-                                check_im = None
-                                if check_idx is not None:
-                                    try:
-                                        _, check_im = sanitize_and_normalize_image(
-                                            raw_bytes_list[check_idx], max_dimension=settings.IMAGE_MAX_DIMENSION
-                                        )
-                                    except Exception:
-                                        check_im = None
+                                check_im = pil_cache.get(check_idx) if check_idx is not None else None
 
                                 if check_im is not None:
                                     db_pool = get_db_pool()
