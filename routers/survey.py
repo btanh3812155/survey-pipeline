@@ -598,6 +598,37 @@ async def submit_webrtc_survey(
             pass
 
     raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
+
+    # Persist the accepted submission BEFORE the AI verdict. If the vision stage
+    # crashes, the client disconnects, or the worker is restarted mid-processing,
+    # the submission still exists for manual review instead of vanishing (nothing
+    # was stored before this point even though the photos were already on disk).
+    # The final upsert below upgrades this row with the real verdict.
+    if db_pool and not is_test_mode:
+        try:
+            async with db_pool.connection() as early_conn:
+                await early_conn.execute(
+                    """
+                    INSERT INTO survey_submissions (
+                        submission_id, form_id, ctv_code, driver_phone, driver_name,
+                        receipt_serial_no, status, rejection_reason, form_data
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'MANUAL_REVIEW', %s, %s)
+                    ON CONFLICT (submission_id) DO NOTHING;
+                    """,
+                    (
+                        submission_id,
+                        active_form_id,
+                        str(collab_param or "").strip() or None,
+                        clean_phone,
+                        driver_name,
+                        f"SN-{license_plate or 'AUTO'}",
+                        "Hồ sơ đã nhận ảnh, đang chờ hệ thống xác thực tự động.",
+                        json.dumps({"status": "PROCESSING"}),
+                    ),
+                )
+        except Exception as early_err:
+            logger.error(f"[SUBMIT] Early persistence failed for #{submission_id}: {early_err}")
+
     if not is_schema_valid:
         status_str = "REJECTED"
         is_approved = False
@@ -1432,13 +1463,20 @@ async def submit_webrtc_survey(
                         await cur.execute(insert_query, insert_vals_full)
                     except Exception as ins_err:
                         logger.warning(f"Extended column insert failed for #{submission_id}: {ins_err}")
+                        # Minimal fallback must stay FK-safe: omitting driver_id means a
+                        # stale/missing driver_identity_vault row can never abort the whole
+                        # persistence (that silently lost 5 submissions on 2026-11-16).
                         await cur.execute(
                             """
                             INSERT INTO survey_submissions (
                                 submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
-                                status, rejection_reason, form_data, raw_extracted_facts, driver_id
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (submission_id) DO NOTHING;
+                                status, rejection_reason, form_data, raw_extracted_facts
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (submission_id) DO UPDATE SET
+                                status = EXCLUDED.status,
+                                rejection_reason = EXCLUDED.rejection_reason,
+                                form_data = EXCLUDED.form_data,
+                                raw_extracted_facts = EXCLUDED.raw_extracted_facts;
                             """,
                             (
                                 submission_id,
@@ -1451,7 +1489,6 @@ async def submit_webrtc_survey(
                                 reason_str if not is_approved else None,
                                 json.dumps(clean_form_data),
                                 json.dumps(ai_res),
-                                vault_driver_id,
                             ),
                         )
                     if license_plate and not is_dissent:

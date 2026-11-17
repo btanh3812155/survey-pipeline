@@ -820,6 +820,141 @@ def test_image_object_coverage_is_order_agnostic():
             FORM_REGISTRY.pop(form_id, None)
 
 
+def test_accepted_submission_gets_early_row_even_if_final_insert_fails():
+    """
+    Photos on disk must never outlive a missing DB row. The handler stores a
+    MANUAL_REVIEW placeholder before the AI verdict; even when the rich insert
+    fails (simulated FK violation), the FK-safe fallback keeps the row instead of
+    returning 200 with nothing persisted (5 submissions were lost this way on
+    2026-11-16, leaving orphan photo dirs).
+    """
+    import io
+    from unittest.mock import AsyncMock
+    from PIL import Image
+    from main import FORM_REGISTRY
+    from services.form_engine import (
+        FormSchema, FormQuestion, FormSettings, QuestionType, ImageCheckConfig,
+    )
+
+    def jpeg_bytes(color):
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 260), color).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    executed = []
+    stored = {}
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, query, params=None):
+            executed.append(query)
+            if "INSERT INTO survey_submissions" in query:
+                if "image_dhash" in query:
+                    raise RuntimeError("simulated foreign key violation")
+                stored[params[0]] = "MANUAL_REVIEW" if "MANUAL_REVIEW" in query else params[6]
+
+        async def fetchone(self):
+            return None
+
+    class FakeConn:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, query, params=None):
+            executed.append(query)
+            if "INSERT INTO survey_submissions" in query:
+                stored[params[0]] = "MANUAL_REVIEW"
+
+        def cursor(self):
+            return FakeCursor()
+
+        async def commit(self):
+            return None
+
+    class FakePool:
+        def connection(self):
+            return FakeConn()
+
+    form_id = "SIM-EARLY-PERSIST"
+    FORM_REGISTRY[form_id] = FormSchema(
+        form_id=form_id,
+        title="Early Persist Simulation",
+        settings=FormSettings(
+            decree13_required=False,
+            is_test_mode=False,
+            image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=True),
+        ),
+        questions=[FormQuestion(
+            id="q_cam", title="Anh", type=QuestionType.CAMERA_WEBRTC, required=True,
+            image_slots=[
+                {"slot": 0, "title": "Ho so", "role": "app_profile", "required": True},
+                {"slot": 1, "title": "Thu nhap", "role": "app_income", "required": True},
+            ],
+            min_images=2, max_images=2, exact_image_count=2,
+        )],
+    )
+
+    client = TestClient(app)
+    data = {"form_id": form_id, "is_test_mode": "false", "bypass_img_check": "false",
+            "driver_phone": "0988111222", "driver_name": "Nguyen Van A",
+            "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
+    files = [
+        ("survey_photo_0", ("profile.jpg", io.BytesIO(jpeg_bytes((20, 60, 200))), "image/jpeg")),
+        ("survey_photo_1", ("income.jpg", io.BytesIO(jpeg_bytes((220, 40, 40))), "image/jpeg")),
+    ]
+    try:
+        with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+             patch("routers.survey.get_db_pool", return_value=FakePool()), \
+             patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
+            resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        sub_id = body["submission_id"]
+        assert sub_id in stored, "accepted submission must always have a DB row"
+
+        early_idx = next(i for i, q in enumerate(executed)
+                         if "INSERT INTO survey_submissions" in q and "MANUAL_REVIEW" in q)
+        rich_idx = next(i for i, q in enumerate(executed)
+                        if "INSERT INTO survey_submissions" in q and "MANUAL_REVIEW" not in q)
+        assert early_idx < rich_idx, "placeholder must be written before the final upsert"
+
+        fallback = next(q for q in executed
+                        if "INSERT INTO survey_submissions" in q
+                        and "image_dhash" not in q and "MANUAL_REVIEW" not in q)
+        assert "driver_id" not in fallback, "fallback insert must stay FK-safe"
+
+        # Phase 2: the verdict stage explodes (worker kill / client disconnect).
+        # The already-written placeholder must survive instead of the photos
+        # becoming an orphan directory with no row.
+        stored.clear()
+        executed.clear()
+        crash_client = TestClient(app, raise_server_exceptions=False)
+        with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+             patch("routers.survey.get_db_pool", return_value=FakePool()), \
+             patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
+             patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
+             patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
+             patch("routers.survey._classification_slots", side_effect=RuntimeError("vision stage crashed")):
+            crash_resp = crash_client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+
+        assert crash_resp.status_code == 500
+        assert len(stored) == 1, "placeholder row must exist even when the verdict crashes"
+        assert list(stored.values()) == ["MANUAL_REVIEW"]
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
+
+
 def test_multi_image_submit_decodes_each_upload_once():
     """
     Every uploaded image is decoded/downscaled exactly once per submission.
