@@ -878,6 +878,7 @@ class TelegramPollingRunner:
                 gross_revenue=gross_rev,
                 form_id=form_id,
                 recipient_kind=recipient_kind,
+                ctv_ref=collab_id,
             )
             logger.info(
                 f"Dispatched decision verdict for #{clean_sub_id} to {recipient_kind} "

@@ -1003,12 +1003,13 @@ async def test_submission_notification_uses_configured_question_source():
             body = TestClient(app).post(
                 "/api/v1/survey/submit-webrtc",
                 data={"form_id": fid, "is_test_mode": "true", "bypass_img_check": "true",
-                      "phone_q": "0961281310", "cam_0": "uploaded_0"},
+                      "phone_q": "0961281310", "ctv_code": "CTV01", "cam_0": "uploaded_0"},
                 files={"cam__file_0": ("a.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")},
             ).json()
         sub_id = body.get("submission_id") or (body.get("data") or {}).get("submission_id")
         assert captured.get("collaborator_id") == "0961281310", captured
         assert captured.get("recipient_kind") == "driver"
+        assert captured.get("ctv_ref") == "CTV01", captured
     finally:
         if sub_id:
             shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
@@ -1034,3 +1035,17 @@ async def test_direct_telegram_send_uses_configured_http_client(monkeypatch):
     ok = await survey_router.send_telegram_direct_message("123:abc", 8094247707, "hello")
     assert ok is True
     assert client.calls and client.calls[0][1]["chat_id"] == 8094247707
+
+
+def test_retry_link_keeps_original_ctv_ref_for_driver_recipient():
+    """Rejected-submission retry link must carry the original CTV ref, not the phone recipient."""
+    from routers.survey import _build_retry_form_link
+
+    link = _build_retry_form_link("TB_GSM_2026_Nov_Test", "TUAN_LM_HCM_001", "0961281310", "driver")
+    assert link.startswith("https://survey.trustbridgevn.com/forms/TB_GSM_2026_Nov_Test?ref=")
+    assert "0961281310" not in link
+    assert "TUAN_LM_HCM_001" in link.upper()
+
+    # CTV recipients keep using the collaborator when no explicit ref is supplied.
+    ctv_link = _build_retry_form_link("TB_GSM_2026_Nov_Test", None, "DUNG_NV_HCM_002", "ctv")
+    assert "DUNG_NV_HCM_002" in ctv_link.upper()

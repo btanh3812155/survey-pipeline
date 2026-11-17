@@ -371,6 +371,20 @@ def _infer_driver_phone(schema, answers: Dict[str, Any]) -> Optional[str]:
     return best[1] if best else None
 
 
+def _build_retry_form_link(
+    form_id: Optional[str],
+    ctv_ref: Optional[str],
+    collaborator_id: Optional[Union[str, int]],
+    recipient_kind: str = "ctv",
+) -> str:
+    """Retry/submit-again link that keeps the original submission's CTV ref."""
+    from core.ctv import extract_ctv_short_code
+
+    ref_source = ctv_ref or (collaborator_id if recipient_kind != "driver" else None)
+    ref = extract_ctv_short_code(str(ref_source)) if ref_source else ""
+    return f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -1454,6 +1468,7 @@ async def submit_webrtc_survey(
                 gross_revenue=ai_res.get("gross_revenue") or gross_revenue,
                 form_id=active_form_id,
                 recipient_kind=notify_kind,
+                ctv_ref=collab_param,
             )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
@@ -1849,6 +1864,7 @@ async def dispatch_submission_telegram_notifications(
     gross_revenue: Optional[Union[str, int]] = None,
     form_id: Optional[str] = None,
     recipient_kind: str = "ctv",
+    ctv_ref: Optional[str] = None,
 ):
     """
     Notifies the configured Telegram recipient for a submission: the owning CTV
@@ -1883,10 +1899,7 @@ async def dispatch_submission_telegram_notifications(
         f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}"
     )
     if status_str == "REJECTED" and form_id:
-        from core.ctv import extract_ctv_short_code
-
-        ref = extract_ctv_short_code(str(collaborator_id)) if recipient_kind != "driver" else ""
-        link = f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
+        link = _build_retry_form_link(form_id, ctv_ref, collaborator_id, recipient_kind)
         collab_msg += f"\n\n🔁 <b>Nộp lại / mở biểu mẫu:</b> {link}"
     footer = "Tài xế" if recipient_kind == "driver" else "Cộng tác viên phụ trách"
     collab_msg += f"\n\n<i>Thông báo tự động dành cho {footer}.</i>"
