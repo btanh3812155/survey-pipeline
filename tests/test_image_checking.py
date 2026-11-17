@@ -316,6 +316,22 @@ def test_same_ocr_period_with_different_money_is_not_a_duplicate():
     assert _find_duplicate_income_period([(5, slot_5_week3), (6, slot_6_week4)]) is None
 
 
+def test_unreadable_week_tab_is_never_reported_as_duplicate():
+    """A screen whose week tab could not be read is a re-shoot, not a duplicate claim."""
+    from routers.survey import _find_duplicate_income_period
+
+    unreadable = {
+        "period": "10/10 - 16/10/2026",
+        "gross_revenue": 4659500,
+        "net_income": 1097313,
+        "total_trips": 48,
+        "period_reliable": False,
+        "period_uncertain_reason": "Selected week tab is clipped at the right edge of the screen",
+    }
+    violation = _find_duplicate_income_period([(5, unreadable), (6, dict(unreadable))])
+    assert violation is None
+
+
 def test_intra_duplicate_check_uses_global_income_indices_and_money():
     """The check must compare the income screens by global upload index, never target_q slot numbers."""
     from services.form_engine import DEFAULT_TRUST_BRIDGE_SCHEMA

@@ -47,6 +47,12 @@ def test_parse_tab_period_classifies_day_week_month():
     assert (wrap.start, wrap.end, wrap.days) == (date(2026, 10, 26), date(2026, 11, 1), 7)
     assert wrap.granularity == TimeGranularity.WEEKLY
 
+    # First week tab of a month starts in the PREVIOUS month ("26 - 02" under 10/2026
+    # is 26/09-02/10, as its "Chi tiết" list shows; "26 - 01" above still rolls forward).
+    first_week = parse_tab_period("26 - 02", "10/2026")
+    assert (first_week.start, first_week.end, first_week.days) == (date(2026, 9, 26), date(2026, 10, 2), 7)
+    assert first_week.normalized == "26/09 - 02/10/2026"
+
     month = parse_tab_period("01 - 31", "10/2026")
     assert month.days == 31 and month.granularity == TimeGranularity.MONTHLY
 
@@ -188,12 +194,14 @@ def test_validator_rejects_monthly_and_daily_but_accepts_weekly():
     assert ok is True, err
 
 
-def test_detail_date_corrects_adjacent_week_misread():
-    """Regression: VN-F1821C38AB8611BC week 17-23 was OCR'd as 10-16 (dark neighbour label).
+def test_clipped_week_tab_is_marked_unreliable_and_never_corrected():
+    """Regression: VN-F1821C38AB8611BC slot_6 (17/10 Chi tiết, tab OCR'd as 10 - 16).
 
-    The 'Chi tiết' list starts on the selected week's first day, so it must win over an
-    adjacent-week tab misread instead of producing two screens with the same period.
+    The pill is clipped at the screen edge. The layout must keep the OCR period,
+    flag the week as unreliable, and never rewrite it from the Chi tiết date.
     """
+    from routers.survey import _unreliable_week_reason
+
     data = {
         "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 -"],
         "selected_period_label": "10 - 16",
@@ -203,13 +211,37 @@ def test_detail_date_corrects_adjacent_week_misread():
         "field_labels": list(INCOME_FIELD_LABELS),
     }
     applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
-    assert applied["period"] == "17/10 - 23/10/2026"
-    assert applied["period_days"] == 7
-    assert applied["active_tab_index"] == 3
-    assert any("corrected" in note for note in applied["layout_notes"])
+    # No guessing: the OCR period is preserved, only the reliability flag changes.
+    assert applied["period"] == "10/10 - 16/10/2026"
+    assert applied["period_reliable"] is False
+    assert "17/10/2026" in applied["period_uncertain_reason"]
+    assert not any("corrected" in note for note in applied["layout_notes"])
+
+    reason = _unreliable_week_reason(applied, week_num=4, image_num=7)
+    assert reason.startswith("Ảnh Tuần 4 (Ảnh 7): Không đọc được chính xác tuần đang chọn")
+    assert "Vui lòng chụp lại màn hình hiển thị đủ các tab tuần." in reason
 
 
-def test_detail_date_inside_selected_period_leaves_period_untouched():
+def test_model_flagged_unreliable_week_is_propagated():
+    from routers.survey import _unreliable_week_reason
+
+    data = {
+        "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 -"],
+        "selected_period_label": "10 - 16",
+        "selected_period_index": 2,
+        "period_month": "10/2026",
+        "period_reliable": False,
+        "period_uncertain_reason": "Selected week tab is clipped at the right edge of the screen",
+        "field_labels": list(INCOME_FIELD_LABELS),
+    }
+    applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
+    assert applied["period_reliable"] is False
+    assert "clipped" in applied["period_uncertain_reason"]
+    reason = _unreliable_week_reason(applied, week_num=4)
+    assert reason.startswith("Ảnh Tuần 4: Không đọc được chính xác tuần đang chọn")
+
+
+def test_agreeing_detail_date_keeps_week_reliable():
     data = {
         "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 - 23"],
         "selected_period_label": "10 - 16",
@@ -220,10 +252,11 @@ def test_detail_date_inside_selected_period_leaves_period_untouched():
     }
     applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
     assert applied["period"] == "10/10 - 16/10/2026"
-    assert applied["active_tab_index"] == 2
+    assert applied["period_reliable"] is True
+    assert applied["period_uncertain_reason"] == ""
 
 
-def test_detail_date_far_from_selected_period_does_not_override():
+def test_conflicting_detail_date_is_unreliable_even_if_far_off():
     data = {
         "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 - 23"],
         "selected_period_label": "10 - 16",
@@ -234,3 +267,6 @@ def test_detail_date_far_from_selected_period_does_not_override():
     }
     applied = apply_layout_to_ocr(data, _png(_screen(selected_index=2)))
     assert applied["period"] == "10/10 - 16/10/2026"
+    assert applied["period_reliable"] is False
+
+

@@ -15,13 +15,12 @@ network. `analyse_income_layout` folds the model's transcription and this
 deterministic pass together.
 """
 
-import calendar
 import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import date
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -73,6 +72,8 @@ class IncomeLayoutResult:
     tabs: List[str] = field(default_factory=list)
     selected_index: Optional[int] = None
     period: PeriodInfo = field(default_factory=PeriodInfo)
+    period_reliable: bool = True
+    period_uncertain_reason: str = ""
     missing_labels: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
@@ -182,22 +183,27 @@ def parse_tab_period(label: str, month_label: str = "", reference_year: int = 20
         if not day_only or not month:
             return PeriodInfo(label=text)
         d1, d2 = int(day_only.group(1)), int(day_only.group(2))
-        days_in_month = calendar.monthrange(year, month)[1]
+        prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+        next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+        candidates = []
+        # The week ends in the selected month but started in the previous one
+        # ("26 - 02" under 10/2026 is 26/09 - 02/10, not 26/10 - 02/11).
         try:
-            if d1 > days_in_month:
-                # the week starts in the previous month, e.g. "31 - 06" under 09/2026
-                prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-                start = date(prev_year, prev_month, d1)
-                end = date(year, month, d2)
-            else:
-                start = date(year, month, d1)
-                if d2 >= d1:
-                    end = date(year, month, d2)
-                else:
-                    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-                    end = date(next_year, next_month, d2)
+            candidates.append((date(prev_year, prev_month, d1), date(year, month, d2)))
         except ValueError:
+            pass
+        # The week starts in the selected month and ends there or in the next one
+        # ("03 - 09" or "26 - 01" under 10/2026).
+        try:
+            end_in_month = date(year, month, d2) if d2 >= d1 else date(next_year, next_month, d2)
+            candidates.append((date(year, month, d1), end_in_month))
+        except ValueError:
+            pass
+        if not candidates:
             return PeriodInfo(label=text)
+        # Weekly tabs span 7 days (only the trailing partial week is shorter); pick the
+        # candidate closest to a week so a month anchor never silently adds a month.
+        start, end = min(candidates, key=lambda span: abs((span[1] - span[0]).days + 1 - 7))
     if not start or not end:
         return PeriodInfo(label=text)
     days = (end - start).days + 1
@@ -237,37 +243,6 @@ def _parse_detail_date(value: str, reference_year: int) -> Optional[date]:
         return None
 
 
-def _correct_period_from_detail_date(
-    detail_date: date,
-    tabs: Sequence[str],
-    month_label: str,
-    reference_year: int,
-) -> Tuple[Optional[PeriodInfo], Optional[int]]:
-    """Restate the selected period using the selected week's first daily breakdown date.
-
-    The vision model occasionally anchors on the dark date text of a neighbouring
-    (unselected) tab, reporting the previous week. The 'Chi tiết' list always starts
-    on the selected week's first day, so it is the reliable anchor.
-    """
-    for tab_index, tab in enumerate(tabs):
-        candidate = parse_tab_period(tab, month_label, reference_year)
-        if candidate.start and candidate.end and candidate.start <= detail_date <= candidate.end:
-            return candidate, tab_index
-    week_end = detail_date + timedelta(days=6)
-    fallback = parse_tab_period(
-        f"{detail_date.strftime('%d/%m')} - {week_end.strftime('%d/%m')}",
-        month_label,
-        reference_year,
-    )
-    # A tab clipped at the screen edge ("17 -") cannot be parsed as a range, but its
-    # leading day still identifies which tab is active.
-    for tab_index, tab in enumerate(tabs):
-        day_match = re.match(r"\s*(\d{1,2})", tab)
-        if day_match and int(day_match.group(1)) == detail_date.day:
-            return fallback, tab_index
-    return fallback, None
-
-
 def analyse_income_layout(
     image_bytes: bytes,
     model_data: Optional[Dict[str, Any]],
@@ -303,28 +278,28 @@ def analyse_income_layout(
             month_label = month_match.group(0)
     period = parse_tab_period(selected, month_label, reference_year)
 
-    # Cross-check the tab read against the selected week's first 'Chi tiết' date.
-    # Only correct an adjacent-week misread (<= 8 days off) so a hallucinated or
-    # unrelated date can never rewrite the period.
+    # Never rewrite the period from a guess. Instead, surface every disagreement so
+    # the caller can ask the driver to re-shoot the screen with all week tabs visible.
+    period_reliable = data.get("period_reliable") is not False
+    uncertain_reason = str(data.get("period_uncertain_reason") or "").strip()
+    if not period_reliable and not uncertain_reason:
+        uncertain_reason = "model reported the active week tab as unreadable or ambiguous"
     detail_date = _parse_detail_date(str(data.get("first_detail_date") or ""), reference_year)
     if (
-        detail_date
+        period_reliable
+        and detail_date
         and period.start
         and period.end
         and not (period.start <= detail_date <= period.end)
-        and abs((detail_date - period.start).days) <= 8
     ):
-        corrected, corrected_index = _correct_period_from_detail_date(
-            detail_date, tabs, month_label, reference_year
+        period_reliable = False
+        conflict = (
+            f"ngày Chi tiết {detail_date.strftime('%d/%m/%Y')} không nằm trong kỳ đã đọc "
+            f"({period.normalized or period.label or 'không rõ'})"
         )
-        if corrected and corrected.start and corrected.end and corrected.start <= detail_date <= corrected.end:
-            result.notes.append(
-                f"period corrected via Chi tiết date {detail_date.strftime('%d/%m/%Y')}: "
-                f"{period.label or period.normalized} -> {corrected.normalized}"
-            )
-            period = corrected
-            if corrected_index is not None:
-                index = corrected_index
+        uncertain_reason = f"{uncertain_reason}; {conflict}" if uncertain_reason else conflict
+    if not period_reliable:
+        result.notes.append(f"period unreliable: {uncertain_reason}")
 
     labels = [_normalize(str(item)) for item in (data.get("field_labels") or [])]
     joined = "".join(labels)
@@ -342,6 +317,8 @@ def analyse_income_layout(
     result.tabs = tabs
     result.selected_index = index
     result.period = period
+    result.period_reliable = period_reliable
+    result.period_uncertain_reason = uncertain_reason
     result.missing_labels = missing
     return result
 
@@ -385,6 +362,8 @@ def apply_layout_to_ocr(model_data: Optional[Dict[str, Any]], image_bytes: bytes
         data["period"] = layout.period.normalized
     elif layout.period.label:
         data["period"] = layout.period.label
+    data["period_reliable"] = layout.period_reliable
+    data["period_uncertain_reason"] = layout.period_uncertain_reason
 
     detected_app = str(data.get("detected_app") or "").upper()
     if layout.matched:

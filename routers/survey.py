@@ -335,6 +335,10 @@ def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Option
     for idx_pos, result in income_pairs:
         if not isinstance(result, dict):
             continue
+        if result.get("period_reliable") is False:
+            # The selected week tab could not be read; the weekly loop rejects it with
+            # an actionable reason. Never turn an unreadable tab into a duplicate claim.
+            continue
         label = str(result.get("period") or result.get("period_raw_text") or "").strip()
         if not label:
             continue
@@ -360,6 +364,23 @@ def _find_duplicate_income_period(income_pairs: List[Tuple[int, Any]]) -> Option
             }
         seen[key] = (idx_pos, result)
     return None
+
+
+def _unreliable_week_reason(
+    ocr_data: Any, week_num: int, image_num: Optional[int] = None
+) -> Optional[str]:
+    """Actionable rejection text when the selected week tab could not be read reliably."""
+    if not isinstance(ocr_data, dict) or ocr_data.get("period_reliable") is not False:
+        return None
+    detail = str(ocr_data.get("period_uncertain_reason") or "").strip()
+    label = f"Ảnh Tuần {week_num}" if image_num is None else f"Ảnh Tuần {week_num} (Ảnh {image_num})"
+    reason = (
+        f"{label}: Không đọc được chính xác tuần đang chọn (tab tuần bị cắt/khuất). "
+        "Vui lòng chụp lại màn hình hiển thị đủ các tab tuần."
+    )
+    if detail:
+        reason += f" Chi tiết: {detail}."
+    return reason
 
 
 def _select_unique_check_index(target_q: Any, income_indices: List[int], image_count: int) -> Optional[int]:
@@ -1062,6 +1083,24 @@ async def submit_webrtc_survey(
                             tot_gross += g_val
                             tot_net += n_val
                             tot_trips += t_val
+
+                            # An unreadable/clipped week tab is a re-shoot, never a guess.
+                            unreliable_reason = _unreliable_week_reason(
+                                ocr_w,
+                                w_num,
+                                matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else None,
+                            )
+                            if unreliable_reason:
+                                monthly_violation = {
+                                    "failed_slot": (
+                                        matched_income_indices[w_i]
+                                        if w_i < len(matched_income_indices)
+                                        else w_num
+                                    ),
+                                    "reason": unreliable_reason,
+                                    "ocr_data": ocr_w,
+                                }
+                                break
 
                             # Guard against invalid timeframe (Daily, Monthly, Swapped Week, Out-of-Window)
                             p_raw = ocr_w.get("period") or ocr_w.get("period_raw_text") or ""
