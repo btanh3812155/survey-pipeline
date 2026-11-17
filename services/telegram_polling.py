@@ -26,6 +26,10 @@ DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
 ACTIVE_SUPPORT_CONVERSATIONS: Dict[int, dict] = {}  # user_id -> conversation metadata
 ADMIN_GROUP_ACTIVE_SESSION: Dict[str, int] = {}     # legacy chat/admin identifier -> user_id
 ADMIN_ACTIVE_CONVERSATIONS: Dict[int, int] = {}     # admin_user_id -> user_id (isolated per-admin routing)
+# Strong refs for fire-and-forget review uploads; asyncio only weakly tracks tasks,
+# and webhook runners are short-lived instances, so a module-level set keeps the
+# media/document send alive after the callback response is returned.
+BACKGROUND_REVIEW_TASKS: set = set()
 
 class TelegramPollingRunner:
     """
@@ -362,6 +366,25 @@ class TelegramPollingRunner:
             logger.error(f"Failed to edit message reply markup: {e}")
             return False
 
+    def schedule_submission_review(self, chat_id: Union[int, str], sub_id: str) -> None:
+        """
+        Runs the heavy dossier upload AFTER the callback was answered.
+
+        Telegram shows a spinner on the inline button until answerCallbackQuery
+        lands, so awaiting the media group (which can take 20-30s) made the bot
+        look frozen. The send itself keeps strict image-then-data ordering inside
+        send_dossier_bundle; failures are logged instead of killing the webhook.
+        """
+        async def _run() -> None:
+            try:
+                await self.execute_submission_review(chat_id, sub_id)
+            except Exception as e:
+                logger.error(f"Background submission review failed for #{sub_id}: {e}", exc_info=True)
+
+        task = asyncio.create_task(_run())
+        BACKGROUND_REVIEW_TASKS.add(task)
+        task.add_done_callback(BACKGROUND_REVIEW_TASKS.discard)
+
     async def execute_submission_review(self, chat_id: Union[int, str], sub_id: str) -> None:
         """
         Unified review handler invoked identically by /check command and [📋 Mở Phiếu] button.
@@ -566,8 +589,10 @@ class TelegramPollingRunner:
 
         if data.startswith("admin_review:") or data.startswith("admin_query:"):
             sub_id = data.split(":", 1)[1]
-            await self.execute_submission_review(cq_chat_id, sub_id)
-            await self.answer_callback_query(cq_id, f"Đã mở phiếu #{sub_id}")
+            # Answer immediately (Telegram caps callback acks at ~10s and keeps the
+            # button spinner until then); the 20-30s media+document send follows.
+            await self.answer_callback_query(cq_id, "Đang mở phiếu...")
+            self.schedule_submission_review(cq_chat_id, sub_id)
         elif data.startswith("admin_req_approve:"):
             sub_id = data.split(":", 1)[1]
             confirm_buttons = {
@@ -1949,20 +1974,20 @@ class DriverBotRunner(TelegramPollingRunner):
                 sub_id = parts[1]
                 slot_name = parts[2] if len(parts) > 2 else "slot_photo"
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
+                await self.answer_callback_query(cq_id, "Đang chờ gửi ảnh mới")
                 await self.send_message(
                     chat_id,
                     f"📸 <b>Đang chờ nhận ảnh cho phiếu #{sub_id} ({slot_name}):</b>\n\n"
                     f"👉 Vui lòng mở camera, chụp rõ nét và gửi thẳng ảnh vào khung chat này ngay nhé!",
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
-                await self.answer_callback_query(cq_id, "Đang chờ gửi ảnh mới")
 
             elif data.startswith("driver_support:"):
                 sub_id = data.split(":", 1)[1]
+                await self.answer_callback_query(cq_id, f"Đang gửi yêu cầu hỗ trợ cho #{sub_id}")
                 await self.handle_admin_help_request(
                     chat_id, user_id, f"Cần hỗ trợ về phiếu khảo sát #{sub_id}", cq.get("from", {})
                 )
-                await self.answer_callback_query(cq_id, f"Đã gửi yêu cầu hỗ trợ cho #{sub_id}")
             else:
                 await self.answer_callback_query(cq_id)
 

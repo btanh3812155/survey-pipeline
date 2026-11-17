@@ -126,6 +126,94 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
 
 
 @pytest.mark.asyncio
+async def test_admin_review_callback_answers_before_dossier_uploads():
+    """
+    Telegram keeps the inline-button spinner until answerCallbackQuery lands.
+    The review callback must ack first, then upload sendMediaGroup -> sendDocument
+    (which can take 20-30s and previously made the bot look frozen).
+    """
+    import asyncio
+    from services import telegram_polling as tp
+
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    events = []
+    bundles = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        events.append("answer_callback_query")
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    async def mock_bundle(*args, **kwargs):
+        bundles.append(kwargs)
+        started.set()
+        events.append("sendMediaGroup")
+        await release.wait()
+        events.append("sendDocument")
+        return True
+    runner.send_dossier_bundle = mock_bundle
+
+    async def mock_dossier(sub_id, db_pool=None):
+        return {"submission_id": sub_id, "status": "MANUAL_REVIEW", "photo_paths": ["/tmp/x.jpg"]}
+
+    with patch("services.telegram_polling.query_submission_dossier", new=mock_dossier):
+        await runner.handle_callback_query({
+            "id": "cq_order",
+            "data": "admin_review:VN-ORDER1",
+            "message": {"message_id": 7, "chat": {"id": 123456}},
+            "from": {"id": 888},
+        })
+        tasks = list(tp.BACKGROUND_REVIEW_TASKS)
+        await asyncio.wait_for(started.wait(), 1)
+        # The webhook already returned while the media upload is still in flight,
+        # and the callback was acknowledged before any upload started.
+        assert events == ["answer_callback_query", "sendMediaGroup"]
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 2)
+
+    assert events == ["answer_callback_query", "sendMediaGroup", "sendDocument"]
+    # Data document still carries the approve/reject buttons under it.
+    keyboard = bundles[0]["reply_markup"]["inline_keyboard"]
+    assert any("admin_req_approve:VN-ORDER1" in b.get("callback_data", "") for row in keyboard for b in row)
+
+
+@pytest.mark.asyncio
+async def test_admin_review_callback_answers_once_when_upload_fails():
+    """A failing dossier upload is logged, never re-answers or crashes the webhook."""
+    import asyncio
+    from services import telegram_polling as tp
+
+    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    answers = []
+
+    async def mock_answer_cq(cq_id, text=None, show_alert=False):
+        answers.append(text)
+        return True
+    runner.answer_callback_query = mock_answer_cq
+
+    async def failing_bundle(*args, **kwargs):
+        raise RuntimeError("telegram upload unavailable")
+    runner.send_dossier_bundle = failing_bundle
+
+    async def mock_dossier(sub_id, db_pool=None):
+        return {"submission_id": sub_id, "status": "MANUAL_REVIEW", "photo_paths": []}
+
+    with patch("services.telegram_polling.query_submission_dossier", new=mock_dossier):
+        await runner.handle_callback_query({
+            "id": "cq_fail",
+            "data": "admin_review:VN-FAIL1",
+            "message": {"message_id": 8, "chat": {"id": 123456}},
+            "from": {"id": 888},
+        })
+        tasks = list(tp.BACKGROUND_REVIEW_TASKS)
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 2)
+
+    assert answers == ["Đang mở phiếu..."]
+
+
+@pytest.mark.asyncio
 async def test_support_ticket_markup_has_no_dead_close_button():
     """Support ticket button card contains ONLY active locked status; no dead close button."""
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
