@@ -1,11 +1,17 @@
 import asyncio
 import logging
+import os
 from typing import Optional
 import psycopg
 from psycopg.rows import dict_row
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("outbox_worker")
+
+try:
+    DRIVE_SYNC_INTERVAL_SEC = float(os.environ.get("DRIVE_SYNC_INTERVAL_SEC", "900"))
+except ValueError:
+    DRIVE_SYNC_INTERVAL_SEC = 900.0
 
 
 async def process_outbox_batch(
@@ -135,7 +141,54 @@ async def run_outbox_daemon(conn_str: str, poll_interval_sec: float = 10.0):
             logger.info(f"processed {count} outbox events")
 
 
+async def run_drive_sync_daemon(conn_str: str, interval_sec: float = DRIVE_SYNC_INTERVAL_SEC):
+    """
+    Periodically pushes approved deliverables to Google Drive.
+
+    sync_all_approved_to_drive takes a Postgres advisory lock, so this loop and
+    manual /api/v1/admin/sync-drive calls never run concurrently. An interval of
+    0 disables the loop.
+    """
+    if interval_sec <= 0:
+        logger.info("[DRIVE SYNC] periodic sync disabled (DRIVE_SYNC_INTERVAL_SEC=0)")
+        return
+
+    from psycopg_pool import AsyncConnectionPool
+
+    pool = AsyncConnectionPool(conn_str, min_size=1, max_size=3, open=False)
+    await pool.open()
+    logger.info(f"[DRIVE SYNC] periodic sync every {interval_sec:g}s started")
+    try:
+        while True:
+            try:
+                from services.google_drive_delivery import (
+                    has_google_credentials,
+                    sync_all_approved_to_drive,
+                )
+
+                if has_google_credentials():
+                    ok = await sync_all_approved_to_drive(pool)
+                    logger.info(f"[DRIVE SYNC] periodic run finished ok={ok}")
+                else:
+                    logger.debug("[DRIVE SYNC] skipped: no Google credentials configured")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"[DRIVE SYNC] periodic run failed: {e}")
+            await asyncio.sleep(interval_sec)
+    finally:
+        await pool.close()
+
+
+async def run_all_service_loops(conn_str: str):
+    """Runs the outbox worker and the periodic Drive sync loop together."""
+    await asyncio.gather(
+        run_outbox_daemon(conn_str),
+        run_drive_sync_daemon(conn_str, DRIVE_SYNC_INTERVAL_SEC),
+    )
+
+
 if __name__ == "__main__":
     from config import settings
 
-    asyncio.run(run_outbox_daemon(settings.DATABASE_URL))
+    asyncio.run(run_all_service_loops(settings.DATABASE_URL))

@@ -116,3 +116,97 @@ def test_migrate_legacy_local_layout(monkeypatch, tmp_path):
     assert (images / "form_alpha" / "submissions" / "VN-FLAT-1" / "slot_0.jpg").read_bytes() == b"a"
     assert (images / "form_alpha" / "submissions" / "VN-NESTED-1" / "slot_0.jpg").read_bytes() == b"b"
     assert not flat.exists() and not per_form.exists()
+
+
+def test_cursor_rows_to_records_maps_psycopg_tuples():
+    import services.google_drive_delivery as gd
+
+    class Desc:
+        def __init__(self, name):
+            self.name = name
+
+    class Cur:
+        description = [Desc("submission_id"), Desc("status"), Desc("form_id")]
+
+    records = gd._cursor_rows_to_records(Cur(), [("VN-1", "APPROVED", "income_survey")])
+    assert records == [{"submission_id": "VN-1", "status": "APPROVED", "form_id": "income_survey"}]
+
+
+class _FakeCursor:
+    def __init__(self, value):
+        self.value = value
+
+    async def fetchone(self):
+        return (self.value,)
+
+
+class _FakeLockConn:
+    def __init__(self, value):
+        self.value = value
+        self.statements = []
+
+    async def execute(self, sql, params=None):
+        self.statements.append(sql)
+        return _FakeCursor(self.value)
+
+
+class _FakeConnectionCtx:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        return self.conn
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakePool:
+    def __init__(self, lock_acquired):
+        self.conn = _FakeLockConn(lock_acquired)
+
+    def connection(self):
+        return _FakeConnectionCtx(self.conn)
+
+
+@pytest.mark.asyncio
+async def test_sync_skips_when_advisory_lock_is_held(monkeypatch):
+    import services.google_drive_delivery as gd
+
+    calls = []
+
+    async def fake_impl(db_pool=None):
+        calls.append(db_pool)
+        return True
+
+    monkeypatch.setattr(gd, "_sync_all_approved_to_drive_unlocked", fake_impl)
+    pool = _FakePool(lock_acquired=False)
+
+    assert await gd.sync_all_approved_to_drive(pool) is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sync_runs_and_releases_advisory_lock(monkeypatch):
+    import services.google_drive_delivery as gd
+
+    calls = []
+
+    async def fake_impl(db_pool=None):
+        calls.append(db_pool)
+        return True
+
+    monkeypatch.setattr(gd, "_sync_all_approved_to_drive_unlocked", fake_impl)
+    pool = _FakePool(lock_acquired=True)
+
+    assert await gd.sync_all_approved_to_drive(pool) is True
+    assert calls == [pool]
+    assert any("pg_try_advisory_lock" in s for s in pool.conn.statements)
+    assert any("pg_advisory_unlock" in s for s in pool.conn.statements)
+
+
+@pytest.mark.asyncio
+async def test_drive_sync_daemon_disabled_when_interval_is_zero():
+    import workers.outbox_worker as ow
+
+    assert await ow.run_drive_sync_daemon("postgresql://unused", 0) is None

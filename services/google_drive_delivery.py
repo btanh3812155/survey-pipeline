@@ -258,6 +258,9 @@ GOOGLE_DRIVE_CLIENT_ID = os.environ.get("GOOGLE_DRIVE_CLIENT_ID") or getattr(set
 GOOGLE_DRIVE_CLIENT_SECRET = os.environ.get("GOOGLE_DRIVE_CLIENT_SECRET") or getattr(settings, "GOOGLE_DRIVE_CLIENT_SECRET", "")
 GOOGLE_DRIVE_ACCESS_TOKEN = os.environ.get("GOOGLE_DRIVE_ACCESS_TOKEN") or getattr(settings, "GOOGLE_DRIVE_ACCESS_TOKEN", "")
 
+# Postgres advisory lock key so periodic and manual syncs never overlap.
+DRIVE_SYNC_LOCK_KEY = 764539267
+
 
 def get_google_service_account_info() -> Optional[Dict[str, Any]]:
     """
@@ -1273,13 +1276,55 @@ async def _sync_form_sheet(
     ) is not None
 
 
+def _cursor_rows_to_records(cur: Any, rows: List[Any]) -> List[Dict[str, Any]]:
+    """Maps psycopg tuple rows to dict records using the cursor description."""
+    columns = [getattr(desc, "name", None) for desc in (getattr(cur, "description", None) or [])]
+    records: List[Dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            records.append(row)
+        elif columns and all(columns):
+            records.append(dict(zip(columns, row)))
+    return records
+
+
 async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
     """
     Pushes the Master CSV, per-form CSVs/Sheets and submission images to Google Drive.
 
     Remote layout: <root>/<form_id>/submissions/<submission_id>/*, <root>/<form_id>/<form_id>.csv
     and a native Google Sheet named <form_id> inside <root>/<form_id>/.
+
+    When a database pool is provided, a session advisory lock serializes periodic
+    and manual runs; a second concurrent caller returns False without doing work.
     """
+    if db_pool is None:
+        return await _sync_all_approved_to_drive_unlocked(None)
+
+    try:
+        async with db_pool.connection() as lock_conn:
+            lock_cur = await lock_conn.execute(
+                "SELECT pg_try_advisory_lock(%s);", (DRIVE_SYNC_LOCK_KEY,)
+            )
+            row = await lock_cur.fetchone()
+            if not row or not row[0]:
+                logger.info("⏭️ [AUTO DRIVE SYNC] Skipped: another Drive sync is already running.")
+                return False
+            try:
+                return await _sync_all_approved_to_drive_unlocked(db_pool)
+            finally:
+                try:
+                    await lock_conn.execute(
+                        "SELECT pg_advisory_unlock(%s);", (DRIVE_SYNC_LOCK_KEY,)
+                    )
+                except Exception as unlock_err:
+                    logger.warning(f"Failed to release Drive sync lock: {unlock_err}")
+    except Exception as e:
+        logger.warning(f"Drive sync advisory lock unavailable ({e}); running without it.")
+        return await _sync_all_approved_to_drive_unlocked(db_pool)
+
+
+async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) -> bool:
     # Archive master sheet to R2 on every sync execution
     if os.path.exists(MASTER_CSV_FILE) and os.path.getsize(MASTER_CSV_FILE) > 0:
         try:
@@ -1322,11 +1367,9 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT * FROM survey_submissions WHERE status = 'APPROVED';")
-                    for row in await cur.fetchall():
-                        try:
-                            _collect(dict(row))
-                        except Exception:
-                            continue
+                    rows = await cur.fetchall()
+                    for record in _cursor_rows_to_records(cur, rows):
+                        _collect(record)
         except Exception as e:
             logger.debug(f"Could not query DB for approved records: {e}")
 
