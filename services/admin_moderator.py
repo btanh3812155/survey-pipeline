@@ -122,6 +122,94 @@ def _collect_submission_photos(submission_id: str) -> list:
     return []
 
 
+_WEEK_KEYS = ("week_1", "week_2", "week_3", "week_4", "week_5")
+_WEEK_FIELDS = ("gross_revenue", "net_income", "total_trips")
+
+
+def _as_dict(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _as_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolve_income(gross, net, trips, weekly_incomes, raw_facts):
+    """Recovers income for legacy rows whose DB income columns were never filled.
+
+    Older submissions kept zeros in `income_week_*`/`total_*`; the real values
+    live in `raw_extracted_facts` (weekly_incomes and totals). Stored values win
+    per field, then raw facts, then the sum of the weeks.
+    """
+    raw_facts = _as_dict(raw_facts)
+    raw_weekly = _as_dict(raw_facts.get("weekly_incomes"))
+    stored_weekly = _as_dict(weekly_incomes)
+
+    weeks = {}
+    for i, key in enumerate(_WEEK_KEYS, 1):
+        raw_week = _as_dict(raw_weekly.get(key))
+        stored_week = _as_dict(stored_weekly.get(key))
+        entry = dict(raw_week)
+        for field in _WEEK_FIELDS:
+            value = _as_int(stored_week.get(field))
+            entry[field] = value if value else _as_int(raw_week.get(field))
+        entry["period"] = entry.get("period") or f"Tuần {i}"
+        weeks[key] = entry
+
+    def week_sum(field):
+        return sum(_as_int(week.get(field)) for week in weeks.values())
+
+    if not _as_int(gross):
+        gross = _as_int(raw_facts.get("total_gross_revenue") or raw_facts.get("gross_revenue")) or week_sum("gross_revenue")
+    if not _as_int(net):
+        net = _as_int(raw_facts.get("total_net_income") or raw_facts.get("net_income")) or week_sum("net_income")
+    if not _as_int(trips):
+        trips = _as_int(raw_facts.get("total_trips") or raw_facts.get("total_trips_count")) or week_sum("total_trips")
+    return _as_int(gross), _as_int(net), _as_int(trips), weeks
+
+
+def _dev_record_dossier(submission_id: str, r: dict) -> dict:
+    """Dossier for a submission persisted in the dev JSON stores (no DB pool)."""
+    ai_res = _as_dict(r.get("ai_result"))
+    raw_facts = _as_dict(r.get("raw_extracted_facts"))
+    facts = {**ai_res, **raw_facts}
+    stored_weekly = _as_dict(r.get("weekly_incomes")) or _as_dict(ai_res.get("weekly_incomes"))
+    gross, net, trips, weekly_incomes = _resolve_income(
+        _as_int(r.get("total_gross_revenue") or r.get("gross_revenue")),
+        _as_int(r.get("total_net_income") or r.get("net_income")),
+        _as_int(r.get("total_trips") or r.get("trip_count")),
+        stored_weekly,
+        facts,
+    )
+    return {
+        "submission_id": submission_id,
+        "status": r.get("status", "MANUAL_REVIEW"),
+        "rejection_reason": r.get("reason"),
+        "driver_name": r.get("driver_name", "Tài xế"),
+        "driver_phone": r.get("driver_phone", "N/A"),
+        "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
+        "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
+        "created_at": r.get("submitted_at", "Vừa xong"),
+        "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
+        "car_model": r.get("car_model", ""),
+        "gross_income": gross,
+        "net_income": net,
+        "trips_count": trips,
+        "weekly_incomes": weekly_incomes,
+        "photo_paths": _collect_submission_photos(submission_id),
+        "raw_data": r,
+        "form_id": r.get("form_id"),
+    }
+
+
 async def query_submission_dossier(
     submission_id: str, db_pool=None, redis_client=None
 ) -> dict:
@@ -139,23 +227,7 @@ async def query_submission_dossier(
                         dev_recs = json.load(df)
                     for r in dev_recs:
                         if r.get("submission_id") == submission_id:
-                            return {
-                                "submission_id": submission_id,
-                                "status": r.get("status", "MANUAL_REVIEW"),
-                                "rejection_reason": r.get("reason"),
-                                "driver_name": r.get("driver_name", "Tài xế"),
-                                "driver_phone": r.get("driver_phone", "N/A"),
-                                "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
-                                "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
-                                "created_at": r.get("submitted_at", "Vừa xong"),
-                                "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
-                                "gross_income": r.get("total_gross_revenue", 0),
-                                "net_income": r.get("total_net_income", 0),
-                                "trips_count": r.get("total_trips", 0),
-                                "photo_paths": _collect_submission_photos(submission_id),
-                                "raw_data": r,
-                                "form_id": r.get("form_id"),
-                            }
+                            return _dev_record_dossier(submission_id, r)
                 except Exception:
                     pass
         return {
@@ -220,25 +292,7 @@ async def query_submission_dossier(
                                 dev_recs = json.load(df)
                             for r in dev_recs:
                                 if r.get("submission_id") == submission_id:
-                                    return {
-                                        "submission_id": submission_id,
-                                        "status": r.get("status", "MANUAL_REVIEW"),
-                                        "rejection_reason": r.get("reason"),
-                                        "driver_name": r.get("driver_name", "Tài xế"),
-                                        "driver_phone": r.get("driver_phone", "N/A"),
-                                        "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
-                                        "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
-                                        "created_at": r.get("submitted_at", "Vừa xong"),
-                                        "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
-                                        "car_model": r.get("car_model", ""),
-                                        "gross_income": r.get("total_gross_revenue", 0),
-                                        "net_income": r.get("total_net_income", 0),
-                                        "trips_count": r.get("total_trips", 0),
-                                        "weekly_incomes": r.get("weekly_incomes", {}),
-                                        "photo_paths": _collect_submission_photos(submission_id),
-                                        "raw_data": r,
-                                        "form_id": r.get("form_id"),
-                                    }
+                                    return _dev_record_dossier(submission_id, r)
                         except Exception:
                             pass
                 return {"error": f"Không tìm thấy phiếu #{submission_id} trong cơ sở dữ liệu."}
@@ -250,9 +304,9 @@ async def query_submission_dossier(
                 try: raw_facts = json.loads(raw_facts)
                 except: raw_facts = {}
 
-            tot_gross = int(sub[17] or 0)
-            tot_net = int(sub[18] or 0)
-            tot_trips = int(sub[19] or 0)
+            tot_gross = _as_int(sub[17])
+            tot_net = _as_int(sub[18])
+            tot_trips = _as_int(sub[19])
             v_type = sub[20] or "Chưa xác định"
             c_model = sub[21] or ""
             form_data = sub[22] or {}
@@ -260,24 +314,19 @@ async def query_submission_dossier(
                 try: form_data = json.loads(form_data)
                 except: form_data = {}
 
-            if tot_gross == 0 and isinstance(raw_facts, dict):
-                tot_gross = int(raw_facts.get("total_gross_revenue") or raw_facts.get("gross_revenue") or raw_facts.get("raw_total") or 0)
-                tot_net = int(raw_facts.get("total_net_income") or raw_facts.get("net_income") or raw_facts.get("raw_subtotal") or 0)
-                tot_trips = int(raw_facts.get("total_trips") or raw_facts.get("total_trips_count") or 0)
-
             if (not v_type or v_type in ("CAR", "N/A")) and isinstance(form_data, dict):
                 v_type = form_data.get("vehicle_type") or v_type
 
             # Locate every stored photo (all camera questions, including nested dirs)
             photo_paths = _collect_submission_photos(submission_id)
 
-            weekly_incomes = raw_facts.get("weekly_incomes") or {
-                "week_1": {"gross_revenue": int(sub[23] or 0), "period": "Tuần 1"},
-                "week_2": {"gross_revenue": int(sub[24] or 0), "period": "Tuần 2"},
-                "week_3": {"gross_revenue": int(sub[25] or 0), "period": "Tuần 3"},
-                "week_4": {"gross_revenue": int(sub[26] or 0), "period": "Tuần 4"},
-                "week_5": {"gross_revenue": int(sub[27] or 0), "period": "Tuần 5"},
+            db_weekly = {
+                f"week_{i}": {"gross_revenue": _as_int(sub[22 + i])}
+                for i in range(1, 6)
             }
+            tot_gross, tot_net, tot_trips, weekly_incomes = _resolve_income(
+                tot_gross, tot_net, tot_trips, db_weekly, raw_facts
+            )
 
             return {
                 "submission_id": sub[0],
