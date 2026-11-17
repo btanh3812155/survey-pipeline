@@ -1013,3 +1013,24 @@ async def test_submission_notification_uses_configured_question_source():
         if sub_id:
             shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
         FORM_REGISTRY.pop(fid, None)
+
+
+@pytest.mark.asyncio
+async def test_direct_telegram_send_uses_configured_http_client(monkeypatch):
+    """Regression: send_telegram_direct_message must not reference an undefined client."""
+    from routers import survey as survey_router
+
+    class Resp:
+        status_code = 200
+        text = ""
+    class Client:
+        def __init__(self): self.calls = []
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    ok = await survey_router.send_telegram_direct_message("123:abc", 8094247707, "hello")
+    assert ok is True
+    assert client.calls and client.calls[0][1]["chat_id"] == 8094247707

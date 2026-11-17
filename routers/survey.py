@@ -1764,7 +1764,12 @@ async def send_telegram_direct_message(
         payload["reply_markup"] = reply_markup
 
     try:
-        resp = await http_client.post(url, json=payload)
+        client = get_http_client()
+        if client is not None:
+            resp = await client.post(url, json=payload)
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as temp_client:
+                resp = await temp_client.post(url, json=payload)
         if resp.status_code != 200:
             logger.error(
                 f"Telegram send to chat {chat_id} failed: HTTP {resp.status_code} {resp.text[:300]}"
