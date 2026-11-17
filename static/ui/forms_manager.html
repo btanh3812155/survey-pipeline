@@ -557,7 +557,8 @@
                     <option value="active">Chính thức (Active)</option>
                     <option value="test">Thử nghiệm (Test)</option>
                 </select>
-                <select id="sortFilter" class="select-filter" onchange="applyClientFilter()">
+                <select id="sortFilter" class="select-filter" onchange="changeSortOrder(this.value)">
+                    <option value="updated_desc">Sắp xếp: Mới sửa đổi</option>
                     <option value="default">Sắp xếp: Mặc định</option>
                     <option value="name_asc">Tên (A → Z)</option>
                     <option value="name_desc">Tên (Z → A)</option>
@@ -704,6 +705,13 @@
             visibleCards.forEach(c => container.appendChild(c));
         }
 
+        function changeSortOrder(sort) {
+            const url = new URL(window.location.href);
+            url.searchParams.set("sort", sort);
+            url.searchParams.set("page", "1");
+            window.location.href = url.toString();
+        }
+
         function changePageSize(size) {
             const url = new URL(window.location.href);
             url.searchParams.set("size", size);
@@ -813,6 +821,8 @@
             // Populate page size select
             const sizeSel = document.getElementById("pageSizeSelect");
             if (sizeSel) sizeSel.value = size;
+            const sortSel = document.getElementById("sortFilter");
+            if (sortSel) sortSel.value = urlParams.get("sort") || sortSel.dataset.activeSort || "updated_desc";
 
             // Detect environment badge
             const isDev = window.location.hostname.includes("dev") || window.location.hostname.includes("staging");

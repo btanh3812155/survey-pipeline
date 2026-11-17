@@ -383,6 +383,16 @@
                 </div>
             </div>
 
+                    <div style="margin-top: 20px; border-top: 1px solid rgba(239,68,68,0.4); padding-top: 14px;">
+                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #f87171; margin-bottom: 6px;">Vùng nguy hiểm</h3>
+                        <p style="font-size: 0.78rem; color: #94a3b8; margin-bottom: 10px;">
+                            Xóa vĩnh viễn biểu mẫu này. Toàn bộ schema được sao lưu vào cơ sở dữ liệu trước khi xóa.
+                        </p>
+                        <button type="button" id="btnDeleteForm" onclick="deleteFormWithConfirmation()" style="display:none; align-items:center; gap:8px; padding:10px 16px; border-radius:10px; background:#dc2626; color:#fff; border:none; font-weight:700; font-size:0.88rem; cursor:pointer;">
+                            🗑️ Xóa biểu mẫu
+                        </button>
+                    </div>
+
             <!-- Tab 3: Questions -->
             <div class="tab-panel" id="tabQuestions">
                 <div class="card">
@@ -1235,6 +1245,41 @@
             return dangling;
         }
 
+        async function deleteFormWithConfirmation() {
+            const formId = ((document.getElementById('formId') || {}).value || '').trim();
+            if (!formId) return;
+            const ok = confirm(
+                `Xóa vĩnh viễn biểu mẫu "${formId}"?\n\n` +
+                "Bản sao lưu đầy đủ của schema sẽ được lưu vào cơ sở dữ liệu trước khi xóa. " +
+                "Biểu mẫu sẽ biến mất khỏi danh sách và không thể khôi phục trên giao diện."
+            );
+            if (!ok) return;
+            const btn = document.getElementById('btnDeleteForm');
+            if (btn) { btn.disabled = true; btn.textContent = 'Đang xóa...'; }
+            try {
+                const resp = await fetch(`/api/v1/forms/${encodeURIComponent(formId)}`, {
+                    method: 'DELETE', credentials: 'include'
+                });
+                if (resp.ok) {
+                    alert(`Đã xóa biểu mẫu "${formId}". Bản sao lưu đã được lưu.`);
+                    window.location.href = '/admin/forms';
+                    return;
+                }
+                let detail = '';
+                try {
+                    const err = await resp.json();
+                    detail = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail || err);
+                } catch (e) {
+                    detail = await resp.text();
+                }
+                alert('Lỗi xóa (HTTP ' + resp.status + '): ' + (detail || 'Không rõ nguyên nhân'));
+            } catch (e) {
+                alert('Lỗi kết nối: ' + e.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '🗑️ Xóa biểu mẫu'; }
+            }
+        }
+
         async function saveForm() {
             const formId = document.getElementById('formId').value.trim();
             const formTitle = document.getElementById('formTitle').value.trim();
@@ -1378,6 +1423,8 @@
         }
         function hydrateEditorFromSchema() {
             const s = INITIAL_SCHEMA || {};
+            const deleteBtn = document.getElementById('btnDeleteForm');
+            if (deleteBtn) deleteBtn.style.display = s.form_id ? 'inline-flex' : 'none';
             const isNew = !s.form_id;
             const title = isNew ? "Tạo Biểu Mẫu Mới" : `Chỉnh Sửa: ${s.title || s.form_id}`;
             document.title = title;

@@ -1765,7 +1765,12 @@ async def send_telegram_direct_message(
 
     try:
         resp = await http_client.post(url, json=payload)
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            logger.error(
+                f"Telegram send to chat {chat_id} failed: HTTP {resp.status_code} {resp.text[:300]}"
+            )
+            return False
+        return True
     except Exception as e:
         logger.error(f"Failed to dispatch Telegram message to {chat_id}: {e}")
         return False
@@ -1885,6 +1890,16 @@ async def dispatch_submission_telegram_notifications(
         chat_id=collab_tg_id,
         text=collab_msg,
     )
+    if not sent:
+        # The CTV/ driver may only have started the admin bot; try it as a fallback.
+        admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None)
+        if admin_token and admin_token != driver_bot_token and admin_token != "mock_tg_token":
+            logger.info(f"Retrying TG verdict for #{submission_id} via admin bot fallback.")
+            sent = await _send_direct(
+                bot_token=admin_token,
+                chat_id=collab_tg_id,
+                text=collab_msg,
+            )
     if sent:
         logger.info(
             f"TG verdict sent for #{submission_id} to {recipient_kind} telegram_id={collab_tg_id} "

@@ -663,3 +663,39 @@ def test_ctv_tracking_requirement_and_phone_inference():
         {"cau_2_26": "0961281310"},
     )
     assert phone == "0961281310"
+
+
+def test_delete_form_backs_up_schema_and_removes_registry(monkeypatch):
+    """Deleting a form archives it (file fallback when DB pool is unavailable) and removes it."""
+    import os, shutil
+    from fastapi.testclient import TestClient
+    from main import app, FORM_REGISTRY
+    from services.form_engine import FormSchema, FormQuestion, FormSettings, QuestionType
+
+    fid = "delete_probe_test"
+    FORM_REGISTRY[fid] = FormSchema(
+        form_id=fid, title="Delete Probe", settings=FormSettings(is_test_mode=True),
+        questions=[FormQuestion(id="q1", title="Q", type=QuestionType.TEXT)],
+    )
+    backup_dir = os.path.join(os.getcwd(), "data", "form_backups")
+    before = set(os.listdir(backup_dir)) if os.path.isdir(backup_dir) else set()
+    try:
+        with monkeypatch.context() as m:
+            m.setattr("routers.admin_forms.get_db_pool", lambda: None)
+            resp = TestClient(app).delete(
+                f"/api/v1/forms/{fid}", auth=("admin", "12345678")
+            )
+        assert resp.status_code == 200, resp.text
+        assert fid not in FORM_REGISTRY
+        payload = resp.json()
+        assert payload["status"] == "success"
+        backup_path = payload["backup"]
+        assert os.path.isfile(backup_path)
+        import json as _json
+        with open(backup_path, encoding="utf-8") as f:
+            assert _json.load(f)["form_id"] == fid
+    finally:
+        FORM_REGISTRY.pop(fid, None)
+        if os.path.isdir(backup_dir):
+            for name in set(os.listdir(backup_dir)) - before:
+                os.remove(os.path.join(backup_dir, name))

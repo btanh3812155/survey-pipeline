@@ -278,39 +278,14 @@ async def dispatch_action_checklist(
             )
 
     # 2. Action: Telegram Admin Group Notification
+    # The submission ingress already posts the review card (with the "Mở Phiếu Xét
+    # Duyệt" button) to the admin group, so this task must not post a second message.
     if await acquire_action_lease(db_pool, submission_id, "telegram_notify", is_test_mode=is_test_mode):
-        try:
-            admin_group = getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None)
-            from services.telegram_polling import TelegramPollingRunner
-            token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or getattr(settings, "TELEGRAM_BOT_TOKEN", None)
-            if admin_group and token and token != "mock_tg_token":
-                runner = TelegramPollingRunner(bot_token=token, role="admin")
-                plate_str = license_plate or ai_res.get("detected_plate") or "N/A"
-                status_emoji = "✅ APPROVED" if is_approved else "❌ REJECTED"
-                msg_text = (
-                    f"📋 <b>Thông Báo Khảo Sát Mới (#{submission_id})</b>\n\n"
-                    f"• <b>Trạng thái:</b> <code>{status_emoji}</code>\n"
-                    f"• <b>Tài xế:</b> {driver_name or 'Ẩn danh'}\n"
-                    f"• <b>Số điện thoại:</b> <code>{driver_phone or 'N/A'}</code>\n"
-                    f"• <b>Biển số:</b> <code>{plate_str}</code>\n"
-                    f"• <b>Lý do / Ghi chú:</b> {reason_str or 'Hợp lệ'}"
-                )
-                sent = await runner.send_message(admin_group, msg_text)
-                await update_action_record(
-                    db_pool, submission_id, "telegram_notify", "COMPLETED" if sent else "FAILED",
-                    meta={"sent": sent, "chat_id": admin_group}, is_test_mode=is_test_mode
-                )
-            else:
-                await update_action_record(
-                    db_pool, submission_id, "telegram_notify", "SKIPPED",
-                    meta={"reason": "Telegram admin group or bot token not configured"}, is_test_mode=is_test_mode
-                )
-        except Exception as e:
-            logger.error(f"[CHECKLIST] Telegram notify failed for #{submission_id}: {e}")
-            await update_action_record(
-                db_pool, submission_id, "telegram_notify", "FAILED",
-                meta={"error": str(e)}, is_test_mode=is_test_mode
-            )
+        await update_action_record(
+            db_pool, submission_id, "telegram_notify", "SKIPPED",
+            meta={"reason": "Handled by submission ingress review card"},
+            is_test_mode=is_test_mode,
+        )
 
     # 3. Action: Lark Base Sync
     if is_approved:

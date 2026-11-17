@@ -6,10 +6,11 @@ Decoupled into static/ui/forms_manager.html and static/ui/form_editor.html.
 
 import html
 import json
+from datetime import datetime
 import math
 import os
 from typing import Dict, Optional, List, Any
-from core.state import STATIC_DIR
+from core.state import STATIC_DIR, FORMS_STORAGE_DIR
 from services.form_engine import FormSchema, FormSettings, FormQuestion, QuestionType
 
 
@@ -17,7 +18,8 @@ def render_forms_list_html(
     forms_registry: Dict[str, FormSchema],
     page: int = 1,
     page_size: int = 6,
-    environment: str = "production"
+    environment: str = "production",
+    sort: str = "updated_desc",
 ) -> str:
     is_dev = (str(environment).lower() != "production")
     if is_dev:
@@ -39,8 +41,17 @@ def render_forms_list_html(
                 continue
             seen_codes.add(code)
             ctv_options.append({"code": code, "label": str(option)})
+        schema_path = os.path.join(FORMS_STORAGE_DIR, f"{f.form_id}.json")
+        try:
+            updated_at = os.path.getmtime(schema_path)
+        except OSError:
+            updated_at = 0
         unique_forms[f.form_id] = {
             "form_id": f.form_id,
+            "updated_at": updated_at,
+            "updated_label": (
+                datetime.fromtimestamp(updated_at).strftime("%d/%m/%Y %H:%M") if updated_at else "Chưa lưu"
+            ),
             "title": f.title,
             "description": f.description or "",
             "question_count": len(f.questions),
@@ -51,6 +62,14 @@ def render_forms_list_html(
         }
 
     all_forms = list(unique_forms.values())
+    if sort == "updated_desc":
+        all_forms.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
+    elif sort == "name_asc":
+        all_forms.sort(key=lambda item: item.get("title", "").lower())
+    elif sort == "name_desc":
+        all_forms.sort(key=lambda item: item.get("title", "").lower(), reverse=True)
+    elif sort == "questions_desc":
+        all_forms.sort(key=lambda item: item.get("question_count", 0), reverse=True)
     total_forms = len(all_forms)
     page_size = max(1, page_size)
     total_pages = max(1, math.ceil(total_forms / page_size))
@@ -69,7 +88,7 @@ def render_forms_list_html(
         title_esc = html.escape(f["title"])
 
         forms_cards_html += f"""
-        <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}" data-ctv-options="{html.escape(json.dumps(f['ctv_options'], ensure_ascii=False), quote=True)}" data-ctv-ref-enabled="{'true' if f['ctv_ref_enabled'] else 'false'}">
+        <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}" data-updated="{f['updated_at']}" data-ctv-options="{html.escape(json.dumps(f['ctv_options'], ensure_ascii=False), quote=True)}" data-ctv-ref-enabled="{'true' if f['ctv_ref_enabled'] else 'false'}">
             <div class="form-card-top">
                 <span class="{badge_cls}">{badge_txt}</span>
                 <span style="font-size:0.75rem; color:var(--muted); font-family:monospace;">ID: {html.escape(form_id_str)}</span>
@@ -78,6 +97,7 @@ def render_forms_list_html(
             <div class="form-item-meta">
                 <div>Số câu hỏi: <b>{f['question_count']}</b></div>
                 <div>Quyền truy cập: <b>{html.escape(f['access_control'])}</b></div>
+                <div>Cập nhật: <b>{f['updated_label']}</b></div>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn-action qr" onclick="openAdminQrModal('{form_id_str}', '{title_esc}')" title="Mã QR" aria-label="Mã QR">
@@ -98,6 +118,7 @@ def render_forms_list_html(
         with open(html_file, "r", encoding="utf-8") as f:
             content = f.read()
         content = content.replace('{forms_cards_html}', forms_cards_html)
+        content = content.replace('id="sortFilter"', f'id="sortFilter" data-active-sort="{html.escape(sort)}"')
         content = content.replace('<span id="totalFormsCount">0</span>', f'<span id="totalFormsCount">{total_forms}</span>')
         content = content.replace('<span id="currentPageNum">1</span>', f'<span id="currentPageNum">{current_page}</span>')
         content = content.replace('<span id="totalPagesNum">1</span>', f'<span id="totalPagesNum">{total_pages}</span>')

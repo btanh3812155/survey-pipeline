@@ -6,6 +6,7 @@ and schema validation from submission ingress.
 """
 
 import os
+import time
 import logging
 from typing import Optional
 from pydantic import BaseModel
@@ -44,39 +45,38 @@ async def admin_samples_page(admin_user: str = Depends(verify_admin_auth)):
     return RedirectResponse(url="/admin/media", status_code=status.HTTP_302_FOUND)
 
 
-@router.get("/admin/forms", response_class=FileResponse)
-async def get_forms_list(page: int = 1, size: int = 6, admin_user: str = Depends(verify_admin_auth)):
-    """Serves pure static Forms Manager client."""
-    html_file = os.path.join(STATIC_DIR, "ui", "forms_manager.html")
-    if os.path.exists(html_file):
-        return FileResponse(html_file, media_type="text/html")
+@router.get("/admin/forms", response_class=HTMLResponse)
+async def get_forms_list(
+    page: int = 1,
+    size: int = 6,
+    sort: str = "updated_desc",
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Admin Web UI with pagination to view and manage forms."""
     return HTMLResponse(
-        content=render_forms_list_html(FORM_REGISTRY, page=page, page_size=size, environment=settings.ENVIRONMENT),
+        content=render_forms_list_html(
+            FORM_REGISTRY, page=page, page_size=size,
+            environment=settings.ENVIRONMENT, sort=sort,
+        ),
         status_code=200,
     )
 
 
-@router.get("/admin/forms/create", response_class=FileResponse)
+@router.get("/admin/forms/create", response_class=HTMLResponse)
 async def create_new_form_page(admin_user: str = Depends(verify_admin_auth)):
-    """Serves pure static Form Creation client."""
-    html_file = os.path.join(STATIC_DIR, "ui", "form_editor.html")
-    if os.path.exists(html_file):
-        return FileResponse(html_file, media_type="text/html")
+    """Dedicated 3-tab creation page."""
     return HTMLResponse(
         content=render_form_editor_html(None, is_new=True, environment=settings.ENVIRONMENT),
         status_code=200,
     )
 
 
-@router.get("/admin/forms/edit/{form_id}", response_class=FileResponse)
+@router.get("/admin/forms/edit/{form_id}", response_class=HTMLResponse)
 async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_auth)):
-    """Serves pure static Form Editor client."""
+    """Dedicated 3-tab edit page for a specific form."""
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
-    html_file = os.path.join(STATIC_DIR, "ui", "form_editor.html")
-    if os.path.exists(html_file):
-        return FileResponse(html_file, media_type="text/html")
     return HTMLResponse(
         content=render_form_editor_html(schema, is_new=False, environment=settings.ENVIRONMENT),
         status_code=200,
@@ -105,6 +105,60 @@ async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verif
         "question_count": len(schema.questions),
         "message": f"Biểu mẫu '{schema.title}' đã sẵn sàng hoạt động!",
     }
+
+
+@router.delete("/api/v1/forms/{form_id}")
+async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)):
+    """Deletes a form after archiving its full schema in the database."""
+    schema = FORM_REGISTRY.get(form_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
+
+    backup_id = None
+    schema_json = schema.model_dump_json()
+    db_pool = get_db_pool()
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS deleted_forms (
+                            id SERIAL PRIMARY KEY,
+                            form_id VARCHAR(64) NOT NULL,
+                            title TEXT,
+                            schema_json JSONB NOT NULL,
+                            deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            deleted_by TEXT
+                        );
+                        """
+                    )
+                    await cur.execute(
+                        "INSERT INTO deleted_forms (form_id, title, schema_json, deleted_by) "
+                        "VALUES (%s, %s, %s::jsonb, %s) RETURNING id;",
+                        (form_id, schema.title, schema_json, str(admin_user)),
+                    )
+                    row = await cur.fetchone()
+                    backup_id = row[0] if row else None
+                await conn.commit()
+        except Exception as e:
+            logger.error(f"DB archive failed for form {form_id}; falling back to file backup: {e}")
+
+    if backup_id is None:
+        # Dev/DB-outage fallback: durable file backup before deletion.
+        backup_dir = os.path.join("data", "form_backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, f"{form_id}_{int(time.time())}.json")
+        with open(backup_path, "w", encoding="utf-8") as f:
+            f.write(schema_json)
+        backup_id = backup_path
+
+    FORM_REGISTRY.pop(form_id, None)
+    schema_path = os.path.join(FORMS_STORAGE_DIR, f"{form_id}.json")
+    if os.path.exists(schema_path):
+        os.remove(schema_path)
+    logger.info(f"Form '{form_id}' deleted by admin {admin_user}; backup={backup_id}")
+    return {"status": "success", "form_id": form_id, "backup": backup_id}
 
 
 @router.get("/api/v1/forms/draft/{slug}")
