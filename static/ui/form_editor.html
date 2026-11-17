@@ -1312,6 +1312,7 @@
 
             const payload = {
                 form_id: formId,
+                previous_form_id: INITIAL_SCHEMA.form_id || null,
                 title: formTitle,
                 description: document.getElementById('formDesc').value.trim(),
                 settings: {

@@ -428,3 +428,24 @@ def test_generic_camera_slot_roles_are_inferred_from_titles():
     assert _normalize_vehicle_type("Xe máy") == "BIKE"
     assert _normalize_vehicle_type("Xe ô tô") == "CAR"
     assert _normalize_vehicle_type("VF5") == "CAR"
+
+
+def test_classification_roles_include_income_from_all_camera_questions():
+    """Income screens must be classifiable even when the target camera question is the profile one."""
+    from types import SimpleNamespace
+    from routers.survey import _classification_slots
+
+    profile_q = SimpleNamespace(id="prof", type="camera_webrtc", image_slots=[
+        {"role": "custom_object", "title": "Màn hình chính profile của app"},
+        {"role": "custom_object", "title": "Thân xe / đầu xe"},
+    ])
+    income_q = SimpleNamespace(id="inc", type="camera_webrtc", image_slots=[
+        {"role": "custom_object", "title": f"Tuần thu nhập {i+1}/5"} for i in range(5)
+    ])
+    schema = SimpleNamespace(questions=[profile_q, income_q])
+
+    slots = _classification_slots(schema, profile_q)
+    roles = {slot["role"] for slot in slots}
+    assert {"app_profile", "vehicle_exterior", "app_income"} <= roles
+    # deduplicated per role
+    assert sum(1 for slot in slots if slot["role"] == "app_income") == 1

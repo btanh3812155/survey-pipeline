@@ -436,6 +436,24 @@ def _normalize_vehicle_type(value: Optional[str]) -> str:
     return "CAR"
 
 
+def _classification_slots(schema: Any, target_q: Any) -> List[dict]:
+    """Deduplicated (role,title) slot contract covering every camera question."""
+    slots = []
+    seen = set()
+    questions = [
+        q for q in (getattr(schema, "questions", None) or [])
+        if getattr(q, "type", None) == "camera_webrtc" and getattr(q, "image_slots", None)
+    ] or ([target_q] if target_q and getattr(target_q, "image_slots", None) else [])
+    for question in questions:
+        for slot in _normalized_image_slots(question.image_slots):
+            role = slot.get("role")
+            if role in seen:
+                continue
+            seen.add(role)
+            slots.append(slot)
+    return slots
+
+
 @router.post("/api/v1/survey/submit-webrtc")
 async def submit_webrtc_survey(
     request: Request,
@@ -721,12 +739,16 @@ async def submit_webrtc_survey(
                             for i, res in enumerate(norm_results)
                         ]
 
-                        # 2. Parallel role classification across all normalized images
+                        # 2. Parallel role classification across all normalized images.
+                        # The allowed role set must cover every camera question (profile,
+                        # vehicle AND income), otherwise income screens can never be
+                        # classified and week completeness falsely fails.
+                        classification_slots = _classification_slots(schema, target_q)
                         classify_tasks = [
                             vision_client.classify_image_role(
                                 norm_bytes_list[s_idx],
                                 filename=getattr(images_list[s_idx], "filename", "") or "",
-                                expected_slots=_normalized_image_slots(target_q.image_slots),
+                                expected_slots=classification_slots,
                             )
                             for s_idx in range(len(raw_bytes_list))
                         ]

@@ -83,8 +83,43 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
     )
 
 @router.post("/api/v1/forms/upload-schema")
-async def upload_form_schema(schema: FormSchema, admin_user: str = Depends(verify_admin_auth)):
+async def upload_form_schema(request: Request, admin_user: str = Depends(verify_admin_auth)):
     """Allows form owners to upload arbitrary survey schemas with custom rules and constraints."""
+    raw_payload = await request.json()
+    schema = FormSchema.model_validate(raw_payload)
+    previous_form_id = str(raw_payload.get("previous_form_id") or "").strip()
+
+    if (
+        previous_form_id
+        and previous_form_id != schema.form_id
+        and previous_form_id in FORM_REGISTRY
+    ):
+        old_path = os.path.join(FORMS_STORAGE_DIR, f"{previous_form_id}.json")
+        FORM_REGISTRY.pop(previous_form_id, None)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+        db_pool = get_db_pool()
+        if db_pool:
+            try:
+                async with db_pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "UPDATE survey_submissions SET form_id = %s WHERE form_id = %s;",
+                            (schema.form_id, previous_form_id),
+                        )
+                    await conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to migrate submissions for form rename {previous_form_id}->{schema.form_id}: {e}")
+        try:
+            from services.google_drive_delivery import rename_local_form_folder, rename_form_folder
+            rename_local_form_folder(previous_form_id, schema.form_id)
+            await rename_form_folder(previous_form_id, schema.form_id)
+        except Exception as e:
+            logger.warning(f"Failed to rename Drive mirror for form {previous_form_id}->{schema.form_id}: {e}")
+
     schema_path = os.path.join(FORMS_STORAGE_DIR, f"{schema.form_id}.json")
     target_path = os.path.realpath(schema_path)
     base_path = os.path.realpath(FORMS_STORAGE_DIR)

@@ -887,15 +887,16 @@ class GoogleDriveClient:
                 logger.error("Could not obtain Google Drive access token.")
                 return False
 
-            # 1. Create or resolve top-level "Images" folder under root_folder_id
+            # Structure: <root>/<form_id>/<submission_id>/...
             parent_id = self.root_folder_id if self.root_folder_id else None
-            images_parent_id = await self.get_or_create_folder(client, token, "Images", parent_id)
+            form_folder_name = str(record.get("form_id") or "unknown_form")
+            form_folder_id = await self.get_or_create_folder(client, token, form_folder_name, parent_id)
 
-            # 2. Create or resolve submission folder under Images/
-            sub_folder_id = await self.get_or_create_folder(client, token, submission_id, images_parent_id)
-            target_folder = sub_folder_id or images_parent_id
+            # 2. Create or resolve submission folder under the form folder
+            sub_folder_id = await self.get_or_create_folder(client, token, submission_id, form_folder_id)
+            target_folder = sub_folder_id or form_folder_id
 
-            # 3. Upload images into Images/{submission_id}/
+            # 3. Upload images into <form_id>/{submission_id}/
             if images:
                 for idx, img in enumerate(images):
                     fname = img.get("filename") or f"slot_{idx}.webp"
@@ -903,7 +904,7 @@ class GoogleDriveClient:
                     if raw_bytes:
                         await self.upload_file(client, token, fname, raw_bytes, _guess_mime(fname), target_folder)
 
-            logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into Images/{submission_id} finished successfully.")
+            logger.info(f"🚀 [GOOGLE DRIVE] Complete remote upload for #{submission_id} into {form_folder_name}/{submission_id} finished successfully.")
             return True
 
 def append_to_local_sheets_mirror(record: Dict[str, Any]) -> None:
@@ -942,15 +943,20 @@ def append_to_local_sheets_mirror(record: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Failed to append to local sheets mirror: {e}")
 
-def save_submission_images_locally(submission_id: str, images: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+def save_submission_images_locally(
+    submission_id: str,
+    images: Optional[List[Dict[str, Any]]],
+    form_id: Optional[str] = None,
+) -> Optional[str]:
     """
-    Saves all photos for a submission into its dedicated subfolder under Images/{submission_id}/.
+    Saves all photos for a submission into Images/<form_id>/<submission_id>/.
     Only saves to deliverables mirror if not a dev/test/mock submission and images is not empty!
     """
     if is_test_submission(submission_id) or not images:
         logger.debug(f"Skipping deliverables mirror save for dev/test or empty images submission #{submission_id}")
         return None
-    subfolder_path = os.path.join(LOCAL_IMAGES_DIR, submission_id)
+    form_folder = str(form_id or "unknown_form")
+    subfolder_path = os.path.join(LOCAL_IMAGES_DIR, form_folder, submission_id)
     os.makedirs(subfolder_path, exist_ok=True)
 
     saved_paths = []
@@ -972,6 +978,43 @@ def save_submission_images_locally(submission_id: str, images: Optional[List[Dic
 
     logger.info(f"📁 [DRIVE IMAGES MIRROR] Saved {len(saved_paths)} images to {subfolder_path}")
     return subfolder_path
+
+
+def rename_local_form_folder(old_form_id: str, new_form_id: str) -> None:
+    """Mirror a form-id rename in the local Drive deliverable mirror."""
+    old_dir = os.path.join(LOCAL_IMAGES_DIR, old_form_id)
+    new_dir = os.path.join(LOCAL_IMAGES_DIR, new_form_id)
+    if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+        os.makedirs(os.path.dirname(new_dir), exist_ok=True)
+        shutil.move(old_dir, new_dir)
+        logger.info(f"📁 [DRIVE IMAGES MIRROR] Renamed local folder {old_form_id} -> {new_form_id}")
+
+
+async def rename_form_folder(old_form_id: str, new_form_id: str) -> bool:
+    """Renames the Drive form folder when a form's id changes."""
+    if not has_google_credentials():
+        return False
+    client = GoogleDriveClient()
+    async with httpx.AsyncClient(timeout=30.0) as http_client:
+        token = await client.get_token(http_client)
+        if not token:
+            return False
+        root_id = client.root_folder_id or None
+        folder_id = await client.find_file_or_folder(
+            http_client, token, old_form_id, root_id, "application/vnd.google-apps.folder"
+        )
+        if not folder_id:
+            return False
+        resp = await http_client.patch(
+            f"https://www.googleapis.com/drive/v3/files/{folder_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"name": new_form_id},
+        )
+        if resp.status_code == 200:
+            logger.info(f"📁 [GOOGLE DRIVE] Renamed form folder {old_form_id} -> {new_form_id}")
+            return True
+        logger.error(f"Failed to rename Drive folder {old_form_id}: {resp.status_code} {resp.text[:200]}")
+        return False
 
 
 def has_google_credentials() -> bool:
@@ -1018,7 +1061,7 @@ async def upload_to_google_drive(
 
     # 2. Save Images to Subfolder (1 subfolder per submission)
     if images:
-        save_submission_images_locally(submission_id, images)
+        save_submission_images_locally(submission_id, images, form_id=record.get("form_id"))
 
     # 3. Individual surveys are NOT uploaded directly to Google Drive.
     # Deliverables are synchronized via sync_all_approved_to_drive and scripts/sync_to_drive.py,
@@ -1048,6 +1091,7 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
 
     # Find approved submission IDs
     approved_ids = set()
+    submission_forms: Dict[str, str] = {}
     # 1. Dev storage
     dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
     if os.path.exists(dev_storage_file):
@@ -1057,6 +1101,7 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
             for r in dev_records:
                 if r.get("status") == "APPROVED" and r.get("submission_id"):
                     approved_ids.add(r.get("submission_id"))
+                    submission_forms[r.get("submission_id")] = r.get("form_id") or "unknown_form"
         except Exception as e:
             logger.debug(f"Could not read dev storage for approved IDs: {e}")
 
@@ -1065,11 +1110,12 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute("SELECT submission_id FROM survey_submissions WHERE status = 'APPROVED';")
+                    await cur.execute("SELECT submission_id, form_id FROM survey_submissions WHERE status = 'APPROVED';")
                     rows = await cur.fetchall()
                     for row in rows:
                         if row[0]:
                             approved_ids.add(row[0])
+                            submission_forms[row[0]] = row[1] or "unknown_form"
         except Exception as e:
             logger.debug(f"Could not query DB for approved IDs: {e}")
 
@@ -1100,55 +1146,89 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
             except Exception as e:
                 logger.error(f"[AUTO DRIVE SYNC] Failed to upload Master CSV: {e}")
 
-        # 2. Upload approved image subfolders with directory diffing
-        submission_dirs = glob.glob(os.path.join(LOCAL_IMAGES_DIR, "*"))
-        if submission_dirs:
-            try:
-                images_parent_id = await client.get_or_create_folder(http_client, token, "Images", root_id)
-                
-                # Query all existing remote folders in Drive Images/ in a single fast call
-                remote_subfolders = {}
-                q_sub = f"'{images_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-                url_files = "https://www.googleapis.com/drive/v3/files"
-                headers = {"Authorization": f"Bearer {token}"}
-                params = {"q": q_sub, "fields": "nextPageToken, files(id, name)", "pageSize": 1000}
+        # 1b. Migrate legacy Images/<submission_id>/ dirs into Images/<form_id>/<submission_id>/
+        try:
+            for entry in os.listdir(LOCAL_IMAGES_DIR):
+                entry_path = os.path.join(LOCAL_IMAGES_DIR, entry)
+                if not os.path.isdir(entry_path):
+                    continue
+                child_dirs = [d for d in os.listdir(entry_path) if os.path.isdir(os.path.join(entry_path, d))]
+                if child_dirs:
+                    continue  # already a form folder
+                form_id = submission_forms.get(entry)
+                if not form_id:
+                    continue
+                dest_dir = os.path.join(LOCAL_IMAGES_DIR, form_id)
+                os.makedirs(dest_dir, exist_ok=True)
+                dest = os.path.join(dest_dir, entry)
+                if not os.path.exists(dest):
+                    shutil.move(entry_path, dest)
+        except Exception as e:
+            logger.warning(f"[AUTO DRIVE SYNC] Legacy image dir migration failed: {e}")
+
+        # 2. Upload approved submissions under <root>/<form_id>/<submission_id>/
+        uploaded_count = 0
+        skipped_count = 0
+        try:
+            root_id = client.root_folder_id or None
+            headers = {"Authorization": f"Bearer {token}"}
+            url_files = "https://www.googleapis.com/drive/v3/files"
+
+            async def list_remote_folders(parent_id: Optional[str]) -> Dict[str, str]:
+                if parent_id:
+                    q = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+                else:
+                    q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+                params = {"q": q, "fields": "nextPageToken, files(id, name)", "pageSize": 1000}
+                found: Dict[str, str] = {}
                 page_tok = None
                 while True:
                     if page_tok:
                         params["pageToken"] = page_tok
-                    resp_sub = await http_client.get(url_files, params=params, headers=headers)
-                    if resp_sub.status_code != 200:
+                    resp = await http_client.get(url_files, params=params, headers=headers)
+                    if resp.status_code != 200:
                         break
-                    d_sub = resp_sub.json()
-                    for f in d_sub.get("files", []):
-                        remote_subfolders[f["name"]] = f["id"]
-                    page_tok = d_sub.get("nextPageToken")
+                    body = resp.json()
+                    for f in body.get("files", []):
+                        found[f["name"]] = f["id"]
+                    page_tok = body.get("nextPageToken")
                     if not page_tok:
                         break
+                return found
 
-                uploaded_count = 0
-                skipped_count = 0
-                for s_dir in submission_dirs:
-                    if not os.path.isdir(s_dir):
+            form_dirs = [p for p in glob.glob(os.path.join(LOCAL_IMAGES_DIR, "*")) if os.path.isdir(p)]
+            for form_dir in form_dirs:
+                form_folder_name = os.path.basename(form_dir)
+                form_folder_id = await client.get_or_create_folder(
+                    http_client, token, form_folder_name, root_id
+                )
+                if not form_folder_id:
+                    continue
+                remote_subfolders = await list_remote_folders(form_folder_id)
+
+                for sub_dir in glob.glob(os.path.join(form_dir, "*")):
+                    if not os.path.isdir(sub_dir):
                         continue
-                    sub_id = os.path.basename(s_dir)
+                    sub_id = os.path.basename(sub_dir)
                     if is_test_submission(sub_id):
                         continue
                     if approved_ids and sub_id not in approved_ids:
                         continue
-
-                    files = [f for f in glob.glob(os.path.join(s_dir, "*.*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
+                    files = [
+                        f for f in glob.glob(os.path.join(sub_dir, "*.*"))
+                        if os.path.isfile(f) and os.path.getsize(f) > 0
+                    ]
                     if not files:
                         continue
 
-                    # Diff per file, not per folder: a folder whose earlier upload
-                    # partially failed must still receive the missing images.
                     if sub_id in remote_subfolders:
                         sub_folder_id = remote_subfolders[sub_id]
                         remote_names = await _list_remote_file_names(http_client, token, sub_folder_id)
                         skipped_count += 1
                     else:
-                        sub_folder_id = await client.get_or_create_folder(http_client, token, sub_id, images_parent_id)
+                        sub_folder_id = await client.get_or_create_folder(
+                            http_client, token, sub_id, form_folder_id
+                        )
                         remote_names = set()
                         if sub_folder_id:
                             remote_subfolders[sub_id] = sub_folder_id
@@ -1167,9 +1247,13 @@ async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
                         if file_id:
                             uploaded_count += 1
                         else:
-                            logger.warning(f"[AUTO DRIVE SYNC] Upload failed for {sub_id}/{fname}; will retry next sync.")
-                logger.info(f"🖼️ [AUTO DRIVE SYNC] Diffed image dirs: {skipped_count} folders up-to-date (skipped); synced {uploaded_count} new files across new subfolders.")
-            except Exception as e:
-                logger.error(f"[AUTO DRIVE SYNC] Failed to sync image subfolders: {e}")
+                            logger.warning(f"[AUTO DRIVE SYNC] Upload failed for {form_folder_name}/{sub_id}/{fname}; will retry next sync.")
+
+            logger.info(
+                f"🖼️ [AUTO DRIVE SYNC] Synced {uploaded_count} new image files across "
+                f"form folders under root {root_id}; {skipped_count} submission folders already existed."
+            )
+        except Exception as e:
+            logger.error(f"[AUTO DRIVE SYNC] Failed to sync image subfolders: {e}")
 
         return True

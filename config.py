@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # google drive / workspace delivery
     GOOGLE_ADMIN_EMAIL: str = "admin@trustbridgevn.com"
-    GOOGLE_DRIVE_ROOT_FOLDER_ID: Optional[str] = None
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: Optional[str] = "1zWaDQP0cJxt-dGiJPrZIKfCucl6ig4Bp"
     GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None
     GOOGLE_DRIVE_REFRESH_TOKEN: Optional[str] = None
     GOOGLE_DRIVE_CLIENT_ID: Optional[str] = None

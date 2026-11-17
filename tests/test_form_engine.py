@@ -699,3 +699,46 @@ def test_delete_form_backs_up_schema_and_removes_registry(monkeypatch):
         if os.path.isdir(backup_dir):
             for name in set(os.listdir(backup_dir)) - before:
                 os.remove(os.path.join(backup_dir, name))
+
+
+def test_form_id_rename_migrates_registry_and_file(monkeypatch):
+    """Changing a form id must move its schema and (best-effort) its Drive folder."""
+    import os, json
+    from fastapi.testclient import TestClient
+    from main import app, FORM_REGISTRY
+    from core.state import FORMS_STORAGE_DIR
+
+    old_id, new_id = "rename_probe_old", "rename_probe_new"
+    payload = {
+        "form_id": old_id, "title": "Rename Probe",
+        "settings": {"decree13_required": False, "is_test_mode": True},
+        "questions": [{"id": "q1", "title": "Q", "type": "text", "required": False}],
+    }
+    client = TestClient(app)
+    try:
+        assert client.post("/api/v1/forms/upload-schema", json=payload,
+                           auth=("admin", "12345678")).status_code == 200
+        moved = []
+        monkeypatch.setattr(
+            "services.google_drive_delivery.rename_local_form_folder",
+            lambda old, new: moved.append(("local", old, new)),
+        )
+        async def fake_drive_rename(old, new):
+            moved.append(("drive", old, new))
+            return True
+        monkeypatch.setattr("services.google_drive_delivery.rename_form_folder", fake_drive_rename)
+
+        payload2 = dict(payload, form_id=new_id, previous_form_id=old_id, title="Rename Probe Renamed")
+        resp = client.post("/api/v1/forms/upload-schema", json=payload2, auth=("admin", "12345678"))
+        assert resp.status_code == 200, resp.text
+        assert old_id not in FORM_REGISTRY and new_id in FORM_REGISTRY
+        assert not os.path.exists(os.path.join(FORMS_STORAGE_DIR, f"{old_id}.json"))
+        assert os.path.exists(os.path.join(FORMS_STORAGE_DIR, f"{new_id}.json"))
+        assert ("local", old_id, new_id) in moved and ("drive", old_id, new_id) in moved
+    finally:
+        FORM_REGISTRY.pop(old_id, None)
+        FORM_REGISTRY.pop(new_id, None)
+        for fid in (old_id, new_id):
+            path = os.path.join(FORMS_STORAGE_DIR, f"{fid}.json")
+            if os.path.exists(path):
+                os.remove(path)
