@@ -1762,7 +1762,7 @@ async def sync_internal_status_mirror(
         root_folder_id=root_id,
         publish_customer=False,
         exclude_test=True,
-        skip_empty=True,
+        skip_empty=False,
         photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
     logger.info(

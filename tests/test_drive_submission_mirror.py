@@ -259,6 +259,7 @@ async def test_production_sync_mirrors_all_statuses_internally_only(tmp_path, mo
         _record("VN-REJECTED", "REJECTED"),
         _record("VN-APPEAL", "APPEAL_PENDING"),
         _record("VN-REVIEW", "MANUAL_REVIEW"),
+        _record("VN-EMPTY", "REJECTED"),
         _record("TEST_SHOULD_STAY_OUT", "REJECTED"),
     ]
     client = FakeDriveClient()
@@ -271,6 +272,8 @@ async def test_production_sync_mirrors_all_statuses_internally_only(tmp_path, mo
     assert report["publish_customer"] is False
     assert form["customer"] == {}
     assert set(form["internal"]) == {"APPROVED", "REJECTED", "APPEAL_PENDING", "MANUAL_REVIEW"}
+    # Empty submissions still get a folder so every status is represented.
+    assert form["internal"]["REJECTED"]["VN-EMPTY"]["files"] == []
     assert not any("TEST_SHOULD_STAY_OUT" in folder for folder in client.folders)
     assert not any("/form_alpha/submissions/VN-" in folder for folder in client.folders)
     internal_base = "ROOT/Internal/form_alpha/submissions"

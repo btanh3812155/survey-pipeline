@@ -112,7 +112,7 @@ async def main() -> int:
         internal_root_segments=(),
         publish_customer=False,
         exclude_test=True,
-        skip_empty=True,
+        skip_empty=False,
         photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
     if args.json:
