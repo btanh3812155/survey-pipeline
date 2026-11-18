@@ -11,11 +11,11 @@ from core import quotas as quota_module
 from core.ctv import (
     build_ctv_form_url,
     get_ctv_entry,
+    get_ctv_form_link,
     get_ctv_options_for_form,
     get_ctv_codes,
     clear_ctv_directory_cache,
     ensure_ctv_platform_schema,
-    resolve_ctv_identifier,
     seed_ctv_directory,
     set_ctv_directory_cache,
     set_ctv_form_links_cache,
@@ -46,7 +46,27 @@ class FakeCursor:
         normalized = " ".join(sql.split())
         self._rows = []
         self.rowcount = 0
-        if normalized.startswith("UPDATE ctv_directory SET"):
+        if normalized.startswith("UPDATE ctv_directory SET phone = COALESCE"):
+            code = str(params[-1]) if params else ""
+            updated_rows = []
+            for row in self.pool.directory_rows:
+                if str(row[0]) == code:
+                    updated_rows.append(
+                        (
+                            row[0],
+                            row[1],
+                            row[2] if row[2] is not None else params[0],
+                            row[3] if row[3] is not None else params[1],
+                            row[4],
+                            row[5] if len(row) > 5 else None,
+                        )
+                    )
+                    self.rowcount = 1
+                else:
+                    updated_rows.append(row)
+            if self.rowcount:
+                self.pool.directory_rows = updated_rows
+        elif normalized.startswith("UPDATE ctv_directory SET"):
             code = str(params[-1]) if params else ""
             target = code.upper()
             updated_rows = []
@@ -67,12 +87,27 @@ class FakeCursor:
                     updated_rows.append(row)
             if self.rowcount:
                 self.pool.directory_rows = updated_rows
-        elif "SELECT DISTINCT ctv_code FROM survey_submissions" in normalized:
-            self._rows = list(self.pool.submission_ctv_codes)
-        elif "SELECT DISTINCT collaborator_id FROM survey_submissions" in normalized:
-            self._rows = list(self.pool.submission_collaborators)
-        elif "SELECT ctv_code, collaborator_id, form_data FROM survey_submissions" in normalized:
-            self._rows = list(self.pool.submission_contact_rows)
+        elif normalized.startswith("DELETE FROM ctv_form_links"):
+            legacy = set(params[0]) if params else set()
+            before = len(self.pool.link_rows)
+            self.pool.link_rows = [
+                row for row in self.pool.link_rows if str(row[0]) not in legacy
+            ]
+            self.rowcount = before - len(self.pool.link_rows)
+        elif normalized.startswith("DELETE FROM ctv_quotas"):
+            legacy = set(params[0]) if params else set()
+            before = len(self.pool.quota_rows)
+            self.pool.quota_rows = [
+                row for row in self.pool.quota_rows if str(row[0]) not in legacy
+            ]
+            self.rowcount = before - len(self.pool.quota_rows)
+        elif normalized.startswith("DELETE FROM ctv_directory"):
+            legacy = set(params[0]) if params else set()
+            before = len(self.pool.directory_rows)
+            self.pool.directory_rows = [
+                row for row in self.pool.directory_rows if str(row[0]) not in legacy
+            ]
+            self.rowcount = before - len(self.pool.directory_rows)
         elif "FROM authorized_users" in normalized:
             self._rows = list(self.pool.authorized_rows)
         elif "FROM ctv_form_links" in normalized:
@@ -110,18 +145,14 @@ class FakePool:
         directory_rows=None,
         authorized_rows=None,
         link_rows=None,
-        submission_ctv_codes=None,
-        submission_collaborators=None,
-        submission_contact_rows=None,
+        quota_rows=None,
     ):
         self.executed = []
         self.commits = 0
         self.directory_rows = directory_rows or []
         self.authorized_rows = authorized_rows or []
         self.link_rows = link_rows or []
-        self.submission_ctv_codes = submission_ctv_codes or []
-        self.submission_collaborators = submission_collaborators or []
-        self.submission_contact_rows = submission_contact_rows or []
+        self.quota_rows = quota_rows or []
 
     def connection(self):
         return FakeConn(self)
@@ -136,15 +167,17 @@ def _reset_ctv_cache():
 
 @pytest.mark.asyncio
 async def test_schema_seed_and_cache_read_helpers():
+    static_rows = [
+        (code, ctv_module.STATIC_CTV_NAMES[code], None, None, True, "seed:static")
+        for code in ctv_module.CTV_CODES
+    ]
     pool = FakePool(
         authorized_rows=[
             (111, "TUAN_LM_HCM_001", "Tuấn LM", "0901111111", "COLLABORATOR"),
             (222, "new_ctv_x", "CTV Mới", "0902222222", "COLLABORATOR"),
         ],
-        directory_rows=[
-            ("TUAN_LM_HCM_001", "Tuấn LM", "0901111111", 111, True, "seed:static"),
-            ("NEW_CTV_X", "CTV Mới", "0902222222", 222, True, "seed:authorized_users"),
-        ],
+        directory_rows=static_rows,
+        link_rows=[("TUAN_LM_HCM_001", "income_survey", "https://x.test", "qr")],
     )
 
     assert await ensure_ctv_platform_schema(pool) is True
@@ -159,114 +192,126 @@ async def test_schema_seed_and_cache_read_helpers():
         params for sql, params in pool.executed
         if "INSERT INTO ctv_directory" in sql and "seed:static" in sql
     ]
-    # 4 static seed codes + the two authorized_users CTV rows.
     assert len(static_inserts) == 4
-    assert {p[0] for p in static_inserts} == set(ctv_module.CTV_CODES)
-    authorized_upserts = [
-        params for sql, params in pool.executed
-        if "INSERT INTO ctv_directory" in sql and "seed:authorized_users" in sql
+    assert [p[0] for p in static_inserts] == list(ctv_module.CTV_CODES)
+    assert [p[1] for p in static_inserts] == [
+        ctv_module.STATIC_CTV_NAMES[code] for code in ctv_module.CTV_CODES
     ]
-    assert {p[0] for p in authorized_upserts} == {"TUAN_LM_HCM_001", "NEW_CTV_X"}
+    assert [p[1] for p in static_inserts] == [
+        "Tuấn_LM_HCM_001",
+        "Dũng_NV_HCM_002",
+        "Khuyên_TL_HCM_003",
+        "Vỹ_PV_HCM_004",
+    ]
 
-    assert get_ctv_codes() == ["TUAN_LM_HCM_001", "NEW_CTV_X"]
-    assert get_ctv_options_for_form(DEFAULT_TRUST_BRIDGE_SCHEMA) == [
-        "TUAN_LM_HCM_001",
-        "NEW_CTV_X",
+    # authorized_users only fills phone/telegram on known static codes.
+    authorized_updates = [
+        params for sql, params in pool.executed
+        if "phone = COALESCE(ctv_directory.phone" in sql
     ]
+    assert [p[-1] for p in authorized_updates] == ["TUAN_LM_HCM_001"]
+    assert not any(
+        params and "NEW_CTV_X" in str(params) for _, params in pool.executed
+    )
+
+    assert get_ctv_codes() == list(ctv_module.CTV_CODES)
+    assert get_ctv_options_for_form(DEFAULT_TRUST_BRIDGE_SCHEMA) == list(ctv_module.CTV_CODES)
 
 
 @pytest.mark.asyncio
-async def test_seed_submission_codes_idempotent_and_no_overwrite(monkeypatch):
-    monkeypatch.setattr(ctv_module, "_iter_dev_submission_rows", lambda: iter(()))
+async def test_seed_restricts_directory_to_exactly_four_static_codes():
     pool = FakePool(
         directory_rows=[
-            ("CTV001_DUNG_HN", "Existing Name", "0901234567", 555, True, "seed:static"),
+            (code, ctv_module.STATIC_CTV_NAMES[code], None, None, True, "seed:static")
+            for code in ctv_module.CTV_CODES
         ],
-        submission_ctv_codes=[
-            ("CTV001_Dũng_HN",),
-            ("CTV001_Dũng_HN",),
-            ("CTV002_Tuấn_HN",),
-        ],
-        submission_collaborators=[(999,), (999,), (None,)],
-    )
-
-    first_stats = await seed_ctv_directory(FakeCursor(pool))
-    submission_inserts = [
-        params for sql, params in pool.executed
-        if "INSERT INTO ctv_directory" in sql and params and params[-1] == "seed:survey_submissions"
-    ]
-    assert [p[0] for p in submission_inserts] == [
-        "CTV001_Dũng_HN",
-        "CTV002_Tuấn_HN",
-        "999",
-    ]
-    assert first_stats["submission_codes"] == 3
-
-    # Existing directory fields are only filled when NULL, never overwritten.
-    submission_sql = [
-        sql for sql, params in pool.executed
-        if "INSERT INTO ctv_directory" in sql and params and params[-1] == "seed:survey_submissions"
-    ]
-    for sql in submission_sql:
-        assert "ON CONFLICT (code) DO UPDATE SET" in sql
-        assert "display_name = COALESCE(ctv_directory.display_name, EXCLUDED.display_name)" in sql
-        assert "phone = COALESCE(ctv_directory.phone, EXCLUDED.phone)" in sql
-        assert "telegram_user_id = COALESCE(ctv_directory.telegram_user_id, EXCLUDED.telegram_user_id)" in sql
-
-    # Re-running stays idempotent: one upsert per distinct code, never duplicates.
-    pool.executed.clear()
-    second_stats = await seed_ctv_directory(FakeCursor(pool))
-    second_inserts = [
-        params[0] for sql, params in pool.executed
-        if "INSERT INTO ctv_directory" in sql and params and params[-1] == "seed:survey_submissions"
-    ]
-    assert second_inserts == ["CTV001_Dũng_HN", "CTV002_Tuấn_HN", "999"]
-    assert second_stats["submission_codes"] == 3
-
-
-@pytest.mark.asyncio
-async def test_seed_phone_and_telegram_propagation_sources(monkeypatch):
-    monkeypatch.setattr(
-        ctv_module,
-        "_iter_dev_submission_rows",
-        lambda: iter([
-            {"ctv_code": "DEV_001", "form_data": {"ctv_phone": "0908 111 222"}},
-        ]),
-    )
-    pool = FakePool(
-        authorized_rows=[
-            (777, "CTV_AUTH", "CTV Auth", "0907 333 444", "COLLABORATOR"),
-        ],
-        submission_contact_rows=[
-            ("CTV001_Dũng_HN", None, {"ctv_phone": "0901 234 567", "ctv_telegram": "88888"}),
-            ("CTV002_Tuấn_HN", None, {"phone": "0908 888 888"}),
-            (None, 42, {"ctv_telegram": "0907 777 777"}),
-        ],
+        authorized_rows=[(222, "new_ctv_x", "CTV Mới", "0902222222", "COLLABORATOR")],
     )
 
     stats = await seed_ctv_directory(FakeCursor(pool))
 
-    by_code = {}
-    for sql, params in pool.executed:
-        if "INSERT INTO ctv_directory" not in sql or not params:
-            continue
-        if "seed:authorized_users" in sql:
-            by_code[params[0]] = params
-        elif params[-1] in ("seed:survey_submissions", "seed:dev_submissions"):
-            by_code[params[0]] = params
+    assert stats["static"] == 4
+    assert stats["legacy_deleted"] == {"directory": 0, "links": 0, "quotas": 0}
+    assert all("survey_submissions" not in sql for sql, _ in pool.executed)
+    static_inserts = [
+        params for sql, params in pool.executed
+        if "INSERT INTO ctv_directory" in sql and "seed:static" in sql
+    ]
+    assert [p[0] for p in static_inserts] == list(ctv_module.CTV_CODES)
+    assert not any(
+        "seed:authorized_users" in sql or "seed:survey_submissions" in sql
+        for sql, _ in pool.executed
+    )
 
-    assert by_code["CTV_AUTH"][2] == "0907333444"
-    assert by_code["CTV001_Dũng_HN"][2] == "0901234567"
-    assert by_code["CTV001_Dũng_HN"][3] == 88888
-    assert by_code["CTV002_Tuấn_HN"][2] == "0908888888"
-    assert by_code["42"][2] == "0907777777"
-    assert by_code["DEV_001"][2] == "0908111222"
+    pool.executed.clear()
+    second_stats = await seed_ctv_directory(FakeCursor(pool))
+    second_inserts = [
+        params[0] for sql, params in pool.executed
+        if "INSERT INTO ctv_directory" in sql and "seed:static" in sql
+    ]
+    assert second_stats["static"] == 4
+    assert second_inserts == list(ctv_module.CTV_CODES)
 
-    assert stats["phone_sources"]["authorized_users"] == 1
-    assert stats["phone_sources"]["survey_submissions.form_data.ctv_phone"] == 1
-    assert stats["phone_sources"]["survey_submissions.form_data.phone"] == 1
-    assert stats["phone_sources"]["survey_submissions.form_data.ctv_telegram"] == 1
-    assert stats["phone_sources"]["dev_submissions.form_data.ctv_phone"] == 1
+
+@pytest.mark.asyncio
+async def test_seed_cleans_known_legacy_codes_but_keeps_admin_codes():
+    legacy = list(ctv_module.LEGACY_SUBMISSION_CODES)
+    static_rows = [
+        (code, ctv_module.STATIC_CTV_NAMES[code], None, None, True, "seed:static")
+        for code in ctv_module.CTV_CODES
+    ]
+    pool = FakePool(
+        directory_rows=static_rows
+        + [(code, code, None, None, True, "seed:survey_submissions") for code in legacy]
+        + [("ADMIN_EXTRA", "Admin Extra", "0909", 999, True, "admin")],
+        link_rows=[
+            (code, "income_survey", f"https://x.test/{code}", "qr") for code in legacy
+        ]
+        + [("ADMIN_EXTRA", "income_survey", "https://x.test/admin", "qr")],
+        quota_rows=[
+            (code, "global", None, 10, 30, True) for code in legacy
+        ]
+        + [("ADMIN_EXTRA", "global", None, 5, 30, True)],
+    )
+
+    assert await ensure_ctv_platform_schema(pool) is True
+
+    delete_statements = [
+        (sql, params) for sql, params in pool.executed if sql.lstrip().startswith("DELETE")
+    ]
+    assert len(delete_statements) == 3
+    for _, params in delete_statements:
+        assert params == (legacy,)
+
+    assert {row[0] for row in pool.directory_rows} == set(ctv_module.CTV_CODES) | {"ADMIN_EXTRA"}
+    assert [row[0] for row in pool.link_rows] == ["ADMIN_EXTRA"]
+    assert [row[0] for row in pool.quota_rows] == ["ADMIN_EXTRA"]
+
+    assert get_ctv_entry("CTV001_Dũng_HN") is None
+    assert get_ctv_entry("ADMIN_EXTRA")["code"] == "ADMIN_EXTRA"
+
+
+@pytest.mark.asyncio
+async def test_form_options_and_links_only_contain_static_four():
+    legacy = list(ctv_module.LEGACY_SUBMISSION_CODES)
+    pool = FakePool(
+        directory_rows=[
+            (code, ctv_module.STATIC_CTV_NAMES[code], None, None, True, "seed:static")
+            for code in ctv_module.CTV_CODES
+        ]
+        + [(code, code, None, None, True, "seed:survey_submissions") for code in legacy],
+        link_rows=[
+            (code, "income_survey", f"https://x.test/{code}", "qr") for code in legacy
+        ]
+        + [("TUAN_LM_HCM_001", "income_survey", "https://x.test/tuan", "qr")],
+    )
+
+    assert await ensure_ctv_platform_schema(pool) is True
+
+    assert get_ctv_codes() == list(ctv_module.CTV_CODES)
+    assert get_ctv_options_for_form(DEFAULT_TRUST_BRIDGE_SCHEMA) == list(ctv_module.CTV_CODES)
+    assert get_ctv_form_link("CTV001_Dũng_HN", "income_survey") is None
+    assert get_ctv_form_link("TUAN_LM_HCM_001", "income_survey") is not None
 
 
 @pytest.mark.asyncio
@@ -316,17 +361,6 @@ def test_directory_driven_options_and_links_override_static():
     assert build_ctv_form_url("ALPHA_001", "tag_demo") == "https://x.test/ref/alpha"
     assert build_ctv_form_url("BETA_002", "tag_demo") == (
         "https://survey.trustbridgevn.com/forms/tag_demo?ref=BETA_002"
-    )
-
-
-def test_legacy_diacritic_codes_preserved_and_resolvable():
-    set_ctv_directory_cache(
-        [{"code": "CTV001_Dũng_HN", "display_name": "CTV001_Dũng_HN", "is_active": True}]
-    )
-    assert resolve_ctv_identifier("ctv001_dung_hn") == "CTV001_Dũng_HN"
-    assert get_ctv_entry("CTV001_DUNG_HN")["code"] == "CTV001_Dũng_HN"
-    assert build_ctv_form_url("ctv001_dung_hn", "income_survey").endswith(
-        "?ref=CTV001_Dũng_HN"
     )
 
 
