@@ -1992,6 +1992,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
         })
 
     # 2. Update status in Database
+    appeal_note = f"Tài xế yêu cầu người thật đối soát lại: {req.reason}"
     db_pool = get_db_pool()
     if db_pool:
         try:
@@ -1999,7 +2000,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s WHERE submission_id = %s;",
-                        (f"Tài xế yêu cầu người thật đối soát lại: {req.reason}", sub_id)
+                        (appeal_note, sub_id)
                     )
                     await conn.commit()
         except Exception as e:
@@ -2013,7 +2014,8 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             for r in dev_records:
                 if r.get("submission_id") == sub_id:
                     r["status"] = "APPEAL_PENDING"
-                    r["reason"] = f"Tài xế yêu cầu người thật đối soát lại: {req.reason}"
+                    r["reason"] = appeal_note
+                    r["rejection_reason"] = appeal_note
             with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
                 json.dump(dev_records, f, indent=2, ensure_ascii=False)
         except Exception as e:

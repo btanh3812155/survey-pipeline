@@ -797,9 +797,11 @@ class TelegramPollingRunner:
     async def _update_submission_status(self, sub_id: str, new_status: str, reason: str = "") -> Tuple[bool, str]:
         """
         Updates submission status in DB and dev storage.
-        If the submission was already resolved (APPROVED or REJECTED), refuses to take further responses!
+        If the submission was already resolved (APPROVED or REJECTED), refuses further
+        responses unless the caller explicitly reopens it for review (appeal).
         Returns (success: bool, current_status: str).
         """
+        reopened_for_review = new_status in ("APPEAL_PENDING", "MANUAL_REVIEW")
         if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
@@ -811,7 +813,7 @@ class TelegramPollingRunner:
                         row = await cur.fetchone()
                         if row:
                             current_status = row[0]
-                            if current_status in ("APPROVED", "REJECTED"):
+                            if current_status in ("APPROVED", "REJECTED") and not reopened_for_review:
                                 return False, current_status
 
                         await cur.execute(
@@ -831,16 +833,23 @@ class TelegramPollingRunner:
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
                         records = json.load(f)
-                    for r in records:
-                        if r.get("submission_id") == sub_id:
-                            current_status = r.get("status")
-                            if current_status in ("APPROVED", "REJECTED"):
-                                return False, current_status
-                            r["status"] = new_status
-                            r["reason"] = reason
-                            with open(fpath, "w", encoding="utf-8") as f_out:
-                                json.dump(records, f_out, ensure_ascii=False, indent=2)
-                            return True, new_status
+                    changed = False
+                    for r in records if isinstance(records, list) else []:
+                        if r.get("submission_id") != sub_id:
+                            continue
+                        # dev_test_submissions.json also holds action-checklist stubs
+                        # ({submission_id, action_status}); never treat them as submissions.
+                        if not (r.get("status") or r.get("reason") or r.get("rejection_reason") or r.get("submitted_at")):
+                            continue
+                        current_status = r.get("status")
+                        if current_status in ("APPROVED", "REJECTED") and not reopened_for_review:
+                            return False, current_status
+                        r["status"] = new_status
+                        r["reason"] = reason
+                        changed = True
+                    if changed:
+                        with open(fpath, "w", encoding="utf-8") as f_out:
+                            json.dump(records, f_out, ensure_ascii=False, indent=2)
                 except Exception as e:
                     logger.error(f"Failed to update submission status in {fpath}: {e}")
         return True, new_status

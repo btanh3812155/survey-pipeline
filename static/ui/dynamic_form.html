@@ -2941,6 +2941,7 @@
 
             clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             closeResetModal();
+            clearSubmissionStatus();
             evaluateConditionals();
             window.scrollTo({ top: 0, behavior: 'smooth' });
             if (!silent) alert(I18N[currentLang].reset_done);
@@ -3219,6 +3220,22 @@
                 scheduleStatusPolling(saved);
                 refreshSubmissionStatus(false);
             }
+        }
+
+        function clearSubmissionStatus() {
+            stopStatusPolling();
+            lastSubmissionStatus = null;
+            statusReasonExpanded = false;
+            try { localStorage.removeItem(getLastSubmissionKey()); } catch(e) {}
+            const bar = document.getElementById('submissionStatusBar');
+            if (bar) {
+                bar.classList.remove('visible');
+                bar.style.borderLeftColor = '';
+            }
+            document.body.classList.remove('has-submission-status');
+            document.documentElement.style.setProperty('--status-bar-offset', '0px');
+            renderSubmissionStatus(null);
+            closeSubmissionResultModal();
         }
         let lastSubmittedData = null;
         function closeSubmissionResultModal() {
