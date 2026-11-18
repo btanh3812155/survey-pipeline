@@ -1214,6 +1214,7 @@ class TelegramPollingRunner:
             {"command": "start", "description": "Bắt đầu / liên kết CTV"},
             {"command": "surveys", "description": "Khảo sát của tôi"},
             {"command": "quota", "description": "Hạn mức nộp phiếu của tôi"},
+            {"command": "linkphone", "description": "Liên kết số điện thoại với Telegram"},
             {"command": "appeal", "description": "Phúc khảo một phiếu"},
             {"command": "support", "description": "Yêu cầu hỗ trợ"},
             {"command": "help", "description": "Hướng dẫn sử dụng"},
@@ -1400,6 +1401,8 @@ class DriverBotRunner(TelegramPollingRunner):
 
         username = from_user.get("username", "")
         await self.bind_driver_phone(user_id, username, name, phone)
+        from core.phone_links import upsert_phone_telegram_link
+        await upsert_phone_telegram_link(phone, user_id, source="contact_share", db_pool=self.db_pool)
 
         clean_phone = re.sub(r"[^\d+]", "", phone.strip())
         masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
@@ -1955,6 +1958,38 @@ class DriverBotRunner(TelegramPollingRunner):
         elif cmd in ("/quota", "/quotas", "/hanmuc"):
             await self.handle_quota_command(chat_id, clean, user_id)
 
+        elif cmd in ("/linkphone", "/lienket_sdt", "/linksdt"):
+            parts = clean.split(maxsplit=1)
+            if len(parts) < 2:
+                await self.send_message(
+                    chat_id,
+                    "⚠️ Cú pháp: <code>/linkphone 09xxxxxxxx</code> (hoặc chia sẻ danh bạ bằng nút bên dưới).",
+                    reply_markup=self.get_driver_reply_keyboard(),
+                )
+                return
+            from core.phone_links import normalize_vn_phone, upsert_phone_telegram_link
+            normalized = normalize_vn_phone(parts[1])
+            if not normalized:
+                await self.send_message(
+                    chat_id,
+                    "⚠️ Số điện thoại không hợp lệ. Ví dụ: <code>/linkphone 0932090967</code>.",
+                    reply_markup=self.get_driver_reply_keyboard(),
+                )
+                return
+            ok = await upsert_phone_telegram_link(
+                normalized, user_id, source="command", db_pool=self.db_pool
+            )
+            masked = normalized[:3] + "****" + normalized[-3:]
+            await self.send_message(
+                chat_id,
+                (
+                    f"✅ Đã liên kết <code>{masked}</code> với Telegram này."
+                    if ok
+                    else "⚠️ Không thể lưu liên kết số điện thoại. Vui lòng thử lại sau."
+                ),
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+
         elif cmd in ("/support", "/hotro", "/help_admin", "/lienhe") or "hỗ trợ" in clean.lower():
             if clean.startswith("/"):
                 parts = clean.split(" ", 1)
@@ -1975,6 +2010,7 @@ class DriverBotRunner(TelegramPollingRunner):
                 "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
                 "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
                 "3. <b>Xem hạn mức:</b> Gõ <code>/quota</code> để xem hạn mức nộp phiếu của bạn.\n"
+                "3b. <b>Liên kết số điện thoại:</b> Gõ <code>/linkphone 09xxxxxxxx</code> hoặc chia sẻ danh bạ.\n"
                 "4. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
                 "5. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"
                 "6. <b>Cần trợ giúp:</b> Gõ <code>/support &lt;nội dung&gt;</code> hoặc bấm [🆘 Yêu Cầu Hỗ Trợ].\n"

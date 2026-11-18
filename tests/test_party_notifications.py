@@ -173,8 +173,8 @@ async def test_dispatch_retries_telegram_429_with_retry_after(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_question_source_passes_raw_answer_value_as_chat_id(monkeypatch):
-    """Question source sends the answer value verbatim; no user/CTV lookup."""
+async def test_question_source_resolves_phone_mapping_to_chat_id(monkeypatch):
+    """Question answer -> standalone phone mapping -> chat id; no driver/CTV lookup."""
     from config import settings
     from routers import survey as survey_router
 
@@ -196,46 +196,97 @@ async def test_question_source_passes_raw_answer_value_as_chat_id(monkeypatch):
     client = Client()
     monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
-    phone_lookup = AsyncMock(return_value=9241303232)
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
+    mapping = AsyncMock(return_value=9241303232)
+    phone_lookup = AsyncMock(return_value=111222333)
     collab_lookup = AsyncMock(return_value=987654321)
 
-    with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
+    with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+         patch("main.lookup_telegram_user_by_phone", phone_lookup), \
          patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
-         patch("routers.survey.get_db_pool", side_effect=AssertionError("question path must not use DB")), \
          patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
         await dispatch_submission_telegram_notifications(
-            submission_id="DEV-RAW-PHONE",
+            submission_id="DEV-PHONE-MAP",
             status_str="APPROVED",
             driver_phone="0932090967",
-            driver_name="[TEST] raw phone answer",
-            collaborator_id="0932090967",
-            reason_str="Raw answer path test",
+            driver_name="[TEST] mapped phone",
+            collaborator_id="+84 932 090 967",
+            reason_str="Mapped phone path test",
             form_id="TB_GSM_2026_Nov_Test",
             recipient_kind="driver",
             ctv_ref="TUAN_LM_HCM_001",
         )
 
+    mapping.assert_awaited_once_with("0932090967")
     phone_lookup.assert_not_awaited()
     collab_lookup.assert_not_awaited()
     assert len(client.calls) == 1
     _, payload = client.calls[0]
-    assert payload["chat_id"] == "0932090967"
-    assert "DEV-RAW-PHONE" in payload["text"]
+    assert payload["chat_id"] == 9241303232
+    assert "DEV-PHONE-MAP" in payload["text"]
 
 
 @pytest.mark.asyncio
-async def test_question_source_surfaces_invalid_chat_id_error(monkeypatch, caplog):
-    """A non-chat answer value goes to Telegram as-is; the API error is surfaced."""
+async def test_question_source_without_mapping_skips_send(monkeypatch, caplog):
+    """An unmapped phone logs clearly and does not fall back to driver/CTV rows."""
     import logging
     from config import settings
     from routers import survey as survey_router
 
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            class Resp:
+                status_code = 200
+                text = ""
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
+    mapping = AsyncMock(return_value=None)
+    phone_lookup = AsyncMock(return_value=111222333)
+    collab_lookup = AsyncMock(return_value=987654321)
+
+    with caplog.at_level(logging.WARNING, logger="routers.survey"):
+        with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+             patch("main.lookup_telegram_user_by_phone", phone_lookup), \
+             patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
+             patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+            await dispatch_submission_telegram_notifications(
+                submission_id="DEV-UNMAPPED-PHONE",
+                status_str="REJECTED",
+                driver_phone="0932090967",
+                collaborator_id="0932090967",
+                reason_str="Unmapped phone",
+                form_id="TB_GSM_2026_Nov_Test",
+                recipient_kind="driver",
+            )
+
+    mapping.assert_awaited_once_with("0932090967")
+    phone_lookup.assert_not_awaited()
+    collab_lookup.assert_not_awaited()
+    assert client.calls == []
+    assert "no phone_telegram_links mapping" in caplog.text
+    assert "0932090967" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_question_source_direct_numeric_chat_id_and_username(monkeypatch):
+    """Numeric chat ids and @usernames bypass the phone mapping and send directly."""
+    from config import settings
+    from routers import survey as survey_router
+
     class Resp:
-        status_code = 400
-        text = '{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}'
+        status_code = 200
+        text = ""
 
         def json(self):
-            return {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}
+            return {"ok": True, "result": {"message_id": 9912}}
 
     class Client:
         def __init__(self):
@@ -249,27 +300,58 @@ async def test_question_source_surfaces_invalid_chat_id_error(monkeypatch, caplo
     monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
     monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
-    phone_lookup = AsyncMock(return_value=9241303232)
-    collab_lookup = AsyncMock(return_value=987654321)
+    mapping = AsyncMock(return_value=999999999)
 
-    with caplog.at_level(logging.ERROR, logger="routers.survey"):
-        with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
-             patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
-             patch("routers.survey.get_db_pool", side_effect=AssertionError("question path must not use DB")), \
-             patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+    with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+         patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+        for value in ("9241303232", "@JerryTest"):
             await dispatch_submission_telegram_notifications(
-                submission_id="DEV-BAD-PHONE",
-                status_str="REJECTED",
-                driver_phone="0961281318",
-                collaborator_id="0961281318",
-                reason_str="Invalid chat target",
+                submission_id=f"DEV-DIRECT-{value[-4:]}",
+                status_str="APPROVED",
+                collaborator_id=value,
+                reason_str="Direct chat id",
                 form_id="TB_GSM_2026_Nov_Test",
                 recipient_kind="driver",
             )
 
-    phone_lookup.assert_not_awaited()
-    collab_lookup.assert_not_awaited()
-    assert len(client.calls) == 1
-    _, payload = client.calls[0]
-    assert payload["chat_id"] == "0961281318"
-    assert "chat not found" in caplog.text
+    mapping.assert_not_awaited()
+    assert [payload["chat_id"] for _, payload in client.calls] == ["9241303232", "@JerryTest"]
+
+
+@pytest.mark.asyncio
+async def test_question_source_non_phone_answer_skips_send(monkeypatch, caplog):
+    """A non-phone, non-chat answer is not sent anywhere."""
+    import logging
+    from config import settings
+    from routers import survey as survey_router
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            class Resp:
+                status_code = 200
+                text = ""
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
+    mapping = AsyncMock(return_value=None)
+
+    with caplog.at_level(logging.WARNING, logger="routers.survey"):
+        with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+             patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+            await dispatch_submission_telegram_notifications(
+                submission_id="DEV-GARBAGE",
+                status_str="REJECTED",
+                collaborator_id="not-a-phone",
+                form_id="TB_GSM_2026_Nov_Test",
+                recipient_kind="driver",
+            )
+
+    mapping.assert_not_awaited()
+    assert client.calls == []
+    assert "neither" in caplog.text

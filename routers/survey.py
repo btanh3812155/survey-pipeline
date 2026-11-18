@@ -29,6 +29,7 @@ from config import settings
 from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
+from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone
 from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone, hash_plate, generate_driver_tag
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation, normalize_image_to_webp
@@ -2455,12 +2456,38 @@ async def dispatch_submission_telegram_notifications(
         return
 
     if recipient_kind == "driver":
-        # Question source: the answer value itself is the Telegram target. Send it
-        # verbatim (only trimming surrounding whitespace); no user/CTV lookup.
-        # Telegram accepts a numeric chat id or @username, so a phone number will
-        # be rejected by the API and must surface that error, not be remapped.
-        collab_tg_id = str(collaborator_id).strip()
-        logger.info(f"TG question-source raw recipient for #{submission_id}: {collab_tg_id!r}")
+        # Question source: resolve the answer through the standalone phone link
+        # table, or send a numeric chat id / @username directly. Driver rows and
+        # the CTV directory are never consulted on this path.
+        answer_value = str(collaborator_id).strip()
+        normalized_phone = normalize_vn_phone(answer_value)
+        if answer_value.startswith("@"):
+            collab_tg_id = answer_value
+            target_source = "username"
+        elif answer_value.lstrip("-").isdigit() and normalized_phone is None:
+            collab_tg_id = answer_value
+            target_source = "numeric_chat_id"
+        elif normalized_phone:
+            mapped = await get_telegram_id_for_phone(normalized_phone)
+            if not mapped:
+                logger.warning(
+                    f"TG question source for #{submission_id}: phone {normalized_phone} "
+                    f"(answer={answer_value!r}) has no phone_telegram_links mapping; skipping "
+                    f"(no driver/CTV fallback)."
+                )
+                return
+            collab_tg_id = mapped
+            target_source = f"phone_telegram_links:{normalized_phone}"
+        else:
+            logger.warning(
+                f"TG question source for #{submission_id}: answer {answer_value!r} is neither "
+                f"a mapped phone, numeric chat id, nor @username; skipping."
+            )
+            return
+        logger.info(
+            f"TG question-source recipient for #{submission_id}: answer={answer_value!r} "
+            f"-> chat_id={collab_tg_id!r} via {target_source}"
+        )
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
         if not collab_tg_id:

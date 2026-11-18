@@ -137,6 +137,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[CTV] Platform schema/cache init failed: {e}")
 
+    # 3c. Standalone phone <-> Telegram mapping (no driver/CTV dependency)
+    try:
+        from core.phone_links import ensure_phone_link_schema
+        await ensure_phone_link_schema(state.db_pool)
+    except Exception as e:
+        logger.warning(f"[PHONE LINKS] Schema init failed: {e}")
+
     # 4. Seed media directory
     seed_media_storage()
 

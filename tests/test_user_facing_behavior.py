@@ -1344,7 +1344,7 @@ async def test_ctv_bot_command_menu_excludes_forms_and_privacy():
     names = [c["command"] for c in payload["commands"]]
     assert url.endswith("/setMyCommands")
     assert "forms" not in names and "privacy" not in names
-    assert {"start", "surveys", "quota", "appeal", "support", "help", "close"} == set(names)
+    assert {"start", "surveys", "quota", "linkphone", "appeal", "support", "help", "close"} == set(names)
 
 
 @pytest.mark.asyncio
