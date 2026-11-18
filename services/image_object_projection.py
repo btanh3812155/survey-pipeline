@@ -88,11 +88,15 @@ def image_object_result(
     slot_title: str,
     extraction: Any,
     check: Optional[Dict[str, Any]] = None,
+    question_id: Optional[str] = None,
+    flat_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Uniform per-slot result shape for new submissions and the editor API."""
     payload = {
+        "question_id": question_id,
         "object_type": object_type,
         "slot_index": slot_index,
+        "flat_index": flat_index,
         "slot_title": slot_title,
         "extraction": _extraction(extraction),
         "passed": bool((check or {}).get("passed", True)),

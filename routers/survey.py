@@ -596,6 +596,22 @@ def _normalize_vehicle_type(value: Optional[str]) -> str:
     return "CAR"
 
 
+def _role_group(role: Any) -> str:
+    value = str(role or "").lower()
+    if "profile" in value or "odometer" in value:
+        return "profile"
+    if "vehicle" in value or "exterior" in value or "steering" in value:
+        return "vehicle"
+    if "income" in value or "revenue" in value or "earnings" in value:
+        return "income"
+    return "unknown"
+
+
+def _question_classification_slots(question: Any) -> List[dict]:
+    """Deduplicated (role,title) slot contract for one camera question."""
+    return _classification_slots(None, question)
+
+
 def _classification_slots(schema: Any, target_q: Any) -> List[dict]:
     """Deduplicated (role,title) slot contract covering every camera question."""
     slots = []
@@ -671,6 +687,346 @@ async def _extract_image_object(
     if hasattr(result, "model_dump"):
         result = result.model_dump()
     return result if isinstance(result, dict) else {}
+
+
+_UPLOAD_FILE_KEY_RE = re.compile(r"^(?P<qid>.+)__file_(?P<slot>\d+)$")
+_LEGACY_PHOTO_KEY_RE = re.compile(r"^survey_photo(?:_(?P<slot>\d+))?$")
+
+
+class UploadGroupError(ValueError):
+    """Raised when an uploaded file key cannot be mapped to a question slot."""
+
+
+def _group_uploaded_files(form_data: Any, schema: Any, explicit_question_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Group uploaded file parts by camera question and slot, preserving legacy names."""
+    camera_questions = [
+        q for q in (getattr(schema, "questions", None) or [])
+        if getattr(q, "type", None) == "camera_webrtc"
+    ] if schema else []
+    by_id = {q.id: q for q in camera_questions}
+    explicit = (explicit_question_id or "").strip() or None
+    if explicit and explicit not in by_id:
+        raise UploadGroupError(f"question_id '{explicit}' không phải câu hỏi camera hợp lệ.")
+
+    groups: Dict[str, Dict[int, Any]] = {}
+    next_slot: Dict[str, int] = {}
+
+    def _slot_limit(qid: str) -> int:
+        question = by_id.get(qid)
+        return len(getattr(question, "image_slots", None) or []) if question else 0
+
+    def _put(qid: str, slot: int, upload: Any) -> None:
+        limit = _slot_limit(qid)
+        if limit and slot >= limit:
+            raise UploadGroupError(f"Ảnh cho câu hỏi '{qid}' tham chiếu slot {slot} vượt quá {limit} slot.")
+        if not limit and slot != 0:
+            raise UploadGroupError(f"Ảnh cho câu hỏi '{qid}' tham chiếu slot {slot}, nhưng câu hỏi không khai báo image_slots.")
+        groups.setdefault(qid, {})[slot] = upload
+        next_slot[qid] = max(next_slot.get(qid, 0), slot + 1)
+
+    for key, upload in form_data.multi_items():
+        if not hasattr(upload, "read"):
+            continue
+        key = str(key)
+        match = _UPLOAD_FILE_KEY_RE.match(key)
+        if match:
+            qid = match.group("qid")
+            slot = int(match.group("slot"))
+            if qid not in by_id:
+                raise UploadGroupError(f"Tệp '{key}' tham chiếu câu hỏi không tồn tại: '{qid}'.")
+            if explicit and qid != explicit:
+                raise UploadGroupError(
+                    f"Tệp '{key}' thuộc câu hỏi '{qid}', không khớp question_id '{explicit}'."
+                )
+            _put(qid, slot, upload)
+            continue
+
+        legacy = _LEGACY_PHOTO_KEY_RE.match(key)
+        if legacy or explicit or len(camera_questions) == 1:
+            if explicit:
+                qid = explicit
+            elif len(camera_questions) == 1:
+                qid = camera_questions[0].id
+            elif camera_questions:
+                qid = camera_questions[0].id
+            else:
+                qid = "__legacy__"
+            if legacy and legacy.group("slot") is not None:
+                slot = int(legacy.group("slot"))
+            else:
+                slot = next_slot.get(qid, 0)
+            if qid == "__legacy__":
+                groups.setdefault(qid, {})[slot] = upload
+                next_slot[qid] = slot + 1
+            else:
+                _put(qid, slot, upload)
+            continue
+
+        raise UploadGroupError(
+            f"Không xác định được câu hỏi cho tệp '{key}'. Dùng dạng '<question_id>__file_<slot>'."
+        )
+
+    ordered: List[Dict[str, Any]] = []
+    for question in camera_questions:
+        if explicit and question.id != explicit:
+            continue
+        for slot in sorted(groups.get(question.id, {})):
+            upload = groups[question.id][slot]
+            ordered.append({
+                "question": question,
+                "question_id": question.id,
+                "slot_index": slot,
+                "upload": upload,
+                "filename": getattr(upload, "filename", "") or "",
+            })
+    for slot in sorted(groups.get("__legacy__", {})):
+        upload = groups["__legacy__"][slot]
+        ordered.append({
+            "question": None,
+            "question_id": "__legacy__",
+            "slot_index": slot,
+            "upload": upload,
+            "filename": getattr(upload, "filename", "") or "",
+        })
+    for flat_index, item in enumerate(ordered):
+        item["flat_index"] = flat_index
+    return ordered
+
+
+def _slot_title(question: Any, slot_index: int) -> str:
+    slots = getattr(question, "image_slots", None) or []
+    if 0 <= slot_index < len(slots):
+        return str(slots[slot_index].get("title") or slots[slot_index].get("role") or f"Ảnh {slot_index + 1}")
+    return f"Ảnh {slot_index + 1}"
+
+
+async def _audit_camera_question(
+    question: Any,
+    items: List[Dict[str, Any]],
+    norm_bytes_cache: Dict[int, bytes],
+) -> Dict[str, Any]:
+    """Classify, extract and check one camera question with its own slots only."""
+    question_id = getattr(question, "id", "__legacy__")
+    result = {
+        "question_id": question_id,
+        "question": question,
+        "image_object_results": [],
+        "income_pairs": [],
+        "income_required": 0,
+        "profile_res": {},
+        "profile_flat_index": None,
+        "profile_object": None,
+        "profile_config": {},
+        "violation": None,
+        "role_0": "unknown",
+        "slot_0_is_profile": False,
+    }
+    if not items:
+        return result
+
+    local_norm = [norm_bytes_cache.get(item["flat_index"], b"") for item in items]
+    slots = getattr(question, "image_slots", None) or []
+    classification_slots = _question_classification_slots(question)
+    classified_roles = await asyncio.gather(
+        *[
+            vision_client.classify_image_role(
+                local_norm[idx],
+                filename=item.get("filename", ""),
+                expected_slots=classification_slots,
+            )
+            for idx, item in enumerate(items)
+        ],
+        return_exceptions=True,
+    )
+    classified_roles = [role if isinstance(role, str) else "unknown" for role in classified_roles]
+    result["role_0"] = classified_roles[0] if classified_roles else "unknown"
+
+    groups = {"profile": [], "vehicle": [], "income": []}
+    for idx, role in enumerate(classified_roles):
+        group = _role_group(role)
+        if group in groups:
+            groups[group].append(idx)
+
+    required_slots = [slot for slot in slots if slot.get("required", True)]
+    required_roles = [
+        (_normalized_image_slots([slot])[0].get("role"), slot) for slot in required_slots
+    ]
+    required_counts = {"profile": 0, "vehicle": 0, "income": 0}
+    for role, _slot in required_roles:
+        group = _role_group(role)
+        if group in required_counts:
+            required_counts[group] += 1
+    missing_titles = []
+    for group, needed in required_counts.items():
+        if len(groups[group]) < needed:
+            for role, slot in required_roles:
+                if _role_group(role) == group:
+                    missing_titles.append(str(slot.get("title") or slot.get("role") or group))
+                    break
+    if missing_titles:
+        result["violation"] = {
+            "failed_slot": items[0]["flat_index"],
+            "reason": (
+                f"Câu hỏi '{question_id}': Thiếu ảnh đúng loại cho: " + "; ".join(missing_titles)
+                + ". Vui lòng chụp đủ các mục yêu cầu."
+            ),
+            "ocr_data": {},
+        }
+
+    slot_objects = [_slot_object(slot) for slot in slots]
+    slot_roles = [_normalized_image_slots([slot])[0].get("role") for slot in slots]
+    config_by_object: Dict[str, Dict[str, Any]] = {}
+    prompt_by_object: Dict[str, str] = {}
+    for slot, obj in zip(slots, slot_objects):
+        config_by_object.setdefault(obj.id, _slot_config(slot))
+        custom_prompt = str((slot or {}).get("ai_detection_prompt") or "").strip()
+        if custom_prompt:
+            prompt_by_object.setdefault(obj.id, custom_prompt)
+
+    income_object = next((obj for obj in slot_objects if obj.extractor == "income_statement"), None)
+    if income_object is None:
+        income_object = next(
+            (obj for role, obj in zip(slot_roles, slot_objects) if _role_group(role) == "income"),
+            None,
+        )
+    profile_object = next((obj for obj in slot_objects if obj.extractor == "profile"), None)
+    if profile_object is None:
+        profile_object = next(
+            (obj for role, obj in zip(slot_roles, slot_objects) if _role_group(role) == "profile"),
+            None,
+        )
+    income_config = config_by_object.get(income_object.id, {}) if income_object else {}
+    profile_config = config_by_object.get(profile_object.id, {}) if profile_object else {}
+    result["profile_object"] = profile_object
+    result["profile_config"] = profile_config
+
+    extraction_tasks = []
+    extraction_kinds: List[str] = []
+    extraction_positions: List[int] = []
+    matched_profile_idx = groups["profile"][0] if groups["profile"] else None
+    if matched_profile_idx is not None:
+        result["role_0"] = classified_roles[matched_profile_idx]
+    matched_income_indices = list(groups["income"])
+    result["slot_0_is_profile"] = bool(
+        slot_objects
+        and slot_objects[0].extractor == "profile"
+        and not slot_objects[0].id.startswith("custom_")
+    )
+
+    if profile_object is not None and matched_profile_idx is not None:
+        extraction_tasks.append(
+            _extract_image_object(
+                local_norm[matched_profile_idx],
+                profile_object,
+                profile_config,
+                prompt_override=prompt_by_object.get(profile_object.id),
+            )
+        )
+        extraction_kinds.append("profile")
+        extraction_positions.append(matched_profile_idx)
+    if income_object is not None:
+        for i_pos, local_idx in enumerate(matched_income_indices):
+            extraction_tasks.append(
+                _extract_image_object(
+                    local_norm[local_idx],
+                    income_object,
+                    income_config,
+                    week_idx=i_pos + 1,
+                    prompt_override=prompt_by_object.get(income_object.id),
+                )
+            )
+            extraction_kinds.append("income")
+            extraction_positions.append(local_idx)
+
+    all_results = await asyncio.gather(*extraction_tasks, return_exceptions=True) if extraction_tasks else []
+    profile_res: Any = {}
+    income_pairs: List[Any] = []
+    for kind, local_idx, extracted in zip(extraction_kinds, extraction_positions, all_results):
+        if kind == "profile":
+            profile_res = extracted if isinstance(extracted, dict) else {}
+            result["profile_res"] = profile_res
+            result["profile_flat_index"] = items[local_idx]["flat_index"]
+        else:
+            income_pairs.append((local_idx, extracted))
+    result["income_pairs"] = income_pairs
+
+    def _period_start(pair):
+        extracted = pair[1]
+        if isinstance(extracted, dict):
+            start, _, _ = parse_date_range_from_text(str(extracted.get("period") or ""), default_year=2026)
+            if start:
+                return (0, start)
+        return (1, items[pair[0]]["flat_index"])
+
+    income_pairs.sort(key=_period_start)
+    income_only = [pair for pair in income_pairs if _looks_like_income_statement(pair[1])]
+    if income_only:
+        income_pairs = income_only
+    result["income_required"] = sum(1 for role in slot_roles if _role_group(role) == "income")
+
+    image_results: List[Dict[str, Any]] = []
+    if profile_object is not None and matched_profile_idx is not None:
+        slot_idx = items[matched_profile_idx]["slot_index"]
+        try:
+            profile_check = run_definition_checks(profile_object, profile_res, profile_config)
+        except ImageObjectDefinitionError as exc:
+            logger.error("[IMAGE OBJECTS] profile check unusable for %s: %s", question_id, exc)
+            profile_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
+        image_results.append(image_object_result(
+            profile_object.id, slot_idx, _slot_title(question, slot_idx), profile_res, profile_check,
+            question_id=question_id, flat_index=items[matched_profile_idx]["flat_index"],
+        ))
+        if result["violation"] is None and not profile_check.get("passed"):
+            result["violation"] = {
+                "failed_slot": items[matched_profile_idx]["flat_index"],
+                "reason": f"Câu hỏi '{question_id}' ảnh {slot_idx + 1}: {profile_check['reasons'][0]}",
+                "ocr_data": profile_res,
+            }
+
+    for w_i, (local_idx, extracted) in enumerate(income_pairs):
+        if not isinstance(extracted, dict):
+            continue
+        slot_idx = items[local_idx]["slot_index"]
+        object_check = None
+        if income_object is not None:
+            try:
+                object_check = run_definition_checks(income_object, extracted, income_config)
+            except ImageObjectDefinitionError as exc:
+                logger.error("[IMAGE OBJECTS] income check unusable for %s: %s", question_id, exc)
+                object_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
+        image_results.append(image_object_result(
+            income_object.id if income_object else "income", slot_idx, _slot_title(question, slot_idx), extracted, object_check,
+            question_id=question_id, flat_index=items[local_idx]["flat_index"],
+        ))
+        if result["violation"] is not None:
+            continue
+        unreliable_reason = _unreliable_week_reason(extracted, w_i + 1, slot_idx + 1)
+        if unreliable_reason:
+            result["violation"] = {
+                "failed_slot": items[local_idx]["flat_index"],
+                "reason": f"Câu hỏi '{question_id}': {unreliable_reason}",
+                "ocr_data": extracted,
+            }
+            continue
+        if object_check is not None and not object_check.get("passed"):
+            result["violation"] = {
+                "failed_slot": items[local_idx]["flat_index"],
+                "reason": f"Câu hỏi '{question_id}' ảnh {slot_idx + 1}: {object_check['reasons'][0]}",
+                "ocr_data": extracted,
+            }
+
+    for local_idx in groups["vehicle"]:
+        slot_idx = items[local_idx]["slot_index"]
+        vehicle_object = slot_objects[local_idx] if local_idx < len(slot_objects) else None
+        if vehicle_object is not None:
+            image_results.append(image_object_result(
+                vehicle_object.id, slot_idx, _slot_title(question, slot_idx), {},
+                {"passed": True, "failures": [], "engines": []},
+                question_id=question_id, flat_index=items[local_idx]["flat_index"],
+            ))
+
+    result["image_object_results"] = image_results
+    return result
 
 
 INTERRUPTED_CHECK_REASON = (
@@ -839,16 +1195,30 @@ async def submit_webrtc_survey(
     schema = FORM_REGISTRY.get(requested_form_id) if requested_form_id else None
     if requested_form_id and schema is None:
         logger.warning(f"[SUBMIT] form_id '{requested_form_id}' is not registered; schema validation skipped.")
-    if not question_id and schema:
-        first_camera = next((q for q in schema.questions if q.type == "camera_webrtc"), None)
-        question_id = first_camera.id if first_camera else None
-    target_question_id = question_id or "camera_receipt"
+    explicit_question_id = (question_id or "").strip() or None
+    upload_items: List[Dict[str, Any]] = []
+    upload_error: Optional[str] = None
+    try:
+        upload_items = _group_uploaded_files(form_data, schema, explicit_question_id)
+    except UploadGroupError as exc:
+        upload_error = str(exc)
+        logger.warning("[SUBMIT] Upload grouping failed: %s", exc)
+
+    first_camera_id = next(
+        (q.id for q in (getattr(schema, "questions", None) or []) if getattr(q, "type", None) == "camera_webrtc"),
+        None,
+    )
+    target_question_id = (
+        explicit_question_id
+        or (upload_items[0]["question_id"] if upload_items else None)
+        or first_camera_id
+        or "camera_receipt"
+    )
     target_q = next((qu for qu in schema.questions if qu.id == target_question_id), None) if schema else None
 
-    # Collect every uploaded image across all camera questions. Slot files are
-    # keyed `<question_id>__file_<slot>` so multiple camera questions no longer
-    # overwrite each other under a shared survey_photo_<idx> key.
-    images_list = [v for _k, v in form_data.multi_items() if hasattr(v, "read")]
+    # File parts are keyed `<question_id>__file_<slot>`; legacy `survey_photo*`
+    # parts are assigned to the explicit/first camera question by the grouper.
+    images_list = [item["upload"] for item in upload_items]
     has_indexed_photos = len(images_list) > 1
 
     answers: Dict[str, Any] = {
@@ -863,29 +1233,32 @@ async def submit_webrtc_survey(
     if "driver_signature" not in answers and signature_png:
         answers["driver_signature"] = signature_png
     is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
-    if images_list:
-        if f"{target_question_id}_0" in answers:
-            pass  # modern client already sent per-slot markers for every camera question
-        elif target_q and target_q.image_slots:
-            uploaded = min(len(images_list), len(target_q.image_slots))
-            answers[target_question_id] = [f"uploaded_{i}" for i in range(uploaded)]
-            for slot_index in range(uploaded):
-                answers[f"{target_question_id}_{slot_index}"] = f"uploaded_{slot_index}"
-        elif has_indexed_photos or len(images_list) > 1:
-            answers[target_question_id] = [f"uploaded_{i}" for i in range(len(images_list))]
-        else:
-            # Legacy single photo upload without indexed multi-image fields
-            if target_q and target_q.min_images and target_q.min_images > 1:
-                answers[target_question_id] = [f"uploaded_{i}" for i in range(target_q.min_images)]
-            else:
-                answers[target_question_id] = "uploaded"
+    camera_questions = [
+        q for q in (getattr(schema, "questions", None) or [])
+        if getattr(q, "type", None) == "camera_webrtc"
+    ] if schema else []
+    if upload_items:
+        uploaded_by_qid: Dict[str, List[int]] = {}
+        for item in upload_items:
+            uploaded_by_qid.setdefault(item["question_id"], []).append(item["slot_index"])
+        for qid, slot_indexes in uploaded_by_qid.items():
+            question = next((q for q in camera_questions if q.id == qid), None)
+            slots = sorted(set(slot_indexes))
+            if not answers.get(qid):
+                if question is not None and getattr(question, "image_slots", None):
+                    answers[qid] = [f"uploaded_{i}" for i in range(max(slots) + 1)]
+                else:
+                    answers[qid] = [f"uploaded_{i}" for i in slots]
+            for slot_index in slots:
+                answers.setdefault(f"{qid}_{slot_index}", f"uploaded_{slot_index}")
     elif is_bypassed:
-        slot_cnt = len(target_q.image_slots) if (target_q and target_q.image_slots) else (target_q.min_images or 7 if target_q else 7)
-        answers[target_question_id] = [f"bypassed_slot_{i}" for i in range(slot_cnt)]
+        for question in camera_questions:
+            slot_count = len(getattr(question, "image_slots", None) or []) or getattr(question, "min_images", None) or 1
+            answers[question.id] = [f"bypassed_slot_{i}" for i in range(slot_count)]
+            for slot_index in range(slot_count):
+                answers.setdefault(f"{question.id}_{slot_index}", f"bypassed_slot_{slot_index}")
     elif target_question_id not in answers or not answers[target_question_id]:
         answers[target_question_id] = None
-    if "camera_receipt" not in answers and target_question_id != "camera_receipt":
-        answers["camera_receipt"] = answers.get(target_question_id, "uploaded")
     if "daily_net_income" not in answers and gross_revenue is not None:
         answers["daily_net_income"] = gross_revenue
     if "monthly_gross_revenue" not in answers and gross_revenue is not None:
@@ -895,7 +1268,10 @@ async def submit_webrtc_survey(
     checks = get_effective_image_checks(schema, target_question_id)
     is_schema_valid = True
     validation_err = None
-    if schema:
+    if upload_error:
+        is_schema_valid = False
+        validation_err = upload_error
+    elif schema:
         is_schema_valid, validation_err = validate_submission_against_schema(schema, answers)
     pil_im = None
     blur_var = None
@@ -1024,12 +1400,23 @@ async def submit_webrtc_survey(
                 decode_error_slot_title = None
 
                 for idx, img_b in enumerate(raw_bytes_list):
-                    slot_checks = get_effective_image_checks(schema, target_question_id, slot_index=idx)
+                    item = upload_items[idx] if idx < len(upload_items) else None
+                    item_question = item.get("question") if item else None
+                    item_slot = int(item.get("slot_index", idx)) if item else idx
+                    slot_checks = get_effective_image_checks(
+                        schema,
+                        item.get("question_id") if item else target_question_id,
+                        slot_index=item_slot,
+                    )
                     if not slot_checks.enable_blur_check:
                         continue
                     slot_blur_thresh = slot_checks.blur_threshold if slot_checks.blur_threshold is not None else settings.BLUR_THRESHOLD
                     slot_name = f"Ảnh {idx + 1}"
-                    if target_q and target_q.image_slots and idx < len(target_q.image_slots):
+                    if item_question is not None and getattr(item_question, "image_slots", None):
+                        stitle = _slot_title(item_question, item_slot)
+                        if stitle:
+                            slot_name = f"{item.get('question_id')} - {stitle}"
+                    elif target_q and target_q.image_slots and idx < len(target_q.image_slots):
                         stitle = target_q.image_slots[idx].get("title") or target_q.image_slots[idx].get("role")
                         if stitle:
                             slot_name = f"Ảnh {idx + 1} ({stitle})"
@@ -1083,316 +1470,89 @@ async def submit_webrtc_survey(
                     reason_str = "Chấp thuận (bỏ qua kiểm tra AI theo cấu hình biểu mẫu)."
                 else:
                     # AI vision audit with parallel execution via asyncio.gather
-                    if target_q and target_q.image_slots and len(images_list) >= 2:
-                        # 1. Reuse the single decode pass done for the blur check.
-                        norm_bytes_list = [
-                            norm_bytes_cache.get(i, raw_bytes_list[i])
-                            for i in range(len(raw_bytes_list))
-                        ]
+                    camera_groups: Dict[str, List[Dict[str, Any]]] = {}
+                    for item in upload_items:
+                        question = item.get("question")
+                        if question is None or not getattr(question, "image_slots", None):
+                            continue
+                        camera_groups.setdefault(question.id, []).append(item)
 
-                        # 2. Parallel role classification across all normalized images.
-                        # The allowed role set must cover every camera question (profile,
-                        # vehicle AND income), otherwise income screens can never be
-                        # classified and week completeness falsely fails.
-                        classification_slots = _classification_slots(schema, target_q)
-                        classify_tasks = [
-                            vision_client.classify_image_role(
-                                norm_bytes_list[s_idx],
-                                filename=getattr(images_list[s_idx], "filename", "") or "",
-                                expected_slots=classification_slots,
-                            )
-                            for s_idx in range(len(raw_bytes_list))
-                        ]
-                        classified_roles = await asyncio.gather(*classify_tasks, return_exceptions=True)
-                        classified_roles = [r if isinstance(r, str) else "unknown" for r in classified_roles]
-
-                        # 3. Order-agnostic object coverage: classify every image, then
-                        # require the right objects rather than matching image positions.
-                        def _role_group(role):
-                            value = str(role or "").lower()
-                            if "profile" in value or "odometer" in value:
-                                return "profile"
-                            if "vehicle" in value or "exterior" in value or "steering" in value:
-                                return "vehicle"
-                            if "income" in value or "revenue" in value or "earnings" in value:
-                                return "income"
-                            return "unknown"
-
-                        groups = {"profile": [], "vehicle": [], "income": []}
-                        for idx, role in enumerate(classified_roles):
-                            group = _role_group(role)
-                            if group in groups:
-                                groups[group].append(idx)
-
-                        required_slots = [
-                            slot for slot in (target_q.image_slots or []) if slot.get("required", True)
-                        ]
-                        required_counts = {"profile": 0, "vehicle": 0, "income": 0}
-                        required_roles = [
-                            (_normalized_image_slots([slot])[0].get("role"), slot) for slot in required_slots
-                        ]
-                        for role, _slot in required_roles:
-                            group = _role_group(role)
-                            if group in required_counts:
-                                required_counts[group] += 1
-
-                        missing_titles = []
-                        for group, needed in required_counts.items():
-                            if len(groups[group]) < needed:
-                                for role, slot in required_roles:
-                                    if _role_group(role) == group:
-                                        missing_titles.append(str(slot.get("title") or slot.get("role") or group))
-                                        break
-
-                        coverage_violation = None
-                        if missing_titles:
-                            coverage_violation = {
-                                "failed_slot": 0,
-                                "ocr_data": {},
-                                "reason": (
-                                    "Thiếu ảnh đúng loại cho: " + "; ".join(missing_titles)
-                                    + ". Vui lòng chụp đủ các mục yêu cầu (thứ tự ảnh không quan trọng)."
-                                ),
-                            }
-
-                        matched_profile_idx = groups["profile"][0] if groups["profile"] else None
-                        matched_vehicle_idx = groups["vehicle"][0] if groups["vehicle"] else None
-                        matched_income_indices = list(groups["income"])
-
-                        # 4. Object-driven extraction: profile + every income object.
-                        # REUSING pre-normalized bytes (ZERO redundant libvips calls!)
-                        slot_objects = [_slot_object(slot) for slot in (target_q.image_slots or [])]
-                        slot_roles = [
-                            _normalized_image_slots([slot])[0].get("role")
-                            for slot in (target_q.image_slots or [])
-                        ]
-                        config_by_object: Dict[str, Dict[str, Any]] = {}
-                        prompt_by_object: Dict[str, str] = {}
-                        for slot, obj in zip(target_q.image_slots or [], slot_objects):
-                            config_by_object.setdefault(obj.id, _slot_config(slot))
-                            custom_prompt = str((slot or {}).get("ai_detection_prompt") or "").strip()
-                            if custom_prompt:
-                                prompt_by_object.setdefault(obj.id, custom_prompt)
-                        income_object = next(
-                            (obj for obj in slot_objects if obj.extractor == "income_statement"),
-                            None,
-                        )
-                        if income_object is None:
-                            income_object = next(
-                                (
-                                    obj for role, obj in zip(slot_roles, slot_objects)
-                                    if _role_group(role) == "income"
-                                ),
-                                None,
-                            )
-                        profile_object = next(
-                            (obj for obj in slot_objects if obj.extractor == "profile"),
-                            None,
-                        )
-                        if profile_object is None:
-                            profile_object = next(
-                                (
-                                    obj for role, obj in zip(slot_roles, slot_objects)
-                                    if _role_group(role) == "profile"
-                                ),
-                                None,
-                            )
-                        income_config = config_by_object.get(income_object.id, {}) if income_object else {}
-                        profile_config = config_by_object.get(profile_object.id, {}) if profile_object else {}
-
-                        extraction_tasks = []
-                        extraction_kinds: List[str] = []
-                        extraction_indices: List[int] = []
-                        if profile_object is not None and matched_profile_idx is not None:
-                            extraction_tasks.append(
-                                _extract_image_object(
-                                    norm_bytes_list[matched_profile_idx],
-                                    profile_object,
-                                    profile_config,
-                                    prompt_override=prompt_by_object.get(profile_object.id),
-                                )
-                            )
-                            extraction_kinds.append("profile")
-                            extraction_indices.append(matched_profile_idx)
-
-                        if income_object is not None:
-                            for i_pos, s_idx in enumerate(matched_income_indices):
-                                extraction_tasks.append(
-                                    _extract_image_object(
-                                        norm_bytes_list[s_idx],
-                                        income_object,
-                                        income_config,
-                                        week_idx=i_pos + 1,
-                                        prompt_override=prompt_by_object.get(income_object.id),
-                                    )
-                                )
-                                extraction_kinds.append("income")
-                                extraction_indices.append(s_idx)
-
-                        all_results = await asyncio.gather(*extraction_tasks, return_exceptions=True) if extraction_tasks else []
-                        profile_res: Any = {}
-                        income_res_list: List[Any] = []
-                        income_indices_order: List[int] = []
-                        for kind, img_idx, result in zip(extraction_kinds, extraction_indices, all_results):
-                            if kind == "profile":
-                                profile_res = result if isinstance(result, dict) else {}
-                            else:
-                                income_res_list.append(result)
-                                income_indices_order.append(img_idx)
-                        matched_income_indices = income_indices_order
-
-                        # Order-agnostic weeks: drop images whose OCR is clearly not an
-                        # income statement (e.g. the profile menu listing "Thống kê thu nhập"
-                        # as a row), then sort by detected period start.
-                        income_pairs = list(zip(matched_income_indices, income_res_list))
-                        income_only = [pair for pair in income_pairs if _looks_like_income_statement(pair[1])]
-                        if income_only:
-                            income_pairs = income_only
-
-                        income_required = 0
-                        for question in (getattr(schema, "questions", None) or []):
-                            if getattr(question, "type", None) != "camera_webrtc" or not getattr(question, "image_slots", None):
+                    if camera_groups:
+                        audits: List[Dict[str, Any]] = []
+                        for question in camera_questions:
+                            group_items = camera_groups.get(question.id)
+                            if not group_items:
                                 continue
-                            count_income = sum(
-                                1 for slot in _normalized_image_slots(question.image_slots)
-                                if _role_group(slot.get("role")) == "income"
+                            audits.append(
+                                await _audit_camera_question(question, group_items, norm_bytes_cache)
                             )
-                            income_required = max(income_required, count_income)
-                        short_income_violation = None
-                        if income_required and len(income_pairs) < income_required:
-                            short_income_violation = {
-                                "failed_slot": matched_income_indices[0] if matched_income_indices else 0,
-                                "ocr_data": {},
-                                "reason": (
-                                    f"Thiếu ảnh thu nhập hợp lệ: chỉ nhận diện được {len(income_pairs)}/{income_required} tuần. "
-                                    "Vui lòng chụp đủ các tuần thu nhập được yêu cầu (thứ tự ảnh không quan trọng)."
-                                ),
-                            }
+
+                        image_object_results = [
+                            result for audit in audits for result in audit["image_object_results"]
+                        ]
+                        all_income_pairs = [
+                            pair for audit in audits for pair in audit["income_pairs"]
+                        ]
+                        income_required = sum(audit["income_required"] for audit in audits)
+                        coverage_violation = next(
+                            (audit["violation"] for audit in audits if audit["violation"]),
+                            None,
+                        )
 
                         def _period_start(pair):
-                            result = pair[1]
-                            if isinstance(result, dict):
-                                start, _, _ = parse_date_range_from_text(str(result.get("period") or ""), default_year=2026)
+                            extracted = pair[1]
+                            if isinstance(extracted, dict):
+                                start, _, _ = parse_date_range_from_text(
+                                    str(extracted.get("period") or ""), default_year=2026
+                                )
                                 if start:
                                     return (0, start)
                             return (1, pair[0])
 
-                        income_pairs.sort(key=_period_start)
-                        duplicate_week_violation = short_income_violation or _find_duplicate_income_period(income_pairs)
-                        matched_income_indices = [pair[0] for pair in income_pairs]
-                        income_res_list = [pair[1] for pair in income_pairs]
+                        all_income_pairs.sort(key=_period_start)
+                        duplicate_week_violation = None if coverage_violation else _find_duplicate_income_period(all_income_pairs)
+                        short_income_violation = None
+                        if income_required and len(all_income_pairs) < income_required:
+                            short_income_violation = {
+                                "failed_slot": all_income_pairs[0][0] if all_income_pairs else 0,
+                                "ocr_data": {},
+                                "reason": (
+                                    f"Thiếu ảnh thu nhập hợp lệ: chỉ nhận diện được "
+                                    f"{len(all_income_pairs)}/{income_required} kỳ. "
+                                    "Vui lòng chụp đủ các ảnh thu nhập được yêu cầu."
+                                ),
+                            }
+                        monthly_violation = coverage_violation or short_income_violation or duplicate_week_violation
+                        matched_income_indices = [pair[0] for pair in all_income_pairs]
 
-                        role_0 = (
-                            classified_roles[matched_profile_idx]
-                            if groups["profile"] and matched_profile_idx is not None
-                            else (target_q.image_slots[0].get("role", "app_profile") if target_q.image_slots else "app_profile")
+                        profile_audit = next(
+                            (audit for audit in audits if audit["profile_object"] is not None),
+                            None,
                         )
-                        membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else None
-                        primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
+                        profile_res: Any = profile_audit["profile_res"] if profile_audit else {}
+                        membership_type = (
+                            profile_res.get("membership_type")
+                            if isinstance(profile_res, dict) else None
+                        )
+                        role_0 = (
+                            profile_audit["role_0"] if profile_audit
+                            else (audits[0]["role_0"] if audits else "unknown")
+                        )
+                        primary_ocr = (
+                            all_income_pairs[0][1]
+                            if all_income_pairs and isinstance(all_income_pairs[0][1], dict)
+                            else {}
+                        )
                         ocr_data = primary_ocr
-
-                        image_object_results: List[Dict[str, Any]] = []
-                        monthly_violation = coverage_violation or duplicate_week_violation
-
-                        def _slot_title(idx: int) -> str:
-                            slots = target_q.image_slots or []
-                            if 0 <= idx < len(slots):
-                                return str(slots[idx].get("title") or slots[idx].get("role") or f"Ảnh {idx + 1}")
-                            return f"Ảnh {idx + 1}"
-
-                        if profile_object is not None and matched_profile_idx is not None:
-                            try:
-                                profile_check = run_definition_checks(profile_object, profile_res, profile_config)
-                            except ImageObjectDefinitionError as exc:
-                                logger.error("[IMAGE OBJECTS] profile check unusable: %s", exc)
-                                profile_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
-                            image_object_results.append(
-                                image_object_result(
-                                    profile_object.id,
-                                    matched_profile_idx,
-                                    _slot_title(matched_profile_idx),
-                                    profile_res,
-                                    profile_check,
-                                )
-                            )
-                            if not monthly_violation and not profile_check.get("passed"):
-                                monthly_violation = {
-                                    "failed_slot": matched_profile_idx,
-                                    "reason": f"Ảnh {matched_profile_idx + 1}: {profile_check['reasons'][0]}",
-                                    "ocr_data": profile_res,
-                                }
-
-                        for w_i, (img_idx, ocr_w) in enumerate(income_pairs):
-                            w_num = w_i + 1
-                            if not isinstance(ocr_w, dict):
-                                continue
-                            object_check = None
-                            if income_object is not None:
-                                try:
-                                    object_check = run_definition_checks(income_object, ocr_w, income_config)
-                                except ImageObjectDefinitionError as exc:
-                                    logger.error("[IMAGE OBJECTS] income check unusable: %s", exc)
-                                    object_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
-                                image_object_results.append(
-                                    image_object_result(
-                                        income_object.id,
-                                        img_idx,
-                                        _slot_title(img_idx),
-                                        ocr_w,
-                                        object_check,
-                                    )
-                                )
-
-                            # An unreadable/clipped week tab is a re-shoot, never a guess.
-                            unreliable_reason = None if monthly_violation else _unreliable_week_reason(
-                                ocr_w,
-                                w_num,
-                                img_idx + 1,
-                            )
-                            if unreliable_reason:
-                                monthly_violation = {
-                                    "failed_slot": img_idx,
-                                    "reason": unreliable_reason,
-                                    "ocr_data": ocr_w,
-                                }
-                                break
-
-                            if monthly_violation:
-                                continue
-                            if object_check is not None and not object_check.get("passed"):
-                                monthly_violation = {
-                                    "failed_slot": img_idx,
-                                    "reason": f"Ảnh {img_idx + 1} (Tuần {w_num}): {object_check['reasons'][0]}",
-                                    "ocr_data": ocr_w,
-                                }
-                                break
-
-                        for vehicle_idx in groups.get("vehicle", []):
-                            vehicle_object = slot_objects[vehicle_idx] if vehicle_idx < len(slot_objects) else None
-                            if vehicle_object is not None:
-                                image_object_results.append(
-                                    image_object_result(
-                                        vehicle_object.id,
-                                        vehicle_idx,
-                                        _slot_title(vehicle_idx),
-                                        {},
-                                        {"passed": True, "failures": [], "engines": []},
-                                    )
-                                )
-
                         compat_income = project_income_weeks(image_object_results)
                         compat_totals = project_income_totals(compat_income)
 
-                        slot_0_role = _infer_slot_role(target_q.image_slots[0]) if target_q.image_slots else "app_profile"
-                        slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
-                        slot_0_object = slot_objects[0] if slot_objects else None
-                        slot_0_is_profile = bool(
-                            slot_0_object is not None
-                            and slot_0_object.extractor == "profile"
-                            and not slot_0_object.id.startswith("custom_")
-                        )
+                        profile_question = profile_audit["question"] if profile_audit else None
+                        profile_slots = getattr(profile_question, "image_slots", None) or []
+                        slot_0_role = _infer_slot_role(profile_slots[0]) if profile_slots else "app_profile"
+                        slot_0_title = _slot_title(profile_question, 0) if profile_question else "Ảnh 1"
+                        slot_0_is_profile = bool(profile_audit and profile_audit["slot_0_is_profile"])
 
-                        # 1. Profile Verification (Slot 0)
                         is_approved = False
                         if monthly_violation:
                             is_approved = False
@@ -1427,21 +1587,16 @@ async def submit_webrtc_survey(
                                 "detected_roles": [role_0],
                                 "model": "DEEPSEEK_V3_CHAT",
                             }
-                        # 2. Income-screen authenticity/tampering/legibility checks are
-                        # executed by the object's bound engines (see monthly_violation).
                         else:
                             is_approved = True
                             status_str = "APPROVED"
                             reason_str = "Gửi phiếu khảo sát thành công!"
-                            gross_val = int(ocr_data.get("gross_revenue") or 0)
-                            net_val = int(ocr_data.get("net_income") or 0)
-                            trips_val = int(ocr_data.get("total_trips") or 0)
-                            hours_val = str(ocr_data.get("online_hours") or "")
-                            period_val = str(ocr_data.get("period") or "")
+                            hours_val = str(primary_ocr.get("online_hours") or "")
+                            period_val = str(primary_ocr.get("period") or "")
                             ai_res = {
                                 "status": "APPROVED",
                                 "model": "DEEPSEEK_V3_CHAT",
-                                "roles_verified": [role_0, "auto_passed_vehicle" if len(target_q.image_slots) >= 7 else "app_income"],
+                                "roles_verified": [audit["role_0"] for audit in audits],
                                 "total_slots_processed": len(images_list),
                                 "membership_type": membership_type,
                                 "image_object_results": image_object_results,
@@ -1452,7 +1607,6 @@ async def submit_webrtc_survey(
 
                         should_check_fraud = bool(getattr(checks, "enable_anti_fraud", True) and getattr(checks, "require_unique", True))
                         if is_approved and should_check_fraud:
-                            # 3. Anti-Fraud: Intra-submission duplicate check across income objects (Meta DINOv2 + dHash + numbers)
                             intra_dup, intra_reason = check_intra_submission_duplicates(
                                 raw_bytes_list, target_q, compat_income,
                                 income_indices=matched_income_indices, pil_cache=pil_cache
@@ -1466,8 +1620,6 @@ async def submit_webrtc_survey(
                                 ai_res["duplicate_detected"] = True
                                 ai_res["duplicate_type"] = "INTRA_SUBMISSION"
                             else:
-                                # Pick the uniqueness-bearing image (income screen), never a
-                                # reusable profile/vehicle photo. No candidate -> skip the check.
                                 check_idx = _select_unique_check_index(
                                     target_q, matched_income_indices, len(raw_bytes_list)
                                 )
@@ -1476,7 +1628,6 @@ async def submit_webrtc_survey(
                                 if check_im is not None:
                                     db_pool = get_db_pool()
                                     if db_pool:
-                                        # 4. Anti-Fraud: Inter-submission duplicate check against approved submissions (Meta DINOv2 + dHash + identical data)
                                         primary_emb = compute_dinov2_embedding(check_im)
                                         inter_dup, matched_sub_id, dup_type = await check_inter_submission_duplicates(
                                             db_pool, check_im, primary_emb,
@@ -1504,43 +1655,42 @@ async def submit_webrtc_survey(
                                                     dev_recs = json.load(df)
                                                 target_dhash = compute_dhash_int(check_im)
                                                 for prev in dev_recs:
-                                                    if prev.get("status") == "APPROVED":
-                                                        # 1. Identical financial data check
-                                                        prev_w = prev.get("weekly_incomes") or {}
-                                                        prev_g = int(prev.get("total_gross_revenue") or prev.get("gross_revenue") or 0)
-                                                        prev_t = int(prev.get("total_trips") or prev.get("trip_count") or 0)
-                                                        cur_w1 = int(compat_income.get("week_1", {}).get("gross_revenue") or 0)
-                                                        cur_w2 = int(compat_income.get("week_2", {}).get("gross_revenue") or 0)
-                                                        if prev_g > 0 and compat_totals["total_gross_revenue"] > 0 and prev_g == compat_totals["total_gross_revenue"] and prev_t > 0 and prev_t == compat_totals["total_trips"]:
-                                                            p_w1 = int(prev_w.get("week_1", {}).get("gross_revenue") or prev.get("income_week_1_gross") or 0)
-                                                            p_w2 = int(prev_w.get("week_2", {}).get("gross_revenue") or prev.get("income_week_2_gross") or 0)
-                                                            if p_w1 > 0 and p_w1 == cur_w1 and p_w2 > 0 and p_w2 == cur_w2:
-                                                                is_approved = False
-                                                                status_str = "REJECTED"
-                                                                reason_str = f"Số liệu doanh thu các kỳ bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{prev.get('submission_id')})! Phát hiện sao chép số liệu thu nhập."
-                                                                ai_res["status"] = "REJECTED"
-                                                                ai_res["reason"] = reason_str
-                                                                ai_res["duplicate_detected"] = True
-                                                                ai_res["matched_submission_id"] = prev.get('submission_id')
-                                                                ai_res["duplicate_type"] = "INTER_SUBMISSION_DATA"
-                                                                break
-
-                                                        # 2. Image hash check
-                                                        if prev.get("image_dhash_int") is not None:
-                                                            prev_dh = int(prev["image_dhash_int"])
-                                                            if hamming_distance(target_dhash, prev_dh) <= 6:
-                                                                is_approved = False
-                                                                status_str = "REJECTED"
-                                                                reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{prev.get('submission_id')})! Phát hiện trùng lặp hình ảnh."
-                                                                ai_res["status"] = "REJECTED"
-                                                                ai_res["reason"] = reason_str
-                                                                ai_res["duplicate_detected"] = True
-                                                                ai_res["matched_submission_id"] = prev.get('submission_id')
-                                                                ai_res["duplicate_type"] = "INTER_SUBMISSION"
-                                                                break
+                                                    if prev.get("status") != "APPROVED":
+                                                        continue
+                                                    prev_w = prev.get("weekly_incomes") or {}
+                                                    prev_g = int(prev.get("total_gross_revenue") or prev.get("gross_revenue") or 0)
+                                                    prev_t = int(prev.get("total_trips") or prev.get("trip_count") or 0)
+                                                    cur_w1 = int(compat_income.get("week_1", {}).get("gross_revenue") or 0)
+                                                    cur_w2 = int(compat_income.get("week_2", {}).get("gross_revenue") or 0)
+                                                    if prev_g > 0 and compat_totals["total_gross_revenue"] > 0 and prev_g == compat_totals["total_gross_revenue"] and prev_t > 0 and prev_t == compat_totals["total_trips"]:
+                                                        p_w1 = int(prev_w.get("week_1", {}).get("gross_revenue") or prev.get("income_week_1_gross") or 0)
+                                                        p_w2 = int(prev_w.get("week_2", {}).get("gross_revenue") or prev.get("income_week_2_gross") or 0)
+                                                        if p_w1 > 0 and p_w1 == cur_w1 and p_w2 > 0 and p_w2 == cur_w2:
+                                                            is_approved = False
+                                                            status_str = "REJECTED"
+                                                            reason_str = f"Số liệu doanh thu các kỳ bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{prev.get('submission_id')})! Phát hiện sao chép số liệu thu nhập."
+                                                            ai_res["status"] = "REJECTED"
+                                                            ai_res["reason"] = reason_str
+                                                            ai_res["duplicate_detected"] = True
+                                                            ai_res["matched_submission_id"] = prev.get('submission_id')
+                                                            ai_res["duplicate_type"] = "INTER_SUBMISSION_DATA"
+                                                            break
+                                                    if prev.get("image_dhash_int") is not None:
+                                                        prev_dh = int(prev["image_dhash_int"])
+                                                        if hamming_distance(target_dhash, prev_dh) <= 6:
+                                                            is_approved = False
+                                                            status_str = "REJECTED"
+                                                            reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{prev.get('submission_id')})! Phát hiện trùng lặp hình ảnh."
+                                                            ai_res["status"] = "REJECTED"
+                                                            ai_res["reason"] = reason_str
+                                                            ai_res["duplicate_detected"] = True
+                                                            ai_res["matched_submission_id"] = prev.get('submission_id')
+                                                            ai_res["duplicate_type"] = "INTER_SUBMISSION"
+                                                            break
                                             except Exception:
                                                 pass
-                    else:
+
+                    if not camera_groups:
                         try:
                             facts = await vision_client.extract_facts(norm_bytes)
                             ai_res = facts.model_dump() if hasattr(facts, "model_dump") else {}
@@ -1554,7 +1704,9 @@ async def submit_webrtc_survey(
                                     status_str = "APPROVED"
                                     reason_str = "Ảnh chụp rõ nét, đạt chuẩn kiểm tra hình ảnh (Đã tắt nhận diện đối tượng theo yêu cầu)."
                             else:
+                                from services.evaluator import evaluate_survey_compliance
                                 compliance = evaluate_survey_compliance(facts, checks=checks)
+                                is_approved = bool(compliance.passed)
                                 status_str = "APPROVED" if is_approved else "REJECTED"
                                 reason_str = compliance.collaborator_note or compliance.reason_code
                         except Exception as ai_err:
@@ -1575,6 +1727,7 @@ async def submit_webrtc_survey(
                                 is_approved = False
                                 status_str = "MANUAL_REVIEW"
                                 reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+
     # 3. Persistence: Test mode -> Dev storage; Production mode -> DB + Outbox Events in same transaction
     is_dissent = answers.get("consent_choice") == "Tôi không đồng ý"
     if is_approved and not is_bypassed and not is_dissent and not is_test_mode:

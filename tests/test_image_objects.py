@@ -4,6 +4,7 @@
 import io
 import json
 import os
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -620,5 +621,116 @@ def test_runtime_accepts_object_type_form(monkeypatch):
         body = response.json()
         assert "Thiếu ảnh" not in (body.get("reason") or "")
         assert "Cấu hình kiểm tra ảnh không hợp lệ" not in (body.get("reason") or "")
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
+
+
+def _probe_multi_camera_form(form_id: str):
+    FORM_REGISTRY[form_id] = FormSchema(
+        form_id=form_id,
+        title="Multi Camera Probe",
+        settings=FormSettings(
+            decree13_required=False,
+            is_test_mode=True,
+            image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=True, enable_anti_fraud=False),
+        ),
+        questions=[
+            FormQuestion(
+                id="q_identity", title="Profile + vehicle", type=QuestionType.CAMERA_WEBRTC, required=True,
+                image_slots=[
+                    {"slot": 0, "title": "Ho so", "role": "app_profile", "object_type": "app_profile", "object_config": {}, "required": True},
+                    {"slot": 1, "title": "Phuong tien", "role": "vehicle_exterior", "object_type": "vehicle_exterior_or_interior", "object_config": {}, "required": True},
+                ],
+                min_images=2, max_images=2, exact_image_count=2,
+            ),
+            FormQuestion(
+                id="q_income", title="Income x5", type=QuestionType.CAMERA_WEBRTC, required=True,
+                image_slots=[
+                    {"slot": i, "title": f"Tuan {i + 1}", "role": f"app_income_week_{i + 1}", "object_type": "weekly_income", "object_config": _weekly_config(), "required": True, "require_unique": True}
+                    for i in range(5)
+                ],
+                min_images=5, max_images=5, exact_image_count=5,
+            ),
+            FormQuestion(
+                id="q_phone", title="Phone only", type=QuestionType.CAMERA_WEBRTC, required=False,
+                image_slots=[
+                    {"slot": 0, "title": "Dien thoai", "role": "custom_object", "required": False},
+                ],
+                min_images=1, max_images=1, exact_image_count=1,
+            ),
+        ],
+    )
+
+
+def test_multi_camera_questions_process_independently(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    form_id = "SIM-MULTI-CAMERA-QUESTIONS"
+    _probe_multi_camera_form(form_id)
+    captured = {}
+    try:
+        client = TestClient(app)
+        files = [
+            ("q_identity__file_0", ("profile.jpg", io.BytesIO(_jpeg_bytes()), "image/jpeg")),
+            ("q_identity__file_1", ("vehicle.jpg", io.BytesIO(_jpeg_bytes((90, 90, 90))), "image/jpeg")),
+            ("q_income__file_0", ("income1.jpg", io.BytesIO(_jpeg_bytes((210, 20, 20))), "image/jpeg")),
+            ("q_income__file_1", ("income2.jpg", io.BytesIO(_jpeg_bytes((20, 210, 20))), "image/jpeg")),
+            ("q_income__file_2", ("income3.jpg", io.BytesIO(_jpeg_bytes((20, 20, 210))), "image/jpeg")),
+            ("q_income__file_3", ("income4.jpg", io.BytesIO(_jpeg_bytes((210, 210, 20))), "image/jpeg")),
+            ("q_income__file_4", ("income5.jpg", io.BytesIO(_jpeg_bytes((20, 210, 210))), "image/jpeg")),
+            ("q_phone__file_0", ("phone.jpg", io.BytesIO(_jpeg_bytes((150, 100, 50))), "image/jpeg")),
+        ]
+        with patch("routers.survey.append_dev_submission", side_effect=lambda record: captured.update(record)):
+            response = client.post(
+                "/api/v1/survey/submit-webrtc",
+                data={"form_id": form_id, "is_test_mode": "true"},
+                files=files,
+            )
+        body = response.json()
+        assert body.get("status") == "APPROVED", body
+        assert "0/5" not in (body.get("reason") or "")
+        results = captured["ai_result"]["image_object_results"]
+        assert {result["question_id"] for result in results} >= {"q_identity", "q_income"}
+        assert sum(1 for result in results if result["question_id"] == "q_income" and result["object_type"] == "weekly_income") == 5
+        assert all(result["passed"] for result in results), results
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
+
+
+def test_upload_key_unknown_question_is_rejected_clearly(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    form_id = "SIM-UNKNOWN-UPLOAD-QUESTION"
+    _probe_form(form_id, [{"slot": 0, "title": "Ho so", "role": "app_profile", "required": True}])
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={"form_id": form_id, "is_test_mode": "true"},
+            files=[("missing_q__file_0", ("profile.jpg", io.BytesIO(_jpeg_bytes()), "image/jpeg"))],
+        )
+        body = response.json()
+        assert body.get("status") == "REJECTED"
+        assert "không tồn tại" in (body.get("reason") or "")
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
+
+
+def test_upload_key_out_of_range_slot_is_rejected_clearly(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    form_id = "SIM-BAD-UPLOAD-SLOT"
+    _probe_form(form_id, [
+        {"slot": 0, "title": "Ho so", "role": "app_profile", "required": True},
+        {"slot": 1, "title": "Thu nhap", "role": "app_income", "required": True},
+    ])
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={"form_id": form_id, "is_test_mode": "true"},
+            files=[("q_cam__file_5", ("profile.jpg", io.BytesIO(_jpeg_bytes()), "image/jpeg"))],
+        )
+        body = response.json()
+        assert body.get("status") == "REJECTED"
+        assert "slot 5" in (body.get("reason") or "")
+        assert "vượt quá" in (body.get("reason") or "")
     finally:
         FORM_REGISTRY.pop(form_id, None)
