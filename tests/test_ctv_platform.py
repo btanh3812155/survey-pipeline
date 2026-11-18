@@ -15,6 +15,7 @@ from core.ctv import (
     get_ctv_codes,
     clear_ctv_directory_cache,
     ensure_ctv_platform_schema,
+    resolve_ctv_identifier,
     seed_ctv_directory,
     set_ctv_directory_cache,
     set_ctv_form_links_cache,
@@ -195,8 +196,8 @@ async def test_seed_submission_codes_idempotent_and_no_overwrite(monkeypatch):
         if "INSERT INTO ctv_directory" in sql and params and params[-1] == "seed:survey_submissions"
     ]
     assert [p[0] for p in submission_inserts] == [
-        "CTV001_DUNG_HN",
-        "CTV002_TUAN_HN",
+        "CTV001_Dũng_HN",
+        "CTV002_Tuấn_HN",
         "999",
     ]
     assert first_stats["submission_codes"] == 3
@@ -219,7 +220,7 @@ async def test_seed_submission_codes_idempotent_and_no_overwrite(monkeypatch):
         params[0] for sql, params in pool.executed
         if "INSERT INTO ctv_directory" in sql and params and params[-1] == "seed:survey_submissions"
     ]
-    assert second_inserts == ["CTV001_DUNG_HN", "CTV002_TUAN_HN", "999"]
+    assert second_inserts == ["CTV001_Dũng_HN", "CTV002_Tuấn_HN", "999"]
     assert second_stats["submission_codes"] == 3
 
 
@@ -255,9 +256,9 @@ async def test_seed_phone_and_telegram_propagation_sources(monkeypatch):
             by_code[params[0]] = params
 
     assert by_code["CTV_AUTH"][2] == "0907333444"
-    assert by_code["CTV001_DUNG_HN"][2] == "0901234567"
-    assert by_code["CTV001_DUNG_HN"][3] == 88888
-    assert by_code["CTV002_TUAN_HN"][2] == "0908888888"
+    assert by_code["CTV001_Dũng_HN"][2] == "0901234567"
+    assert by_code["CTV001_Dũng_HN"][3] == 88888
+    assert by_code["CTV002_Tuấn_HN"][2] == "0908888888"
     assert by_code["42"][2] == "0907777777"
     assert by_code["DEV_001"][2] == "0908111222"
 
@@ -296,8 +297,8 @@ async def test_admin_update_refreshes_directory_cache():
 def test_directory_driven_options_and_links_override_static():
     set_ctv_directory_cache(
         [
-            {"code": "alpha_001", "display_name": "Alpha", "is_active": True},
-            {"code": "beta_002", "display_name": "Beta", "is_active": False},
+            {"code": "ALPHA_001", "display_name": "Alpha", "is_active": True},
+            {"code": "BETA_002", "display_name": "Beta", "is_active": False},
         ]
     )
     schema = FormSchema(
@@ -315,6 +316,17 @@ def test_directory_driven_options_and_links_override_static():
     assert build_ctv_form_url("ALPHA_001", "tag_demo") == "https://x.test/ref/alpha"
     assert build_ctv_form_url("BETA_002", "tag_demo") == (
         "https://survey.trustbridgevn.com/forms/tag_demo?ref=BETA_002"
+    )
+
+
+def test_legacy_diacritic_codes_preserved_and_resolvable():
+    set_ctv_directory_cache(
+        [{"code": "CTV001_Dũng_HN", "display_name": "CTV001_Dũng_HN", "is_active": True}]
+    )
+    assert resolve_ctv_identifier("ctv001_dung_hn") == "CTV001_Dũng_HN"
+    assert get_ctv_entry("CTV001_DUNG_HN")["code"] == "CTV001_Dũng_HN"
+    assert build_ctv_form_url("ctv001_dung_hn", "income_survey").endswith(
+        "?ref=CTV001_Dũng_HN"
     )
 
 

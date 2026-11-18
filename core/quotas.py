@@ -180,7 +180,7 @@ def format_quota_report(
     display_name: Optional[str],
     evaluations: List[Dict[str, Any]],
 ) -> str:
-    code = normalize_ctv_code(ctv_code)
+    code = str(ctv_code or "").strip() or normalize_ctv_code(ctv_code)
     label = html.escape(display_name or code)
     header = f"📊 <b>Hạn mức CTV <code>{html.escape(code)}</code></b>"
     if display_name and display_name != code:
@@ -204,8 +204,9 @@ async def fetch_active_quotas(db_pool, ctv_code: str) -> List[Dict[str, Any]]:
                 await cur.execute(
                     "SELECT id, ctv_code, scope_type, scope_value, max_submissions, "
                     "period_days, active FROM ctv_quotas "
-                    "WHERE UPPER(ctv_code) = %s AND active = TRUE ORDER BY id;",
-                    (normalize_ctv_code(ctv_code),),
+                    "WHERE (UPPER(ctv_code) = UPPER(%s) OR UPPER(ctv_code) = UPPER(%s)) "
+                    "AND active = TRUE ORDER BY id;",
+                    (str(ctv_code).strip(), normalize_ctv_code(ctv_code)),
                 )
                 rows = await cur.fetchall()
     except Exception as e:
@@ -232,9 +233,9 @@ async def fetch_ctv_submission_rows(
         return []
     query = (
         "SELECT form_id, created_at FROM survey_submissions "
-        "WHERE UPPER(ctv_code) = %s"
+        "WHERE (UPPER(ctv_code) = UPPER(%s) OR UPPER(ctv_code) = UPPER(%s))"
     )
-    params: List[Any] = [normalize_ctv_code(ctv_code)]
+    params: List[Any] = [str(ctv_code).strip(), normalize_ctv_code(ctv_code)]
     if since is not None:
         query += " AND created_at >= %s"
         params.append(since)
@@ -312,8 +313,9 @@ async def get_ctv_display_name(db_pool, ctv_code: str) -> Optional[str]:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT display_name FROM ctv_directory WHERE UPPER(code) = %s LIMIT 1;",
-                    (normalize_ctv_code(ctv_code),),
+                    "SELECT display_name FROM ctv_directory "
+                    "WHERE (UPPER(code) = UPPER(%s) OR UPPER(code) = UPPER(%s)) LIMIT 1;",
+                    (str(ctv_code).strip(), normalize_ctv_code(ctv_code)),
                 )
                 row = await cur.fetchone()
                 if row and row[0]:
@@ -324,7 +326,8 @@ async def get_ctv_display_name(db_pool, ctv_code: str) -> Optional[str]:
 
 
 async def build_ctv_quota_report(db_pool, ctv_code: str) -> str:
-    code = normalize_ctv_code(ctv_code)
+    entry = get_ctv_entry(ctv_code)
+    code = entry["code"] if entry else str(ctv_code or "").strip()
     display_name = await get_ctv_display_name(db_pool, code)
     evaluations = await get_ctv_quota_evaluations(db_pool, code)
     return format_quota_report(code, display_name, evaluations)
@@ -335,20 +338,24 @@ async def resolve_ctv_code_from_ref(db_pool, ref: str) -> Optional[str]:
     code = normalize_ctv_code(ref)
     if not code:
         return None
+    entry = get_ctv_entry(ref)
+    if entry:
+        return str(entry["code"])
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT code FROM ctv_directory WHERE UPPER(code) = %s LIMIT 1;",
-                        (code,),
+                        "SELECT code FROM ctv_directory "
+                        "WHERE (UPPER(code) = UPPER(%s) OR UPPER(code) = UPPER(%s)) LIMIT 1;",
+                        (str(ref).strip().lstrip("@"), code),
                     )
                     row = await cur.fetchone()
                     if row and row[0]:
-                        return normalize_ctv_code(str(row[0]))
+                        return str(row[0]).strip()
         except Exception as e:
             logger.debug(f"CTV ref lookup failed for {ref}: {e}")
-    if get_ctv_entry(code) or is_known_ctv_code(code):
+    if is_known_ctv_code(code):
         return code
     return None
 
@@ -369,7 +376,7 @@ async def resolve_ctv_code_for_telegram(db_pool, telegram_user_id: int) -> Optio
                     )
                     row = await cur.fetchone()
                     if row and row[0]:
-                        return normalize_ctv_code(str(row[0]))
+                        return str(row[0]).strip()
 
                     await cur.execute(
                         "SELECT driver_phone, username FROM authorized_users "
@@ -389,8 +396,11 @@ async def resolve_ctv_code_for_telegram(db_pool, telegram_user_id: int) -> Optio
                         )
                         row = await cur.fetchone()
                         if row and row[0]:
-                            return normalize_ctv_code(str(row[0]))
+                            return str(row[0]).strip()
                     if username:
+                        entry = get_ctv_entry(username)
+                        if entry:
+                            return str(entry["code"])
                         code = normalize_ctv_code(username)
                         if code:
                             return code

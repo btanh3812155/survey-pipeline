@@ -129,7 +129,7 @@ def set_ctv_directory_cache(rows: Iterable[Dict[str, Any]]) -> None:
     """Replace the in-memory directory cache (also used by tests)."""
     _CTV_DIRECTORY.clear()
     for row in rows:
-        code = normalize_ctv_code(str(row.get("code") or ""))
+        code = str(row.get("code") or "").strip()
         if not code:
             continue
         _CTV_DIRECTORY[code] = {
@@ -151,8 +151,27 @@ def get_ctv_directory() -> Dict[str, Dict[str, Any]]:
     return _CTV_DIRECTORY
 
 
+def _find_ctv_code(value: str) -> Optional[str]:
+    """Finds the stored directory code for a case/diacritic-insensitive input."""
+    raw = str(value or "").strip()
+    if not raw or not _CTV_DIRECTORY:
+        return None
+    if raw in _CTV_DIRECTORY:
+        return raw
+    if raw.upper() in {code.upper() for code in _CTV_DIRECTORY}:
+        for code in _CTV_DIRECTORY:
+            if code.upper() == raw.upper():
+                return code
+    target = normalize_ctv_code(raw)
+    for code in _CTV_DIRECTORY:
+        if normalize_ctv_code(code) == target:
+            return code
+    return None
+
+
 def get_ctv_entry(code: str) -> Optional[Dict[str, Any]]:
-    return _CTV_DIRECTORY.get(normalize_ctv_code(code))
+    stored = _find_ctv_code(code)
+    return _CTV_DIRECTORY.get(stored) if stored else None
 
 
 def is_known_ctv_code(code: str) -> bool:
@@ -160,7 +179,7 @@ def is_known_ctv_code(code: str) -> bool:
     if not normalized:
         return False
     if _CTV_DIRECTORY:
-        row = _CTV_DIRECTORY.get(normalized)
+        row = get_ctv_entry(code)
         return bool(row and row.get("is_active", True))
     return normalized in CTV_CODE_MAP
 
@@ -180,13 +199,14 @@ def extract_ctv_short_code(ctv_id: str) -> str:
 
 
 def resolve_ctv_identifier(ref: str) -> Optional[str]:
-    """Resolves a ref/slug/CTV name to the canonical uppercase code."""
+    """Resolves a ref/slug/CTV name to the stored directory code."""
     if not ref:
         return None
     code = normalize_ctv_code(ref)
     if _CTV_DIRECTORY:
-        if code in _CTV_DIRECTORY:
-            return code
+        stored = _find_ctv_code(ref)
+        if stored:
+            return stored
         return code or None
     if code in CTV_CODE_MAP:
         return CTV_CODE_MAP[code]
@@ -232,7 +252,8 @@ def build_ctv_form_url(
     base_url: str = "https://survey.trustbridgevn.com",
 ) -> str:
     """Preferred per-CTV form URL from ctv_form_links, else the canonical ref link."""
-    code = normalize_ctv_code(ctv_code)
+    entry = get_ctv_entry(ctv_code)
+    code = entry["code"] if entry else normalize_ctv_code(ctv_code)
     link = get_ctv_form_link(code, form_id)
     if link and link.get("url"):
         return str(link["url"])
@@ -396,10 +417,10 @@ async def _upsert_submission_ctv(
     source: str = "seed:survey_submissions",
 ) -> Optional[str]:
     """Inserts a submission-derived CTV row; existing directory fields win."""
-    code = normalize_ctv_code(str(raw_code or ""))
+    code = str(raw_code or "").strip()
     if not code:
         return None
-    fallback_name = str(raw_code).strip() or code
+    fallback_name = code
     await cur.execute(
         """
         INSERT INTO ctv_directory (code, display_name, phone, telegram_user_id, is_active, notes)
@@ -482,10 +503,10 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
     seen_codes: set = set()
 
     def _new_code(raw: Any) -> Optional[str]:
-        code = normalize_ctv_code(str(raw or ""))
-        if not code or code in seen_codes:
+        code = str(raw or "").strip()
+        if not code or code.casefold() in seen_codes:
             return None
-        seen_codes.add(code)
+        seen_codes.add(code.casefold())
         return code
 
     try:
@@ -523,22 +544,37 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
             "'phone', 'ctv_telegram_user_id', 'ctv_telegram', 'ctv_tg_id', "
             "'telegram_user_id', 'ctv_tg'];"
         )
+        contacts: Dict[str, Dict[str, Any]] = {}
         for raw_code, raw_collab, form_data in await cur.fetchall():
             codes = []
             if raw_code and str(raw_code).strip():
-                codes.append(normalize_ctv_code(str(raw_code)))
+                codes.append(str(raw_code).strip())
             if raw_collab and str(raw_collab).strip():
-                codes.append(normalize_ctv_code(str(raw_collab)))
+                codes.append(str(raw_collab).strip())
             phone, tg_id, source_key = _extract_contacts(form_data)
             if not phone and not tg_id:
                 continue
             for code in codes:
                 if not code:
                     continue
-                await _upsert_submission_ctv(cur, code, phone=phone, telegram_user_id=tg_id)
-                if phone:
-                    key = f"survey_submissions.form_data.{source_key or 'phone'}"
-                    stats["phone_sources"][key] = stats["phone_sources"].get(key, 0) + 1
+                current = contacts.setdefault(
+                    code, {"phone": None, "telegram_user_id": None, "source_key": None}
+                )
+                if phone and not current["phone"]:
+                    current["phone"] = phone
+                    current["source_key"] = source_key or "phone"
+                if tg_id and not current["telegram_user_id"]:
+                    current["telegram_user_id"] = tg_id
+        for code, contact in contacts.items():
+            await _upsert_submission_ctv(
+                cur,
+                code,
+                phone=contact["phone"],
+                telegram_user_id=contact["telegram_user_id"],
+            )
+            if contact["phone"]:
+                key = f"survey_submissions.form_data.{contact['source_key'] or 'phone'}"
+                stats["phone_sources"][key] = stats["phone_sources"].get(key, 0) + 1
     except Exception as e:
         logger.debug(f"CTV seed skipped survey_submissions.form_data contacts: {e}")
 
@@ -580,6 +616,8 @@ async def update_ctv_directory_entry(
     normalized = normalize_ctv_code(code)
     if not db_pool or not normalized:
         return False
+    entry = get_ctv_entry(code)
+    stored_code = entry["code"] if entry else str(code).strip()
     try:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -591,14 +629,14 @@ async def update_ctv_directory_entry(
                         telegram_user_id = %s,
                         is_active = %s,
                         updated_at = NOW()
-                    WHERE UPPER(code) = %s;
+                    WHERE code = %s;
                     """,
                     (
                         str(display_name).strip() or None if display_name is not None else None,
                         _clean_phone(phone) if phone else None,
                         _clean_telegram_id(telegram_user_id) if telegram_user_id not in (None, "") else None,
                         bool(is_active),
-                        normalized,
+                        stored_code,
                     ),
                 )
                 updated = int(getattr(cur, "rowcount", 1) or 0) > 0

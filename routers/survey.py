@@ -2154,8 +2154,9 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT telegram_user_id, phone FROM ctv_directory "
-                        "WHERE UPPER(code) = %s AND is_active = TRUE LIMIT 1;",
-                        (code,),
+                        "WHERE (UPPER(code) = UPPER(%s) OR UPPER(code) = UPPER(%s)) "
+                        "AND is_active = TRUE LIMIT 1;",
+                        (collab_str, code),
                     )
                     row = await cur.fetchone()
                     if row:
