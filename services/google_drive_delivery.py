@@ -1749,7 +1749,7 @@ async def sync_internal_status_mirror(
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT * FROM survey_submissions "
+                "SELECT submission_id, form_id, status FROM survey_submissions "
                 "WHERE status IN ('APPROVED', 'REJECTED', 'APPEAL_PENDING', 'MANUAL_REVIEW');"
             )
             records = _cursor_rows_to_records(cur, await cur.fetchall())
