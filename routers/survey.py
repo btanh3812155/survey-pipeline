@@ -30,6 +30,7 @@ from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGI
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
 from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone
+from core.submission_ids import normalize_submission_id
 from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone, hash_plate, generate_driver_tag
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation, normalize_image_to_webp
@@ -238,6 +239,34 @@ async def get_survey_history(
 
     return {"phone": phone, "count": len(results), "attempts": results}
 
+def _clear_active_appeal_after_verdict(submission_id: str, status_str: str) -> None:
+    """Best-effort closure of a stale in-memory appeal lock after an AI verdict.
+
+    The DB status is the source of truth; this just removes the bot-process lock
+    immediately so a terminal verdict does not leave an "active check" behind.
+    """
+    if str(status_str or "").upper() not in ("APPROVED", "REJECTED"):
+        return
+    try:
+        from routers import webhooks
+        runner = webhooks.get_driver_bot_runner()
+        if runner is None:
+            return
+        active = getattr(runner, "active_appeals", None)
+        if not active:
+            return
+        canonical = normalize_submission_id(submission_id)
+        for uid, sid in list(active.items()):
+            if normalize_submission_id(sid) == canonical:
+                active.pop(uid, None)
+                logger.info(
+                    f"Cleared active appeal check for #{canonical} after AI verdict "
+                    f"{str(status_str).upper()} (source=ai)"
+                )
+    except Exception as e:
+        logger.debug(f"Could not clear active appeal after verdict for #{submission_id}: {e}")
+
+
 def _read_dev_submission_status(clean_id: str):
     for fpath in (
         os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
@@ -249,7 +278,7 @@ def _read_dev_submission_status(clean_id: str):
             with open(fpath, "r", encoding="utf-8") as f:
                 records = json.load(f)
             for r in records if isinstance(records, list) else []:
-                if str(r.get("submission_id") or "").strip() != clean_id:
+                if normalize_submission_id(r.get("submission_id")) != clean_id:
                     continue
                 # dev_test_submissions.json also holds action-checklist stubs
                 # ({submission_id, action_status}); they are not submission records.
@@ -274,7 +303,7 @@ async def get_submission_status(request: Request, submission_id: str):
     if STATUS_RATE_LIMITER.incr(client_ip) > 60:
         raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu trạng thái. Vui lòng thử lại sau!")
 
-    clean_id = (submission_id or "").strip().lstrip("#")
+    clean_id = normalize_submission_id(submission_id)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,63}", clean_id):
         raise HTTPException(status_code=404, detail="Không tìm thấy phiếu khảo sát.")
 
@@ -294,7 +323,7 @@ async def get_submission_status(request: Request, submission_id: str):
                         """
                         SELECT status, rejection_reason, COALESCE(moderated_at, created_at)
                         FROM survey_submissions
-                        WHERE submission_id = %s;
+                        WHERE UPPER(submission_id) = UPPER(%s);
                         """,
                         (clean_id,),
                     )
@@ -2038,6 +2067,7 @@ async def submit_webrtc_survey(
             raise
 
     request.state.pending_submission["final_written"] = True
+    _clear_active_appeal_after_verdict(submission_id, status_str)
 
     # 4. Dispatch Idempotent Downstream Action Checklist
     try:
@@ -2179,37 +2209,76 @@ class AppealRequest(BaseModel):
 async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundTasks):
     """Processes driver manual review requests with 2-hour rate limiting (max 5) and active guard."""
     phone = (req.driver_phone or "ANONYMOUS").strip()
-    sub_id = req.submission_id.strip()
+    sub_id = normalize_submission_id(req.submission_id)
 
-    # 1. Prevent duplicate active appeal
-    is_already_active = False
+    if not sub_id:
+        return JSONResponse(status_code=404, content={
+            "status": "NOT_FOUND",
+            "message": "Không tìm thấy phiếu khảo sát.",
+        })
+
+    # 1. Validate the submission and check only a genuinely open appeal/check.
+    current_status = None
     db_pool = get_db_pool()
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute("SELECT status FROM survey_submissions WHERE submission_id = %s;", (sub_id,))
+                    await cur.execute(
+                        "SELECT status FROM survey_submissions "
+                        "WHERE UPPER(submission_id) = UPPER(%s) LIMIT 1;",
+                        (sub_id,),
+                    )
                     row = await cur.fetchone()
-                    if row and row[0] in ("APPEAL_PENDING", "MANUAL_REVIEW"):
-                        is_already_active = True
-        except Exception:
-            pass
-    if not is_already_active and os.path.exists(DEV_STORAGE_FILE):
+                    if row:
+                        current_status = str(row[0] or "").upper()
+        except Exception as e:
+            logger.warning(f"Appeal status lookup failed for #{sub_id}: {e}")
+
+    if current_status is None and os.path.exists(DEV_STORAGE_FILE):
         try:
             with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                 dev_records = json.load(f)
-            for r in dev_records:
-                if r.get("submission_id") == sub_id and r.get("status") in ("APPEAL_PENDING", "MANUAL_REVIEW"):
-                    is_already_active = True
-                    break
-        except Exception:
-            pass
+            for r in dev_records if isinstance(dev_records, list) else []:
+                if normalize_submission_id(r.get("submission_id")) != sub_id:
+                    continue
+                if not (r.get("status") or r.get("reason") or r.get("rejection_reason") or r.get("submitted_at")):
+                    continue
+                current_status = str(r.get("status") or "MANUAL_REVIEW").upper()
+                break
+        except Exception as e:
+            logger.warning(f"Dev appeal status lookup failed for #{sub_id}: {e}")
 
-    if is_already_active:
+    if current_status is None:
+        return JSONResponse(status_code=404, content={
+            "status": "NOT_FOUND",
+            "submission_id": sub_id,
+            "message": f"Không tìm thấy phiếu #{sub_id}.",
+        })
+
+    if current_status == "APPEAL_PENDING":
         return JSONResponse(status_code=200, content={
             "status": "ALREADY_ACTIVE",
             "submission_id": sub_id,
             "message": f"Phiếu #{sub_id} đã có yêu cầu kiểm tra đang hoạt động! Bạn không thể gửi thêm yêu cầu mới khi yêu cầu cũ chưa hoàn tất."
+        })
+    if current_status == "APPROVED":
+        return JSONResponse(status_code=200, content={
+            "status": "APPROVED_LOCKED",
+            "submission_id": sub_id,
+            "message": f"Phiếu #{sub_id} đã được duyệt và không thể mở lại để phúc khảo."
+        })
+    if current_status == "MANUAL_REVIEW":
+        return JSONResponse(status_code=200, content={
+            "status": "UNDER_REVIEW",
+            "submission_id": sub_id,
+            "message": f"Phiếu #{sub_id} đang được Ban Quản Trị kiểm tra. Vui lòng chờ kết quả."
+        })
+    if current_status != "REJECTED":
+        return JSONResponse(status_code=200, content={
+            "status": "NOT_APPEALABLE",
+            "submission_id": sub_id,
+            "message": f"Phiếu #{sub_id} chưa thể phúc khảo ở trạng thái {current_status}."
         })
 
     rate_key = f"rate_limit:appeal:{phone}"
@@ -2261,7 +2330,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s, moderated_at = NOW() WHERE submission_id = %s;",
+                        "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s, moderated_at = NOW() WHERE UPPER(submission_id) = UPPER(%s);",
                         (appeal_note, sub_id)
                     )
                     await conn.commit()
@@ -2274,7 +2343,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                 dev_records = json.load(f)
             for r in dev_records:
-                if r.get("submission_id") == sub_id:
+                if normalize_submission_id(r.get("submission_id")) == sub_id:
                     r["status"] = "APPEAL_PENDING"
                     r["reason"] = appeal_note
                     r["rejection_reason"] = appeal_note
@@ -2309,14 +2378,14 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
 @router.post("/api/v1/survey/appeal/cancel")
 async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundTasks):
     """Allows cancelling an active manual review / appeal request."""
-    sub_id = req.submission_id.strip()
+    sub_id = normalize_submission_id(req.submission_id)
     db_pool = get_db_pool()
     if db_pool:
         try:
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "UPDATE survey_submissions SET status = 'REJECTED', rejection_reason = 'Yêu cầu kiểm tra lại đã bị hủy bởi người dùng', moderated_at = NOW() WHERE submission_id = %s;",
+                        "UPDATE survey_submissions SET status = 'REJECTED', rejection_reason = 'Yêu cầu kiểm tra lại đã bị hủy bởi người dùng', moderated_at = NOW() WHERE UPPER(submission_id) = UPPER(%s);",
                         (sub_id,)
                     )
                     await conn.commit()
@@ -2328,7 +2397,7 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                 dev_records = json.load(f)
             for r in dev_records:
-                if r.get("submission_id") == sub_id:
+                if normalize_submission_id(r.get("submission_id")) == sub_id:
                     r["status"] = "REJECTED"
                     r["reason"] = "Yêu cầu kiểm tra lại đã bị hủy bởi người dùng"
                     r["moderated_at"] = datetime.now(timezone.utc).isoformat()
@@ -2336,6 +2405,8 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
                 json.dump(dev_records, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.warning(f"Failed to cancel appeal in dev storage: {e}")
+
+    _clear_active_appeal_after_verdict(sub_id, "REJECTED")
 
     if getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", None):
         alert_text = f"ℹ️ <b>Người dùng đã HỦY yêu cầu kiểm tra lại cho phiếu #{sub_id}.</b>"

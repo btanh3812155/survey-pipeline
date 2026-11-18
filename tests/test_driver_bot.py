@@ -94,7 +94,8 @@ async def test_driver_bot_appeal_rate_limit(driver_runner):
     """Driver appeals are rate limited to max 5 per 2 hours."""
     mock_send = AsyncMock()
     with patch.object(driver_runner, "send_message", mock_send), \
-         patch.object(driver_runner, "_update_submission_status", AsyncMock()), \
+         patch.object(driver_runner, "_get_submission_status", AsyncMock(return_value="REJECTED")), \
+         patch.object(driver_runner, "_update_submission_status", AsyncMock(return_value=(True, "APPEAL_PENDING"))), \
          patch.object(driver_runner, "get_driver_phone", AsyncMock(return_value="0988111222")):
         # Appeals 1 to 5 should succeed (clearing active appeal between calls to test rate limit)
         for i in range(5):
@@ -115,8 +116,18 @@ async def test_driver_bot_appeal_rate_limit(driver_runner):
 async def test_driver_bot_prevent_duplicate_active_and_cancel(driver_runner):
     """Prevents duplicate active requests and allows cancelling."""
     mock_send = AsyncMock()
+    status_state = {"value": "REJECTED"}
+
+    async def fake_status(_sub_id):
+        return status_state["value"]
+
+    async def fake_update(_sub_id, new_status, reason=""):
+        status_state["value"] = new_status
+        return True, new_status
+
     with patch.object(driver_runner, "send_message", mock_send), \
-         patch.object(driver_runner, "_update_submission_status", AsyncMock()):
+         patch.object(driver_runner, "_get_submission_status", side_effect=fake_status), \
+         patch.object(driver_runner, "_update_submission_status", side_effect=fake_update):
         # Step 1: Submit first appeal
         await driver_runner.handle_driver_appeal(chat_id=601, user_id=601, sub_id="VN-ACTIVE1")
         assert "đã được gửi thành công" in mock_send.await_args[0][1]

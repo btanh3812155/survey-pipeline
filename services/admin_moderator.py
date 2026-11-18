@@ -1,4 +1,5 @@
 import os
+from core.submission_ids import normalize_submission_id
 import glob
 import json
 import re
@@ -219,6 +220,7 @@ async def query_submission_dossier(
     """
     Queries complete forensic, vehicle, financial, and legal audit data for a submission from PostgreSQL & Redis.
     """
+    submission_id = normalize_submission_id(submission_id)
     if not db_pool:
         for storage_path in (
             os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
@@ -229,7 +231,7 @@ async def query_submission_dossier(
                     with open(storage_path, "r", encoding="utf-8") as df:
                         dev_recs = json.load(df)
                     for r in dev_recs:
-                        if r.get("submission_id") == submission_id:
+                        if normalize_submission_id(r.get("submission_id")) == submission_id:
                             return _dev_record_dossier(submission_id, r)
                 except Exception:
                     pass
@@ -279,7 +281,7 @@ async def query_submission_dossier(
                        income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross,
                        collaborator_id, ctv_code, form_id
                 FROM survey_submissions
-                WHERE submission_id = %s;
+                WHERE UPPER(submission_id) = UPPER(%s);
             """,
                 (submission_id,),
             )
@@ -294,7 +296,7 @@ async def query_submission_dossier(
                             with open(storage_path, "r", encoding="utf-8") as df:
                                 dev_recs = json.load(df)
                             for r in dev_recs:
-                                if r.get("submission_id") == submission_id:
+                                if normalize_submission_id(r.get("submission_id")) == submission_id:
                                     return _dev_record_dossier(submission_id, r)
                         except Exception:
                             pass
