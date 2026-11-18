@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Internal CTV matrix (Google Sheet) generation and Drive sync."""
+import io
+import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -8,7 +11,9 @@ logger = logging.getLogger("ctv_matrix")
 
 FORM_BASE_URL = "https://survey.trustbridgevn.com/forms"
 QR_API_URL = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={data}"
+DRIVE_IMAGE_URL = "https://drive.google.com/uc?export=view&id={file_id}"
 INTERNAL_FOLDER_NAME = "Internal"
+QR_FOLDER_NAME = "QR"
 CTV_SHEET_NAME = "CTV_Info"
 
 CTV_DDL = [
@@ -61,6 +66,74 @@ def form_link_url(form_id: str, ctv_code: str) -> str:
 
 def qr_image_url(url: str) -> str:
     return QR_API_URL.format(data=quote(url, safe=""))
+
+
+def parse_qr_record(value: Any) -> Dict[str, Any]:
+    """Normalizes ctv_form_links.qr (JSON, dict or legacy string) into a dict."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return {"legacy_url": str(value)}
+
+
+def qr_record_is_current(record: Dict[str, Any], link_url: str) -> bool:
+    return bool(
+        record.get("file_id")
+        and record.get("image_url")
+        and record.get("target") == link_url
+    )
+
+
+def qr_cell_value(link: Dict[str, Any]) -> str:
+    """IMAGE formula for a Drive-hosted QR PNG, else a clickable fallback."""
+    record = parse_qr_record(link.get("qr"))
+    image_url = record.get("image_url") or ""
+    target = record.get("target") or link.get("url") or ""
+    if image_url:
+        return f'=IMAGE("{image_url}")'
+    if target:
+        return f'=HYPERLINK("{target}","Mở QR")'
+    return ""
+
+
+def qr_file_name(ctv_code: str, form_id: str) -> str:
+    safe_code = re.sub(r"[^A-Za-z0-9_.-]+", "_", ctv_code) or "ctv"
+    safe_form = re.sub(r"[^A-Za-z0-9_.-]+", "_", form_id) or "form"
+    return f"{safe_code}_{safe_form}.png"
+
+
+async def generate_qr_png(target_url: str, http_client: Any = None) -> Optional[bytes]:
+    """Local QR library when available, otherwise fetch a PNG from the QR endpoint."""
+    try:
+        import qrcode  # type: ignore[import-not-found]
+
+        image = qrcode.make(target_url)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+    except Exception:
+        pass
+
+    if http_client is None:
+        return None
+    try:
+        resp = await http_client.get(
+            qr_image_url(target_url),
+            timeout=20.0,
+        )
+        if resp.status_code == 200 and resp.content:
+            return resp.content
+        logger.warning(f"QR endpoint returned HTTP {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Could not fetch QR PNG for {target_url}: {e}")
+    return None
 
 
 def column_letter(index: int) -> str:
@@ -200,9 +273,8 @@ def build_matrix_payload(
         row: List[Any] = []
         for form_id in forms:
             link = links.get((code, form_id)) or {}
-            qr = link.get("qr") or ""
             url = link.get("url") or ""
-            row.append(f'=IMAGE("{qr}")' if qr else "")
+            row.append(qr_cell_value(link))
             row.append(url)
         row.extend([phone, code])
         values.append(row)
@@ -248,6 +320,19 @@ async def sync_internal_ctv_matrix(
         logger.info(f"[CTV MATRIX] Skipped: {len(ctvs)} active CTVs, {len(forms)} forms.")
         return True
 
+    internal_folder_id = await drive_client.get_or_create_folder(
+        http_client, token, INTERNAL_FOLDER_NAME, root_id
+    )
+    if not internal_folder_id:
+        logger.error("[CTV MATRIX] Could not create/find the Internal folder.")
+        return False
+
+    qr_folder_id = await drive_client.get_or_create_folder(
+        http_client, token, QR_FOLDER_NAME, internal_folder_id
+    )
+    if not qr_folder_id:
+        logger.warning("[CTV MATRIX] Could not create/find the Internal/QR folder; using hyperlink fallbacks.")
+
     existing_links = await fetch_links(db_pool)
     links: Dict[Tuple[str, str], Dict[str, Any]] = {}
     changed: List[Tuple[str, str, str, str]] = []
@@ -257,21 +342,48 @@ async def sync_internal_ctv_matrix(
             continue
         for form_id in forms:
             url = form_link_url(form_id, code)
-            qr = qr_image_url(url)
             previous = existing_links.get((code, form_id)) or {}
-            if not previous.get("url") or not previous.get("qr") or previous.get("url") != url:
-                changed.append((code, form_id, url, qr))
-            links[(code, form_id)] = {"url": url, "qr": qr}
+            previous_qr = parse_qr_record(previous.get("qr"))
+            if (
+                not previous.get("url")
+                or previous.get("url") != url
+                or not qr_record_is_current(previous_qr, url)
+            ):
+                qr_png = await generate_qr_png(url, http_client)
+                file_id = None
+                if qr_png and qr_folder_id:
+                    file_id = await drive_client.upload_file(
+                        http_client,
+                        token,
+                        qr_file_name(code, form_id),
+                        qr_png,
+                        "image/png",
+                        qr_folder_id,
+                    )
+                    if file_id:
+                        await drive_client.make_file_public(http_client, token, file_id)
+                if file_id:
+                    record = {
+                        "type": "drive_image",
+                        "file_id": file_id,
+                        "image_url": DRIVE_IMAGE_URL.format(file_id=file_id),
+                        "target": url,
+                        "source_url": qr_image_url(url),
+                    }
+                else:
+                    record = {
+                        "type": "link",
+                        "image_url": "",
+                        "target": url,
+                        "source_url": qr_image_url(url),
+                    }
+                changed.append((code, form_id, url, json.dumps(record, ensure_ascii=False)))
+            else:
+                record = previous_qr
+            links[(code, form_id)] = {"url": url, "qr": record}
     await upsert_links(db_pool, changed)
 
     values, merge_ranges = build_matrix_payload(ctvs, forms, links)
-
-    internal_folder_id = await drive_client.get_or_create_folder(
-        http_client, token, INTERNAL_FOLDER_NAME, root_id
-    )
-    if not internal_folder_id:
-        logger.error("[CTV MATRIX] Could not create/find the Internal folder.")
-        return False
 
     sheet_id = await drive_client.find_file_or_folder(
         http_client, token, CTV_SHEET_NAME, internal_folder_id
@@ -284,17 +396,44 @@ async def sync_internal_ctv_matrix(
         logger.error("[CTV MATRIX] Could not create/find the CTV_Info sheet.")
         return False
 
-    numeric_sheet_id = await drive_client.get_spreadsheet_sheet_id(http_client, token, sheet_id)
-    if numeric_sheet_id is None:
-        logger.error("[CTV MATRIX] Could not read the CTV_Info sheet tab id.")
+    metadata = await drive_client.get_spreadsheet_metadata(http_client, token, sheet_id)
+    if not metadata or metadata.get("sheet_id") is None:
+        logger.error("[CTV MATRIX] Could not read the CTV_Info sheet metadata.")
         return False
+    numeric_sheet_id = metadata["sheet_id"]
+    previous_columns = max(int(metadata.get("column_count") or 1), 1)
+    previous_rows = max(int(metadata.get("row_count") or 1), 1)
 
-    await drive_client.clear_sheet_values(
+    # Clear and unmerge the previous grid before writing the new (possibly narrower) matrix.
+    cleared = await drive_client.clear_sheet_values(
         http_client,
         token,
         sheet_id,
-        f"A1:{column_letter(max(len(row) for row in values) - 1)}1000",
+        f"A1:{column_letter(previous_columns - 1)}{previous_rows}",
     )
+    if not cleared:
+        logger.warning("[CTV MATRIX] Could not clear the previous sheet grid.")
+    unmerged = await drive_client.batch_update_spreadsheet(
+        http_client,
+        token,
+        sheet_id,
+        [
+            {
+                "unmergeCells": {
+                    "range": {
+                        "sheetId": numeric_sheet_id,
+                        "startRowIndex": 0,
+                        "endRowIndex": previous_rows,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": previous_columns,
+                    }
+                }
+            }
+        ],
+    )
+    if not unmerged:
+        logger.warning("[CTV MATRIX] Could not unmerge previous header cells.")
+
     updated = await drive_client.update_sheet_values(
         http_client, token, sheet_id, values, value_input_option="USER_ENTERED"
     )

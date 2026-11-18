@@ -956,6 +956,53 @@ class GoogleDriveClient:
             logger.error(f"Failed to read spreadsheet {spreadsheet_id} metadata: {e}")
             return None
 
+    async def get_spreadsheet_metadata(
+        self, client: httpx.AsyncClient, token: str, spreadsheet_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """First tab id plus previous row/column counts, used to clear stale matrix cells."""
+        try:
+            resp = await client.get(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"fields": "sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)))"},
+            )
+            resp.raise_for_status()
+            sheets = resp.json().get("sheets") or []
+            if not sheets:
+                return None
+            properties = sheets[0].get("properties") or {}
+            grid = properties.get("gridProperties") or {}
+            return {
+                "sheet_id": properties.get("sheetId"),
+                "title": properties.get("title"),
+                "row_count": grid.get("rowCount"),
+                "column_count": grid.get("columnCount"),
+            }
+        except Exception as e:
+            logger.error(f"Failed to read spreadsheet {spreadsheet_id} grid metadata: {e}")
+            return None
+
+    async def make_file_public(
+        self, client: httpx.AsyncClient, token: str, file_id: str
+    ) -> bool:
+        """Grants anyone-with-link reader access (for Drive-hosted QR images)."""
+        try:
+            resp = await client.post(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"type": "anyone", "role": "reader", "allowFileDiscovery": False},
+            )
+            if resp.status_code in (200, 201):
+                return True
+            if "already" in resp.text.lower():
+                return True
+            logger.warning(
+                f"Failed to make file {file_id} public: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to make file {file_id} public: {e}")
+        return False
+
     async def clear_sheet_values(
         self, client: httpx.AsyncClient, token: str, spreadsheet_id: str, range_a1: str = "A1:ZZ1000"
     ) -> bool:
