@@ -6,6 +6,7 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
     environment:
       - ENVIRONMENT=development
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - REDIS_URL=redis://redis:6379/1
       - GEMINI_API_KEY=${GEMINI_API_KEY}
