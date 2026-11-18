@@ -14,7 +14,7 @@
     "ctv_ref_enabled": true,
     "tags": [],
     "tg_response_source": "question",
-    "tg_response_question_id": "cau_2_26",
+    "tg_response_question_id": "cau_20",
     "is_test_mode": false,
     "image_checks": {
       "enable_blur_check": true,
@@ -678,7 +678,7 @@
       "image_slots": null
     },
     {
-      "id": "cau_17",
+      "id": "cau_16",
       "title": "Câu 16: Hạng thành viên GSM (Tài xế thân thiết) hiện tại của anh/chị trên ứng dụng là gì?",
       "type": "single_choice",
       "required": true,
@@ -715,6 +715,30 @@
             "operator": "not_empty",
             "expected_value": null
           }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_8",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_9",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_10",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_11",
+            "operator": "not_empty",
+            "expected_value": null
+          }
         ]
       ],
       "is_consent_gate": false,
@@ -727,7 +751,7 @@
       "image_slots": null
     },
     {
-      "id": "cau_2_21",
+      "id": "cau_17",
       "title": "Câu 17: Chụp ảnh Profile tài xế trên app & ảnh thân / đầu xe máy",
       "type": "camera_webrtc",
       "required": true,
@@ -753,7 +777,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
@@ -778,7 +802,11 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "app_profile",
-          "object_config": {"require_authentic": true, "require_member_tier": false, "allowed_apps": "XANH_SM"},
+          "object_config": {
+            "require_authentic": true,
+            "require_member_tier": false,
+            "allowed_apps": "XANH_SM"
+          },
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -800,7 +828,10 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "vehicle_exterior_or_interior",
-          "object_config": {"require_plate": false, "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"},
+          "object_config": {
+            "require_plate": false,
+            "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"
+          },
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -814,7 +845,7 @@
       ]
     },
     {
-      "id": "cau_2_24",
+      "id": "cau_18",
       "title": "Câu 18: Chụp ảnh Profile tài xế trên app & ảnh thân / vô lăng / đầu xe ô tô",
       "type": "camera_webrtc",
       "required": true,
@@ -840,7 +871,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
@@ -865,7 +896,11 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "app_profile",
-          "object_config": {"require_authentic": true, "require_member_tier": false, "allowed_apps": "XANH_SM"}
+          "object_config": {
+            "require_authentic": true,
+            "require_member_tier": false,
+            "allowed_apps": "XANH_SM"
+          }
         },
         {
           "slot": 1,
@@ -878,7 +913,10 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "vehicle_exterior_or_interior",
-          "object_config": {"require_plate": false, "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"},
+          "object_config": {
+            "require_plate": false,
+            "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"
+          },
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -892,7 +930,7 @@
       ]
     },
     {
-      "id": "cau_2_25",
+      "id": "cau_19",
       "title": "Câu 19: Chụp ảnh lịch sử 5 tuần thu nhập gần nhất của \"tháng\" trên ứng dụng",
       "type": "camera_webrtc",
       "required": true,
@@ -918,7 +956,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
@@ -935,7 +973,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
@@ -960,7 +998,21 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
+          "object_config": {
+            "period_type": "WEEKLY",
+            "constraints": [
+              {
+                "field": "period_months",
+                "op": "contains",
+                "value": 10
+              },
+              {
+                "field": "period_years",
+                "op": "contains",
+                "value": 2026
+              }
+            ]
+          }
         },
         {
           "slot": 1,
@@ -973,7 +1025,21 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
+          "object_config": {
+            "period_type": "WEEKLY",
+            "constraints": [
+              {
+                "field": "period_months",
+                "op": "contains",
+                "value": 10
+              },
+              {
+                "field": "period_years",
+                "op": "contains",
+                "value": 2026
+              }
+            ]
+          }
         },
         {
           "slot": 2,
@@ -986,7 +1052,21 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
+          "object_config": {
+            "period_type": "WEEKLY",
+            "constraints": [
+              {
+                "field": "period_months",
+                "op": "contains",
+                "value": 10
+              },
+              {
+                "field": "period_years",
+                "op": "contains",
+                "value": 2026
+              }
+            ]
+          }
         },
         {
           "slot": 3,
@@ -999,7 +1079,21 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
+          "object_config": {
+            "period_type": "WEEKLY",
+            "constraints": [
+              {
+                "field": "period_months",
+                "op": "contains",
+                "value": 10
+              },
+              {
+                "field": "period_years",
+                "op": "contains",
+                "value": 2026
+              }
+            ]
+          }
         },
         {
           "slot": 4,
@@ -1012,12 +1106,26 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
+          "object_config": {
+            "period_type": "WEEKLY",
+            "constraints": [
+              {
+                "field": "period_months",
+                "op": "contains",
+                "value": 10
+              },
+              {
+                "field": "period_years",
+                "op": "contains",
+                "value": 2026
+              }
+            ]
+          }
         }
       ]
     },
     {
-      "id": "cau_2_26",
+      "id": "cau_20",
       "title": "Câu 20: Nhập số điện thoại / Zalo của tài xế",
       "type": "number",
       "required": false,
@@ -1043,7 +1151,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
@@ -1060,7 +1168,7 @@
             "expected_value": null
           },
           {
-            "depends_on_question_id": "cau_17",
+            "depends_on_question_id": "cau_16",
             "operator": "not_empty",
             "expected_value": null
           }
