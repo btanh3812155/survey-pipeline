@@ -110,9 +110,21 @@
         .row-2 { grid-template-columns: 1fr 1fr; }
         .row-3 { grid-template-columns: 1fr 1fr 1fr; }
 
+        /* Image slot editor grids: same responsive behavior as .row-* */
+        .slot-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .slot-config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 8px;
+        }
+
         /* STACK VERTICALLY ON MOBILE SO DROPDOWNS ARE NEVER SQUISHED */
         @media (max-width: 640px) {
-            .row-2, .row-3 {
+            .row-2, .row-3, .slot-grid {
                 grid-template-columns: 1fr !important;
             }
         }
@@ -972,16 +984,22 @@
                         <span style="font-weight:700; font-size:0.8rem; color:#94a3b8;">Slot #${sidx + 1} (Chỉ mục: ${sidx})</span>
                         <button type="button" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px; font-size:0.72rem; cursor:pointer;" onclick="removeImageSlot(${qidx}, ${sidx})">Xóa</button>
                     </div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                    <div class="slot-grid">
                         <div>
                             <label style="font-size:0.72rem; color:#94a3b8;">Tiêu đề hiển thị</label>
                             <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.title || '')}" placeholder="VD: Ảnh 1: Mặt trước CCCD" oninput="updateImageSlot(${qidx}, ${sidx}, 'title', this.value)">
                         </div>
                         <div>
-                            <label style="font-size:0.72rem; color:#94a3b8;">Loại đối tượng / Role (Mã AI nhận diện)</label>
-                            <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.role || '')}" placeholder="VD: app_profile, app_income, id_card_front, restaurant_bill..." oninput="updateImageSlot(${qidx}, ${sidx}, 'role', this.value)">
+                            <label style="font-size:0.72rem; color:#94a3b8;">Loại đối tượng ảnh / Prompt tự nhập</label>
+                            <select style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" onchange="setSlotObjectType(${qidx}, ${sidx}, this.value)">
+                                <option value="" ${!s.object_type ? 'selected' : ''}>-- Tự nhập prompt --</option>
+                                ${(window.IMAGE_OBJECTS || []).map(obj => `<option value="${escapeHtml(obj.id)}" ${s.object_type === obj.id ? 'selected' : ''}>${escapeHtml((obj.label || obj.id) + ' (' + obj.id + ')')}</option>`).join('')}
+                                ${s.object_type && !imageObjectById(s.object_type) ? `<option value="${escapeHtml(s.object_type)}" selected>${escapeHtml(s.object_type)} (không tìm thấy trong danh sách)</option>` : ''}
+                            </select>
+                            <div style="font-size:0.7rem; color:#64748b; margin-top:4px; line-height:1.4;">${escapeHtml(slotObjectDescription(s))}</div>
                         </div>
                     </div>
+                    ${renderSlotObjectConfig(q, qidx, s, sidx)}
                     <div>
                         <label style="font-size:0.72rem; color:#94a3b8;">Tooltip hướng dẫn riêng cho slot</label>
                         <input type="text" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;" value="${escapeHtml(s.tooltip || '')}" placeholder="VD: Chụp rõ họ tên và mã tài xế..." oninput="updateImageSlot(${qidx}, ${sidx}, 'tooltip', this.value)">
@@ -1055,6 +1073,149 @@
                     </details>
                 </div>
             `).join('');
+        }
+        function imageObjectById(id) {
+            if (!id) return null;
+            return (window.IMAGE_OBJECTS || []).find(obj => obj && obj.id === id) || null;
+        }
+        function slotObjectDescription(slot) {
+            const obj = imageObjectById(slot.object_type);
+            if (obj) {
+                return obj.description
+                    || 'AI nhận diện ảnh theo đối tượng này và trích xuất các trường bên dưới.';
+            }
+            if (slot.object_type) {
+                return `Không tải được cấu hình của đối tượng "${slot.object_type}". Chọn "-- Tự nhập prompt --" để dùng prompt tự nhập.`;
+            }
+            return 'AI sẽ dùng prompt tự nhập bên dưới để nhận diện ảnh này.';
+        }
+        function imageObjectConfigDefaults(obj) {
+            const config = {};
+            (obj.customizable || []).forEach(item => {
+                if (!item || !item.key) return;
+                if (item.default !== undefined) config[item.key] = item.default;
+                else if (item.type === 'toggle') config[item.key] = false;
+            });
+            return config;
+        }
+        function setSlotObjectType(qidx, sidx, value) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            const obj = imageObjectById(value);
+            if (obj) {
+                // Reset config to this object's defaults; stale keys would otherwise leak across objects.
+                slot.object_type = obj.id;
+                slot.object_config = imageObjectConfigDefaults(obj);
+                slot.role = obj.id;
+            } else {
+                // Custom prompt mode: keep the existing role for backward compatibility.
+                delete slot.object_type;
+                delete slot.object_config;
+            }
+            renderQuestions();
+        }
+        function setSlotObjectConfig(qidx, sidx, key, value, type) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (!slot.object_config || typeof slot.object_config !== 'object') slot.object_config = {};
+            if (type === 'toggle') {
+                slot.object_config[key] = Boolean(value);
+            } else if (type === 'number') {
+                slot.object_config[key] = (value === '' || value === null || value === undefined) ? null : Number(value);
+            } else {
+                slot.object_config[key] = value;
+            }
+            // Text-like inputs keep their focus; selection controls re-render so the UI reflects state.
+            if (type === 'select') renderQuestions();
+        }
+        function renderSlotObjectControl(qidx, sidx, config, item) {
+            const key = String(item.key || '');
+            const type = String(item.type || 'text');
+            const value = Object.prototype.hasOwnProperty.call(config, key) ? config[key] : item.default;
+            const label = escapeHtml(item.label || key);
+            const help = item.help
+                ? `<div style="font-size:0.68rem; color:#64748b; margin-top:3px; line-height:1.35;">${escapeHtml(item.help)}</div>`
+                : '';
+            const labelHtml = `<label style="font-size:0.72rem; color:#94a3b8; display:block; margin-bottom:3px;">${label}</label>`;
+            const keyArg = escapeHtml(JSON.stringify(key));
+            const setter = `setSlotObjectConfig(${qidx}, ${sidx}, ${keyArg}, `;
+            const boxStyle = 'width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;';
+            if (type === 'select') {
+                const options = (item.options || []).map(opt => {
+                    const optValue = (opt && typeof opt === 'object') ? String(opt.value ?? opt.label ?? '') : String(opt);
+                    const optLabel = (opt && typeof opt === 'object') ? String(opt.label ?? opt.value ?? '') : String(opt);
+                    return `<option value="${escapeHtml(optValue)}" ${String(value ?? '') === optValue ? 'selected' : ''}>${escapeHtml(optLabel)}</option>`;
+                }).join('');
+                return `<div>${labelHtml}<select style="${boxStyle}" onchange="${setter}this.value, 'select')">${options}</select>${help}</div>`;
+            }
+            if (type === 'toggle') {
+                const checked = (value === true || value === 'true' || value === 1);
+                return `<div>
+                    <label class="toggle-switch" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; background:#020617; border:1px solid #334155; border-radius:6px; width:100%;">
+                        <span style="font-size:0.78rem; color:#cbd5e1;">${label}</span>
+                        <input type="checkbox" ${checked ? 'checked' : ''} onchange="${setter}this.checked, 'toggle')">
+                        <span class="toggle-slider"></span>
+                    </label>${help}
+                </div>`;
+            }
+            if (type === 'number') {
+                return `<div>${labelHtml}<input type="number" style="${boxStyle}" value="${value === undefined || value === null ? '' : escapeHtml(value)}" oninput="${setter}this.value, 'number')">${help}</div>`;
+            }
+            if (type === 'month' || type === 'date') {
+                return `<div>${labelHtml}<input type="${type}" style="${boxStyle}" value="${value === undefined || value === null ? '' : escapeHtml(value)}" oninput="${setter}this.value, '${type}')">${help}</div>`;
+            }
+            if (type === 'textarea') {
+                return `<div style="grid-column:1 / -1;">${labelHtml}<textarea rows="2" style="width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px; resize:vertical;" oninput="${setter}this.value, 'textarea')">${escapeHtml(value === undefined || value === null ? '' : value)}</textarea>${help}</div>`;
+            }
+            return `<div>${labelHtml}<input type="text" style="${boxStyle}" value="${value === undefined || value === null ? '' : escapeHtml(value)}" oninput="${setter}this.value, 'text')">${help}</div>`;
+        }
+        function renderSlotObjectConfig(q, qidx, s, sidx) {
+            if (!s.object_type) {
+                return `<div>
+                    <label style="font-size:0.72rem; color:#94a3b8;">Prompt nhận diện tự nhập</label>
+                    <textarea rows="3" style="width:100%; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả đối tượng cần nhận diện, các trường cần trích xuất và điều kiện hợp lệ. VD: Màn hình thu nhập tuần Xanh SM, đọc số tiền và khoảng ngày (dd/mm - dd/mm)..." oninput="updateImageSlot(${qidx}, ${sidx}, 'ai_detection_prompt', this.value)">${escapeHtml(s.ai_detection_prompt || '')}</textarea>
+                </div>`;
+            }
+            const obj = imageObjectById(s.object_type);
+            if (!obj) {
+                return `<div style="font-size:0.75rem; color:#fbbf24; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.35); border-radius:6px; padding:6px 10px;">
+                    Chưa tải được cấu hình cho đối tượng "${escapeHtml(s.object_type)}". Cấu hình hiện có vẫn được giữ nguyên khi lưu.
+                </div>`;
+            }
+            const config = (s.object_config && typeof s.object_config === 'object') ? s.object_config : {};
+            const controls = (obj.customizable || []).map(item => renderSlotObjectControl(qidx, sidx, config, item)).join('');
+            const expected = Array.isArray(obj.expected_fields) ? obj.expected_fields : [];
+            const expectedHtml = expected.length
+                ? `<div style="font-size:0.72rem; color:#94a3b8; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:6px 10px;">
+                        <div style="font-weight:700; color:#93c5fd; margin-bottom:4px;">AI sẽ trích xuất các trường sau (chỉ đọc):</div>
+                        <ul style="margin:0; padding-left:16px; display:flex; flex-direction:column; gap:2px;">
+                            ${expected.map(f => `<li><code style="color:#38bdf8;">${escapeHtml(f.key || '')}</code> - ${escapeHtml(f.label || f.key || '')} <span style="color:#64748b;">(${escapeHtml(f.type || 'string')}${f.required ? ', bắt buộc' : ''})</span></li>`).join('')}
+                        </ul>
+                    </div>`
+                : '';
+            return `${controls ? `<div class="slot-config-grid">${controls}</div>` : ''}${expectedHtml}`;
+        }
+        async function loadImageObjects() {
+            try {
+                const resp = await fetch('/api/v1/image-objects', { credentials: 'include' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                window.IMAGE_OBJECTS = (data && Array.isArray(data.objects)) ? data.objects : [];
+                window.CHECK_ENGINES = (data && Array.isArray(data.engines)) ? data.engines : [];
+                window.IMAGE_OBJECTS_ERROR = '';
+                return true;
+            } catch (e) {
+                window.IMAGE_OBJECTS = [];
+                window.CHECK_ENGINES = [];
+                window.IMAGE_OBJECTS_ERROR = (e && e.message) ? e.message : 'không kết nối được';
+                return false;
+            }
+        }
+        function renderImageObjectsWarning() {
+            if (!window.IMAGE_OBJECTS_ERROR) return '';
+            return `<div style="font-size:0.75rem; color:#fbbf24; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.35); border-radius:6px; padding:6px 10px; margin-bottom:8px;">
+                Không tải được danh sách loại đối tượng ảnh (${escapeHtml(window.IMAGE_OBJECTS_ERROR)}). Vẫn có thể dùng chế độ tự nhập prompt.
+            </div>`;
         }
         function toggleSlotImageChecks(qidx, sidx, isEnabled) {
             const slot = questions[qidx]?.image_slots?.[sidx];
@@ -1168,6 +1329,7 @@
                                 <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
                                 <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${idx})">+ Thêm Slot Ảnh</button>
                             </div>
+                            ${renderImageObjectsWarning()}
                             <div id="slotsWrap_${idx}" style="display:flex; flex-direction:column; gap:8px;">
                                 ${renderSlotsBuilderHtml(q, idx)}
                             </div>
@@ -1380,6 +1542,25 @@
                         delete cleanQ.is_consent_gate;
                         delete cleanQ.consent_accept_values;
                     }
+                    if (Array.isArray(cleanQ.image_slots)) {
+                        cleanQ.image_slots = cleanQ.image_slots.map(slot => {
+                            const cleanSlot = { ...slot };
+                            if (!cleanSlot.object_type) {
+                                // Custom prompt mode must not ship an object config.
+                                delete cleanSlot.object_config;
+                                return cleanSlot;
+                            }
+                            const obj = imageObjectById(cleanSlot.object_type);
+                            const allowed = obj ? new Set((obj.customizable || []).map(item => item.key)) : null;
+                            const config = (cleanSlot.object_config && typeof cleanSlot.object_config === 'object')
+                                ? cleanSlot.object_config
+                                : {};
+                            cleanSlot.object_config = Object.fromEntries(
+                                Object.entries(config).filter(([key, val]) => val !== undefined && (!allowed || allowed.has(key)))
+                            );
+                            return cleanSlot;
+                        });
+                    }
                     return cleanQ;
                 })
             };
@@ -1513,6 +1694,10 @@
             normalizeSignatureRules();
             hydrateEditorFromSchema();
             renderQuestions();
+            // Non-blocking: the editor stays usable with custom prompts if this fails.
+            loadImageObjects().then(() => {
+                if (questions.some(q => q.type === 'camera_webrtc')) renderQuestions();
+            });
         });
     </script>
 </body>
