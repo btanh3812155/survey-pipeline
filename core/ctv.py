@@ -393,6 +393,17 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
         )
         stats["static"] += 1
 
+    # Repair legacy/manual data: a canonical CTV code may only live on an
+    # explicit COLLABORATOR row. Driver rows keep their real Telegram username
+    # (or NULL) and are never given a CTV identifier.
+    await cur.execute(
+        "UPDATE authorized_users SET username = NULL "
+        "WHERE username IS NOT NULL "
+        "AND UPPER(TRIM(username)) = ANY(%s) "
+        "AND UPPER(COALESCE(role, '')) <> 'COLLABORATOR';",
+        (list(CTV_CODES),),
+    )
+
     # Only explicit CTV bindings may populate the directory. A driver phone is
     # never a CTV target: question-source verdicts resolve the phone directly.
     await cur.execute(
