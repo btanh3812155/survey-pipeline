@@ -2,24 +2,23 @@
 """
 CTV Directory admin page.
 
-Read-only view of `ctv_directory` (codes, contacts, Telegram ids, active flag)
-with a compact quota/tag summary per collaborator. Inline editing lives in the
-database for now; the page just surfaces the platform layer for operators.
+Directory view of `ctv_directory` (codes, contacts, Telegram ids, active flag)
+with a compact quota/tag summary per collaborator and inline edit forms.
 """
 
 import html
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.state import verify_admin_auth, get_db_pool
 from core.ctv import (
     STATIC_CTV_NAMES,
     CTV_CODES,
-    get_ctv_codes,
     get_ctv_directory,
+    update_ctv_directory_entry,
 )
 from core.quotas import get_ctv_quota_evaluations
 
@@ -105,6 +104,8 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
         )
         notes = html.escape(str(row.get("notes") or ""))
         quota_html = row.get("quota_summary") or ""
+        tg_raw = html.escape(str(row.get("telegram_user_id") or ""))
+        active_checked = "checked" if active else ""
         body_rows.append(
             f"""
             <tr>
@@ -115,6 +116,18 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
                 <td>{active_html}</td>
                 <td class="quota-cell">{quota_html}</td>
                 <td class="notes-cell">{notes}</td>
+                <td class="edit-cell">
+                    <details>
+                        <summary>Sửa</summary>
+                        <form method="post" action="/admin/ctvs/{code}">
+                            <input name="display_name" value="{name}" placeholder="Tên hiển thị">
+                            <input name="phone" value="{'' if phone == '—' else phone}" placeholder="Số điện thoại">
+                            <input name="telegram_user_id" value="{tg_raw}" placeholder="Telegram ID">
+                            <label class="active-toggle"><input type="checkbox" name="is_active" value="1" {active_checked}> Active</label>
+                            <button type="submit">Lưu</button>
+                        </form>
+                    </details>
+                </td>
             </tr>
             """
         )
@@ -145,6 +158,11 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
         tr:last-child td {{ border-bottom: none; }}
         .quota-cell {{ font-size: 0.8rem; line-height: 1.5; }}
         .notes-cell {{ color: var(--muted); font-size: 0.78rem; max-width: 220px; }}
+        details summary {{ cursor: pointer; color: var(--primary); font-weight: 600; font-size: 0.8rem; }}
+        .edit-cell form {{ display: grid; gap: 6px; margin-top: 8px; min-width: 180px; }}
+        .edit-cell input[type="text"], .edit-cell input:not([type]) {{ width: 100%; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.78rem; }}
+        .edit-cell button {{ padding: 5px 10px; border: 0; border-radius: 6px; background: var(--primary); color: #fff; font-weight: 700; font-size: 0.78rem; cursor: pointer; }}
+        .active-toggle {{ display: flex; gap: 6px; align-items: center; font-size: 0.78rem; }}
         .empty {{ padding: 40px; text-align: center; color: var(--muted); }}
     </style>
 </head>
@@ -152,7 +170,7 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
     <header>
         <div>
             <h1>Quản Lý Cộng Tác Viên (CTV)</h1>
-            <p class="sub">Danh bạ CTV trung tâm: mã, liên hệ, Telegram và hạn mức.</p>
+            <p class="sub">Danh bạ CTV trung tâm: mã, liên hệ, Telegram và hạn mức. Bấm "Sửa" để cập nhật.</p>
         </div>
         <div class="nav-actions">
             <a href="/admin/forms" class="nav-btn">Quản Lý Form</a>
@@ -173,10 +191,11 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
                     <th>Trạng thái</th>
                     <th>Hạn mức (tag/quota)</th>
                     <th>Ghi chú</th>
+                    <th>Sửa</th>
                 </tr>
             </thead>
             <tbody>
-                {rows_html or '<tr><td colspan="7" class="empty">Chưa có CTV nào trong danh bạ.</td></tr>'}
+                {rows_html or '<tr><td colspan="8" class="empty">Chưa có CTV nào trong danh bạ.</td></tr>'}
             </tbody>
         </table>
     </main>
@@ -188,7 +207,7 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
 async def admin_ctv_directory(
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Read-only CTV directory + quota summary."""
+    """CTV directory + quota summary with inline editing."""
     db_pool = get_db_pool()
     rows = await _load_directory_rows(db_pool)
     for row in rows:
@@ -200,3 +219,29 @@ async def admin_ctv_directory(
             logger.warning(f"Quota summary failed for {row.get('code')}: {e}")
             row["quota_summary"] = '<span style="color:#64748b;">—</span>'
     return HTMLResponse(content=_render_page(rows), status_code=200)
+
+
+@router.post("/admin/ctvs/{code}")
+async def update_admin_ctv(
+    code: str,
+    display_name: str = Form(""),
+    phone: str = Form(""),
+    telegram_user_id: str = Form(""),
+    is_active: Optional[str] = Form(None),
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Updates one CTV directory row (display name, phone, Telegram, active)."""
+    db_pool = get_db_pool()
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Cơ sở dữ liệu chưa sẵn sàng")
+    updated = await update_ctv_directory_entry(
+        db_pool,
+        code,
+        display_name=display_name.strip() or None,
+        phone=phone.strip() or None,
+        telegram_user_id=telegram_user_id.strip() or None,
+        is_active=is_active is not None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Không tìm thấy CTV")
+    return RedirectResponse(url="/admin/ctvs", status_code=303)

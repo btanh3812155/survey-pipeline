@@ -11,8 +11,10 @@ form lists, QR links) keep working without awaiting a DB round-trip. When the DB
 is unavailable or empty, the static CTV_CODES registry is used as a fallback.
 """
 
+import os
 import re
 import html
+import json
 import hashlib
 import logging
 import unicodedata
@@ -284,11 +286,150 @@ async def refresh_ctv_directory_cache(db_pool=None) -> Dict[str, Dict[str, Any]]
     return _CTV_DIRECTORY
 
 
-async def seed_ctv_directory(cur) -> int:
-    """Idempotently seeds ctv_directory from static codes + authorized_users.
+CTV_PHONE_KEYS = ("ctv_phone", "ctv_phone_number", "ctv_sdt", "phone")
+CTV_TELEGRAM_KEYS = (
+    "ctv_telegram_user_id",
+    "ctv_tg_id",
+    "telegram_user_id",
+    "ctv_tg",
+)
+CTV_SUBMISSION_CODE_KEYS = ("ctv_code", "collaborator_id", "ctv_id")
 
-    Returns the number of static codes ensured.
+
+def _clean_phone(value: Any) -> Optional[str]:
+    raw = re.sub(r"[^\d+]", "", str(value or "").strip())
+    if raw.startswith("+84"):
+        raw = "0" + raw[3:]
+    elif raw.startswith("84") and len(raw) == 11:
+        raw = "0" + raw[2:]
+    return raw if len(raw) >= 8 else None
+
+
+def _clean_telegram_id(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw or not re.fullmatch(r"\d{4,20}", raw):
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _extract_contacts(form_data: Any) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+    """Returns (phone, telegram_user_id, source_key) from a submission payload."""
+    if not isinstance(form_data, dict):
+        return None, None, None
+    phone = None
+    phone_key = None
+    for key in CTV_PHONE_KEYS:
+        candidate = _clean_phone(form_data.get(key))
+        if candidate:
+            phone, phone_key = candidate, key
+            break
+    tg_id = None
+    for key in CTV_TELEGRAM_KEYS:
+        candidate = _clean_telegram_id(form_data.get(key))
+        if candidate:
+            tg_id = candidate
+            break
+        if phone is None:
+            fallback_phone = _clean_phone(form_data.get(key))
+            if fallback_phone:
+                phone, phone_key = fallback_phone, key
+
+    # `ctv_telegram` may hold a phone number ("090...") or a numeric Telegram id.
+    telegram_hint = str(form_data.get("ctv_telegram") or "").strip()
+    if telegram_hint:
+        if phone is None and telegram_hint.startswith(("0", "+84", "84")):
+            candidate_phone = _clean_phone(telegram_hint)
+            if candidate_phone:
+                phone, phone_key = candidate_phone, "ctv_telegram"
+        if tg_id is None and not telegram_hint.startswith(("0", "+", "84")):
+            tg_id = _clean_telegram_id(telegram_hint)
+    return phone, tg_id, phone_key
+
+
+def _submission_row_codes(row: Dict[str, Any]) -> List[str]:
+    codes: List[str] = []
+    for key in CTV_SUBMISSION_CODE_KEYS:
+        value = row.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        code = normalize_ctv_code(str(value))
+        if code and code not in codes:
+            codes.append(code)
+    form_data = row.get("form_data")
+    if isinstance(form_data, dict):
+        for key in CTV_SUBMISSION_CODE_KEYS:
+            value = form_data.get(key)
+            if value is None or str(value).strip() == "":
+                continue
+            code = normalize_ctv_code(str(value))
+            if code and code not in codes:
+                codes.append(code)
+    return codes
+
+
+def _iter_dev_submission_rows() -> Iterable[Dict[str, Any]]:
+    """Reads local dev submission JSON files (absent/short files are harmless)."""
+    for name in ("dev_submissions.json", "dev_test_submissions.json"):
+        path = os.path.join(os.getcwd(), "data", name)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict):
+                        yield row
+        except Exception as e:
+            logger.debug(f"Skipping dev submission file {path}: {e}")
+
+
+async def _upsert_submission_ctv(
+    cur,
+    raw_code: Any,
+    display_name: Optional[str] = None,
+    phone: Optional[str] = None,
+    telegram_user_id: Optional[int] = None,
+    source: str = "seed:survey_submissions",
+) -> Optional[str]:
+    """Inserts a submission-derived CTV row; existing directory fields win."""
+    code = normalize_ctv_code(str(raw_code or ""))
+    if not code:
+        return None
+    fallback_name = str(raw_code).strip() or code
+    await cur.execute(
+        """
+        INSERT INTO ctv_directory (code, display_name, phone, telegram_user_id, is_active, notes)
+        VALUES (%s, %s, %s, %s, TRUE, %s)
+        ON CONFLICT (code) DO UPDATE SET
+            display_name = COALESCE(ctv_directory.display_name, EXCLUDED.display_name),
+            phone = COALESCE(ctv_directory.phone, EXCLUDED.phone),
+            telegram_user_id = COALESCE(ctv_directory.telegram_user_id, EXCLUDED.telegram_user_id),
+            updated_at = NOW();
+        """,
+        (code, display_name or fallback_name, phone, telegram_user_id, source),
+    )
+    return code
+
+
+async def seed_ctv_directory(cur) -> Dict[str, Any]:
+    """Idempotently seeds ctv_directory from static codes, authorized_users,
+    existing submissions, and local dev submissions.
+
+    Existing directory fields are never overwritten; contacts are only filled
+    when currently NULL. Returns counters for startup logging.
     """
+    stats: Dict[str, Any] = {
+        "static": 0,
+        "authorized": 0,
+        "submission_codes": 0,
+        "dev_submission_codes": 0,
+        "phone_sources": {},
+    }
+
     for code in CTV_CODES:
         await cur.execute(
             """
@@ -298,6 +439,7 @@ async def seed_ctv_directory(cur) -> int:
             """,
             (code, STATIC_CTV_NAMES.get(code) or code),
         )
+        stats["static"] += 1
 
     await cur.execute(
         "SELECT telegram_user_id, username, full_name, driver_phone, role "
@@ -318,19 +460,155 @@ async def seed_ctv_directory(cur) -> int:
         )
         if not looks_like_ctv:
             continue
+        clean_phone = _clean_phone(phone)
         await cur.execute(
             """
             INSERT INTO ctv_directory (code, display_name, phone, telegram_user_id, notes)
             VALUES (%s, %s, %s, %s, 'seed:authorized_users')
             ON CONFLICT (code) DO UPDATE SET
-                display_name = COALESCE(EXCLUDED.display_name, ctv_directory.display_name),
-                phone = COALESCE(EXCLUDED.phone, ctv_directory.phone),
-                telegram_user_id = COALESCE(EXCLUDED.telegram_user_id, ctv_directory.telegram_user_id),
+                display_name = COALESCE(ctv_directory.display_name, EXCLUDED.display_name),
+                phone = COALESCE(ctv_directory.phone, EXCLUDED.phone),
+                telegram_user_id = COALESCE(ctv_directory.telegram_user_id, EXCLUDED.telegram_user_id),
                 updated_at = NOW();
             """,
-            (code, full_name or code, phone, tg_id),
+            (code, full_name or code, clean_phone, tg_id),
         )
-    return len(CTV_CODES)
+        stats["authorized"] += 1
+        if clean_phone:
+            stats["phone_sources"]["authorized_users"] = (
+                stats["phone_sources"].get("authorized_users", 0) + 1
+            )
+
+    seen_codes: set = set()
+
+    def _new_code(raw: Any) -> Optional[str]:
+        code = normalize_ctv_code(str(raw or ""))
+        if not code or code in seen_codes:
+            return None
+        seen_codes.add(code)
+        return code
+
+    try:
+        await cur.execute(
+            "SELECT DISTINCT ctv_code FROM survey_submissions "
+            "WHERE ctv_code IS NOT NULL AND btrim(ctv_code) <> '';"
+        )
+        for (raw_code,) in await cur.fetchall():
+            code = _new_code(raw_code)
+            if not code:
+                continue
+            await _upsert_submission_ctv(cur, code)
+            stats["submission_codes"] += 1
+    except Exception as e:
+        logger.debug(f"CTV seed skipped survey_submissions.ctv_code: {e}")
+
+    try:
+        await cur.execute(
+            "SELECT DISTINCT collaborator_id FROM survey_submissions "
+            "WHERE collaborator_id IS NOT NULL;"
+        )
+        for (raw_id,) in await cur.fetchall():
+            code = _new_code(raw_id)
+            if not code:
+                continue
+            await _upsert_submission_ctv(cur, code)
+            stats["submission_codes"] += 1
+    except Exception as e:
+        logger.debug(f"CTV seed skipped survey_submissions.collaborator_id: {e}")
+
+    try:
+        await cur.execute(
+            "SELECT ctv_code, collaborator_id, form_data FROM survey_submissions "
+            "WHERE form_data ?| ARRAY['ctv_phone', 'ctv_phone_number', 'ctv_sdt', "
+            "'phone', 'ctv_telegram_user_id', 'ctv_telegram', 'ctv_tg_id', "
+            "'telegram_user_id', 'ctv_tg'];"
+        )
+        for raw_code, raw_collab, form_data in await cur.fetchall():
+            codes = []
+            if raw_code and str(raw_code).strip():
+                codes.append(normalize_ctv_code(str(raw_code)))
+            if raw_collab and str(raw_collab).strip():
+                codes.append(normalize_ctv_code(str(raw_collab)))
+            phone, tg_id, source_key = _extract_contacts(form_data)
+            if not phone and not tg_id:
+                continue
+            for code in codes:
+                if not code:
+                    continue
+                await _upsert_submission_ctv(cur, code, phone=phone, telegram_user_id=tg_id)
+                if phone:
+                    key = f"survey_submissions.form_data.{source_key or 'phone'}"
+                    stats["phone_sources"][key] = stats["phone_sources"].get(key, 0) + 1
+    except Exception as e:
+        logger.debug(f"CTV seed skipped survey_submissions.form_data contacts: {e}")
+
+    for row in _iter_dev_submission_rows():
+        codes = _submission_row_codes(row)
+        phone, tg_id, source_key = _extract_contacts(row.get("form_data"))
+        if not phone and not tg_id:
+            phone, tg_id, source_key = _extract_contacts(row)
+        for code in codes:
+            await _upsert_submission_ctv(
+                cur, code, phone=phone, telegram_user_id=tg_id, source="seed:dev_submissions"
+            )
+            stats["dev_submission_codes"] += 1
+            if phone:
+                key = f"dev_submissions.form_data.{source_key or 'phone'}"
+                stats["phone_sources"][key] = stats["phone_sources"].get(key, 0) + 1
+
+    logger.info(
+        "CTV directory seed: static=%s authorized=%s submission_codes=%s "
+        "dev_submission_codes=%s phone_sources=%s",
+        stats["static"],
+        stats["authorized"],
+        stats["submission_codes"],
+        stats["dev_submission_codes"],
+        stats["phone_sources"],
+    )
+    return stats
+
+
+async def update_ctv_directory_entry(
+    db_pool,
+    code: str,
+    display_name: Optional[str] = None,
+    phone: Optional[str] = None,
+    telegram_user_id: Optional[Any] = None,
+    is_active: bool = True,
+) -> bool:
+    """Updates one directory row and refreshes the process cache."""
+    normalized = normalize_ctv_code(code)
+    if not db_pool or not normalized:
+        return False
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE ctv_directory SET
+                        display_name = %s,
+                        phone = %s,
+                        telegram_user_id = %s,
+                        is_active = %s,
+                        updated_at = NOW()
+                    WHERE UPPER(code) = %s;
+                    """,
+                    (
+                        str(display_name).strip() or None if display_name is not None else None,
+                        _clean_phone(phone) if phone else None,
+                        _clean_telegram_id(telegram_user_id) if telegram_user_id not in (None, "") else None,
+                        bool(is_active),
+                        normalized,
+                    ),
+                )
+                updated = int(getattr(cur, "rowcount", 1) or 0) > 0
+            await conn.commit()
+    except Exception as e:
+        logger.warning(f"CTV directory update failed for {code}: {e}")
+        return False
+    if updated:
+        await refresh_ctv_directory_cache(db_pool)
+    return updated
 
 
 async def ensure_ctv_platform_schema(db_pool=None) -> bool:
@@ -350,7 +628,7 @@ async def ensure_ctv_platform_schema(db_pool=None) -> bool:
             async with conn.cursor() as cur:
                 for statement in CTV_TABLE_STATEMENTS:
                     await cur.execute(statement)
-                await seed_ctv_directory(cur)
+                stats = await seed_ctv_directory(cur)
             await conn.commit()
     except Exception as e:
         logger.warning(f"CTV platform schema ensure failed: {e}")
@@ -358,7 +636,7 @@ async def ensure_ctv_platform_schema(db_pool=None) -> bool:
     await refresh_ctv_directory_cache(db_pool)
     logger.info(
         f"CTV platform ready: {len(_CTV_DIRECTORY)} directory rows, "
-        f"{len(_CTV_FORM_LINKS)} form links cached."
+        f"{len(_CTV_FORM_LINKS)} form links cached; seed={stats}."
     )
     return True
 
