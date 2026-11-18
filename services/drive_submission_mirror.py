@@ -352,10 +352,13 @@ async def mirror_submissions_to_drive(
                 )
                 form_report["customer_folder_id"] = customer_form_id
 
+        status_folders: Dict[str, Optional[str]] = {}
         for item in form_items:
-            status_folder_id = await client.get_or_create_folder(
-                http_client, token, item["status"], internal_submissions_id
-            )
+            if item["status"] not in status_folders:
+                status_folders[item["status"]] = await client.get_or_create_folder(
+                    http_client, token, item["status"], internal_submissions_id
+                )
+            status_folder_id = status_folders[item["status"]]
             internal_folder_id = None
             if status_folder_id:
                 internal_folder_id = await client.get_or_create_folder(
