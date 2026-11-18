@@ -536,13 +536,18 @@
         function removeQuestion(idx) {
             const removed = questions[idx];
             questions.splice(idx, 1);
-            if (removed && removed.id) {
+            if (removed) {
+                const removedUid = removed.__uid;
+                const removedId = (removed.id || '').trim();
                 questions.forEach(q => {
-                    if (Array.isArray(q.condition_groups)) {
-                        q.condition_groups = q.condition_groups
-                            .map(group => group.filter(rule => rule.depends_on_uid !== removed.__uid))
-                            .filter(group => group.length > 0);
-                    }
+                    if (!Array.isArray(q.condition_groups)) return;
+                    q.condition_groups = q.condition_groups
+                        .map(group => group.filter(rule => {
+                            if (removedUid && rule.depends_on_uid === removedUid) return false;
+                            // Legacy rules may not carry a uid yet; fall back to the visible id.
+                            return !(!rule.depends_on_uid && removedId && rule.depends_on_question_id === removedId);
+                        }))
+                        .filter(group => group.length > 0);
                 });
             }
             renderQuestions();
@@ -684,6 +689,10 @@
         }
         function renderConditionalRowHtml(idx, gidx, rule, cidx, priorQuestions) {
             const parentQ = questions.find(p => p.__uid === rule.depends_on_uid);
+            const parentIndex = questions.findIndex(p => p.__uid === rule.depends_on_uid);
+            const parentIsLater = Boolean(parentQ) && parentIndex >= idx;
+            const parentMissing = !parentQ;
+            const invalidParentOrder = parentIndex === idx ? 'chính câu này' : 'SAU câu này';
             const isSignatureParent = Boolean(parentQ && parentQ.type === 'signature');
             const op = isSignatureParent ? 'not_empty' : (rule.operator || 'equals');
             const values = Array.isArray(rule.expected_value) ? rule.expected_value : [];
@@ -721,10 +730,20 @@
                     <div class="field-group">
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Câu hỏi phụ thuộc</label>
                         <select style="width:100%; padding:7px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px;" onchange="setConditionalParent(${idx}, ${gidx}, ${cidx}, this.value)">
-                            ${priorQuestions.map((p, pIdx) => `
+                            ${priorQuestions.map((p) => `
                                 <option value="${escapeHtml(p.__uid)}" ${p.__uid === rule.depends_on_uid ? 'selected' : ''}>${escapeHtml(p.title || p.id)}</option>
                             `).join('')}
+                            ${parentMissing
+                                ? `<option value="" selected>-- Câu hỏi đã bị xóa (chọn lại) --</option>`
+                                : (parentIsLater
+                                    ? `<option value="${escapeHtml(parentQ.__uid)}" selected>${escapeHtml((parentQ.title || parentQ.id) + ' (' + invalidParentOrder + ' - không hợp lệ)')}</option>`
+                                    : '')}
                         </select>
+                        ${parentMissing
+                            ? `<div style="font-size:0.72rem; color:#f87171; margin-top:4px;">Điều kiện đang trỏ tới câu hỏi không còn tồn tại. Vui lòng chọn lại.</div>`
+                            : (parentIsLater
+                                ? `<div style="font-size:0.72rem; color:#f87171; margin-top:4px;">Câu hỏi phụ thuộc phải nằm TRƯỚC câu này. Hãy di chuyển nó lên trước hoặc chọn câu khác.</div>`
+                                : '')}
                     </div>
                     <div class="field-group">
                         <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Toán tử</label>
@@ -1527,20 +1546,26 @@
             });
         }
 
-        function collectDanglingConditionRefs() {
-            const uids = new Set(questions.map(q => q.__uid).filter(Boolean));
-            const dangling = [];
-            questions.forEach(q => {
-                (q.condition_groups || []).forEach(group => {
-                    (group || []).forEach(rule => {
-                        const parentUid = rule && rule.depends_on_uid;
-                        if (parentUid && !uids.has(parentUid)) {
-                            dangling.push({ questionId: q.id || '(chua dat ma)' });
+        function collectInvalidConditionRefs() {
+            const byUid = new Map(questions.map((q, idx) => [q.__uid, { q, idx }]));
+            const errors = [];
+            questions.forEach((q, idx) => {
+                (q.condition_groups || []).forEach((group, gidx) => {
+                    (group || []).forEach((rule, cidx) => {
+                        if (!rule) return;
+                        const where = `câu '${q.id || q.title || (idx + 1)}' (nhóm ${gidx + 1}, điều kiện ${cidx + 1})`;
+                        const hit = byUid.get(rule.depends_on_uid);
+                        if (!hit) {
+                            errors.push({ message: `${where}: chưa chọn câu hỏi phụ thuộc hoặc câu hỏi đó không còn tồn tại.` });
+                            return;
+                        }
+                        if (hit.idx >= idx) {
+                            errors.push({ message: `${where}: câu hỏi phụ thuộc '${hit.q.id || hit.q.title || ('#' + (hit.idx + 1))}' không nằm trước câu này.` });
                         }
                     });
                 });
             });
-            return dangling;
+            return errors;
         }
 
         async function deleteFormWithConfirmation() {
@@ -1599,11 +1624,12 @@
                 switchTab('questions');
                 return;
             }
-            const dangling = collectDanglingConditionRefs();
-            if (dangling.length) {
-                const detail = dangling.slice(0, 5).map(d => `câu '${d.questionId}'`).join('; ');
-                alert("Điều kiện hiển thị đang trỏ tới câu hỏi không còn tồn tại (có thể đã bị xóa): " + detail +
-                      ". Vui lòng chọn lại câu hỏi phụ thuộc hoặc xóa điều kiện rồi lưu lại.");
+            const conditionErrors = collectInvalidConditionRefs();
+            if (conditionErrors.length) {
+                const detail = conditionErrors.slice(0, 5).map(e => e.message).join('\n- ');
+                alert("Không thể lưu vì điều kiện hiển thị không hợp lệ:\n- " + detail +
+                      "\n\nĐiều kiện chỉ được phụ thuộc vào câu hỏi nằm TRƯỚC câu hiện tại. " +
+                      "Hãy di chuyển câu hỏi phụ thuộc lên trước hoặc chọn câu khác rồi lưu lại.");
                 switchTab('questions');
                 return;
             }
