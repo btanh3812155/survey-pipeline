@@ -3,6 +3,7 @@
 import io
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -11,10 +12,16 @@ logger = logging.getLogger("ctv_matrix")
 
 FORM_BASE_URL = "https://survey.trustbridgevn.com/forms"
 QR_API_URL = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={data}"
-DRIVE_IMAGE_URL = "https://drive.google.com/uc?export=view&id={file_id}"
 INTERNAL_FOLDER_NAME = "Internal"
-QR_FOLDER_NAME = "QR"
 CTV_SHEET_NAME = "CTV_Info"
+# Workspace Sheets blocks external IMAGE() fetches, so QR PNGs are served by our app
+# and the QR column contains a plain (auto-hyperlinked) URL to the hosted PNG.
+APP_QR_DIR = os.environ.get("CTV_QR_MEDIA_DIR") or os.path.join(
+    os.getcwd(), "data", "media", "forms", "qr"
+)
+PUBLIC_MEDIA_BASE = os.environ.get(
+    "PUBLIC_MEDIA_BASE", "https://survey.trustbridgevn.com/media"
+)
 
 CTV_DDL = [
     """
@@ -85,22 +92,24 @@ def parse_qr_record(value: Any) -> Dict[str, Any]:
 
 def qr_record_is_current(record: Dict[str, Any], link_url: str) -> bool:
     return bool(
-        record.get("file_id")
+        record.get("type") in ("app_image", "app_link")
         and record.get("image_url")
         and record.get("target") == link_url
     )
 
 
 def qr_cell_value(link: Dict[str, Any]) -> str:
-    """IMAGE formula for a Drive-hosted QR PNG, else a clickable fallback."""
+    """
+    Plain URL text for the app-hosted QR PNG.
+
+    Google Sheets in this Workspace rejects every external IMAGE() with
+    "#REF! (Please use a desktop web browser ...)", so a plain URL is used;
+    Sheets auto-hyperlinks it and clicking opens the QR image.
+    """
     record = parse_qr_record(link.get("qr"))
     image_url = record.get("image_url") or ""
     target = record.get("target") or link.get("url") or ""
-    if image_url:
-        return f'=IMAGE("{image_url}")'
-    if target:
-        return f'=HYPERLINK("{target}","Mở QR")'
-    return ""
+    return image_url or target
 
 
 def qr_file_name(ctv_code: str, form_id: str) -> str:
@@ -327,12 +336,6 @@ async def sync_internal_ctv_matrix(
         logger.error("[CTV MATRIX] Could not create/find the Internal folder.")
         return False
 
-    qr_folder_id = await drive_client.get_or_create_folder(
-        http_client, token, QR_FOLDER_NAME, internal_folder_id
-    )
-    if not qr_folder_id:
-        logger.warning("[CTV MATRIX] Could not create/find the Internal/QR folder; using hyperlink fallbacks.")
-
     existing_links = await fetch_links(db_pool)
     links: Dict[Tuple[str, str], Dict[str, Any]] = {}
     changed: List[Tuple[str, str, str, str]] = []
@@ -350,33 +353,22 @@ async def sync_internal_ctv_matrix(
                 or not qr_record_is_current(previous_qr, url)
             ):
                 qr_png = await generate_qr_png(url, http_client)
-                file_id = None
-                if qr_png and qr_folder_id:
-                    file_id = await drive_client.upload_file(
-                        http_client,
-                        token,
-                        qr_file_name(code, form_id),
-                        qr_png,
-                        "image/png",
-                        qr_folder_id,
-                    )
-                    if file_id:
-                        await drive_client.make_file_public(http_client, token, file_id)
-                if file_id:
-                    record = {
-                        "type": "drive_image",
-                        "file_id": file_id,
-                        "image_url": DRIVE_IMAGE_URL.format(file_id=file_id),
-                        "target": url,
-                        "source_url": qr_image_url(url),
-                    }
-                else:
-                    record = {
-                        "type": "link",
-                        "image_url": "",
-                        "target": url,
-                        "source_url": qr_image_url(url),
-                    }
+                filename = qr_file_name(code, form_id)
+                image_url = ""
+                if qr_png:
+                    os.makedirs(APP_QR_DIR, exist_ok=True)
+                    with open(os.path.join(APP_QR_DIR, filename), "wb") as qr_file:
+                        qr_file.write(qr_png)
+                    image_url = f"{PUBLIC_MEDIA_BASE.rstrip('/')}/forms/qr/{filename}"
+                if not image_url:
+                    # Clicking the plain link still opens a rendered QR image.
+                    image_url = qr_image_url(url)
+                record = {
+                    "type": "app_image" if qr_png else "app_link",
+                    "image_url": image_url,
+                    "target": url,
+                    "source_url": qr_image_url(url),
+                }
                 changed.append((code, form_id, url, json.dumps(record, ensure_ascii=False)))
             else:
                 record = previous_qr

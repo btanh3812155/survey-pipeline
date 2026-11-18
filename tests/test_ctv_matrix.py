@@ -56,8 +56,6 @@ class FakeDriveClient:
         self.clears = []
         self.values_updates = []
         self.batch_requests = []
-        self.uploads = []
-        self.public_files = []
 
     async def get_or_create_folder(self, client, token, name, parent=None):
         return {"Internal": "internal_folder", "QR": "qr_folder"}.get(name, f"folder_{name}")
@@ -71,14 +69,6 @@ class FakeDriveClient:
 
     async def get_spreadsheet_metadata(self, client, token, spreadsheet_id):
         return {"sheet_id": 7, "row_count": self.row_count, "column_count": self.column_count}
-
-    async def upload_file(self, client, token, filename, content_bytes, mime_type="application/octet-stream", parent_id=None):
-        self.uploads.append((filename, content_bytes, mime_type, parent_id))
-        return f"qr_file_{len(self.uploads)}"
-
-    async def make_file_public(self, client, token, file_id):
-        self.public_files.append(file_id)
-        return True
 
     async def clear_sheet_values(self, client, token, spreadsheet_id, range_a1="A1:ZZ1000"):
         self.clears.append(range_a1)
@@ -124,27 +114,28 @@ async def test_fetch_active_ctvs_filters_inactive(monkeypatch):
     assert [ctv["code"] for ctv in ctvs] == ["CTV-A"]
 
 
-def _patch_qr(monkeypatch, calls=None):
+def _patch_qr(monkeypatch, tmp_path, calls=None):
     async def fake_qr(url, http_client=None):
         if calls is not None:
             calls.append(url)
         return b"png-bytes"
 
     monkeypatch.setattr(cm, "generate_qr_png", fake_qr)
+    monkeypatch.setattr(cm, "APP_QR_DIR", str(tmp_path / "qr"))
 
 
 @pytest.mark.asyncio
-async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypatch):
+async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypatch, tmp_path):
     ctvs = [
         {"code": "CTV-A", "display_name": "An", "phone": "0901", "is_active": True},
         {"code": "CTV-B", "display_name": "Bình", "phone": "0902", "is_active": True},
     ]
     forms = ["form_one", "form_two"]
     url_a1 = cm.form_link_url("form_one", "CTV-A")
+    current_image_url = f"{cm.PUBLIC_MEDIA_BASE}/forms/qr/old_existing.png"
     current_qr = {
-        "type": "drive_image",
-        "file_id": "existing_qr",
-        "image_url": cm.DRIVE_IMAGE_URL.format(file_id="existing_qr"),
+        "type": "app_image",
+        "image_url": current_image_url,
         "target": url_a1,
     }
 
@@ -171,7 +162,7 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
     monkeypatch.setattr(cm, "fetch_links", fake_links)
     monkeypatch.setattr(cm, "upsert_links", fake_upsert)
-    _patch_qr(monkeypatch, qr_calls)
+    _patch_qr(monkeypatch, tmp_path, qr_calls)
 
     drive = FakeDriveClient(existing_sheet="sheet_123")
     assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", object()) is True
@@ -186,22 +177,19 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
     form_two_url, form_two_qr = upserted[("CTV-A", "form_two")]
     assert form_two_url == cm.form_link_url("form_two", "CTV-A")
     form_two_record = cm.parse_qr_record(form_two_qr)
-    assert form_two_record["type"] == "drive_image"
-    assert form_two_record["file_id"] == "qr_file_1"
+    form_two_image_url = f"{cm.PUBLIC_MEDIA_BASE}/forms/qr/{cm.qr_file_name('CTV-A', 'form_two')}"
+    assert form_two_record["type"] == "app_image"
     assert form_two_record["target"] == form_two_url
-    assert form_two_record["image_url"] == cm.DRIVE_IMAGE_URL.format(file_id="qr_file_1")
-
-    assert len(drive.uploads) == 3
-    assert all(mime == "image/png" and parent == "qr_folder" for _, _, mime, parent in drive.uploads)
-    assert drive.public_files == ["qr_file_1", "qr_file_2", "qr_file_3"]
+    assert form_two_record["image_url"] == form_two_image_url
+    assert (tmp_path / "qr" / cm.qr_file_name("CTV-A", "form_two")).read_bytes() == b"png-bytes"
 
     rows, value_input = drive.values_updates[0]
     assert value_input == "USER_ENTERED"
     assert rows[0][-2:] == ["Phone", "CTV Code"]
     assert rows[2][-2:] == ["0901", "CTV-A"]
-    assert rows[2][0] == f'=IMAGE("{cm.DRIVE_IMAGE_URL.format(file_id="existing_qr")}")'
+    assert rows[2][0] == current_image_url
     assert rows[2][1] == url_a1
-    assert rows[2][2] == f'=IMAGE("{cm.DRIVE_IMAGE_URL.format(file_id="qr_file_1")}")'
+    assert rows[2][2] == form_two_image_url
     assert drive.clears == ["A1:F50"]
 
     unmerge_ranges = [r["unmergeCells"]["range"] for r in _unmerge_requests(drive)]
@@ -216,7 +204,7 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_matrix_clears_previous_width_when_forms_shrink(monkeypatch):
+async def test_matrix_clears_previous_width_when_forms_shrink(monkeypatch, tmp_path):
     async def fake_active(pool):
         return [{"code": "CTV-A", "phone": "0901", "is_active": True}]
 
@@ -234,7 +222,7 @@ async def test_matrix_clears_previous_width_when_forms_shrink(monkeypatch):
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
     monkeypatch.setattr(cm, "fetch_links", fake_links)
     monkeypatch.setattr(cm, "upsert_links", fake_upsert)
-    _patch_qr(monkeypatch)
+    _patch_qr(monkeypatch, tmp_path)
 
     # Previous sheet had 2 forms (6 columns); new matrix has 1 form (4 columns).
     drive = FakeDriveClient(existing_sheet="sheet_123", column_count=6, row_count=50)
@@ -269,7 +257,7 @@ async def test_matrix_merges_two_columns_per_form_beyond_26_columns():
 
 
 @pytest.mark.asyncio
-async def test_matrix_creates_sheet_when_missing(monkeypatch):
+async def test_matrix_creates_sheet_when_missing(monkeypatch, tmp_path):
     async def fake_active(pool):
         return [{"code": "CTV-A", "phone": "0901", "is_active": True}]
 
@@ -287,7 +275,7 @@ async def test_matrix_creates_sheet_when_missing(monkeypatch):
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
     monkeypatch.setattr(cm, "fetch_links", fake_links)
     monkeypatch.setattr(cm, "upsert_links", fake_upsert)
-    _patch_qr(monkeypatch)
+    _patch_qr(monkeypatch, tmp_path)
 
     drive = FakeDriveClient(existing_sheet=None)
     assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", object()) is True
@@ -295,8 +283,7 @@ async def test_matrix_creates_sheet_when_missing(monkeypatch):
 
     rows, _ = drive.values_updates[0]
     assert rows[2][-2:] == ["0901", "CTV-A"]
-    assert drive.uploads and drive.uploads[0][2] == "image/png"
-    assert drive.public_files == ["qr_file_1"]
+    assert (tmp_path / "qr" / cm.qr_file_name("CTV-A", "form_one")).read_bytes() == b"png-bytes"
 
 
 async def _noop(*args, **kwargs):
