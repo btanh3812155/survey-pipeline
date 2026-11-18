@@ -39,9 +39,13 @@ from services.image_types import parse_date_range_from_text
 from services.image_objects import (
     ImageObjectDefinitionError,
     build_detection_prompt,
-    get_object,
     resolve_slot_object,
-    run_object_checks,
+    run_definition_checks,
+)
+from services.image_object_projection import (
+    image_object_result,
+    project_income_totals,
+    project_income_weeks,
 )
 from services.action_checklist import init_action_checklist, dispatch_action_checklist
 from services.storage_r2 import r2_client
@@ -658,7 +662,7 @@ async def _extract_image_object(
     if obj.extractor == "none":
         return {}
     prompt = build_detection_prompt(obj, config or {})
-    if (prompt_override or "").strip():
+    if (prompt_override or "").strip() and prompt_override.strip() not in prompt:
         prompt = f"{prompt}\nAdditional slot instructions: {prompt_override.strip()}"
     if obj.extractor == "income_statement":
         result = await _call_object_extractor(vision_client.ocr_driver_app_income, image_bytes, week_idx, prompt)
@@ -927,6 +931,8 @@ async def submit_webrtc_survey(
         "final_written": False,
     }
 
+    compat_income: Dict[str, Dict[str, Any]] = {}
+    compat_totals: Dict[str, int] = {"total_gross_revenue": 0, "total_net_income": 0, "total_trips": 0}
     if not is_schema_valid:
         status_str = "REJECTED"
         is_approved = False
@@ -1154,13 +1160,15 @@ async def submit_webrtc_survey(
 
                         matched_profile_idx = groups["profile"][0] if groups["profile"] else None
                         matched_vehicle_idx = groups["vehicle"][0] if groups["vehicle"] else None
-                        matched_income_indices = list(groups["income"]) or [0]
-                        if matched_profile_idx is None:
-                            matched_profile_idx = matched_income_indices[0]
+                        matched_income_indices = list(groups["income"])
 
-                        # 4. Object-driven extraction: profile + every weekly income screen.
+                        # 4. Object-driven extraction: profile + every income object.
                         # REUSING pre-normalized bytes (ZERO redundant libvips calls!)
                         slot_objects = [_slot_object(slot) for slot in (target_q.image_slots or [])]
+                        slot_roles = [
+                            _normalized_image_slots([slot])[0].get("role")
+                            for slot in (target_q.image_slots or [])
+                        ]
                         config_by_object: Dict[str, Dict[str, Any]] = {}
                         prompt_by_object: Dict[str, str] = {}
                         for slot, obj in zip(target_q.image_slots or [], slot_objects):
@@ -1172,39 +1180,69 @@ async def submit_webrtc_survey(
                             (obj for obj in slot_objects if obj.extractor == "income_statement"),
                             None,
                         )
+                        if income_object is None:
+                            income_object = next(
+                                (
+                                    obj for role, obj in zip(slot_roles, slot_objects)
+                                    if _role_group(role) == "income"
+                                ),
+                                None,
+                            )
                         profile_object = next(
                             (obj for obj in slot_objects if obj.extractor == "profile"),
                             None,
                         )
-                        if income_object is None:
-                            income_object = get_object("weekly_income")
                         if profile_object is None:
-                            profile_object = get_object("app_profile")
-                        income_config = config_by_object.get(income_object.id, {})
-                        profile_config = config_by_object.get(profile_object.id, {})
-
-                        task_profile_ocr = _extract_image_object(
-                            norm_bytes_list[matched_profile_idx],
-                            profile_object,
-                            profile_config,
-                            prompt_override=prompt_by_object.get(profile_object.id),
-                        )
-                        primary_income_idx = matched_income_indices[0]
-
-                        income_tasks = [
-                            _extract_image_object(
-                                norm_bytes_list[s_idx],
-                                income_object,
-                                income_config,
-                                week_idx=i_pos + 1,
-                                prompt_override=prompt_by_object.get(income_object.id),
+                            profile_object = next(
+                                (
+                                    obj for role, obj in zip(slot_roles, slot_objects)
+                                    if _role_group(role) == "profile"
+                                ),
+                                None,
                             )
-                            for i_pos, s_idx in enumerate(matched_income_indices)
-                        ]
+                        income_config = config_by_object.get(income_object.id, {}) if income_object else {}
+                        profile_config = config_by_object.get(profile_object.id, {}) if profile_object else {}
 
-                        all_results = await asyncio.gather(task_profile_ocr, *income_tasks, return_exceptions=True)
-                        profile_res = all_results[0]
-                        income_res_list = all_results[1:]
+                        extraction_tasks = []
+                        extraction_kinds: List[str] = []
+                        extraction_indices: List[int] = []
+                        if profile_object is not None and matched_profile_idx is not None:
+                            extraction_tasks.append(
+                                _extract_image_object(
+                                    norm_bytes_list[matched_profile_idx],
+                                    profile_object,
+                                    profile_config,
+                                    prompt_override=prompt_by_object.get(profile_object.id),
+                                )
+                            )
+                            extraction_kinds.append("profile")
+                            extraction_indices.append(matched_profile_idx)
+
+                        if income_object is not None:
+                            for i_pos, s_idx in enumerate(matched_income_indices):
+                                extraction_tasks.append(
+                                    _extract_image_object(
+                                        norm_bytes_list[s_idx],
+                                        income_object,
+                                        income_config,
+                                        week_idx=i_pos + 1,
+                                        prompt_override=prompt_by_object.get(income_object.id),
+                                    )
+                                )
+                                extraction_kinds.append("income")
+                                extraction_indices.append(s_idx)
+
+                        all_results = await asyncio.gather(*extraction_tasks, return_exceptions=True) if extraction_tasks else []
+                        profile_res: Any = {}
+                        income_res_list: List[Any] = []
+                        income_indices_order: List[int] = []
+                        for kind, img_idx, result in zip(extraction_kinds, extraction_indices, all_results):
+                            if kind == "profile":
+                                profile_res = result if isinstance(result, dict) else {}
+                            else:
+                                income_res_list.append(result)
+                                income_indices_order.append(img_idx)
+                        matched_income_indices = income_indices_order
 
                         # Order-agnostic weeks: drop images whose OCR is clearly not an
                         # income statement (e.g. the profile menu listing "Thống kê thu nhập"
@@ -1249,94 +1287,113 @@ async def submit_webrtc_survey(
 
                         role_0 = (
                             classified_roles[matched_profile_idx]
-                            if groups["profile"]
+                            if groups["profile"] and matched_profile_idx is not None
                             else (target_q.image_slots[0].get("role", "app_profile") if target_q.image_slots else "app_profile")
                         )
                         membership_type = profile_res.get("membership_type") if isinstance(profile_res, dict) and not isinstance(profile_res, Exception) else None
                         primary_ocr = income_res_list[0] if income_res_list and isinstance(income_res_list[0], dict) and not isinstance(income_res_list[0], Exception) else {}
                         ocr_data = primary_ocr
-                        # Compatibility projection for persistence/deliverables. The
-                        # object definition + extraction remain the source of truth.
-                        weekly_incomes = {}
-                        tot_gross = 0
-                        tot_net = 0
-                        tot_trips = 0
+
+                        image_object_results: List[Dict[str, Any]] = []
                         monthly_violation = coverage_violation or duplicate_week_violation
-                        if not monthly_violation and isinstance(profile_res, dict) and not isinstance(profile_res, Exception):
+
+                        def _slot_title(idx: int) -> str:
+                            slots = target_q.image_slots or []
+                            if 0 <= idx < len(slots):
+                                return str(slots[idx].get("title") or slots[idx].get("role") or f"Ảnh {idx + 1}")
+                            return f"Ảnh {idx + 1}"
+
+                        if profile_object is not None and matched_profile_idx is not None:
                             try:
-                                profile_check = run_object_checks(profile_object.id, profile_res, profile_config)
+                                profile_check = run_definition_checks(profile_object, profile_res, profile_config)
                             except ImageObjectDefinitionError as exc:
                                 logger.error("[IMAGE OBJECTS] profile check unusable: %s", exc)
-                                profile_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"]}
-                            if not profile_check.get("passed"):
+                                profile_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
+                            image_object_results.append(
+                                image_object_result(
+                                    profile_object.id,
+                                    matched_profile_idx,
+                                    _slot_title(matched_profile_idx),
+                                    profile_res,
+                                    profile_check,
+                                )
+                            )
+                            if not monthly_violation and not profile_check.get("passed"):
                                 monthly_violation = {
                                     "failed_slot": matched_profile_idx,
                                     "reason": f"Ảnh {matched_profile_idx + 1}: {profile_check['reasons'][0]}",
                                     "ocr_data": profile_res,
                                 }
-                        math_violation = None
-                        for w_i in range(5):
+
+                        for w_i, (img_idx, ocr_w) in enumerate(income_pairs):
                             w_num = w_i + 1
-                            if w_i < len(income_res_list) and isinstance(income_res_list[w_i], dict) and not isinstance(income_res_list[w_i], Exception):
-                                ocr_w = income_res_list[w_i]
-                            elif w_i == 0 and isinstance(ocr_data, dict):
-                                ocr_w = ocr_data
-                            else:
-                                ocr_w = {}
-                            g_val = int(ocr_w.get("gross_revenue") or 0)
-                            n_val = int(ocr_w.get("net_income") or 0)
-                            t_val = int(ocr_w.get("total_trips") or 0)
-                            weekly_incomes[f"week_{w_num}"] = {
-                                "gross_revenue": g_val,
-                                "net_income": n_val,
-                                "total_trips": t_val,
-                                "discount_and_tax": ocr_w.get("discount_and_tax", 0),
-                                "period": ocr_w.get("period", f"Tuần {w_num}"),
-                                "online_hours": ocr_w.get("online_hours", ""),
-                            }
-                            tot_gross += g_val
-                            tot_net += n_val
-                            tot_trips += t_val
+                            if not isinstance(ocr_w, dict):
+                                continue
+                            object_check = None
+                            if income_object is not None:
+                                try:
+                                    object_check = run_definition_checks(income_object, ocr_w, income_config)
+                                except ImageObjectDefinitionError as exc:
+                                    logger.error("[IMAGE OBJECTS] income check unusable: %s", exc)
+                                    object_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"], "failures": [], "engines": []}
+                                image_object_results.append(
+                                    image_object_result(
+                                        income_object.id,
+                                        img_idx,
+                                        _slot_title(img_idx),
+                                        ocr_w,
+                                        object_check,
+                                    )
+                                )
 
                             # An unreadable/clipped week tab is a re-shoot, never a guess.
                             unreliable_reason = None if monthly_violation else _unreliable_week_reason(
                                 ocr_w,
                                 w_num,
-                                matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else None,
+                                img_idx + 1,
                             )
                             if unreliable_reason:
                                 monthly_violation = {
-                                    "failed_slot": (
-                                        matched_income_indices[w_i]
-                                        if w_i < len(matched_income_indices)
-                                        else w_num
-                                    ),
+                                    "failed_slot": img_idx,
                                     "reason": unreliable_reason,
                                     "ocr_data": ocr_w,
                                 }
                                 break
 
-                            # File-defined object engines: period type, arithmetic,
-                            # authenticity, tampering and legibility all come from
-                            # data/image_objects/weekly_income.json.
                             if monthly_violation:
                                 continue
-                            try:
-                                object_check = run_object_checks(income_object.id, ocr_w, income_config)
-                            except ImageObjectDefinitionError as exc:
-                                logger.error("[IMAGE OBJECTS] weekly check unusable: %s", exc)
-                                object_check = {"passed": False, "reasons": [f"Cấu hình kiểm tra ảnh không hợp lệ: {exc}"]}
-                            if not object_check.get("passed"):
-                                s_num = matched_income_indices[w_i] + 1 if w_i < len(matched_income_indices) else w_num + 2
+                            if object_check is not None and not object_check.get("passed"):
                                 monthly_violation = {
-                                    "failed_slot": matched_income_indices[w_i] if w_i < len(matched_income_indices) else w_num,
-                                    "reason": f"Ảnh {s_num} (Tuần {w_num}): {object_check['reasons'][0]}",
+                                    "failed_slot": img_idx,
+                                    "reason": f"Ảnh {img_idx + 1} (Tuần {w_num}): {object_check['reasons'][0]}",
                                     "ocr_data": ocr_w,
                                 }
                                 break
 
+                        for vehicle_idx in groups.get("vehicle", []):
+                            vehicle_object = slot_objects[vehicle_idx] if vehicle_idx < len(slot_objects) else None
+                            if vehicle_object is not None:
+                                image_object_results.append(
+                                    image_object_result(
+                                        vehicle_object.id,
+                                        vehicle_idx,
+                                        _slot_title(vehicle_idx),
+                                        {},
+                                        {"passed": True, "failures": [], "engines": []},
+                                    )
+                                )
+
+                        compat_income = project_income_weeks(image_object_results)
+                        compat_totals = project_income_totals(compat_income)
+
                         slot_0_role = _infer_slot_role(target_q.image_slots[0]) if target_q.image_slots else "app_profile"
                         slot_0_title = target_q.image_slots[0].get("title", "Ảnh 1") if len(target_q.image_slots) > 0 else "Ảnh 1"
+                        slot_0_object = slot_objects[0] if slot_objects else None
+                        slot_0_is_profile = bool(
+                            slot_0_object is not None
+                            and slot_0_object.extractor == "profile"
+                            and not slot_0_object.id.startswith("custom_")
+                        )
 
                         # 1. Profile Verification (Slot 0)
                         is_approved = False
@@ -1349,8 +1406,9 @@ async def submit_webrtc_survey(
                                 "failed_slot": monthly_violation["failed_slot"],
                                 "reason": reason_str,
                                 "ocr_data": monthly_violation["ocr_data"],
+                                "image_object_results": image_object_results,
                             }
-                        elif role_0 in ("app_income", "revenue_screen"):
+                        elif slot_0_is_profile and role_0 in ("app_income", "revenue_screen"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Phát hiện sai loại màn hình (đây là màn hình thống kê thu nhập, không phải màn hình hồ sơ/tiện ích ứng dụng). Vui lòng chụp đúng màn hình hồ sơ ứng dụng ở Ảnh 1!"
@@ -1361,7 +1419,7 @@ async def submit_webrtc_survey(
                                 "detected_roles": [role_0],
                                 "model": "DEEPSEEK_V3_CHAT",
                             }
-                        elif role_0 != slot_0_role and role_0 not in ("app_profile", "odometer"):
+                        elif slot_0_is_profile and role_0 != slot_0_role and role_0 not in ("app_profile", "odometer"):
                             is_approved = False
                             status_str = "REJECTED"
                             reason_str = f"Ảnh 1 ({slot_0_title}): Không phát hiện màn hình hồ sơ ứng dụng tài xế Xanh SM (Phát hiện vật thể không hợp lệ). Vui lòng chụp đúng màn hình hồ sơ ứng dụng tài xế!"
@@ -1389,19 +1447,17 @@ async def submit_webrtc_survey(
                                 "roles_verified": [role_0, "auto_passed_vehicle" if len(target_q.image_slots) >= 7 else "app_income"],
                                 "total_slots_processed": len(images_list),
                                 "membership_type": membership_type,
-                                "weekly_incomes": weekly_incomes,
-                                "total_gross_revenue": tot_gross,
-                                "total_net_income": tot_net,
-                                "total_trips_count": tot_trips if tot_trips > 0 else trips_val,
+                                "image_object_results": image_object_results,
+                                "income_totals": compat_totals,
                                 "online_hours": hours_val,
                                 "period": period_val,
                             }
 
                         should_check_fraud = bool(getattr(checks, "enable_anti_fraud", True) and getattr(checks, "require_unique", True))
                         if is_approved and should_check_fraud:
-                            # 3. Anti-Fraud: Intra-submission duplicate check across weekly income slots (Meta DINOv2 + dHash + numbers)
+                            # 3. Anti-Fraud: Intra-submission duplicate check across income objects (Meta DINOv2 + dHash + numbers)
                             intra_dup, intra_reason = check_intra_submission_duplicates(
-                                raw_bytes_list, target_q, weekly_incomes,
+                                raw_bytes_list, target_q, compat_income,
                                 income_indices=matched_income_indices, pil_cache=pil_cache
                             )
                             if intra_dup:
@@ -1427,15 +1483,15 @@ async def submit_webrtc_survey(
                                         primary_emb = compute_dinov2_embedding(check_im)
                                         inter_dup, matched_sub_id, dup_type = await check_inter_submission_duplicates(
                                             db_pool, check_im, primary_emb,
-                                            weekly_incomes=weekly_incomes,
-                                            tot_gross=tot_gross,
-                                            tot_trips=tot_trips,
+                                            weekly_incomes=compat_income,
+                                            tot_gross=compat_totals["total_gross_revenue"],
+                                            tot_trips=compat_totals["total_trips"],
                                         )
                                         if inter_dup:
                                             is_approved = False
                                             status_str = "REJECTED"
                                             if dup_type == "DATA_DUPLICATE":
-                                                reason_str = f"Số liệu doanh thu 5 tuần bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{matched_sub_id})! Hệ thống chống gian lận phát hiện số liệu bị sao chép."
+                                                reason_str = f"Số liệu doanh thu các kỳ bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{matched_sub_id})! Hệ thống chống gian lận phát hiện số liệu bị sao chép."
                                             else:
                                                 reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{matched_sub_id})! Hệ thống Meta DINOv2 phát hiện ảnh bị nộp lại."
                                             ai_res["status"] = "REJECTED"
@@ -1456,15 +1512,15 @@ async def submit_webrtc_survey(
                                                         prev_w = prev.get("weekly_incomes") or {}
                                                         prev_g = int(prev.get("total_gross_revenue") or prev.get("gross_revenue") or 0)
                                                         prev_t = int(prev.get("total_trips") or prev.get("trip_count") or 0)
-                                                        cur_w1 = int(weekly_incomes.get("week_1", {}).get("gross_revenue") or 0)
-                                                        cur_w2 = int(weekly_incomes.get("week_2", {}).get("gross_revenue") or 0)
-                                                        if prev_g > 0 and tot_gross > 0 and prev_g == tot_gross and prev_t > 0 and prev_t == tot_trips:
+                                                        cur_w1 = int(compat_income.get("week_1", {}).get("gross_revenue") or 0)
+                                                        cur_w2 = int(compat_income.get("week_2", {}).get("gross_revenue") or 0)
+                                                        if prev_g > 0 and compat_totals["total_gross_revenue"] > 0 and prev_g == compat_totals["total_gross_revenue"] and prev_t > 0 and prev_t == compat_totals["total_trips"]:
                                                             p_w1 = int(prev_w.get("week_1", {}).get("gross_revenue") or prev.get("income_week_1_gross") or 0)
                                                             p_w2 = int(prev_w.get("week_2", {}).get("gross_revenue") or prev.get("income_week_2_gross") or 0)
                                                             if p_w1 > 0 and p_w1 == cur_w1 and p_w2 > 0 and p_w2 == cur_w2:
                                                                 is_approved = False
                                                                 status_str = "REJECTED"
-                                                                reason_str = f"Số liệu doanh thu 5 tuần bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{prev.get('submission_id')})! Phát hiện sao chép số liệu thu nhập."
+                                                                reason_str = f"Số liệu doanh thu các kỳ bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{prev.get('submission_id')})! Phát hiện sao chép số liệu thu nhập."
                                                                 ai_res["status"] = "REJECTED"
                                                                 ai_res["reason"] = reason_str
                                                                 ai_res["duplicate_detected"] = True
@@ -1530,7 +1586,7 @@ async def submit_webrtc_survey(
     persisted_phone = None if is_dissent else driver_phone
     persisted_name = None if is_dissent else (driver_name or "Tài xế")
 
-    # Form specific metrics and 5-week income extractions
+    # Form specific metrics and boundary income projection
     vehicle_type_val = _normalize_vehicle_type(
         form_data.get("vehicle_type")
         or vehicle_type
@@ -1559,7 +1615,8 @@ async def submit_webrtc_survey(
         or "Chưa xác định"
     )
 
-    w_incomes = ai_res.get("weekly_incomes") or {}
+    # Boundary adapter only: legacy DB columns / Drive CSV keep their old shape.
+    w_incomes = compat_income or ai_res.get("weekly_incomes") or {}
     w1_g = int(w_incomes.get("week_1", {}).get("gross_revenue") or ai_res.get("gross_revenue") or gross_revenue or 0)
     w1_n = int(w_incomes.get("week_1", {}).get("net_income") or ai_res.get("net_income") or 0)
     w1_t = int(w_incomes.get("week_1", {}).get("total_trips") or trip_count or 0)
@@ -1580,13 +1637,13 @@ async def submit_webrtc_survey(
     w5_n = int(w_incomes.get("week_5", {}).get("net_income") or 0)
     w5_t = int(w_incomes.get("week_5", {}).get("total_trips") or 0)
 
-    computed_tot_g = w1_g + w2_g + w3_g + w4_g + w5_g
-    computed_tot_n = w1_n + w2_n + w3_n + w4_n + w5_n
-    computed_tot_t = w1_t + w2_t + w3_t + w4_t + w5_t
+    computed_tot_g = int(compat_totals.get("total_gross_revenue") or (w1_g + w2_g + w3_g + w4_g + w5_g))
+    computed_tot_n = int(compat_totals.get("total_net_income") or (w1_n + w2_n + w3_n + w4_n + w5_n))
+    computed_tot_t = int(compat_totals.get("total_trips") or (w1_t + w2_t + w3_t + w4_t + w5_t))
 
-    tot_gross_val = int(ai_res.get("total_gross_revenue") or (computed_tot_g if computed_tot_g > 0 else (ai_res.get("gross_revenue") or gross_revenue or 0)))
-    tot_net_val = int(ai_res.get("total_net_income") or (computed_tot_n if computed_tot_n > 0 else (ai_res.get("net_income") or 0)))
-    tot_trips_val = int(ai_res.get("total_trips") or (computed_tot_t if computed_tot_t > 0 else (trip_count or 0)))
+    tot_gross_val = int(computed_tot_g if computed_tot_g > 0 else (ai_res.get("gross_revenue") or gross_revenue or 0))
+    tot_net_val = int(computed_tot_n if computed_tot_n > 0 else (ai_res.get("net_income") or 0))
+    tot_trips_val = int(computed_tot_t if computed_tot_t > 0 else (trip_count or 0))
     clean_form_data = {
         k: v for k, v in answers.items()
         if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")

@@ -409,14 +409,17 @@ def normalize_extraction(obj: ImageObjectDefinition, extraction: Any) -> Tuple[D
     return data, issues
 
 
-def run_object_checks(
-    object_id: str,
+def run_definition_checks(
+    obj: ImageObjectDefinition,
     extraction: Any,
     slot_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Validate extraction fields and execute the object's bound engines."""
+    """Validate extraction fields and execute a definition's bound engines.
+
+    Works for both on-disk objects and transient compatibility objects built
+    from a custom slot prompt.
+    """
     registry = load_registry()
-    obj = get_object(object_id)
     config = merged_config(obj, slot_config)
     values, issues = normalize_extraction(obj, extraction)
 
@@ -427,7 +430,7 @@ def run_object_checks(
     for binding in obj.engines:
         engine_def = registry["engines"].get(binding.id)
         if engine_def is None:
-            raise ImageObjectDefinitionError(f"image object '{object_id}' references missing engine '{binding.id}'")
+            raise ImageObjectDefinitionError(f"image object '{obj.id}' references missing engine '{binding.id}'")
         result = run_engine(
             engine_def.model_dump(),
             binding.model_dump(),
@@ -453,6 +456,15 @@ def run_object_checks(
         "extraction": values,
         "config": config,
     }
+
+
+def run_object_checks(
+    object_id: str,
+    extraction: Any,
+    slot_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Validate extraction fields and execute the object's bound engines."""
+    return run_definition_checks(get_object(object_id), extraction, slot_config)
 
 
 # ==============================================================================
@@ -498,18 +510,43 @@ def _legacy_object_for_slot(slot: Dict[str, Any]) -> ImageObjectDefinition:
     )
 
 
+def _custom_prompt_object(slot: Dict[str, Any]) -> ImageObjectDefinition:
+    """Explicit custom-prompt mode: generic object, no hardcoded semantics."""
+    role = str(slot.get("role") or "custom").strip()
+    title = str(slot.get("title") or role or "Ảnh xác thực")
+    return ImageObjectDefinition(
+        version=1,
+        id=f"custom_{role or 'photo'}",
+        label=title,
+        description="Slot-defined custom AI prompt; no hardcoded object checks.",
+        prompt=str(slot.get("ai_detection_prompt") or "").strip(),
+        objects=[title],
+        expected_fields=[],
+        customizable=[],
+        engines=[],
+        extractor="generic",
+        classify_role=None,
+    )
+
+
 def resolve_slot_object(slot: Any) -> ImageObjectDefinition:
     """Resolve a slot to an object definition.
 
-    `object_type` is authoritative. Forms without it use the compatibility
-    resolver (legacy role, then title keywords) and finally a generic object —
-    never a hidden hardcoded weekly-income contract.
+    Precedence:
+    1. Explicit `object_type` is authoritative.
+    2. A non-empty `ai_detection_prompt` without `object_type` is custom-prompt
+       mode: a generic object with no hardcoded weekly/profile/vehicle checks.
+    3. Legacy role/title compatibility maps to a known object.
+    4. Fallback generic object.
     """
     if not isinstance(slot, dict):
         return _legacy_object_for_slot({})
     object_type = str(slot.get("object_type") or "").strip()
     if object_type:
         return get_object(object_type)
+
+    if str(slot.get("ai_detection_prompt") or "").strip():
+        return _custom_prompt_object(slot)
 
     role = str(slot.get("role") or "").strip().lower()
     resolved = object_type_for_classified_role(role)

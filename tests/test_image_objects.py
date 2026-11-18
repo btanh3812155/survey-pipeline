@@ -30,9 +30,11 @@ from services.image_objects import (
     merged_config,
     object_type_for_classified_role,
     resolve_slot_object,
+    run_definition_checks,
     run_object_checks,
     save_object,
 )
+from services.image_object_projection import project_income_totals, project_income_weeks
 
 
 def _weekly_config(**overrides):
@@ -107,6 +109,50 @@ def test_slot_object_resolution_and_legacy_role_compatibility():
     assert unknown.id.startswith("legacy_")
 
 
+def test_custom_prompt_wins_over_legacy_role_and_title():
+    slot = {
+        "role": "app_income",
+        "title": "Tuần thu nhập tháng 10",
+        "ai_detection_prompt": "CUSTOM PROMPT ONLY",
+    }
+    obj = resolve_slot_object(slot)
+    assert obj.id == "custom_app_income"
+    assert obj.prompt == "CUSTOM PROMPT ONLY"
+    assert obj.expected_fields == []
+    assert obj.engines == []
+    assert build_detection_prompt(obj) == "CUSTOM PROMPT ONLY"
+    result = run_definition_checks(obj, {"anything": 1}, {})
+    assert result["passed"] is True
+    assert result["engines"] == []
+
+
+def test_legacy_role_with_empty_prompt_still_resolves_known_object():
+    obj = resolve_slot_object({"role": "app_income", "title": "Thu nhập tuần", "ai_detection_prompt": ""})
+    assert obj.id == "weekly_income"
+    assert obj.engines
+
+
+def test_custom_prompt_object_save_roundtrip():
+    object_id = "pytest_custom_prompt_object"
+    try:
+        save_object(object_id, {
+            "label": "Custom prompt",
+            "description": "tmp",
+            "prompt": "CUSTOM ONLY {{objects}}",
+            "objects": ["thing"],
+            "expected_fields": [],
+            "customizable": [],
+            "engines": [],
+            "extractor": "generic",
+        })
+        loaded = get_object(object_id)
+        assert loaded.prompt == "CUSTOM ONLY {{objects}}"
+        assert build_detection_prompt(loaded) == "CUSTOM ONLY thing"
+    finally:
+        delete_object(object_id)
+
+
+
 def test_default_form_and_migrated_form_have_object_types():
     migrated = json.load(open("data/forms/TB_GSM_2026_Nov_Test.json", encoding="utf-8"))
     schema = FormSchema.model_validate(migrated)
@@ -170,12 +216,43 @@ def test_period_granularity_engine(period, passed):
     assert result["passed"] is passed, result["reasons"]
 
 
-def test_date_range_engine_rejects_wrong_target_month():
+def test_date_range_engine_cross_month_target_window():
     engine = {"id": "dr", "implementation": "date_range"}
-    binding = {"id": "dr", "params": {"field": "period_raw_text", "target_month": "2026-10", "max_days": 24, "granularity": "WEEKLY", "require_range": True}}
-    result = run_engine(engine, binding, {"period_raw_text": "05/09 - 11/09"}, {})
-    assert result["passed"] is False
-    assert "không khớp tháng mục tiêu" in result["reason"]
+    binding = {"id": "dr", "params": {"field": "period_raw_text", "target_month": "2026-10", "max_days": 24, "granularity": "WEEKLY"}}
+
+    cross_start = run_engine(engine, binding, {"period_raw_text": "28/09 - 04/10"}, {})
+    assert cross_start["passed"] is True, cross_start["reason"]
+
+    cross_end = run_engine(engine, binding, {"period_raw_text": "26/10 - 01/11"}, {})
+    assert cross_end["passed"] is True, cross_end["reason"]
+
+    wrong_month = run_engine(engine, binding, {"period_raw_text": "05/09 - 11/09"}, {})
+    assert wrong_month["passed"] is False
+    assert "không khớp tháng mục tiêu" in wrong_month["reason"]
+
+
+def test_period_granularity_engine_cross_month_target_window():
+    cross_start = run_object_checks(
+        "weekly_income",
+        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "28/09 - 04/10", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
+        _weekly_config(),
+    )
+    assert cross_start["passed"] is True, cross_start["reasons"]
+
+    cross_end = run_object_checks(
+        "weekly_income",
+        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "26/10 - 01/11", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
+        _weekly_config(),
+    )
+    assert cross_end["passed"] is True, cross_end["reasons"]
+
+    wrong_month = run_object_checks(
+        "weekly_income",
+        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "05/09 - 11/09", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
+        _weekly_config(),
+    )
+    assert wrong_month["passed"] is False
+    assert any("tháng mục tiêu" in reason for reason in wrong_month["reasons"])
 
 
 def test_number_range_engine():
@@ -243,6 +320,28 @@ def test_weekly_income_config_changes_target_month_and_max_days():
     assert too_long["passed"] is False
 
 
+def test_projection_adapter_is_not_fixed_to_five_weeks():
+    results = [
+        {"object_type": "weekly_income", "extraction": {"gross_revenue": 1_000_000 * n, "net_income": 800_000 * n, "total_trips": 10 * n, "period": f"0{n}/10 - 0{n}/10"}}
+        for n in range(1, 8)
+    ]
+    weeks = project_income_weeks(results)
+    assert len(weeks) == 7
+    assert weeks["week_7"]["gross_revenue"] == 7_000_000
+    totals = project_income_totals(weeks)
+    assert totals["total_gross_revenue"] == sum(1_000_000 * n for n in range(1, 8))
+    assert totals["total_trips"] == sum(10 * n for n in range(1, 8))
+
+
+def test_projection_adapter_accepts_any_income_bearing_object():
+    weeks = project_income_weeks([
+        {"object_type": "custom_profit_screen", "extraction": {"gross_revenue": 500_000, "net_income": 400_000}},
+        {"object_type": "app_profile", "extraction": {"membership_type": "Vàng"}},
+    ])
+    assert list(weeks) == ["week_1"]
+    assert weeks["week_1"]["gross_revenue"] == 500_000
+
+
 # ==============================================================================
 # Admin page + API
 # ==============================================================================
@@ -264,6 +363,10 @@ def test_admin_page_lists_objects_and_engines():
     assert response.status_code == 200
     assert "weekly_income" in response.text
     assert "period_granularity" in response.text
+
+    forms_page = client.get("/admin/forms", auth=("admin", "12345678"))
+    assert forms_page.status_code == 200
+    assert 'href="/admin/image-objects"' in forms_page.text
 
 
 def test_admin_save_and_delete_object_roundtrip():
@@ -330,6 +433,31 @@ def test_runtime_accepts_legacy_form_without_object_type(monkeypatch):
         body = response.json()
         assert "Thiếu ảnh" not in (body.get("reason") or "")
         assert "Cấu hình kiểm tra ảnh không hợp lệ" not in (body.get("reason") or "")
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
+
+
+def test_runtime_custom_prompt_mode_skips_hardcoded_income_checks(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    form_id = "SIM-CUSTOM-PROMPT-RUNTIME"
+    _probe_form(form_id, [
+        {"slot": 0, "title": "Ho so tuy chinh", "role": "app_profile", "ai_detection_prompt": "CUSTOM PROFILE PROMPT", "required": True},
+        {"slot": 1, "title": "Thu nhap tuy chinh", "role": "app_income", "ai_detection_prompt": "CUSTOM INCOME PROMPT", "required": True},
+    ])
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data={"form_id": form_id, "is_test_mode": "true", "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"},
+            files=[
+                ("survey_photo_0", ("profile.jpg", io.BytesIO(_jpeg_bytes()), "image/jpeg")),
+                ("survey_photo_1", ("income.jpg", io.BytesIO(_jpeg_bytes((220, 40, 40))), "image/jpeg")),
+            ],
+        )
+        body = response.json()
+        assert body.get("status") == "APPROVED", body
+        assert "Số học" not in (body.get("reason") or "")
+        assert "báo cáo thu nhập" not in (body.get("reason") or "")
     finally:
         FORM_REGISTRY.pop(form_id, None)
 

@@ -300,6 +300,21 @@ def _month_key(value: Any) -> Optional[Tuple[int, int]]:
     return None
 
 
+def _months_spanned(start: date, end: date) -> set:
+    """Every (year, month) touched by an inclusive date range."""
+    months = {(start.year, start.month)}
+    cursor = start
+    while True:
+        year, month = cursor.year, cursor.month + 1
+        if month > 12:
+            year, month = year + 1, 1
+        cursor = date(year, month, 1)
+        if cursor > end:
+            break
+        months.add((cursor.year, cursor.month))
+    return months
+
+
 _DATE_LIKE_RE = re.compile(r"\d{1,2}\s*[/-]\s*\d{1,2}")
 
 
@@ -347,7 +362,7 @@ def engine_date_range(params: Dict[str, Any], extraction: Dict[str, Any], contex
             return _result(False, f"Khoảng thời gian ghi nhận ({days} ngày) là báo cáo cả THÁNG. Biểu mẫu yêu cầu chụp riêng từng tuần!")
         if expected == "DAILY" and days > 1:
             return _result(False, f"Khoảng thời gian ghi nhận ({days} ngày) không phải báo cáo theo NGÀY.")
-        if target_month and (start.year, start.month) != target_month:
+        if target_month and target_month not in _months_spanned(start, end):
             return _result(
                 False,
                 f"Kỳ báo cáo {start.strftime('%m/%Y')} không khớp tháng mục tiêu {target_month[1]:02d}/{target_month[0]}.",
@@ -384,15 +399,7 @@ def engine_period_granularity(params: Dict[str, Any], extraction: Dict[str, Any]
     if target_month:
         start, end, _days = parse_date_range_from_text(text)
         if start and end:
-            months = {(start.year, start.month)}
-            cursor = start
-            while cursor < end:
-                year, month = cursor.year, cursor.month + 1
-                if month > 12:
-                    year, month = year + 1, 1
-                cursor = date(year, month, 1)
-                months.add((cursor.year, cursor.month))
-            if target_month not in months:
+            if target_month not in _months_spanned(start, end):
                 return _result(
                     False,
                     f"Kỳ báo cáo không khớp tháng mục tiêu {target_month[1]:02d}/{target_month[0]}.",

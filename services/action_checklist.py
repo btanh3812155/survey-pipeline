@@ -323,7 +323,11 @@ async def dispatch_action_checklist(
         if await acquire_action_lease(db_pool, submission_id, "gdrive_sync", is_test_mode=is_test_mode):
             try:
                 from services.google_drive_delivery import upload_to_google_drive, has_google_credentials
+                from services.image_object_projection import project_income_weeks
                 if has_google_credentials():
+                    weekly_incomes = project_income_weeks(ai_res.get("image_object_results") or [])
+                    if not weekly_incomes:
+                        weekly_incomes = ai_res.get("weekly_incomes") or {}
                     sample_imgs = []
                     if raw_bytes_list:
                         for s_idx, b_item in enumerate(raw_bytes_list):
@@ -341,7 +345,7 @@ async def dispatch_action_checklist(
                         "driver_name": driver_name,
                         "license_plate": license_plate or ai_res.get("detected_plate"),
                         "form_data": answers,
-                        "weekly_incomes": ai_res.get("weekly_incomes") or {},
+                        "weekly_incomes": weekly_incomes,
                         "ai_result": ai_res,
                     }
                     gdrive_ok = await upload_to_google_drive(

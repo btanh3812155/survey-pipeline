@@ -247,8 +247,10 @@ def sync_all_persisted_forms(
                     with open(fpath, "r", encoding="utf-8") as f:
                         disk_obj = json.load(f)
                     parsed = FormSchema.model_validate(disk_obj)
-                    # Run reconciliation to ensure all required fields/defaults exist
-                    synced_schema, _ = reconcile_and_sync_form_schema(parsed, fpath)
+                    # The default form's in-code baseline is authoritative for
+                    # newly added slot contract fields (object_type/object_config).
+                    baseline = base_schema if parsed.form_id == base_schema.form_id else parsed
+                    synced_schema, _ = reconcile_and_sync_form_schema(baseline, fpath)
                     registry[synced_schema.form_id] = synced_schema
                 except Exception as err:
                     logger.warning(f"Error validating and syncing {fname}: {err}")

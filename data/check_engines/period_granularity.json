@@ -2,63 +2,18 @@
   "version": 1,
   "id": "period_granularity",
   "label": "Kiểm tra loại kỳ",
-  "description": "x",
+  "description": "So khớp loại kỳ, độ dài khoảng ngày và tháng mục tiêu.",
   "implementation": "period_granularity",
   "params_schema": [
-    {
-      "key": "expected",
-      "label": "Kỳ mong đợi",
-      "type": "select",
-      "options": [
-        "DAILY",
-        "WEEKLY",
-        "MONTHLY"
-      ],
-      "default": null,
-      "required": true
-    },
-    {
-      "key": "max_days",
-      "label": "Số ngày tối đa",
-      "type": "number",
-      "options": null,
-      "default": 24,
-      "required": false
-    },
-    {
-      "key": "require_range",
-      "label": "Bắt buộc khoảng ngày",
-      "type": "toggle",
-      "options": null,
-      "default": true,
-      "required": false
-    }
+    {"key": "expected", "label": "Kỳ mong đợi", "type": "select", "options": ["DAILY", "WEEKLY", "MONTHLY"], "required": true},
+    {"key": "max_days", "label": "Số ngày tối đa", "type": "number", "default": 24},
+    {"key": "require_range", "label": "Bắt buộc khoảng ngày", "type": "toggle", "default": true},
+    {"key": "target_month", "label": "Tháng mục tiêu", "type": "month"},
+    {"key": "week", "label": "Số tuần hiển thị trong thông báo", "type": "number", "default": 1}
   ],
   "conditions_schema": [
-    {
-      "key": "field",
-      "label": "Trường dữ liệu",
-      "type": "text",
-      "options": null,
-      "default": null,
-      "required": true
-    },
-    {
-      "key": "op",
-      "label": "Điều kiện",
-      "type": "select",
-      "options": [
-        "not_empty",
-        "empty",
-        "equals",
-        "not_equals",
-        "contains",
-        "regex",
-        "gte",
-        "lte"
-      ],
-      "default": null,
-      "required": true
-    }
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true},
+    {"key": "value", "label": "Giá trị so sánh", "type": "text"}
   ]
 }

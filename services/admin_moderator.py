@@ -7,6 +7,7 @@ import logging
 import httpx
 from typing import Optional, List, Dict, Any, Union
 from config import settings
+from services.image_object_projection import project_income_weeks
 logger = logging.getLogger("admin_moderator")
 
 
@@ -151,6 +152,8 @@ def _resolve_income(gross, net, trips, weekly_incomes, raw_facts):
     """
     raw_facts = _as_dict(raw_facts)
     raw_weekly = _as_dict(raw_facts.get("weekly_incomes"))
+    if not raw_weekly:
+        raw_weekly = project_income_weeks(raw_facts.get("image_object_results") or [])
     stored_weekly = _as_dict(weekly_incomes)
 
     weeks = {}
@@ -396,8 +399,12 @@ def render_dossier_message(dossier: dict) -> str:
     w_inc = dossier.get("weekly_incomes") or {}
     if w_inc and isinstance(w_inc, dict):
         w_lines = []
-        for w_i in range(1, 6):
-            w_data = w_inc.get(f"week_{w_i}", {})
+        week_keys = sorted(
+            (key for key in w_inc if re.fullmatch(r"week_\d+", str(key))),
+            key=lambda key: int(str(key).split("_")[1]),
+        )
+        for w_i, week_key in enumerate(week_keys, start=1):
+            w_data = w_inc.get(week_key, {})
             g_w = int(w_data.get("gross_revenue") or 0)
             t_w = int(w_data.get("total_trips") or 0)
             p_w = w_data.get("period", f"Tuần {w_i}")
