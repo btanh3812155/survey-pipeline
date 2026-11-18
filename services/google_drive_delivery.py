@@ -909,15 +909,105 @@ class GoogleDriveClient:
             logger.error(f"Failed to create Google Sheet '{sheet_name}': {e}")
             return None
 
-    async def update_sheet_values(
-        self, client: httpx.AsyncClient, token: str, sheet_id: str, rows: List[List[Any]]
+    async def create_sheet(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        sheet_name: str,
+        parent_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Creates an empty native Google Sheet (Drive files.create with spreadsheet mime)."""
+        metadata: Dict[str, Any] = {
+            "name": sheet_name,
+            "mimeType": "application/vnd.google-apps.spreadsheet",
+        }
+        if parent_id:
+            metadata["parents"] = [parent_id]
+        try:
+            resp = await client.post(
+                "https://www.googleapis.com/drive/v3/files",
+                headers={"Authorization": f"Bearer {token}"},
+                json=metadata,
+            )
+            resp.raise_for_status()
+            sheet_id = resp.json().get("id")
+            logger.info(f"📊 [GOOGLE DRIVE] Created empty Google Sheet '{sheet_name}' (ID: {sheet_id})")
+            return sheet_id
+        except Exception as e:
+            logger.error(f"Failed to create empty Google Sheet '{sheet_name}': {e}")
+            return None
+
+    async def get_spreadsheet_sheet_id(
+        self, client: httpx.AsyncClient, token: str, spreadsheet_id: str
+    ) -> Optional[int]:
+        """Numeric sheetId of the first tab, required for batchUpdate merges."""
+        try:
+            resp = await client.get(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"fields": "sheets(properties(sheetId,title))"},
+            )
+            resp.raise_for_status()
+            sheets = resp.json().get("sheets") or []
+            if not sheets:
+                return None
+            return sheets[0].get("properties", {}).get("sheetId")
+        except Exception as e:
+            logger.error(f"Failed to read spreadsheet {spreadsheet_id} metadata: {e}")
+            return None
+
+    async def clear_sheet_values(
+        self, client: httpx.AsyncClient, token: str, spreadsheet_id: str, range_a1: str = "A1:ZZ1000"
     ) -> bool:
-        """Overwrites a Google Sheet from A1 with CSV rows via Sheets API v4 (RAW)."""
+        """Clears stale rows/columns before writing a fresh matrix."""
+        try:
+            resp = await client.post(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_a1}:clear",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={},
+            )
+            if resp.status_code == 200:
+                return True
+            logger.warning(
+                f"Failed to clear sheet {spreadsheet_id}: {resp.status_code} {resp.text[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear sheet {spreadsheet_id}: {e}")
+        return False
+
+    async def batch_update_spreadsheet(
+        self, client: httpx.AsyncClient, token: str, spreadsheet_id: str, requests: List[Dict[str, Any]]
+    ) -> bool:
+        """Runs a Sheets API batchUpdate (e.g. mergeCells) against a spreadsheet."""
+        try:
+            resp = await client.post(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"requests": requests},
+            )
+            if resp.status_code == 200:
+                return True
+            logger.warning(
+                f"Failed batchUpdate for {spreadsheet_id}: {resp.status_code} {resp.text[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed batchUpdate for {spreadsheet_id}: {e}")
+        return False
+
+    async def update_sheet_values(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        sheet_id: str,
+        rows: List[List[Any]],
+        value_input_option: str = "RAW",
+    ) -> bool:
+        """Overwrites a Google Sheet from A1 via Sheets API v4 values.update."""
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/A1"
         try:
             resp = await client.put(
                 url,
-                params={"valueInputOption": "RAW"},
+                params={"valueInputOption": value_input_option},
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 json={"values": rows},
             )
@@ -1077,6 +1167,12 @@ class GoogleDriveClient:
         images: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """Executes upload of a submission's images under <root>/<form_id>/submissions/<submission_id>/."""
+        if record.get("status") != "APPROVED" or is_test_submission(submission_id):
+            logger.info(
+                f"🚫 [GOOGLE DRIVE] Skipping non-approved/test submission #{submission_id} "
+                f"(status: {record.get('status')})"
+            )
+            return False
         async with httpx.AsyncClient(timeout=30.0) as client:
             token = await self.get_token(client)
             if not token:
@@ -1894,7 +1990,7 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                     sub_id = os.path.basename(sub_dir)
                     if is_test_submission(sub_id):
                         continue
-                    if approved_ids and sub_id not in approved_ids:
+                    if sub_id not in approved_ids:
                         continue
                     files = [
                         f for f in glob.glob(os.path.join(sub_dir, "*.*"))
@@ -1963,5 +2059,16 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
             )
         except Exception as e:
             logger.error(f"[AUTO DRIVE SYNC] Failed to sync form folders: {e}")
+
+        # 3. Internal CTV matrix (isolated: failures must not affect customer deliverables)
+        if db_pool:
+            try:
+                from services.ctv_matrix import sync_internal_ctv_matrix
+
+                await sync_internal_ctv_matrix(
+                    client, http_client, token, root_id, db_pool
+                )
+            except Exception as e:
+                logger.error(f"[AUTO DRIVE SYNC] Internal CTV matrix failed: {e}")
 
         return True

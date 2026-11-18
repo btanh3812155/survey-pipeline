@@ -343,20 +343,35 @@ def test_sync_backfill_skips_rejected_and_test_submissions(monkeypatch, tmp_path
     import asyncio
 
     gd, write_dev, add_photo = _patch_sync_env(monkeypatch, tmp_path)
+    for sid in ("VN-BACKFILL-APPROVED", "VN-BACKFILL-REJECTED", "VN-BACKFILL-MANUAL", "VN-BACKFILL-TEST"):
+        add_photo(sid)
+
+    # A non-approved submission that already has mirrored images must not be uploaded.
+    import io
+    from PIL import Image
+
+    manual_dir = tmp_path / "Images" / "form_alpha" / "submissions" / "VN-MANUAL-EXISTING"
+    manual_dir.mkdir(parents=True)
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(buffer, format="WEBP")
+    (manual_dir / "slot_0.webp").write_bytes(buffer.getvalue())
     write_dev([
         {"submission_id": "VN-BACKFILL-APPROVED", "form_id": "form_alpha", "status": "APPROVED"},
         {"submission_id": "VN-BACKFILL-REJECTED", "form_id": "form_alpha", "status": "REJECTED"},
+        {"submission_id": "VN-BACKFILL-MANUAL", "form_id": "form_alpha", "status": "MANUAL_REVIEW"},
         {"submission_id": "VN-BACKFILL-TEST", "form_id": "form_alpha", "status": "APPROVED"},
+        {"submission_id": "VN-MANUAL-EXISTING", "form_id": "form_alpha", "status": "MANUAL_REVIEW"},
     ])
-    for sid in ("VN-BACKFILL-APPROVED", "VN-BACKFILL-REJECTED", "VN-BACKFILL-TEST"):
-        add_photo(sid)
 
     assert asyncio.run(gd.sync_all_approved_to_drive()) is True
 
     base = tmp_path / "Images" / "form_alpha" / "submissions"
     assert (base / "VN-BACKFILL-APPROVED" / "slot_0.webp").exists()
     assert not (base / "VN-BACKFILL-REJECTED").exists()
+    assert not (base / "VN-BACKFILL-MANUAL").exists()
     assert not (base / "VN-BACKFILL-TEST").exists()
+    client = _FakeDriveClient.instances[0]
+    assert all("VN-MANUAL-EXISTING" not in parent for parent, _, _, _ in client.uploads)
 
     import csv
 
