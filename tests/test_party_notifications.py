@@ -193,8 +193,9 @@ async def test_phone_recipient_is_resolved_by_phone_not_as_chat_id(monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
 
     phone_lookup = AsyncMock(return_value=None)
+    collab_lookup = AsyncMock(return_value=None)
     with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
-         patch("main.lookup_telegram_user_for_collaborator", AsyncMock(return_value=None)), \
+         patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
          patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
         await dispatch_submission_telegram_notifications(
             submission_id="VN-PHONE01",
@@ -207,4 +208,55 @@ async def test_phone_recipient_is_resolved_by_phone_not_as_chat_id(monkeypatch):
         )
 
     phone_lookup.assert_awaited_once_with("0961281318")
+    collab_lookup.assert_not_awaited()
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_question_source_sends_to_phone_without_any_ctv_directory(monkeypatch):
+    """Question source resolves the phone directly; no CTV row/code is required."""
+    from config import settings
+    from routers import survey as survey_router
+
+    class Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 9911}}
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
+    phone_lookup = AsyncMock(return_value=9241303232)
+    collab_lookup = AsyncMock(return_value=None)
+
+    with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
+         patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
+         patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+        await dispatch_submission_telegram_notifications(
+            submission_id="DEV-PHONE-PATH",
+            status_str="APPROVED",
+            driver_phone="0932090967",
+            driver_name="[TEST] Jerry phone path",
+            collaborator_id="0932090967",
+            reason_str="Phone path test",
+            form_id="TB_GSM_2026_Nov_Test",
+            recipient_kind="driver",
+            ctv_ref="TUAN_LM_HCM_001",
+        )
+
+    phone_lookup.assert_awaited_once_with("0932090967")
+    collab_lookup.assert_not_awaited()
+    assert len(client.calls) == 1
+    _, payload = client.calls[0]
+    assert payload["chat_id"] == 9241303232
+    assert "DEV-PHONE-PATH" in payload["text"]

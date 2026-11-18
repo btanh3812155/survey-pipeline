@@ -13,8 +13,8 @@
     "decree13_required": true,
     "ctv_ref_enabled": true,
     "tags": [],
-    "tg_response_source": "ctv",
-    "tg_response_question_id": null,
+    "tg_response_source": "question",
+    "tg_response_question_id": "cau_2_26",
     "is_test_mode": false,
     "image_checks": {
       "enable_blur_check": true,

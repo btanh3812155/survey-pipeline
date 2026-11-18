@@ -2450,16 +2450,20 @@ async def dispatch_submission_telegram_notifications(
         return
 
     if recipient_kind == "driver":
-        # A driver recipient is a phone answer, not a chat id. Resolve it through
-        # authorized_users before falling back to collaborator-code resolution.
+        # Question-source recipients are phone answers. Resolve the phone directly;
+        # never require or fall back to a CTV directory/code on this path.
         collab_tg_id = await _lookup_phone(str(collaborator_id))
         if not collab_tg_id:
-            collab_tg_id = await _lookup_collab(collaborator_id)
+            logger.info(
+                f"Phone recipient '{collaborator_id}' is not linked to an active Telegram user; "
+                f"skipping verdict for #{submission_id}."
+            )
+            return
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
-    if not collab_tg_id:
-        logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
-        return
+        if not collab_tg_id:
+            logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
+            return
 
     status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
     clean_phone = driver_phone or "N/A"

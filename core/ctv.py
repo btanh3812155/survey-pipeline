@@ -393,6 +393,8 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
         )
         stats["static"] += 1
 
+    # Only explicit CTV bindings may populate the directory. A driver phone is
+    # never a CTV target: question-source verdicts resolve the phone directly.
     await cur.execute(
         "SELECT telegram_user_id, username, full_name, driver_phone, role "
         "FROM authorized_users;"
@@ -400,7 +402,7 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
     rows = await cur.fetchall()
     for tg_id, username, full_name, phone, role in rows:
         raw_ref = str(username or "").strip()
-        if not raw_ref:
+        if not raw_ref or str(role or "").upper() != "COLLABORATOR":
             continue
         code = normalize_ctv_code(raw_ref)
         if code not in CTV_CODE_MAP:
