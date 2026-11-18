@@ -213,8 +213,11 @@ def reconcile_and_sync_form_schema(
         if needs_write:
             try:
                 os.makedirs(os.path.dirname(os.path.abspath(disk_json_path)), exist_ok=True)
-                with open(disk_json_path, "w", encoding="utf-8") as f:
+                # Atomic replace: sibling workers refresh this file from disk at any time.
+                tmp_path = f"{disk_json_path}.tmp.{os.getpid()}"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     f.write(canonical_json)
+                os.replace(tmp_path, disk_json_path)
                 was_updated = True
                 logger.info(f"✅ [SCHEMA SYNC] Automatically synchronized canonical schema to {disk_json_path}")
             except Exception as e:

@@ -14,7 +14,7 @@ import httpx
 from fastapi import APIRouter, Request, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from config import settings
-from core.state import FORM_REGISTRY, get_redis_client, get_http_client
+from core.state import FORM_REGISTRY, get_redis_client, get_http_client, refresh_form_registry_from_disk
 from services.dynamic_form_html import render_dynamic_form_html
 
 logger = logging.getLogger("routers.system")
@@ -162,6 +162,7 @@ async def get_sample_image(filename: str):
 @router.get("/", include_in_schema=False)
 async def root_redirect(request: Request):
     """Auto-redirects root URL to /forms/income_survey or matches form from subdomain."""
+    refresh_form_registry_from_disk()
     host = (request.headers.get("host") or "").lower()
     if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)

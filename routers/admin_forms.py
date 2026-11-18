@@ -19,6 +19,7 @@ from core.state import (
     FORMS_STORAGE_DIR,
     STATIC_DIR,
     get_db_pool,
+    refresh_form_registry_from_disk,
 )
 from services.form_engine import FormSchema
 from services.form_manager_html import render_forms_list_html, render_form_editor_html
@@ -53,6 +54,7 @@ async def get_forms_list(
     admin_user: str = Depends(verify_admin_auth),
 ):
     """Admin Web UI with pagination to view and manage forms."""
+    refresh_form_registry_from_disk()
     return HTMLResponse(
         content=render_forms_list_html(
             FORM_REGISTRY, page=page, page_size=size,
@@ -74,6 +76,7 @@ async def create_new_form_page(admin_user: str = Depends(verify_admin_auth)):
 @router.get("/admin/forms/edit/{form_id}", response_class=HTMLResponse)
 async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_auth)):
     """Dedicated 3-tab edit page for a specific form."""
+    refresh_form_registry_from_disk()
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
@@ -128,10 +131,18 @@ async def upload_form_schema(request: Request, admin_user: str = Depends(verify_
 
     FORM_REGISTRY[schema.form_id] = schema
     try:
-        with open(schema_path, "w", encoding="utf-8") as f:
+        # Atomic replace so sibling workers never read a half-written JSON on refresh.
+        tmp_path = f"{schema_path}.tmp.{os.getpid()}"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(schema.model_dump_json(indent=2))
+        os.replace(tmp_path, schema_path)
     except Exception as e:
         logger.error(f"Failed to persist schema to disk: {e}")
+    else:
+        try:
+            refresh_form_registry_from_disk(force=True)
+        except Exception as e:
+            logger.warning(f"Registry refresh after schema save failed: {e}")
 
     db_pool = get_db_pool()
     if db_pool:
@@ -168,6 +179,7 @@ async def upload_form_schema(request: Request, admin_user: str = Depends(verify_
 @router.delete("/api/v1/forms/{form_id}")
 async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)):
     """Deletes a form after archiving its full schema in the database."""
+    refresh_form_registry_from_disk()
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")

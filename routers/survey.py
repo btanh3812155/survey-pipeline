@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from config import settings
-from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client
+from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
 from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone
@@ -69,6 +69,7 @@ STATUS_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 @router.get("/forms/{form_id}", response_class=HTMLResponse)
 async def get_dynamic_form(request: Request, form_id: str = "default"):
     """Renders dynamic forms with conditional logic, signature modal, and GPS authorization."""
+    refresh_form_registry_from_disk()
     host = (request.headers.get("host") or "").lower()
     if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
@@ -134,6 +135,7 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
 @router.get("/api/v1/forms")
 async def list_public_forms_api():
     """Lists all active public survey forms for the catalog."""
+    refresh_form_registry_from_disk()
     items = []
     for fid, s in FORM_REGISTRY.items():
         if not s.settings or s.settings.access_control == "public":
@@ -150,6 +152,7 @@ async def list_public_forms_api():
 @router.get("/api/v1/forms/{form_id}")
 async def get_form_schema_api(form_id: str):
     """Public schema endpoint for dynamic form rendering."""
+    refresh_form_registry_from_disk()
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Biểu mẫu không tồn tại")
@@ -325,6 +328,7 @@ async def pre_check_image_slot(
     question_id: Optional[str] = Form("camera_receipt"),
 ):
     """Lightweight instant pre-check on photo capture: blur variance, format, and quick role check."""
+    refresh_form_registry_from_disk()
     client_ip = request.client.host if request.client else "127.0.0.1"
     rate_key = f"precheck:{client_ip}"
     
@@ -789,6 +793,7 @@ async def submit_webrtc_survey(
     question_id: Optional[str] = Form(None),
 ):
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
+    refresh_form_registry_from_disk()
     db_pool = get_db_pool()
     redis_client = get_redis_client()
     clean_phone = driver_phone.strip() if driver_phone and driver_phone.strip() else None

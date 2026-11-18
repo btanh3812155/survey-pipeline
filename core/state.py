@@ -51,6 +51,57 @@ def load_persisted_forms() -> Dict[str, FormSchema]:
 
 FORM_REGISTRY: Dict[str, FormSchema] = load_persisted_forms()
 
+
+def _forms_disk_signature() -> tuple:
+    """Cheap (name, mtime_ns, size) fingerprint of data/forms/*.json."""
+    try:
+        names = sorted(os.listdir(FORMS_STORAGE_DIR))
+    except OSError:
+        return ()
+    entries = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(FORMS_STORAGE_DIR, name)
+        try:
+            file_stat = os.stat(path)
+        except OSError:
+            continue
+        entries.append((name, file_stat.st_mtime_ns, file_stat.st_size))
+    return tuple(entries)
+
+
+_FORMS_SIGNATURE: Optional[tuple] = _forms_disk_signature()
+# Only forms that came from data/forms may be pruned when their file disappears;
+# schemas registered directly in memory (tests, plugins) must survive a refresh.
+_DISK_FORM_IDS: set = set(FORM_REGISTRY.keys())
+
+
+def refresh_form_registry_from_disk(force: bool = False) -> bool:
+    """Reload FORM_REGISTRY when data/forms/*.json changed on disk.
+
+    uvicorn --workers N loads this module once per process, so a save handled by
+    one worker is invisible to the others until restart. Every form read that
+    matters calls this first; unchanged directories cost only a stat loop.
+    Mutates the dict in place so modules holding the reference stay in sync.
+    """
+    global _FORMS_SIGNATURE
+    signature = _forms_disk_signature()
+    if not force and signature == _FORMS_SIGNATURE:
+        return False
+
+    from core.schema_sync import sync_all_persisted_forms
+
+    loaded = sync_all_persisted_forms(FORMS_STORAGE_DIR, DEFAULT_TRUST_BRIDGE_SCHEMA)
+    for form_id in _DISK_FORM_IDS - set(loaded):
+        FORM_REGISTRY.pop(form_id, None)
+    FORM_REGISTRY.update(loaded)
+    _DISK_FORM_IDS.clear()
+    _DISK_FORM_IDS.update(loaded.keys())
+    _FORMS_SIGNATURE = _forms_disk_signature()
+    return True
+
+
 admin_security = HTTPBasic()
 
 
