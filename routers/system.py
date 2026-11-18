@@ -165,7 +165,9 @@ async def root_redirect(request: Request):
     host = (request.headers.get("host") or "").lower()
     if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
-    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "dev-admin.", "admin-dev.", "submissions-dev.", "data-dev.", "admin.dev.", "data.dev.", "submissions.dev.")):
+    if any(host.startswith(p) for p in ("admin.", "dev-admin.", "admin-dev.", "admin.dev.")):
+        return RedirectResponse(url="/admin/forms", status_code=status.HTTP_302_FOUND)
+    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "submissions-dev.", "data-dev.", "data.dev.", "submissions.dev.")):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
 
     sub_label = host.split(":")[0].split(".")[0]
@@ -179,6 +181,11 @@ async def root_redirect(request: Request):
             schema = FORM_REGISTRY[parts[0]]
             return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
 
+    preferred_form_id = (
+        "TB_GSM_2026_Nov_Test"
+        if "TB_GSM_2026_Nov_Test" in FORM_REGISTRY
+        else next(iter(FORM_REGISTRY), "income_survey")
+    )
     query_str = str(request.url.query)
-    target = "/forms/income_survey" + (f"?{query_str}" if query_str else "")
+    target = f"/forms/{preferred_form_id}" + (f"?{query_str}" if query_str else "")
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)

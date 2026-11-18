@@ -41,3 +41,11 @@ def test_submissions_subdomain_routing():
     resp = client.get("/", headers={"Host": "submissions.146.190.201.32.sslip.io"}, follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers.get("location") == "/admin/submissions"
+
+
+def test_admin_subdomain_routing_defaults_to_forms():
+    client = TestClient(app)
+    # The admin host lands on the forms list, not the submissions viewer.
+    resp = client.get("/", headers={"Host": "admin.trustbridgevn.com"}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers.get("location") == "/admin/forms"

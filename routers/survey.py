@@ -60,7 +60,9 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
     host = (request.headers.get("host") or "").lower()
     if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
-    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "dev-admin.", "admin-dev.", "submissions-dev.", "data-dev.", "admin.dev.", "data.dev.", "submissions.dev.")) and form_id in ("default", "camera-form"):
+    if any(host.startswith(p) for p in ("admin.", "dev-admin.", "admin-dev.", "admin.dev.")) and form_id in ("default", "camera-form"):
+        return RedirectResponse(url="/admin/forms", status_code=status.HTTP_302_FOUND)
+    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "submissions-dev.", "data-dev.", "data.dev.", "submissions.dev.")) and form_id in ("default", "camera-form"):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
     # 1. Primary: Check ?ref= query parameter (also supports ?ctv=, ?collaborator_id=)
     ref_param = (

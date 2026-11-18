@@ -222,14 +222,20 @@ def sync_all_persisted_forms(
     os.makedirs(forms_dir, exist_ok=True)
     default_disk_path = os.path.join(forms_dir, f"{base_schema.form_id}.json")
 
-    # 1. Sync default production schema
-    synced_default, _ = reconcile_and_sync_form_schema(base_schema, default_disk_path)
-    registry[synced_default.form_id] = synced_default
+    # 1. Seed the built-in default schema only for an empty deployment.
+    #    A forms directory that already has JSONs is authoritative; never resurrect
+    #    the default form (e.g. income_survey) once operators removed it.
+    persisted_json_names = [
+        fname for fname in os.listdir(forms_dir) if fname.endswith(".json")
+    ]
+    if not persisted_json_names:
+        synced_default, _ = reconcile_and_sync_form_schema(base_schema, default_disk_path)
+        registry[synced_default.form_id] = synced_default
 
     # 2. Sync all other JSON schemas in directory
     try:
         for fname in os.listdir(forms_dir):
-            if fname.endswith(".json") and fname != f"{base_schema.form_id}.json":
+            if fname.endswith(".json"):
                 fpath = os.path.join(forms_dir, fname)
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
