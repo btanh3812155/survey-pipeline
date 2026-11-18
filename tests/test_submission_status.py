@@ -269,3 +269,84 @@ def test_form_has_bottom_status_bar_and_shared_polling_renderer():
     assert "classList.remove('visible')" in clear_block
     assert "'--status-bar-offset', '0px'" in clear_block
     assert "closeSubmissionResultModal();" in clear_block
+
+
+def test_status_rate_limiter_uses_a_fixed_window(monkeypatch):
+    """The limiter must not extend its own window on every hit.
+
+    A page polling every 15s used to refresh the TTL on every request, so the
+    counter never expired and the client locked itself out after 60 hits (~15 min)
+    while the pending verdict was still pending. Once limited, the frontend used to
+    stop polling for good, so a later admin/Telegram verdict never reached the UI.
+    """
+    import core.cache as cache_mod
+    from core.cache import BoundedTTLCache
+
+    now = [1000.0]
+    monkeypatch.setattr(cache_mod.time, "time", lambda: now[0])
+    limiter = BoundedTTLCache(max_size=4, ttl_seconds=60.0)
+
+    assert limiter.incr("ip") == 1
+    now[0] += 15
+    assert limiter.incr("ip") == 2
+    now[0] += 15
+    assert limiter.incr("ip") == 3
+    # Still inside the window opened by the very first hit: no silent extension.
+    now[0] = 1059.0
+    assert limiter.incr("ip") == 4
+    # Window finally expires -> a fresh counter, not a permanent lockout.
+    now[0] = 1061.0
+    assert limiter.incr("ip") == 1
+
+
+def test_status_endpoint_rate_limit_recovers_after_window(monkeypatch):
+    from routers import survey as survey_mod
+
+    survey_mod.STATUS_RATE_LIMITER.clear()
+    try:
+        client = TestClient(app)
+        codes = [client.get("/api/v1/survey/status/DEV-NO-SUCH-ID").status_code for _ in range(61)]
+        assert codes[59] == 404
+        assert codes[60] == 429
+    finally:
+        survey_mod.STATUS_RATE_LIMITER.clear()
+
+
+@pytest.mark.asyncio
+async def test_admin_decision_stamps_moderated_at_for_status_bar():
+    submission_id = "DEV-STATUS-STAMP01"
+    backups = {p: _backup(p) for p in (DEV_FILE, MAIN_DEV_FILE)}
+    try:
+        _write_json(MAIN_DEV_FILE, [{
+            "submission_id": submission_id,
+            "status": "MANUAL_REVIEW",
+            "reason": "Chờ duyệt.",
+            "submitted_at": "2026-11-18T10:00:00+00:00",
+        }])
+        runner = TelegramPollingRunner(bot_token="mock_token", role="admin", db_pool=None)
+        success, final_status = await runner._update_submission_status(
+            submission_id, "APPROVED", reason="Duyệt thủ công"
+        )
+        assert success is True and final_status == "APPROVED"
+
+        record = next(r for r in json.load(open(MAIN_DEV_FILE, encoding="utf-8")) if r["submission_id"] == submission_id)
+        assert record["status"] == "APPROVED"
+        assert record.get("moderated_at"), "admin decisions must stamp moderated_at"
+
+        status_resp = TestClient(app).get(f"/api/v1/survey/status/{submission_id}")
+        assert status_resp.status_code == 200
+        assert status_resp.json()["updated_at"] == record["moderated_at"]
+    finally:
+        for path, content in backups.items():
+            _restore(path, content)
+
+
+def test_form_exposes_appeal_and_redo_state():
+    html = render_dynamic_form_html(DEFAULT_TRUST_BRIDGE_SCHEMA)
+
+    assert 'id="submissionStatusRedo"' in html
+    assert "status_appeal_pending" in html
+    assert "APPEAL_PENDING" in html
+    assert "statusSettleTimer" in html
+    assert "statusStateEpoch" in html
+    assert "statusRefreshInFlight" in html
