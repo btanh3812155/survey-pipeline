@@ -51,6 +51,7 @@ HISTORY_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 LOCAL_IDEMP_CACHE = BoundedTTLCache(max_size=2048, ttl_seconds=86400.0)
 PRE_CHECK_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 ACTIVE_APPEALS_RATE_LIMITER = BoundedTTLCache(max_size=1024, ttl_seconds=7200.0)
+STATUS_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 
 @router.get("/camera-form", response_class=HTMLResponse)
 @router.get("/forms/{form_id}", response_class=HTMLResponse)
@@ -224,6 +225,83 @@ async def get_survey_history(
             logger.warning(f"Error reading DB history: {e}")
 
     return {"phone": phone, "count": len(results), "attempts": results}
+
+def _read_dev_submission_status(clean_id: str):
+    for fpath in (
+        os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
+        os.path.join(os.getcwd(), "data", "dev_submissions.json"),
+    ):
+        if not os.path.exists(fpath):
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                records = json.load(f)
+            for r in records if isinstance(records, list) else []:
+                if str(r.get("submission_id") or "").strip() != clean_id:
+                    continue
+                return {
+                    "submission_id": clean_id,
+                    "status": (r.get("status") or "MANUAL_REVIEW").upper(),
+                    "reason": r.get("reason") or r.get("rejection_reason") or "",
+                    "updated_at": r.get("moderated_at") or r.get("updated_at") or r.get("submitted_at"),
+                    "is_test_mode": True,
+                }
+        except Exception as e:
+            logger.warning(f"Error reading dev submission status from {fpath}: {e}")
+    return None
+
+
+@router.get("/api/v1/survey/status/{submission_id}")
+async def get_submission_status(request: Request, submission_id: str):
+    """Public, PII-free approval status lookup for a submitted survey."""
+    client_ip = request.client.host if request.client else "unknown"
+    curr = STATUS_RATE_LIMITER.get(client_ip, 0)
+    if curr >= 60:
+        raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu trạng thái. Vui lòng thử lại sau!")
+    STATUS_RATE_LIMITER[client_ip] = curr + 1
+
+    clean_id = (submission_id or "").strip().lstrip("#")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,63}", clean_id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiếu khảo sát.")
+
+    is_dev_id = clean_id.upper().startswith(("DEV-", "TEST-"))
+    if is_dev_id:
+        dev_status = _read_dev_submission_status(clean_id)
+        if dev_status:
+            return dev_status
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiếu khảo sát.")
+
+    db_pool = get_db_pool()
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT status, rejection_reason, COALESCE(moderated_at, created_at)
+                        FROM survey_submissions
+                        WHERE submission_id = %s;
+                        """,
+                        (clean_id,),
+                    )
+                    row = await cur.fetchone()
+            if row:
+                return {
+                    "submission_id": clean_id,
+                    "status": (row[0] or "MANUAL_REVIEW").upper(),
+                    "reason": row[1] or "",
+                    "updated_at": row[2].isoformat() if hasattr(row[2], "isoformat") else (row[2] or None),
+                    "is_test_mode": False,
+                }
+        except Exception as e:
+            logger.warning(f"Error reading DB submission status: {e}")
+
+    # No pool configured (or DB miss): local dev storage still holds test records.
+    dev_status = _read_dev_submission_status(clean_id)
+    if dev_status:
+        return dev_status
+
+    raise HTTPException(status_code=404, detail="Không tìm thấy phiếu khảo sát.")
 PRE_CHECK_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 
 @router.post("/api/v1/survey/pre-check")

@@ -161,7 +161,7 @@
         .btn-floating-help {
             position: fixed;
             right: 18px;
-            bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 16px + var(--status-bar-offset, 0px));
             width: 170px;
             box-sizing: border-box;
             background: linear-gradient(135deg, #0284c7, #0369a1);
@@ -866,7 +866,7 @@
             position: fixed;
             right: 18px;
             left: auto;
-            bottom: calc(env(safe-area-inset-bottom, 20px) + 72px);
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 72px + var(--status-bar-offset, 0px));
             width: 170px;
             box-sizing: border-box;
             z-index: 1000;
@@ -899,6 +899,93 @@
             text-align: center;
             margin-top: 14px;
             line-height: 1.4;
+        }
+
+        /* Persistent approval-status bar (bottom of page) */
+        body.has-submission-status {
+            padding-bottom: calc(env(safe-area-inset-bottom, 24px) + 24px + var(--status-bar-offset, 0px));
+        }
+        #submissionStatusBar {
+            position: fixed;
+            left: 12px;
+            right: 12px;
+            bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+            z-index: 1002;
+            display: none;
+            background: rgba(15, 23, 42, 0.98);
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--accent);
+            border-radius: 14px;
+            padding: 12px 14px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(12px);
+            max-height: 45vh;
+            overflow-y: auto;
+        }
+        #submissionStatusBar.visible {
+            display: block;
+        }
+        .status-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        #submissionStatusBadge {
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 0.74rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        #submissionStatusId {
+            font-family: monospace;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--muted);
+            word-break: break-all;
+        }
+        #submissionStatusUpdated {
+            margin-left: auto;
+            font-size: 0.7rem;
+            color: #64748b;
+        }
+        #submissionStatusReason {
+            display: none;
+            margin-top: 8px;
+            font-size: 0.82rem;
+            line-height: 1.45;
+            color: #cbd5e1;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        #submissionStatusReason.show {
+            display: block;
+        }
+        #submissionStatusReason.clamped {
+            max-height: 4.35em;
+            overflow: hidden;
+        }
+        .status-bar-btn {
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #cbd5e1;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .status-bar-btn:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+        #submissionStatusNote {
+            display: none;
+            margin-top: 7px;
+            font-size: 0.72rem;
+            color: #fbbf24;
         }
     </style>
 </head>
@@ -1066,6 +1153,21 @@
         </div>
     </div>
 
+    <!-- Persistent approval status bar -->
+    <div id="submissionStatusBar" role="status" aria-live="polite">
+        <div class="status-bar-row">
+            <span id="submissionStatusBadge">Đang chờ duyệt</span>
+            <span id="submissionStatusId">#—</span>
+            <span id="submissionStatusUpdated"></span>
+        </div>
+        <div id="submissionStatusReason"></div>
+        <div class="status-bar-row" style="margin-top:8px;">
+            <button type="button" class="status-bar-btn" id="submissionStatusToggle" style="display:none;" onclick="toggleSubmissionStatusReason()">Xem chi tiết</button>
+            <button type="button" class="status-bar-btn" id="submissionStatusRefresh" onclick="refreshSubmissionStatus(true)">Làm mới</button>
+        </div>
+        <div id="submissionStatusNote"></div>
+    </div>
+
     <script src="/static/qrcode.min.js"></script>
 
     <canvas id="hiddenCameraCanvas" style="display:none;"></canvas>
@@ -1081,6 +1183,11 @@
             return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
         }
         let answers = {};
+        let lastSubmissionStatus = null;
+        let statusPollTimer = null;
+        let statusReasonExpanded = false;
+        const STATUS_POLL_MS = 15000;
+        const TERMINAL_SUBMISSION_STATUSES = ['APPROVED', 'REJECTED'];
         let gpsCoordinates = null;
         let activeVideoStream = null;
         let activeSignatureTargetQId = null;
@@ -1138,8 +1245,14 @@
                 server_err: "Lỗi kết nối máy chủ. Vui lòng thử lại sau.",
                 submit_timeout: "Máy chủ phản hồi quá lâu. Vui lòng kiểm tra kết nối và thử gửi lại.",
                 status_approved: "Đã duyệt",
-                status_manual_review: "Chờ kiểm tra",
-                status_rejected: "Cần kiểm tra lại",
+                status_manual_review: "Đang chờ duyệt",
+                status_rejected: "Bị từ chối",
+                status_refresh: "Làm mới",
+                status_expand: "Xem chi tiết",
+                status_collapse: "Thu gọn",
+                status_updated_at: "Cập nhật:",
+                status_update_error: "Không thể cập nhật trạng thái. Bấm Làm mới để thử lại.",
+                status_not_found: "Không tìm thấy phiếu khảo sát này trên hệ thống.",
                 modal_approved_title: "Báo Cáo Hợp Lệ!",
                 modal_approved_desc: "Khảo sát thu nhập thành công. Thông tin của bạn đã được ghi nhận.",
                 modal_review_title: "Chờ Người Thật Kiểm Tra",
@@ -1202,8 +1315,14 @@
                 server_err: "Server connection error. Please try again later.",
                 submit_timeout: "The server took too long to respond. Check your connection and try again.",
                 status_approved: "Approved",
-                status_manual_review: "Manual Review",
+                status_manual_review: "Pending Review",
                 status_rejected: "Rejected",
+                status_refresh: "Refresh",
+                status_expand: "Show details",
+                status_collapse: "Hide details",
+                status_updated_at: "Updated:",
+                status_update_error: "Could not refresh status. Tap Refresh to try again.",
+                status_not_found: "This submission could not be found.",
                 modal_approved_title: "Report Approved!",
                 modal_approved_desc: "Survey submitted successfully. Your submission has been recorded.",
                 modal_review_title: "Pending Manual Review",
@@ -1381,7 +1500,11 @@
             setTxt('txtSubResultTelegram', t.btn_open_telegram);
             setTxt('btnSubResultClose', t.btn_close);
             setTxt('btnSubResultReset', t.btn_new_submission);
+            setTxt('submissionStatusRefresh', t.status_refresh);
             setTxt('lockedQuestionsNotice', t.locked_notice);
+            if (lastSubmissionStatus) {
+                try { renderSubmissionStatus(lastSubmissionStatus); } catch(e) { console.error('status bar render error:', e); }
+            }
             try { updateTestModeUI(); } catch(e) {}
         }
 
@@ -2823,58 +2946,279 @@
             if (!silent) alert(I18N[currentLang].reset_done);
         }
 
-        function showSubmissionResultModal(res) {
-            const modal = document.getElementById('submissionResultModal');
+        function getLastSubmissionKey() {
+            return `tb_last_submission_${SCHEMA.form_id || 'income_survey'}`;
+        }
+
+        function normalizeSubmissionStatus(rawStatus) {
+            const status = String(rawStatus || 'MANUAL_REVIEW').toUpperCase();
+            if (status === 'APPROVED') return 'APPROVED';
+            if (status === 'REJECTED') return 'REJECTED';
+            return 'MANUAL_REVIEW';
+        }
+
+        function isTerminalSubmissionStatus(rawStatus) {
+            return TERMINAL_SUBMISSION_STATUSES.indexOf(normalizeSubmissionStatus(rawStatus)) !== -1;
+        }
+
+        function getSubmissionStatusMeta(rawStatus) {
+            const t = I18N[currentLang];
+            const status = normalizeSubmissionStatus(rawStatus);
+            if (status === 'APPROVED') {
+                return {
+                    status: status,
+                    label: t.status_approved,
+                    color: '#34d399',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    border: '#10b981',
+                    title: t.modal_approved_title,
+                    desc: t.modal_approved_desc
+                };
+            }
+            if (status === 'REJECTED') {
+                return {
+                    status: status,
+                    label: t.status_rejected,
+                    color: '#f87171',
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    border: '#ef4444',
+                    title: t.modal_rejected_title,
+                    desc: t.modal_rejected_desc
+                };
+            }
+            return {
+                status: 'MANUAL_REVIEW',
+                label: t.status_manual_review,
+                color: '#fbbf24',
+                background: 'rgba(245, 158, 11, 0.2)',
+                border: '#f59e0b',
+                title: t.modal_review_title,
+                desc: t.modal_review_desc
+            };
+        }
+
+        function formatSubmissionTime(value) {
+            if (!value) return '';
+            const date = new Date(value);
+            if (isNaN(date.getTime())) return String(value);
+            try {
+                return date.toLocaleString(currentLang === 'vi' ? 'vi-VN' : 'en-US', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                });
+            } catch(e) {
+                return String(value);
+            }
+        }
+
+        function syncSubmissionStatusLayout() {
+            const bar = document.getElementById('submissionStatusBar');
+            const visible = !!(bar && bar.classList.contains('visible'));
+            const height = visible ? bar.offsetHeight : 0;
+            document.documentElement.style.setProperty('--status-bar-offset', height ? `${height}px` : '0px');
+            document.body.classList.toggle('has-submission-status', visible);
+        }
+
+        // Single renderer for both the bottom bar and the result popup so they cannot drift.
+        function renderSubmissionStatus(state, options) {
+            options = options || {};
+            const updateBar = options.updateBar !== false;
+            const t = I18N[currentLang];
+            const meta = getSubmissionStatusMeta(state && state.status);
+            const rawId = (state && state.submission_id) ? String(state.submission_id).replace(/^#/, '') : '';
+            const subIdText = rawId ? `#${rawId}` : '#—';
+            const reasonText = (state && state.reason && String(state.reason).trim()) || meta.desc;
+            const updatedText = (state && state.updated_at)
+                ? `${t.status_updated_at} ${formatSubmissionTime(state.updated_at)}`
+                : '';
+
+            if (updateBar) {
+                const bar = document.getElementById('submissionStatusBar');
+                const badge = document.getElementById('submissionStatusBadge');
+                const idEl = document.getElementById('submissionStatusId');
+                const updatedEl = document.getElementById('submissionStatusUpdated');
+                const reasonEl = document.getElementById('submissionStatusReason');
+                const toggleBtn = document.getElementById('submissionStatusToggle');
+                const noteEl = document.getElementById('submissionStatusNote');
+
+                if (!bar || !rawId) {
+                    if (bar) bar.classList.remove('visible');
+                    syncSubmissionStatusLayout();
+                } else {
+                    bar.classList.add('visible');
+                    bar.style.borderLeftColor = meta.border;
+                    if (badge) {
+                        badge.textContent = meta.label;
+                        badge.style.background = meta.background;
+                        badge.style.color = meta.color;
+                        badge.style.border = `1px solid ${meta.border}`;
+                    }
+                    if (idEl) idEl.textContent = subIdText;
+                    if (updatedEl) updatedEl.textContent = updatedText;
+                    if (reasonEl) {
+                        reasonEl.textContent = reasonText;
+                        reasonEl.classList.add('show');
+                        reasonEl.classList.toggle('clamped', !statusReasonExpanded);
+                    }
+                    if (toggleBtn) {
+                        const canExpand = reasonText.length > 110;
+                        toggleBtn.style.display = canExpand ? 'inline-block' : 'none';
+                        toggleBtn.textContent = statusReasonExpanded ? t.status_collapse : t.status_expand;
+                    }
+                    if (noteEl) {
+                        noteEl.textContent = (state && state._note) || '';
+                        noteEl.style.display = (state && state._note) ? 'block' : 'none';
+                    }
+                    syncSubmissionStatusLayout();
+                }
+            }
+
+            // Keep the result popup in sync even when it is already open.
             const box = document.getElementById('submissionResultBox');
             const badge = document.getElementById('subResultBadge');
             const idEl = document.getElementById('subResultId');
             const titleEl = document.getElementById('subResultTitle');
             const reasonEl = document.getElementById('subResultReason');
-            const t = I18N[currentLang];
-
-            const status = ((res && res.status) || 'REJECTED').toUpperCase();
-            const subId = (res && res.submission_id) ? '#' + res.submission_id : '';
-            idEl.textContent = subId;
-
-            if (status === 'APPROVED') {
-                badge.textContent = t.status_approved;
-                badge.style.background = 'rgba(16, 185, 129, 0.2)';
-                badge.style.color = '#34d399';
-                badge.style.border = '1px solid #10b981';
-                box.style.borderTopColor = '#10b981';
-                titleEl.textContent = t.modal_approved_title;
-                reasonEl.textContent = (res && res.reason) || t.modal_approved_desc;
-            } else if (status === 'MANUAL_REVIEW' || status === 'NEEDS_REVIEW' || status === 'APPEAL_PENDING') {
-                badge.textContent = t.status_manual_review;
-                badge.style.background = 'rgba(245, 158, 11, 0.2)';
-                badge.style.color = '#fbbf24';
-                badge.style.border = '1px solid #f59e0b';
-                box.style.borderTopColor = '#f59e0b';
-                titleEl.textContent = t.modal_review_title;
-                reasonEl.textContent = (res && res.reason) || t.modal_review_desc;
-            } else {
-                badge.textContent = t.status_rejected;
-                badge.style.background = 'rgba(239, 68, 68, 0.2)';
-                badge.style.color = '#f87171';
-                badge.style.border = '1px solid #ef4444';
-                box.style.borderTopColor = '#ef4444';
-                titleEl.textContent = t.modal_rejected_title;
-                reasonEl.textContent = (res && res.reason) || t.modal_rejected_desc;
+            if (badge) {
+                badge.textContent = meta.label;
+                badge.style.background = meta.background;
+                badge.style.color = meta.color;
+                badge.style.border = `1px solid ${meta.border}`;
             }
+            if (idEl) idEl.textContent = subIdText;
+            if (box) box.style.borderTopColor = meta.border;
+            if (titleEl) titleEl.textContent = meta.title;
+            if (reasonEl) reasonEl.textContent = reasonText;
 
             const tgBtn = document.getElementById('btnSubResultTelegram');
             if (tgBtn) {
-                const cleanSubId = (res && res.submission_id) ? String(res.submission_id).replace(/^#/, '') : '';
-                const param = cleanSubId ? `support_${cleanSubId}` : 'support';
+                const param = rawId ? `support_${rawId}` : 'support';
                 tgBtn.href = `https://t.me/{tg_bot}?start=${param}`;
                 tgBtn.style.display = 'flex';
                 const tgTxt = document.getElementById('txtSubResultTelegram');
                 if (tgTxt) {
-                    tgTxt.textContent = status === 'APPROVED' ? 'Xem trên Telegram' : 'Yêu Cầu Hỗ Trợ Qua Telegram';
+                    tgTxt.textContent = meta.status === 'APPROVED' ? 'Xem trên Telegram' : 'Yêu Cầu Hỗ Trợ Qua Telegram';
                 }
             }
+        }
 
-            modal.style.display = 'flex';
+        function showSubmissionResultModal(res) {
+            const state = Object.assign({}, res || {}, { status: (res && res.status) || 'REJECTED' });
+            renderSubmissionStatus(state, { updateBar: false });
+            const modal = document.getElementById('submissionResultModal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function stopStatusPolling() {
+            if (statusPollTimer) {
+                clearInterval(statusPollTimer);
+                statusPollTimer = null;
+            }
+        }
+
+        function scheduleStatusPolling(state) {
+            stopStatusPolling();
+            if (!state || !state.submission_id || isTerminalSubmissionStatus(state.status)) return;
+            statusPollTimer = setInterval(() => { refreshSubmissionStatus(false); }, STATUS_POLL_MS);
+        }
+
+        function persistLastSubmission(state) {
+            try {
+                localStorage.setItem(getLastSubmissionKey(), JSON.stringify({
+                    submission_id: state.submission_id,
+                    status: state.status,
+                    reason: state.reason || '',
+                    submitted_at: state.submitted_at || new Date().toISOString(),
+                    updated_at: state.updated_at || state.submitted_at || new Date().toISOString()
+                }));
+            } catch(e) {}
+        }
+
+        function readLastSubmission() {
+            try {
+                const raw = localStorage.getItem(getLastSubmissionKey());
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                if (!parsed || !parsed.submission_id) return null;
+                return parsed;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function rememberSubmissionStatus(res) {
+            if (!res || !res.submission_id) return;
+            const nowIso = new Date().toISOString();
+            const record = {
+                submission_id: String(res.submission_id).replace(/^#/, ''),
+                status: res.status || 'MANUAL_REVIEW',
+                reason: res.reason || '',
+                submitted_at: res.submitted_at || nowIso,
+                updated_at: res.updated_at || res.submitted_at || nowIso
+            };
+            lastSubmissionStatus = record;
+            statusReasonExpanded = false;
+            persistLastSubmission(record);
+            renderSubmissionStatus(record);
+            scheduleStatusPolling(record);
+        }
+
+        function toggleSubmissionStatusReason() {
+            statusReasonExpanded = !statusReasonExpanded;
+            if (lastSubmissionStatus) renderSubmissionStatus(lastSubmissionStatus);
+        }
+
+        async function refreshSubmissionStatus(manual) {
+            const current = lastSubmissionStatus;
+            if (!current || !current.submission_id) return;
+            const refreshBtn = document.getElementById('submissionStatusRefresh');
+            if (refreshBtn && manual) refreshBtn.disabled = true;
+            try {
+                const resp = await fetch(`/api/v1/survey/status/${encodeURIComponent(current.submission_id)}`, {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                if (resp.status === 404) {
+                    stopStatusPolling();
+                    renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_not_found }));
+                    return;
+                }
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                const next = {
+                    submission_id: data.submission_id || current.submission_id,
+                    status: data.status || current.status,
+                    reason: (data.reason && String(data.reason).trim()) || current.reason || '',
+                    submitted_at: current.submitted_at,
+                    updated_at: data.updated_at || current.updated_at,
+                    is_test_mode: data.is_test_mode
+                };
+                lastSubmissionStatus = next;
+                persistLastSubmission(next);
+                renderSubmissionStatus(next);
+                if (isTerminalSubmissionStatus(next.status)) stopStatusPolling();
+                else if (!statusPollTimer) scheduleStatusPolling(next);
+            } catch(e) {
+                if (e && e.name === 'AbortError') return;
+                stopStatusPolling();
+                renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_update_error }));
+            } finally {
+                if (refreshBtn) refreshBtn.disabled = false;
+            }
+        }
+
+        function initSubmissionStatusBar() {
+            const saved = readLastSubmission();
+            if (!saved) {
+                renderSubmissionStatus(null);
+                return;
+            }
+            lastSubmissionStatus = saved;
+            renderSubmissionStatus(saved);
+            if (!isTerminalSubmissionStatus(saved.status)) {
+                scheduleStatusPolling(saved);
+                refreshSubmissionStatus(false);
+            }
         }
         let lastSubmittedData = null;
         function closeSubmissionResultModal() {
@@ -3091,6 +3435,7 @@
                 const res = await resp.json();
                 const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
                 try { localStorage.removeItem(storageKey); } catch(e) {}
+                rememberSubmissionStatus(res);
                 showSubmissionResultModal(res);
             } catch(e) {
                 showSubmissionResultModal({
@@ -3261,6 +3606,10 @@
             try { initGpsBannerBehavior(); } catch(e) { console.error('initGps error:', e); }
             try { renderForm(); } catch(e) { console.error('renderForm error:', e); }
             try { restoreDraftIfExists(); } catch(e) { console.error('restoreDraft error:', e); }
+            try { initSubmissionStatusBar(); } catch(e) { console.error('status bar init error:', e); }
+            window.addEventListener('resize', () => {
+                try { syncSubmissionStatusLayout(); } catch(e) {}
+            });
         });
     </script>
 </body>
