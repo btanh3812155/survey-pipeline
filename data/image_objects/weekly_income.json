@@ -2,7 +2,7 @@
   "version": 1,
   "id": "weekly_income",
   "label": "Báo cáo thu nhập tuần",
-  "description": "Màn hình thu nhập của ứng dụng tài xế",
+  "description": "Màn hình thu nhập của ứng dụng tài xế. Ví dụ cấu hình: period_type=WEEKLY, constraints=[{\"field\":\"period_months\",\"op\":\"contains\",\"value\":9},{\"field\":\"period_years\",\"op\":\"contains\",\"value\":2026}].",
   "prompt": "You are an expert OCR transcription engine for Vietnamese ride-hailing driver income screens (GSM, Xanh SM, Grab, Be). Analyze the image and output strictly a single valid JSON object. Detect: {{objects}}. Expected fields: {{fields}}. Configuration: {{config}}. Extract the exact visible values only; never guess. gross_revenue = Tong thu nhap / Doanh so (VND); net_income = Thu nhap rong; discount_and_tax = Chiet khau + thue (may be negative); period_raw_text = the date range inside the selected period tab; period_tabs = day-range tab labels left to right; selected_period_label = date range inside the teal-highlighted tab; selected_period_index = 0-based index of the teal tab; first_detail_date = first date under 'Chi tiet'; period_reliable = false when the active tab is clipped, hidden or ambiguous; field_labels = visible income row labels in order; detected_app = XANH_SM, GRAB, BE, GOJEK or OTHER_MOCKUP; is_authentic_gsm_ui = true only for the official Xanh SM / GSM interface; is_manipulated_or_photoshopped = true when digits/text look digitally edited; is_legible and confidence_score describe readability. Output JSON only.",
   "objects": [
     "driver income screen",
@@ -121,34 +121,24 @@
   ],
   "customizable": [
     {
-      "key": "granularity",
-      "label": "Kỳ báo cáo",
+      "key": "period_type",
+      "label": "Loại kỳ báo cáo",
       "type": "select",
-      "options": [
-        "DAILY",
-        "WEEKLY",
-        "MONTHLY"
-      ],
+      "options": ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"],
       "default": "WEEKLY",
-      "help": "Loại báo cáo mong đợi"
+      "help": "DAILY=1 ngày, WEEKLY=2-14 ngày, MONTHLY=25-31, QUARTERLY=80-100, YEARLY=350-380"
     },
     {
-      "key": "target_month",
-      "label": "Tháng mục tiêu",
-      "type": "month",
-      "default": "2026-10"
-    },
-    {
-      "key": "max_days",
-      "label": "Số ngày tối đa",
-      "type": "number",
-      "default": 24
-    },
-    {
-      "key": "require_range",
-      "label": "Bắt buộc có khoảng ngày",
-      "type": "toggle",
-      "default": true
+      "key": "constraints",
+      "label": "Ràng buộc kỳ",
+      "type": "constraints",
+      "default": [],
+      "help": "Tất cả ràng buộc phải cùng đúng (AND).",
+      "item_fields": [
+        {"key": "field", "label": "Trường", "type": "select", "options": ["period_type", "period_months", "period_years", "duration_days", "period_start", "period_end"]},
+        {"key": "op", "label": "Điều kiện", "type": "select", "options": ["equals", "not_equals", "contains", "in", "gte", "lte", "between"]},
+        {"key": "value", "label": "Giá trị", "type": "text"}
+      ]
     }
   ],
   "engines": [
@@ -165,10 +155,14 @@
       "id": "period_granularity",
       "label": "Kiểm tra loại kỳ",
       "params": {
-        "expected": "{{granularity}}",
-        "max_days": "{{max_days}}",
-        "require_range": "{{require_range}}",
-        "target_month": "{{target_month}}"
+        "expected": "{{period_type}}"
+      }
+    },
+    {
+      "id": "constraints",
+      "label": "Ràng buộc kỳ",
+      "params": {
+        "constraints": "{{constraints}}"
       }
     },
     {

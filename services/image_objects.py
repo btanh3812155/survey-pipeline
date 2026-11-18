@@ -28,7 +28,7 @@ from services.image_check_engines import (
 
 logger = logging.getLogger("services.image_objects")
 
-CUSTOMIZABLE_TYPES = ("text", "number", "select", "toggle", "month", "date", "textarea")
+CUSTOMIZABLE_TYPES = ("text", "number", "select", "toggle", "month", "date", "textarea", "constraints")
 EXPECTED_FIELD_TYPES = ("string", "integer", "number", "boolean", "array", "object")
 
 
@@ -66,6 +66,7 @@ class CustomizableField(BaseModel):
     options: Optional[List[Any]] = None
     default: Any = None
     help: Optional[str] = None
+    item_fields: Optional[List[Dict[str, Any]]] = None
 
     @field_validator("type")
     @classmethod
@@ -81,6 +82,17 @@ class CustomizableField(BaseModel):
                 raise ValueError(f"customizable select '{self.key}' requires non-empty options")
         elif self.options is not None:
             raise ValueError(f"customizable '{self.key}' only accepts options when type is select")
+
+        if self.type == "constraints":
+            if not self.item_fields:
+                raise ValueError(f"customizable constraints '{self.key}' requires item_fields")
+            for item in self.item_fields:
+                if not isinstance(item, dict) or not item.get("key") or not item.get("label"):
+                    raise ValueError(
+                        f"customizable constraints '{self.key}' item_fields need key and label"
+                    )
+        elif self.item_fields is not None:
+            raise ValueError(f"customizable '{self.key}' only accepts item_fields when type is constraints")
         return self
 
 

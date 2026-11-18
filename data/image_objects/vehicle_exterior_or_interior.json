@@ -16,9 +16,37 @@
     {"key": "is_authentic", "label": "Ảnh thật", "type": "boolean", "required": false}
   ],
   "customizable": [
-    {"key": "require_plate", "label": "Bắt buộc biển số", "type": "toggle", "default": false}
+    {"key": "require_plate", "label": "Bắt buộc biển số", "type": "toggle", "default": false},
+    {"key": "allowed_views", "label": "Góc chụp cho phép (dấu phẩy)", "type": "text", "default": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"}
   ],
-  "engines": [],
+  "engines": [
+    {
+      "id": "vehicle_plate_required",
+      "label": "Bắt buộc biển số",
+      "params": {"fields": ["license_plate"]},
+      "conditions": [{"field": "$config.require_plate", "op": "equals", "value": true}]
+    },
+    {
+      "id": "vehicle_view_allowed",
+      "label": "Góc chụp hợp lệ",
+      "params": {
+        "field": "view",
+        "allowed": "{{allowed_views}}",
+        "message": "Góc chụp phương tiện không nằm trong danh sách cho phép."
+      },
+      "conditions": [{"field": "view", "op": "not_empty"}]
+    },
+    {
+      "id": "vehicle_authentic",
+      "label": "Ảnh phương tiện thật",
+      "params": {
+        "field": "is_authentic",
+        "expected": true,
+        "message": "Không phát hiện ảnh phương tiện thật."
+      },
+      "conditions": [{"field": "is_authentic", "op": "not_empty"}]
+    }
+  ],
   "extractor": "vehicle",
   "classify_role": "vehicle_exterior"
 }

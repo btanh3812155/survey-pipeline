@@ -6,7 +6,7 @@
   "implementation": "enum",
   "params_schema": [
     {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
-    {"key": "allowed", "label": "Giá trị cho phép", "type": "array", "required": true},
+    {"key": "allowed", "label": "Giá trị cho phép (array hoặc dấu phẩy)", "type": "text", "required": true},
     {"key": "required", "label": "Bắt buộc có giá trị", "type": "toggle", "default": false},
     {"key": "message", "label": "Thông báo lỗi", "type": "text"}
   ],

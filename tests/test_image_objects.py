@@ -38,7 +38,7 @@ from services.image_object_projection import project_income_totals, project_inco
 
 
 def _weekly_config(**overrides):
-    config = {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": True}
+    config = {"period_type": "WEEKLY", "constraints": []}
     config.update(overrides)
     return config
 
@@ -53,7 +53,7 @@ def test_registry_loads_object_and_engine_files():
     ids = {obj.id for obj in registry["objects"].values()}
     assert {"weekly_income", "app_profile", "vehicle_exterior_or_interior"} <= ids
     implementations = {engine.implementation for engine in registry["engines"].values()}
-    assert {"required_fields", "date_range", "number_range", "arithmetic", "regex", "enum", "period_granularity"} <= implementations
+    assert {"required_fields", "date_range", "number_range", "arithmetic", "regex", "enum", "period_granularity", "constraints"} <= implementations
     assert all(engine.implementation for engine in list_engines())
 
 
@@ -65,35 +65,57 @@ def test_missing_object_fails_loudly():
 def test_customizable_defaults_and_slot_overrides():
     obj = get_object("weekly_income")
     defaults = merged_config(obj, {})
-    assert defaults["granularity"] == "WEEKLY"
-    assert defaults["target_month"] == "2026-10"
-    assert defaults["max_days"] == 24
-    assert defaults["require_range"] is True
+    assert defaults["period_type"] == "WEEKLY"
+    assert defaults["constraints"] == []
 
-    overridden = merged_config(obj, {"granularity": "DAILY", "max_days": 1})
-    assert overridden["granularity"] == "DAILY"
-    assert overridden["max_days"] == 1
-    assert overridden["target_month"] == "2026-10"
+    overridden = merged_config(obj, {
+        "period_type": "MONTHLY",
+        "constraints": [{"field": "period_months", "op": "contains", "value": 10}],
+    })
+    assert overridden["period_type"] == "MONTHLY"
+    assert overridden["constraints"][0]["field"] == "period_months"
+
+
+def test_constraints_item_fields_are_validated():
+    from services.image_objects import CustomizableField
+
+    field = CustomizableField(
+        key="constraints",
+        label="Ràng buộc",
+        type="constraints",
+        item_fields=[{"key": "field", "label": "Trường", "type": "select"}],
+    )
+    assert field.item_fields[0]["key"] == "field"
+
+    with pytest.raises(ValueError):
+        CustomizableField(key="bad", label="Bad", type="text", item_fields=[{"key": "field", "label": "Trường"}])
+
+    with pytest.raises(ValueError):
+        CustomizableField(key="missing", label="Missing", type="constraints")
 
 
 def test_placeholder_substitution_keeps_type_and_renders_text():
-    config = {"granularity": "WEEKLY", "max_days": 24}
+    config = {"period_type": "WEEKLY", "duration": 7}
     resolved = resolve_placeholders(
-        {"expected": "{{granularity}}", "max_days": "{{max_days}}", "label": "Kỳ {{granularity}}/{{max_days}}"},
+        {"expected": "{{period_type}}", "duration": "{{duration}}", "label": "Kỳ {{period_type}}/{{duration}}"},
         config,
     )
     assert resolved["expected"] == "WEEKLY"
-    assert resolved["max_days"] == 24
-    assert resolved["label"] == "Kỳ WEEKLY/24"
+    assert resolved["duration"] == 7
+    assert resolved["label"] == "Kỳ WEEKLY/7"
 
 
 def test_detection_prompt_is_built_from_object_and_slot_config():
     obj = get_object("weekly_income")
-    prompt = build_detection_prompt(obj, {"granularity": "MONTHLY", "max_days": 31, "require_range": False})
+    config = {
+        "period_type": "MONTHLY",
+        "constraints": [{"field": "period_months", "op": "contains", "value": 10}],
+    }
+    prompt = build_detection_prompt(obj, config)
     assert "driver income screen" in prompt
     assert "Doanh thu gộp" in prompt
     assert "MONTHLY" in prompt
-    assert "31" in prompt
+    assert "period_months" in prompt
 
 
 def test_slot_object_resolution_and_legacy_role_compatibility():
@@ -164,11 +186,42 @@ def test_default_form_and_migrated_form_have_object_types():
     assert "app_profile" in types
     assert "vehicle_exterior_or_interior" in types
     assert types.count("weekly_income") == 5
+    slot_by_type = {}
+    for question in schema.questions:
+        for slot in (question.image_slots or []):
+            if slot.get("object_type"):
+                slot_by_type.setdefault(slot["object_type"], []).append(slot)
+    assert all(slot.get("object_config") for slots in slot_by_type.values() for slot in slots)
+    profile_config = slot_by_type["app_profile"][0]["object_config"]
+    assert profile_config["require_authentic"] is True
+    assert "allowed_apps" in profile_config
+    vehicle_config = slot_by_type["vehicle_exterior_or_interior"][0]["object_config"]
+    assert "require_plate" in vehicle_config
+    assert "allowed_views" in vehicle_config
     income_slots = [
         slot for question in schema.questions for slot in (question.image_slots or [])
         if slot.get("object_type") == "weekly_income"
     ]
-    assert all(slot["object_config"]["target_month"] == "2026-10" for slot in income_slots)
+    assert all(slot["object_config"]["period_type"] == "WEEKLY" for slot in income_slots)
+    assert all(
+        slot["object_config"]["constraints"] == [
+            {"field": "period_months", "op": "contains", "value": 10},
+            {"field": "period_years", "op": "contains", "value": 2026},
+        ]
+        for slot in income_slots
+    )
+    weeks = ["28/09 - 04/10", "05/10 - 11/10", "12/10 - 18/10", "19/10 - 25/10", "26/10 - 01/11"]
+    for slot, period in zip(income_slots, weeks):
+        result = run_object_checks(
+            "weekly_income",
+            {
+                "gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000,
+                "period": period, "detected_app": "XANH_SM", "is_authentic_gsm_ui": True,
+                "is_legible": True, "confidence_score": 0.95, "is_manipulated_or_photoshopped": False,
+            },
+            slot["object_config"],
+        )
+        assert result["passed"] is True, (period, result["reasons"])
 
 
 # ==============================================================================
@@ -181,11 +234,34 @@ def test_conditions_gate_engine_execution():
     assert not conditions_pass([{"field": "period_raw_text", "op": "empty"}], extraction)
     assert evaluate_condition({"field": "gross_revenue", "op": "gte", "value": 100}, {"gross_revenue": 200})
     assert not evaluate_condition({"field": "gross_revenue", "op": "lte", "value": 100}, {"gross_revenue": 200})
+    assert evaluate_condition({"field": "$config.require_plate", "op": "equals", "value": True}, {}, {"require_plate": True})
+    assert not evaluate_condition({"field": "$config.require_plate", "op": "equals", "value": True}, {}, {"require_plate": False})
 
     engine = {"id": "req", "implementation": "required_fields"}
     binding = {"id": "req", "params": {"fields": ["gross_revenue"]}, "conditions": [{"field": "period_raw_text", "op": "empty"}]}
     result = run_engine(engine, binding, extraction, {})
     assert result["skipped"] is True and result["passed"] is True
+
+
+def test_vehicle_profile_object_engines_read_object_config():
+    vehicle = get_object("vehicle_exterior_or_interior")
+    missing_plate = run_definition_checks(vehicle, {"view": "EXTERIOR"}, {"require_plate": True})
+    assert missing_plate["passed"] is False
+    assert "license_plate" in missing_plate["reasons"][0]
+
+    no_plate_required = run_definition_checks(vehicle, {"view": "EXTERIOR"}, {"require_plate": False})
+    assert no_plate_required["passed"] is True
+
+    bad_view = run_definition_checks(vehicle, {"view": "TRUNK"}, {"require_plate": False})
+    assert bad_view["passed"] is False
+
+    profile = get_object("app_profile")
+    missing_tier = run_definition_checks(profile, {"app": "XANH_SM"}, {"require_member_tier": True})
+    assert missing_tier["passed"] is False
+    assert "membership_type" in missing_tier["reasons"][0]
+
+    bad_app = run_definition_checks(profile, {"app": "GRAB"}, {"require_member_tier": False})
+    assert bad_app["passed"] is False
 
 
 def test_required_fields_engine():
@@ -204,6 +280,8 @@ def test_required_fields_engine():
         ("15/10/2026", False),
         ("15/10 - 21/10", True),
         ("28/09/2026 - 04/10/2026", True),
+        ("15/10 - 28/10", True),
+        ("15/10 - 29/10", False),
         ("Tuần 1", True),
     ],
 )
@@ -216,9 +294,37 @@ def test_period_granularity_engine(period, passed):
     assert result["passed"] is passed, result["reasons"]
 
 
+@pytest.mark.parametrize(
+    "period_type,period,passed",
+    [
+        ("DAILY", "15/10/2026", True),
+        ("DAILY", "15/10 - 16/10", False),
+        ("WEEKLY", "28/09 - 04/10", True),
+        ("WEEKLY", "15/10 - 28/10", True),
+        ("WEEKLY", "15/10 - 29/10", False),
+        ("WEEKLY", "15/10/2026", False),
+        ("MONTHLY", "01/10/2026 - 31/10/2026", True),
+        ("MONTHLY", "Tháng 10/2026", True),
+        ("MONTHLY", "05/10/2026 - 31/10/2026", True),
+        ("QUARTERLY", "01/01/2026 - 31/03/2026", True),
+        ("MONTHLY", "01/01/2026 - 31/03/2026", False),
+        ("QUARTERLY", "01/01/2026 - 15/04/2026", False),
+        ("YEARLY", "01/01/2026 - 31/12/2026", True),
+        ("YEARLY", "01/01/2026 - 31/10/2026", False),
+    ],
+)
+def test_period_type_duration_windows(period_type, period, passed):
+    result = run_object_checks(
+        "weekly_income",
+        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": period, "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
+        _weekly_config(period_type=period_type),
+    )
+    assert result["passed"] is passed, result["reasons"]
+
+
 def test_date_range_engine_cross_month_target_window():
     engine = {"id": "dr", "implementation": "date_range"}
-    binding = {"id": "dr", "params": {"field": "period_raw_text", "target_month": "2026-10", "max_days": 24, "granularity": "WEEKLY"}}
+    binding = {"id": "dr", "params": {"field": "period_raw_text", "target_month": "2026-10", "granularity": "WEEKLY"}}
 
     cross_start = run_engine(engine, binding, {"period_raw_text": "28/09 - 04/10"}, {})
     assert cross_start["passed"] is True, cross_start["reason"]
@@ -231,28 +337,53 @@ def test_date_range_engine_cross_month_target_window():
     assert "không khớp tháng mục tiêu" in wrong_month["reason"]
 
 
-def test_period_granularity_engine_cross_month_target_window():
-    cross_start = run_object_checks(
-        "weekly_income",
-        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "28/09 - 04/10", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
-        _weekly_config(),
-    )
-    assert cross_start["passed"] is True, cross_start["reasons"]
+def test_constraints_engine_period_facts():
+    base = {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95}
+    cross_month = {**base, "period": "28/09 - 04/10"}
 
-    cross_end = run_object_checks(
-        "weekly_income",
-        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "26/10 - 01/11", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
-        _weekly_config(),
-    )
-    assert cross_end["passed"] is True, cross_end["reasons"]
+    passed = run_object_checks("weekly_income", cross_month, _weekly_config(constraints=[
+        {"field": "period_months", "op": "contains", "value": 10},
+        {"field": "period_years", "op": "contains", "value": 2026},
+    ]))
+    assert passed["passed"] is True, passed["reasons"]
 
-    wrong_month = run_object_checks(
-        "weekly_income",
-        {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "05/09 - 11/09", "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95},
-        _weekly_config(),
-    )
-    assert wrong_month["passed"] is False
-    assert any("tháng mục tiêu" in reason for reason in wrong_month["reasons"])
+    month_fail = run_object_checks("weekly_income", cross_month, _weekly_config(constraints=[
+        {"field": "period_months", "op": "contains", "value": 8},
+    ]))
+    assert month_fail["passed"] is False
+    assert "Ràng buộc không đạt" in month_fail["reasons"][0]
+
+    duration_fail = run_object_checks("weekly_income", cross_month, _weekly_config(constraints=[
+        {"field": "duration_days", "op": "between", "value": "8,14"},
+    ]))
+    assert duration_fail["passed"] is False
+
+    duration_pass = run_object_checks("weekly_income", cross_month, _weekly_config(constraints=[
+        {"field": "duration_days", "op": "between", "value": "7,7"},
+    ]))
+    assert duration_pass["passed"] is True, duration_pass["reasons"]
+
+    in_pass = run_object_checks("weekly_income", cross_month, _weekly_config(constraints=[
+        {"field": "period_type", "op": "in", "value": "WEEKLY,MONTHLY"},
+        {"field": "period_start", "op": "equals", "value": "2026-09-28"},
+        {"field": "period_end", "op": "equals", "value": "2026-10-04"},
+    ]))
+    assert in_pass["passed"] is True, in_pass["reasons"]
+
+
+def test_constraints_engine_rejects_empty_value_and_unknown_field():
+    base = {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "period": "28/09 - 04/10"}
+    empty = run_object_checks("weekly_income", base, _weekly_config(constraints=[
+        {"field": "period_months", "op": "contains", "value": ""},
+    ]))
+    assert empty["passed"] is False
+    assert "thiếu giá trị" in empty["reasons"][0]
+
+    unknown = run_object_checks("weekly_income", base, _weekly_config(constraints=[
+        {"field": "gross_revenue", "op": "gte", "value": "1"},
+    ]))
+    assert unknown["passed"] is False
+    assert "không được hỗ trợ" in unknown["reasons"][0]
 
 
 def test_number_range_engine():
@@ -299,7 +430,7 @@ def test_weekly_income_daily_monthly_single_day_and_valid_week():
     base = {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95}
 
     monthly = run_object_checks("weekly_income", {**base, "period": "Tháng 10/2026"}, _weekly_config())
-    assert monthly["passed"] is False and "THÁNG" in monthly["reasons"][0] and "TUẦN" in monthly["reasons"][0]
+    assert monthly["passed"] is False and "THÁNG" in monthly["reasons"][0] and "WEEKLY" in monthly["reasons"][0]
 
     daily_tab = run_object_checks("weekly_income", {**base, "period": "Hôm nay (15/10/2026)", "active_tab": "DAILY"}, _weekly_config())
     assert daily_tab["passed"] is False and "NGÀY" in daily_tab["reasons"][0]
@@ -311,13 +442,18 @@ def test_weekly_income_daily_monthly_single_day_and_valid_week():
     assert valid["passed"] is True, valid["reasons"]
 
 
-def test_weekly_income_config_changes_target_month_and_max_days():
+def test_weekly_income_config_changes_period_type_and_constraints():
     base = {"gross_revenue": 5_000_000, "net_income": 4_000_000, "discount_and_tax": 1_000_000, "detected_app": "XANH_SM", "is_legible": True, "confidence_score": 0.95, "period": "05/10 - 11/10"}
     assert run_object_checks("weekly_income", base, _weekly_config())["passed"] is True
-    wrong_month = run_object_checks("weekly_income", base, _weekly_config(target_month="2026-09"))
+
+    monthly = run_object_checks("weekly_income", {**base, "period": "01/10/2026 - 31/10/2026"}, _weekly_config(period_type="MONTHLY"))
+    assert monthly["passed"] is True, monthly["reasons"]
+
+    wrong_month = run_object_checks("weekly_income", base, _weekly_config(
+        constraints=[{"field": "period_months", "op": "contains", "value": 9}],
+    ))
     assert wrong_month["passed"] is False
-    too_long = run_object_checks("weekly_income", {**base, "period": "01/10 - 10/10"}, _weekly_config(max_days=7))
-    assert too_long["passed"] is False
+    assert "Ràng buộc không đạt" in wrong_month["reasons"][0]
 
 
 def test_projection_adapter_is_not_fixed_to_five_weeks():
@@ -355,6 +491,7 @@ def test_admin_api_returns_on_disk_definitions():
     object_ids = {item["id"] for item in body["objects"]}
     assert {"weekly_income", "app_profile", "vehicle_exterior_or_interior"} <= object_ids
     assert any(engine["implementation"] == "period_granularity" for engine in body["engines"])
+    assert any(engine["implementation"] == "constraints" for engine in body["engines"])
 
 
 def test_admin_page_lists_objects_and_engines():
@@ -363,6 +500,7 @@ def test_admin_page_lists_objects_and_engines():
     assert response.status_code == 200
     assert "weekly_income" in response.text
     assert "period_granularity" in response.text
+    assert "constraints" in response.text
 
     forms_page = client.get("/admin/forms", auth=("admin", "12345678"))
     assert forms_page.status_code == 200

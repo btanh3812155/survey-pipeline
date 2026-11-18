@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "vehicle_authentic",
+  "label": "Ảnh phương tiện thật",
+  "description": "Cờ is_authentic phải là true khi có giá trị.",
+  "implementation": "boolean",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "expected", "label": "Giá trị mong đợi", "type": "toggle", "default": true},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

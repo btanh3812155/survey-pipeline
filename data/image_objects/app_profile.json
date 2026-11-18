@@ -23,10 +23,41 @@
     {"key": "is_authentic", "label": "Hồ sơ chính thức", "type": "boolean", "required": false}
   ],
   "customizable": [
-    {"key": "require_authentic", "label": "Bắt buộc giao diện chính thức", "type": "toggle", "default": true}
+    {"key": "require_authentic", "label": "Bắt buộc giao diện chính thức", "type": "toggle", "default": true},
+    {"key": "require_member_tier", "label": "Bắt buộc hạng thành viên", "type": "toggle", "default": false},
+    {"key": "allowed_apps", "label": "Ứng dụng cho phép (dấu phẩy)", "type": "text", "default": "XANH_SM"}
   ],
   "engines": [
-    {"id": "authentic_profile", "label": "Hồ sơ chính thức", "params": {"field": "is_authentic", "expected": true, "required": false, "message": "Không phát hiện màn hình hồ sơ ứng dụng tài xế Xanh SM chính thức."}, "conditions": [{"field": "is_authentic", "op": "not_empty"}]}
+    {
+      "id": "authentic_profile",
+      "label": "Hồ sơ chính thức",
+      "params": {
+        "field": "is_authentic",
+        "expected": true,
+        "required": false,
+        "message": "Không phát hiện màn hình hồ sơ ứng dụng tài xế Xanh SM chính thức."
+      },
+      "conditions": [
+        {"field": "is_authentic", "op": "not_empty"},
+        {"field": "$config.require_authentic", "op": "equals", "value": true}
+      ]
+    },
+    {
+      "id": "profile_member_tier_required",
+      "label": "Bắt buộc hạng thành viên",
+      "params": {"fields": ["membership_type"]},
+      "conditions": [{"field": "$config.require_member_tier", "op": "equals", "value": true}]
+    },
+    {
+      "id": "profile_app_allowed",
+      "label": "Ứng dụng hồ sơ hợp lệ",
+      "params": {
+        "field": "app",
+        "allowed": "{{allowed_apps}}",
+        "message": "Ứng dụng trên hồ sơ không nằm trong danh sách cho phép."
+      },
+      "conditions": [{"field": "app", "op": "not_empty"}]
+    }
   ],
   "extractor": "profile",
   "classify_role": "app_profile"

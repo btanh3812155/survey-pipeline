@@ -2,14 +2,10 @@
   "version": 1,
   "id": "period_granularity",
   "label": "Kiểm tra loại kỳ",
-  "description": "So khớp loại kỳ, độ dài khoảng ngày và tháng mục tiêu.",
+  "description": "So khớp loại kỳ với độ dài thực tế: DAILY 1 ngày, WEEKLY 2-14, MONTHLY 25-31, QUARTERLY 80-100, YEARLY 350-380.",
   "implementation": "period_granularity",
   "params_schema": [
-    {"key": "expected", "label": "Kỳ mong đợi", "type": "select", "options": ["DAILY", "WEEKLY", "MONTHLY"], "required": true},
-    {"key": "max_days", "label": "Số ngày tối đa", "type": "number", "default": 24},
-    {"key": "require_range", "label": "Bắt buộc khoảng ngày", "type": "toggle", "default": true},
-    {"key": "target_month", "label": "Tháng mục tiêu", "type": "month"},
-    {"key": "week", "label": "Số tuần hiển thị trong thông báo", "type": "number", "default": 1}
+    {"key": "expected", "label": "Loại kỳ mong đợi", "type": "select", "options": ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"], "required": true}
   ],
   "conditions_schema": [
     {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},

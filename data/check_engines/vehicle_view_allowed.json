@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "vehicle_view_allowed",
+  "label": "Góc chụp phương tiện hợp lệ",
+  "description": "Kiểm tra view thuộc allowed_views khi trường view có giá trị.",
+  "implementation": "enum",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "allowed", "label": "Giá trị cho phép (array hoặc dấu phẩy)", "type": "text"},
+    {"key": "required", "label": "Bắt buộc có giá trị", "type": "toggle", "default": false},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

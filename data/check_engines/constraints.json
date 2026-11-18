@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "constraints",
+  "label": "Ràng buộc kỳ",
+  "description": "Kiểm tra AND các ràng buộc khai báo trên period_type, period_months, period_years, duration_days, period_start, period_end.",
+  "implementation": "constraints",
+  "params_schema": [
+    {"key": "constraints", "label": "Danh sách ràng buộc", "type": "constraints", "required": false}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true},
+    {"key": "value", "label": "Giá trị so sánh", "type": "text"}
+  ]
+}

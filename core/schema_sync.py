@@ -131,6 +131,14 @@ def reconcile_form_questions(
                 # Baseline non-empty values (e.g. newly added ai_detection_prompt) populate if disk was blank
                 if sv is not None and sv != "" and not merged_slot.get(sk):
                     merged_slot[sk] = sv
+            base_config = b_slot.get("object_config")
+            disk_config = d_slot.get("object_config")
+            if isinstance(base_config, dict) and base_config:
+                # Keep operator overrides but add newly introduced object-config keys
+                merged_slot["object_config"] = {
+                    **base_config,
+                    **(disk_config if isinstance(disk_config, dict) else {}),
+                }
 
             merged_slots.append(normalize_slot_definition(merged_slot, idx))
 

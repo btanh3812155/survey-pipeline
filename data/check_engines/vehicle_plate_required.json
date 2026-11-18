@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "vehicle_plate_required",
+  "label": "Bắt buộc biển số xe",
+  "description": "Yêu cầu license_plate khi object_config.require_plate bật.",
+  "implementation": "required_fields",
+  "params_schema": [
+    {"key": "fields", "label": "Danh sách trường", "type": "array", "required": true}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu (hỗ trợ $config.<key>)", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true},
+    {"key": "value", "label": "Giá trị so sánh", "type": "text"}
+  ]
+}

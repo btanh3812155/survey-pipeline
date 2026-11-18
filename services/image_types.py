@@ -20,6 +20,8 @@ class TimeGranularity(str, Enum):
     DAILY = "DAILY"        # 1-day statement (e.g. "Hôm nay", "15/10/2026")
     WEEKLY = "WEEKLY"      # 7-day statement (e.g. "28/09 - 04/10")
     MONTHLY = "MONTHLY"    # Full month statement (e.g. "Tháng 10/2026", "01/10 - 31/10")
+    QUARTERLY = "QUARTERLY"  # ~3 months (80-100 days)
+    YEARLY = "YEARLY"      # ~12 months (350-380 days)
     UNKNOWN = "UNKNOWN"
 
 

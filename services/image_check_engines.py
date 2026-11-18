@@ -9,17 +9,13 @@ placeholders resolve against the object's customizable defaults plus the slot's
 """
 
 import ast
+import json
 import logging
 import re
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from services.image_types import (
-    PeriodHeaderMetadata,
-    TimeGranularity,
-    parse_date_range_from_text,
-    validate_extracted_weekly_period,
-)
+from services.image_types import TimeGranularity, parse_date_range_from_text
 
 logger = logging.getLogger("services.image_check_engines")
 
@@ -115,11 +111,16 @@ def resolve_placeholders(value: Any, config: Dict[str, Any]) -> Any:
 # Conditions
 # ==============================================================================
 
-def evaluate_condition(condition: Dict[str, Any], extraction: Dict[str, Any]) -> bool:
+def evaluate_condition(
+    condition: Dict[str, Any], extraction: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+) -> bool:
     field = str(condition.get("field") or "")
     op = str(condition.get("op") or "not_empty")
     expected = condition.get("value")
-    actual = _field_value(extraction, field)
+    if field.startswith("$config."):
+        actual = _field_value(config or {}, field[len("$config."):])
+    else:
+        actual = _field_value(extraction, field)
 
     if op == "not_empty":
         return not _is_empty(actual)
@@ -130,10 +131,10 @@ def evaluate_condition(condition: Dict[str, Any], extraction: Dict[str, Any]) ->
             return actual.strip().lower() == expected.strip().lower()
         return actual == expected
     if op == "not_equals":
-        return not evaluate_condition({**condition, "op": "equals"}, extraction)
+        return not evaluate_condition({**condition, "op": "equals"}, extraction, config)
     if op == "contains":
         if isinstance(actual, (list, tuple, set)):
-            return expected in actual
+            return expected in actual or str(expected) in {str(item) for item in actual}
         return str(expected or "").lower() in str(actual or "").lower()
     if op == "regex":
         return bool(re.search(str(expected or ""), str(actual or "")))
@@ -145,8 +146,12 @@ def evaluate_condition(condition: Dict[str, Any], extraction: Dict[str, Any]) ->
     raise EngineDefinitionError(f"Unknown condition op: {op}")
 
 
-def conditions_pass(conditions: Iterable[Dict[str, Any]], extraction: Dict[str, Any]) -> bool:
-    return all(evaluate_condition(c, extraction) for c in (conditions or []))
+def conditions_pass(
+    conditions: Iterable[Dict[str, Any]],
+    extraction: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    return all(evaluate_condition(c, extraction, config) for c in (conditions or []))
 
 
 # ==============================================================================
@@ -315,53 +320,67 @@ def _months_spanned(start: date, end: date) -> set:
     return months
 
 
-_DATE_LIKE_RE = re.compile(r"\d{1,2}\s*[/-]\s*\d{1,2}")
+_DATE_LIKE_RE = re.compile(
+    r"\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{2,4}"
+    r"|\d{1,2}\s*[/-]\s*\d{1,2}\s*[-–]\s*\d{1,2}"
+)
+
+# Explicit duration windows per period type (inclusive days).
+PERIOD_TYPE_WINDOWS = {
+    "DAILY": (1, 1),
+    "WEEKLY": (2, 14),
+    "MONTHLY": (25, 31),
+    "QUARTERLY": (80, 100),
+    "YEARLY": (350, 380),
+}
 
 
-def _granularity_from_extraction(params: Dict[str, Any], extraction: Dict[str, Any], text: str) -> TimeGranularity:
-    expected = str(params.get("expected") or params.get("granularity") or "WEEKLY").upper()
+def _period_type_from_params(params: Dict[str, Any]) -> str:
+    value = str(params.get("expected") or params.get("period_type") or "WEEKLY").upper()
+    return value if value in PERIOD_TYPE_WINDOWS else "WEEKLY"
+
+
+def _detected_period_type(extraction: Dict[str, Any], text: str) -> Optional[TimeGranularity]:
     raw = str(
-        extraction.get("active_tab")
+        extraction.get("period_type")
+        or extraction.get("active_tab")
         or extraction.get("period_granularity")
-        or extraction.get("period_type")
         or ""
     ).upper()
     if raw in TimeGranularity.__members__:
         return TimeGranularity(raw)
-    lowered = text.lower()
+    lowered = (text or "").lower()
     if "tháng" in lowered or "toàn bộ tháng" in lowered:
         return TimeGranularity.MONTHLY
-    if expected == "DAILY" and ("hôm nay" in lowered or "ngày" in lowered):
-        return TimeGranularity.DAILY
-    if expected in TimeGranularity.__members__:
-        return TimeGranularity(expected)
-    return TimeGranularity.UNKNOWN
+    if "quý" in lowered:
+        return TimeGranularity.QUARTERLY
+    if "năm" in lowered:
+        return TimeGranularity.YEARLY
+    return None
+
+
+def _period_dates(text: str) -> Tuple[Optional[date], Optional[date], int]:
+    return parse_date_range_from_text(text)
 
 
 def engine_date_range(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     field = str(params.get("field") or "period_raw_text")
     text = str(_field_value(extraction, field) or "")
-    expected = str(params.get("expected") or params.get("granularity") or "WEEKLY").upper()
-    max_days = int(params.get("max_days") or 24)
+    expected = _period_type_from_params(params)
     target_month = _month_key(params.get("target_month"))
-    granularity = _granularity_from_extraction(params, extraction, text)
+    granularity = _detected_period_type(extraction, text)
     lowered = text.strip().lower()
 
     if granularity == TimeGranularity.MONTHLY or "tháng" in lowered:
         return _result(False, "Phát hiện ảnh chụp báo cáo doanh thu theo THÁNG. Biểu mẫu yêu cầu báo cáo thu nhập theo TUẦN (7 ngày)!")
-    if granularity == TimeGranularity.DAILY:
+    if granularity == TimeGranularity.DAILY or (("hôm nay" in lowered or "ngày" in lowered) and not any(sep in lowered for sep in ("-", "–", "đến"))):
         return _result(False, "Phát hiện tab 'Ngày' (báo cáo thu nhập theo NGÀY). Vui lòng chuyển sang tab 'Tuần' trên ứng dụng!")
-    if ("hôm nay" in lowered or "ngày" in lowered) and not any(sep in lowered for sep in ("-", "–", "đến")):
-        return _result(False, "Phát hiện báo cáo theo NGÀY. Biểu mẫu yêu cầu báo cáo thu nhập theo TUẦN!")
 
-    start, end, days = parse_date_range_from_text(text)
+    start, end, days = _period_dates(text)
     if start and end:
-        if expected != "MONTHLY" and days == 1:
-            return _result(False, f"Đây là báo cáo thu nhập của 1 ngày ({start.strftime('%d/%m')}). Biểu mẫu yêu cầu báo cáo thu nhập tổng hợp theo TUẦN (7 ngày)!")
-        if expected != "MONTHLY" and days >= max_days + 1:
-            return _result(False, f"Khoảng thời gian ghi nhận ({days} ngày) là báo cáo cả THÁNG. Biểu mẫu yêu cầu chụp riêng từng tuần!")
-        if expected == "DAILY" and days > 1:
-            return _result(False, f"Khoảng thời gian ghi nhận ({days} ngày) không phải báo cáo theo NGÀY.")
+        low, high = PERIOD_TYPE_WINDOWS[expected]
+        if not (low <= days <= high):
+            return _result(False, f"Khoảng thời gian {days} ngày không khớp loại kỳ {expected} ({low}-{high} ngày).")
         if target_month and target_month not in _months_spanned(start, end):
             return _result(
                 False,
@@ -378,35 +397,165 @@ def engine_date_range(params: Dict[str, Any], extraction: Dict[str, Any], contex
 
 def engine_period_granularity(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     text = str(extraction.get("period_raw_text") or extraction.get("period") or "")
-    expected = str(params.get("expected") or "WEEKLY").upper()
-    max_days = int(params.get("max_days") or 24)
-    require_range = bool(params.get("require_range", True))
-    granularity = _granularity_from_extraction(params, extraction, text)
-    header = PeriodHeaderMetadata(
-        detected_app=str(extraction.get("detected_app") or "XANH_SM"),
-        active_tab=granularity,
-        period_raw_text=text,
-    )
-    ok, reason = validate_extracted_weekly_period(
-        header,
-        expected_week_num=int(params.get("week") or 1),
-        max_days=max_days,
-        require_range=require_range,
-    )
-    if not ok:
-        return _result(False, reason)
-    target_month = _month_key(params.get("target_month"))
-    if target_month:
-        start, end, _days = parse_date_range_from_text(text)
-        if start and end:
-            if target_month not in _months_spanned(start, end):
-                return _result(
-                    False,
-                    f"Kỳ báo cáo không khớp tháng mục tiêu {target_month[1]:02d}/{target_month[0]}.",
-                )
-    if expected == "DAILY" and granularity not in (TimeGranularity.DAILY, TimeGranularity.UNKNOWN):
-        return _result(False, "Biểu mẫu yêu cầu báo cáo theo NGÀY.")
-    return _result(True)
+    expected = _period_type_from_params(params)
+    detected = _detected_period_type(extraction, text)
+    lowered = text.strip().lower()
+
+    if detected == TimeGranularity.MONTHLY or "tháng" in lowered:
+        if expected != "MONTHLY":
+            return _result(
+                False,
+                f"Phát hiện ảnh chụp báo cáo doanh thu theo THÁNG. Biểu mẫu yêu cầu báo cáo thu nhập theo {expected}!",
+            )
+    elif detected == TimeGranularity.DAILY:
+        if expected != "DAILY":
+            return _result(
+                False,
+                f"Phát hiện tab 'Ngày' (báo cáo thu nhập theo NGÀY). Biểu mẫu yêu cầu báo cáo thu nhập theo {expected}!",
+            )
+    elif detected is not None and detected != TimeGranularity.UNKNOWN:
+        detected_value = detected.value
+        if detected_value != expected:
+            return _result(
+                False,
+                f"Phát hiện kỳ báo cáo {detected_value} nhưng biểu mẫu yêu cầu {expected}.",
+            )
+
+    start, end, days = _period_dates(text)
+    if start and end:
+        low, high = PERIOD_TYPE_WINDOWS[expected]
+        if not (low <= days <= high):
+            return _result(
+                False,
+                f"Khoảng thời gian {days} ngày không khớp loại kỳ {expected} ({low}-{high} ngày).",
+            )
+        return _result(True, details={"days": days, "period_type": expected})
+
+    if not text.strip():
+        return _result(True, details={"missing_text": True, "period_type": expected})
+    if _DATE_LIKE_RE.search(text):
+        return _result(False, "Không đọc được khoảng ngày (từ ngày - đến ngày) trên màn hình báo cáo.")
+    return _result(True, details={"unparsed": True, "period_type": expected})
+
+
+_CONSTRAINT_FIELDS = {
+    "period_type",
+    "period_months",
+    "period_years",
+    "duration_days",
+    "period_start",
+    "period_end",
+}
+_CONSTRAINT_OPS = ("equals", "not_equals", "contains", "in", "gte", "lte", "between")
+
+
+def _period_facts(extraction: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    """Derived period facts used by the constraints engine."""
+    text = str(extraction.get("period_raw_text") or extraction.get("period") or "")
+    start, end, days = _period_dates(text)
+    facts = dict(extraction)
+    facts["duration_days"] = days if start and end else 0
+    facts["period_start"] = start.isoformat() if start else ""
+    facts["period_end"] = end.isoformat() if end else ""
+    months = sorted(_months_spanned(start, end)) if start and end else []
+    facts["period_months"] = [month for _year, month in months]
+    facts["period_years"] = sorted({year for year, _month in months})
+    facts["period_type"] = str(
+        extraction.get("period_type")
+        or extraction.get("active_tab")
+        or config.get("period_type")
+        or ""
+    ).upper()
+    return facts
+
+
+def _split_values(value: Any) -> List[str]:
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
+def _constraint_actual(facts: Dict[str, Any], field: str) -> Any:
+    if field in _CONSTRAINT_FIELDS:
+        return facts.get(field)
+    return _field_value(facts, field)
+
+
+def _compare_scalar(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, (int, float)) or isinstance(expected, (int, float)):
+        left, right = _to_number(actual), _to_number(expected)
+        if left is not None and right is not None:
+            return left == right
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return bool(actual) == bool(expected)
+    return str(actual).strip().lower() == str(expected).strip().lower()
+
+
+def _evaluate_constraint(constraint: Dict[str, Any], facts: Dict[str, Any]) -> Tuple[bool, str]:
+    if not isinstance(constraint, dict):
+        return False, "Ràng buộc không hợp lệ: mục ràng buộc phải là object."
+    field = str(constraint.get("field") or "").strip()
+    op = str(constraint.get("op") or "").strip()
+    raw_value = constraint.get("value")
+    if field not in _CONSTRAINT_FIELDS:
+        return False, f"Ràng buộc không hợp lệ: trường '{field}' không được hỗ trợ."
+    if op not in _CONSTRAINT_OPS:
+        return False, f"Ràng buộc không hợp lệ: phép '{op}' không được hỗ trợ."
+    if _is_empty(raw_value):
+        return False, f"Ràng buộc không hợp lệ: {field} {op} thiếu giá trị."
+
+    actual = _constraint_actual(facts, field)
+    label = f"{field} {op} {raw_value}"
+
+    if op == "equals":
+        passed = _compare_scalar(actual, raw_value)
+    elif op == "not_equals":
+        passed = not _compare_scalar(actual, raw_value)
+    elif op == "contains":
+        if isinstance(actual, (list, tuple, set)):
+            passed = any(_compare_scalar(item, raw_value) for item in actual)
+        else:
+            passed = str(raw_value).strip().lower() in str(actual or "").lower()
+    elif op == "in":
+        passed = any(_compare_scalar(actual, option) for option in _split_values(raw_value))
+    else:
+        left = _to_number(actual)
+        if op == "between":
+            parts = _split_values(raw_value)
+            if len(parts) != 2:
+                return False, f"Ràng buộc không hợp lệ: {field} between cần giá trị 'a,b'."
+            low, high = _to_number(parts[0]), _to_number(parts[1])
+            if left is None or low is None or high is None:
+                passed = False
+            else:
+                passed = low <= left <= high
+        else:
+            right = _to_number(raw_value)
+            if left is None or right is None:
+                passed = False
+            else:
+                passed = left >= right if op == "gte" else left <= right
+
+    if passed:
+        return True, ""
+    return False, f"Ràng buộc không đạt: {label} (giá trị thực: {actual!r})."
+
+
+def engine_constraints(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    constraints = params.get("constraints")
+    if constraints in (None, "", []):
+        return _result(True)
+    if isinstance(constraints, str):
+        try:
+            constraints = json.loads(constraints)
+        except json.JSONDecodeError:
+            return _result(False, "Ràng buộc không hợp lệ: constraints phải là JSON array.")
+    if not isinstance(constraints, list):
+        return _result(False, "Ràng buộc không hợp lệ: constraints phải là array.")
+    facts = _period_facts(extraction, context.get("config") or {})
+    for constraint in constraints:
+        passed, message = _evaluate_constraint(constraint, facts)
+        if not passed:
+            return _result(False, message)
+    return _result(True, details={"constraints": len(constraints)})
 
 
 def engine_number_range(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -471,6 +620,8 @@ def engine_regex(params: Dict[str, Any], extraction: Dict[str, Any], context: Di
 def engine_enum(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     field = str(params.get("field") or "")
     allowed = params.get("allowed") or params.get("options") or []
+    if isinstance(allowed, str):
+        allowed = [item.strip() for item in allowed.split(",") if item.strip()]
     allowed_norm = {str(item).strip().lower() for item in allowed}
     value = _field_value(extraction, field)
     if _is_empty(value):
@@ -510,6 +661,7 @@ ENGINE_IMPLEMENTATIONS = {
     "enum": engine_enum,
     "boolean": engine_boolean,
     "period_granularity": engine_period_granularity,
+    "constraints": engine_constraints,
 }
 
 
@@ -535,7 +687,7 @@ def run_engine(
         "label": binding.get("label") or engine_def.get("label") or engine_id,
         "params": params,
     }
-    if not conditions_pass(conditions, extraction):
+    if not conditions_pass(conditions, extraction, config):
         return {**base, "passed": True, "skipped": True, "reason": "conditions_not_met", "details": {}}
 
     outcome = fn(params, extraction, {**(context or {}), "engine": engine_def, "config": config})

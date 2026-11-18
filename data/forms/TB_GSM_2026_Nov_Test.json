@@ -778,7 +778,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "app_profile",
-          "object_config": {},
+          "object_config": {"require_authentic": true, "require_member_tier": false, "allowed_apps": "XANH_SM"},
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -800,7 +800,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "vehicle_exterior_or_interior",
-          "object_config": {},
+          "object_config": {"require_plate": false, "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"},
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -865,7 +865,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "app_profile",
-          "object_config": {}
+          "object_config": {"require_authentic": true, "require_member_tier": false, "allowed_apps": "XANH_SM"}
         },
         {
           "slot": 1,
@@ -878,7 +878,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "vehicle_exterior_or_interior",
-          "object_config": {},
+          "object_config": {"require_plate": false, "allowed_views": "EXTERIOR,COCKPIT,STEERING_WHEEL,ODOMETER"},
           "image_checks": {
             "enable_blur_check": true,
             "blur_threshold": 40,
@@ -960,7 +960,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
         },
         {
           "slot": 1,
@@ -973,7 +973,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
         },
         {
           "slot": 2,
@@ -986,7 +986,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
         },
         {
           "slot": 3,
@@ -999,7 +999,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
         },
         {
           "slot": 4,
@@ -1012,7 +1012,7 @@
           "allow_upload": true,
           "tooltip": "",
           "object_type": "weekly_income",
-          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+          "object_config": {"period_type": "WEEKLY", "constraints": [{"field": "period_months", "op": "contains", "value": 10}, {"field": "period_years", "op": "contains", "value": 2026}]}
         }
       ]
     },
