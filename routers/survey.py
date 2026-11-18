@@ -2297,8 +2297,23 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                         return int(row[0])
         except Exception as e:
             logger.debug(f"DB lookup failed for collaborator {collab_str}: {e}")
-    if collab_str.isdigit():
-        return int(collab_str)
+    # A bare number is not a chat id: phone-shaped refs must never be sent to
+    # Telegram as chat_id=961281318 (which yields "chat not found"). Only accept
+    # a numeric collaborator when it is a known active Telegram user.
+    if collab_str.isdigit() and db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT telegram_user_id FROM authorized_users "
+                        "WHERE telegram_user_id = %s AND is_active = TRUE LIMIT 1;",
+                        (int(collab_str),),
+                    )
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return int(row[0])
+        except Exception as e:
+            logger.debug(f"Telegram-id lookup failed for {collab_str}: {e}")
     return None
 
 
@@ -2323,13 +2338,24 @@ async def send_telegram_direct_message(
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
-    try:
+    async def _post() -> httpx.Response:
         client = get_http_client()
         if client is not None:
-            resp = await client.post(url, json=payload)
-        else:
-            async with httpx.AsyncClient(timeout=10.0) as temp_client:
-                resp = await temp_client.post(url, json=payload)
+            return await client.post(url, json=payload)
+        async with httpx.AsyncClient(timeout=10.0) as temp_client:
+            return await temp_client.post(url, json=payload)
+
+    try:
+        resp = await _post()
+        if resp.status_code == 429:
+            try:
+                retry_after = int((resp.json() or {}).get("parameters", {}).get("retry_after", 1))
+            except Exception:
+                retry_after = 1
+            retry_after = max(1, min(retry_after, 5))
+            logger.warning(f"Telegram 429 for chat {chat_id}; retrying after {retry_after}s")
+            await asyncio.sleep(retry_after)
+            resp = await _post()
         if resp.status_code != 200:
             logger.error(
                 f"Telegram send to chat {chat_id} failed: HTTP {resp.status_code} {resp.text[:300]}"
@@ -2424,12 +2450,20 @@ async def dispatch_submission_telegram_notifications(
     main_mod = sys.modules.get("main")
     _send_direct = getattr(main_mod, "send_telegram_direct_message", send_telegram_direct_message) if main_mod else send_telegram_direct_message
     _lookup_collab = getattr(main_mod, "lookup_telegram_user_for_collaborator", lookup_telegram_user_for_collaborator) if main_mod else lookup_telegram_user_for_collaborator
+    _lookup_phone = getattr(main_mod, "lookup_telegram_user_by_phone", lookup_telegram_user_by_phone) if main_mod else lookup_telegram_user_by_phone
 
     if not collaborator_id:
         logger.info(f"Submission #{submission_id} has no collaborator; nothing to notify.")
         return
 
-    collab_tg_id = await _lookup_collab(collaborator_id)
+    if recipient_kind == "driver":
+        # A driver recipient is a phone answer, not a chat id. Resolve it through
+        # authorized_users before falling back to collaborator-code resolution.
+        collab_tg_id = await _lookup_phone(str(collaborator_id))
+        if not collab_tg_id:
+            collab_tg_id = await _lookup_collab(collaborator_id)
+    else:
+        collab_tg_id = await _lookup_collab(collaborator_id)
     if not collab_tg_id:
         logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
         return
@@ -2438,10 +2472,10 @@ async def dispatch_submission_telegram_notifications(
     clean_phone = driver_phone or "N/A"
     masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
     collab_msg = (
-        f"📋 <b>Cập Nhật Khảo Sát #{submission_id}</b>\n\n"
-        f"• <b>Đối tác / Khách hàng:</b> {driver_name or 'Tài xế'} (<code>{masked_phone}</code>)\n"
-        f"• <b>Trạng thái:</b> {status_emoji} <b>{status_str}</b>\n"
-        f"• <b>Ghi chú:</b> {reason_str or 'Hợp lệ'}"
+        f"📋 <b>Cập Nhật Khảo Sát #{html.escape(str(submission_id))}</b>\n\n"
+        f"• <b>Đối tác / Khách hàng:</b> {html.escape(str(driver_name or 'Tài xế'))} (<code>{html.escape(str(masked_phone))}</code>)\n"
+        f"• <b>Trạng thái:</b> {status_emoji} <b>{html.escape(str(status_str))}</b>\n"
+        f"• <b>Ghi chú:</b> {html.escape(str(reason_str or 'Hợp lệ'))}"
     )
     if status_str == "REJECTED" and form_id:
         link = _build_retry_form_link(form_id, ctv_ref, collaborator_id, recipient_kind)

@@ -565,3 +565,17 @@ async def test_admin_update_endpoint_redirects_and_refreshes_cache():
     assert entry["display_name"] == "Alpha Form"
     assert entry["phone"] == "0909222333"
     assert entry["telegram_user_id"] == 99999
+
+
+@pytest.mark.asyncio
+async def test_phone_shaped_collaborator_never_becomes_a_chat_id():
+    """Regression: phone strings must not be cast to Telegram chat ids."""
+    from routers import survey as survey_router
+
+    pool = FakePool(authorized_rows=[])
+    with patch.object(survey_router, "get_db_pool", return_value=pool):
+        assert await survey_router.lookup_telegram_user_for_collaborator("0961281318") is None
+
+    pool = FakePool(authorized_rows=[(9241303232,)])
+    with patch.object(survey_router, "get_db_pool", return_value=pool):
+        assert await survey_router.lookup_telegram_user_for_collaborator("9241303232") == 9241303232
