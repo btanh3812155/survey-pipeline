@@ -2160,12 +2160,14 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                     )
                     row = await cur.fetchone()
                     if row:
-                        if row[0]:
-                            return int(row[0])
-                        if row[1]:
-                            tg_id = await lookup_telegram_user_by_phone(str(row[1]))
+                        phone, cached_tg_id = row[1], row[0]
+                        if phone:
+                            tg_id = await lookup_telegram_user_by_phone(str(phone))
                             if tg_id:
                                 return tg_id
+                        # Internally populated cache/fallback only; never admin input.
+                        if cached_tg_id:
+                            return int(cached_tg_id)
         except Exception as e:
             logger.debug(f"ctv_directory lookup failed for collaborator {collab_str}: {e}")
 

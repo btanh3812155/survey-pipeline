@@ -75,10 +75,10 @@ class FakeCursor:
                     updated_rows.append(
                         (
                             row[0],
-                            params[0] if params[0] is not None else None,
+                            params[0],
                             params[1],
+                            row[3] if len(row) > 3 else None,
                             params[2],
-                            params[3],
                             row[5] if len(row) > 5 else None,
                         )
                     )
@@ -317,7 +317,7 @@ async def test_form_options_and_links_only_contain_static_four():
 @pytest.mark.asyncio
 async def test_admin_update_refreshes_directory_cache():
     pool = FakePool(
-        directory_rows=[("ALPHA_001", "Alpha", None, None, True, "seed:static")],
+        directory_rows=[("ALPHA_001", "Alpha", None, 77777, True, "seed:static")],
     )
 
     assert await update_ctv_directory_entry(
@@ -325,7 +325,6 @@ async def test_admin_update_refreshes_directory_cache():
         "alpha_001",
         display_name="Alpha Updated",
         phone="0909 123 456",
-        telegram_user_id="55555",
         is_active=False,
     ) is True
 
@@ -333,7 +332,7 @@ async def test_admin_update_refreshes_directory_cache():
     assert entry is not None
     assert entry["display_name"] == "Alpha Updated"
     assert entry["phone"] == "0909123456"
-    assert entry["telegram_user_id"] == 55555
+    assert entry["telegram_user_id"] == 77777
     assert entry["is_active"] is False
 
     assert await update_ctv_directory_entry(pool, "MISSING", display_name="X") is False
@@ -414,19 +413,36 @@ def test_quota_computation_form_tag_global_with_window():
 
 
 @pytest.mark.asyncio
-async def test_lookup_telegram_user_for_collaborator_prefers_directory():
+async def test_lookup_telegram_user_for_collaborator_uses_directory_phone():
     from routers import survey as survey_router
 
-    pool = FakePool(directory_rows=[(555, "0901111111")])
-    with patch.object(survey_router, "get_db_pool", return_value=pool):
-        assert await survey_router.lookup_telegram_user_for_collaborator("tuan_lm_hcm_001") == 555
-
-    # Directory phone-only row falls back to authorized_users phone resolution.
-    pool = FakePool(directory_rows=[(None, "0901111111")])
+    # Directory phone wins even when an internally cached tg id is present.
+    pool = FakePool(directory_rows=[(555, "0901 111 111")])
+    phone_lookup = AsyncMock(return_value=777)
     with patch.object(survey_router, "get_db_pool", return_value=pool), patch.object(
-        survey_router, "lookup_telegram_user_by_phone", AsyncMock(return_value=777)
+        survey_router, "lookup_telegram_user_by_phone", phone_lookup
     ):
-        assert await survey_router.lookup_telegram_user_for_collaborator("TUAN_LM_HCM_001") == 777
+        assert await survey_router.lookup_telegram_user_for_collaborator("tuan_lm_hcm_001") == 777
+    phone_lookup.assert_awaited_once_with("0901 111 111")
+
+    # Cached telegram_user_id is only a fallback when phone lookup finds nothing.
+    pool = FakePool(directory_rows=[(555, None)])
+    with patch.object(survey_router, "get_db_pool", return_value=pool):
+        assert await survey_router.lookup_telegram_user_for_collaborator("TUAN_LM_HCM_001") == 555
+
+    pool = FakePool(directory_rows=[(555, "0901111111")])
+    with patch.object(survey_router, "get_db_pool", return_value=pool), patch.object(
+        survey_router, "lookup_telegram_user_by_phone", AsyncMock(return_value=None)
+    ):
+        assert await survey_router.lookup_telegram_user_for_collaborator("TUAN_LM_HCM_001") == 555
+
+    # Real path: directory phone -> authorized_users phone lookup (+84 normalization).
+    pool = FakePool(
+        directory_rows=[(None, "+84 901 111 111")],
+        authorized_rows=[(888,)],
+    )
+    with patch.object(survey_router, "get_db_pool", return_value=pool):
+        assert await survey_router.lookup_telegram_user_for_collaborator("TUAN_LM_HCM_001") == 888
 
 
 @pytest.mark.asyncio
@@ -496,6 +512,7 @@ def test_admin_ctv_directory_page_requires_auth_and_shows_static_fallback():
     assert "TUAN_LM_HCM_001" in response.text
     assert "Quản Lý CTV" in response.text
     assert 'method="post"' in response.text
+    assert 'name="telegram_user_id"' not in response.text
     assert 'action="/admin/ctvs/TUAN_LM_HCM_001"' in response.text
     assert "/admin/ctvs" in response.text
 
@@ -505,14 +522,13 @@ async def test_admin_update_endpoint_redirects_and_refreshes_cache():
     from routers import admin_ctvs
 
     pool = FakePool(
-        directory_rows=[("ALPHA_001", "Alpha", None, None, True, "seed:static")],
+        directory_rows=[("ALPHA_001", "Alpha", None, 66666, True, "seed:static")],
     )
     with patch.object(admin_ctvs, "get_db_pool", return_value=pool):
         response = await admin_ctvs.update_admin_ctv(
             "ALPHA_001",
             display_name="Alpha Endpoint",
             phone="0909 000 111",
-            telegram_user_id="66666",
             is_active="1",
             admin_user="admin",
         )
@@ -523,3 +539,29 @@ async def test_admin_update_endpoint_redirects_and_refreshes_cache():
     assert entry["phone"] == "0909000111"
     assert entry["telegram_user_id"] == 66666
     assert entry["is_active"] is True
+
+    # A legacy client sending telegram_user_id must not change it.
+    from fastapi.testclient import TestClient
+    from config import settings as app_settings
+    from main import app
+
+    pool = FakePool(
+        directory_rows=[("ALPHA_001", "Alpha", None, 99999, True, "seed:static")],
+    )
+    with patch.object(admin_ctvs, "get_db_pool", return_value=pool):
+        client = TestClient(app)
+        response = client.post(
+            "/admin/ctvs/ALPHA_001",
+            data={
+                "display_name": "Alpha Form",
+                "phone": "0909 222 333",
+                "telegram_user_id": "11111",
+                "is_active": "1",
+            },
+            auth=(app_settings.ADMIN_USERNAME, app_settings.ADMIN_PASSWORD),
+        )
+    assert response.status_code == 200
+    entry = get_ctv_entry("ALPHA_001")
+    assert entry["display_name"] == "Alpha Form"
+    assert entry["phone"] == "0909222333"
+    assert entry["telegram_user_id"] == 99999

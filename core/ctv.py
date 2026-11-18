@@ -331,16 +331,6 @@ def _clean_phone(value: Any) -> Optional[str]:
     return raw if len(raw) >= 8 else None
 
 
-def _clean_telegram_id(value: Any) -> Optional[int]:
-    raw = str(value or "").strip()
-    if not raw or not re.fullmatch(r"\d{4,20}", raw):
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
 async def cleanup_legacy_submission_ctvs(cur) -> Dict[str, int]:
     """Deletes the four known submission-derived CTVs and their links/quotas.
 
@@ -447,10 +437,13 @@ async def update_ctv_directory_entry(
     code: str,
     display_name: Optional[str] = None,
     phone: Optional[str] = None,
-    telegram_user_id: Optional[Any] = None,
     is_active: bool = True,
 ) -> bool:
-    """Updates one directory row and refreshes the process cache."""
+    """Updates one directory row and refreshes the process cache.
+
+    `telegram_user_id` is intentionally not editable here; it is populated
+    internally when a CTV binds the Telegram bot and used only as a fallback.
+    """
     normalized = normalize_ctv_code(code)
     if not db_pool or not normalized:
         return False
@@ -464,7 +457,6 @@ async def update_ctv_directory_entry(
                     UPDATE ctv_directory SET
                         display_name = %s,
                         phone = %s,
-                        telegram_user_id = %s,
                         is_active = %s,
                         updated_at = NOW()
                     WHERE code = %s;
@@ -472,7 +464,6 @@ async def update_ctv_directory_entry(
                     (
                         str(display_name).strip() or None if display_name is not None else None,
                         _clean_phone(phone) if phone else None,
-                        _clean_telegram_id(telegram_user_id) if telegram_user_id not in (None, "") else None,
                         bool(is_active),
                         stored_code,
                     ),

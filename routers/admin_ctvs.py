@@ -104,7 +104,6 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
         )
         notes = html.escape(str(row.get("notes") or ""))
         quota_html = row.get("quota_summary") or ""
-        tg_raw = html.escape(str(row.get("telegram_user_id") or ""))
         active_checked = "checked" if active else ""
         body_rows.append(
             f"""
@@ -122,7 +121,6 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
                         <form method="post" action="/admin/ctvs/{code}">
                             <input name="display_name" value="{name}" placeholder="Tên hiển thị">
                             <input name="phone" value="{'' if phone == '—' else phone}" placeholder="Số điện thoại">
-                            <input name="telegram_user_id" value="{tg_raw}" placeholder="Telegram ID">
                             <label class="active-toggle"><input type="checkbox" name="is_active" value="1" {active_checked}> Active</label>
                             <button type="submit">Lưu</button>
                         </form>
@@ -226,11 +224,10 @@ async def update_admin_ctv(
     code: str,
     display_name: str = Form(""),
     phone: str = Form(""),
-    telegram_user_id: str = Form(""),
     is_active: Optional[str] = Form(None),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Updates one CTV directory row (display name, phone, Telegram, active)."""
+    """Updates one CTV directory row (display name, phone, active)."""
     db_pool = get_db_pool()
     if not db_pool:
         raise HTTPException(status_code=503, detail="Cơ sở dữ liệu chưa sẵn sàng")
@@ -239,7 +236,6 @@ async def update_admin_ctv(
         code,
         display_name=display_name.strip() or None,
         phone=phone.strip() or None,
-        telegram_user_id=telegram_user_id.strip() or None,
         is_active=is_active is not None,
     )
     if not updated:
