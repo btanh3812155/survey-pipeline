@@ -119,6 +119,8 @@ def _bar_state(page):
             last: lastSubmissionStatus,
             pollTimer: statusPollTimer !== null,
             settleTimer: statusSettleTimer !== null,
+            retryTimer: statusRetryTimer !== null,
+            errorCount: statusErrorCount,
             epoch: statusStateEpoch,
         })"""
     )
@@ -138,7 +140,7 @@ def test_pending_to_final_stops_polling_and_persists(page):
     page.responses["queue"].append(
         {"submission_id": "T-1", "status": "APPROVED", "reason": "Quản trị viên phê duyệt thủ công"}
     )
-    page.evaluate("() => refreshSubmissionStatus(true)")
+    page.evaluate("() => refreshSubmissionStatus()")
 
     state = _bar_state(page)
     assert state["badge"] == "Đã duyệt"
@@ -204,7 +206,7 @@ def test_in_flight_refresh_cannot_resurrect_a_reset(page):
         {"submission_id": "T-4", "status": "APPROVED", "reason": "late verdict"}
     )
     page.responses["delay"] = 0.7
-    page.evaluate("() => { refreshSubmissionStatus(true); return true; }")
+    page.evaluate("() => { refreshSubmissionStatus(); return true; }")
     page.evaluate("() => resetFormFromModal()")
     page.wait_for_timeout(1400)
 
@@ -221,17 +223,26 @@ def test_transient_error_keeps_auto_refresh_alive(page):
         })"""
     )
     page.responses["queue"].append({"_status": 503, "detail": "upstream down"})
-    page.evaluate("() => refreshSubmissionStatus(true)")
+    page.evaluate("() => refreshSubmissionStatus()")
 
     state = _bar_state(page)
     assert state["badge"] == "Đang chờ duyệt"
-    assert state["pollTimer"] is True, "a single failed poll must not kill auto-refresh"
+    assert state["pollTimer"] is False
+    assert state["retryTimer"] is True, "a failed poll must schedule a backoff retry"
+    assert state["errorCount"] == 1
     assert state["last"]["status"] == "MANUAL_REVIEW"
 
     page.responses["queue"].append(
         {"submission_id": "T-5", "status": "APPROVED", "reason": "finally approved"}
     )
-    page.evaluate("() => refreshSubmissionStatus(true)")
+    page.evaluate("() => refreshSubmissionStatus()")
     state = _bar_state(page)
     assert state["badge"] == "Đã duyệt"
     assert state["pollTimer"] is False
+    assert state["retryTimer"] is False
+    assert state["errorCount"] == 0
+
+    # The bar must not expose a manual refresh control.
+    assert page.evaluate("() => document.querySelectorAll('#submissionStatusBar button').length") == 2
+    assert page.evaluate("() => document.getElementById('submissionStatusRefresh')") is None
+    assert "Làm mới" not in page.inner_text("#submissionStatusBar")

@@ -1163,7 +1163,6 @@
         <div id="submissionStatusReason"></div>
         <div class="status-bar-row" style="margin-top:8px;">
             <button type="button" class="status-bar-btn" id="submissionStatusToggle" style="display:none;" onclick="toggleSubmissionStatusReason()">Xem chi tiết</button>
-            <button type="button" class="status-bar-btn" id="submissionStatusRefresh" onclick="refreshSubmissionStatus(true)">Làm mới</button>
             <button type="button" class="status-bar-btn" id="submissionStatusRedo" onclick="resetFormFromModal()">Làm lại</button>
         </div>
         <div id="submissionStatusNote"></div>
@@ -1187,10 +1186,13 @@
         let lastSubmissionStatus = null;
         let statusPollTimer = null;
         let statusSettleTimer = null;
+        let statusRetryTimer = null;
+        let statusErrorCount = 0;
         let statusRefreshInFlight = false;
         let statusStateEpoch = 0;
         let statusReasonExpanded = false;
         const STATUS_POLL_MS = 15000;
+        const STATUS_RETRY_MAX_MS = 120000;
         const STATUS_SETTLE_MS = 60000;
         const TERMINAL_SUBMISSION_STATUSES = ['APPROVED', 'REJECTED'];
         let gpsCoordinates = null;
@@ -1254,11 +1256,10 @@
                 status_rejected: "Bị từ chối",
                 status_appeal_pending: "Đang chờ phúc khảo",
                 status_redo: "Làm lại",
-                status_refresh: "Làm mới",
                 status_expand: "Xem chi tiết",
                 status_collapse: "Thu gọn",
                 status_updated_at: "Cập nhật:",
-                status_update_error: "Không thể cập nhật trạng thái. Bấm Làm mới để thử lại.",
+                status_update_error: "Chưa cập nhật được trạng thái. Hệ thống sẽ tự thử lại.",
                 status_not_found: "Không tìm thấy phiếu khảo sát này trên hệ thống.",
                 modal_approved_title: "Báo Cáo Hợp Lệ!",
                 modal_approved_desc: "Khảo sát thu nhập thành công. Thông tin của bạn đã được ghi nhận.",
@@ -1328,11 +1329,10 @@
                 status_rejected: "Rejected",
                 status_appeal_pending: "Appeal Pending",
                 status_redo: "Redo",
-                status_refresh: "Refresh",
                 status_expand: "Show details",
                 status_collapse: "Hide details",
                 status_updated_at: "Updated:",
-                status_update_error: "Could not refresh status. Tap Refresh to try again.",
+                status_update_error: "Could not refresh status. Retrying automatically.",
                 status_not_found: "This submission could not be found.",
                 modal_approved_title: "Report Approved!",
                 modal_approved_desc: "Survey submitted successfully. Your submission has been recorded.",
@@ -1513,7 +1513,6 @@
             setTxt('txtSubResultTelegram', t.btn_open_telegram);
             setTxt('btnSubResultClose', t.btn_close);
             setTxt('btnSubResultReset', t.btn_new_submission);
-            setTxt('submissionStatusRefresh', t.status_refresh);
             setTxt('submissionStatusRedo', t.status_redo);
             setTxt('lockedQuestionsNotice', t.locked_notice);
             if (lastSubmissionStatus) {
@@ -3145,6 +3144,25 @@
                 clearTimeout(statusSettleTimer);
                 statusSettleTimer = null;
             }
+            if (statusRetryTimer) {
+                clearTimeout(statusRetryTimer);
+                statusRetryTimer = null;
+            }
+        }
+
+        // Transport failures (offline, 429, 5xx) are temporary: back off and keep
+        // trying instead of leaving the banner frozen forever.
+        function scheduleStatusRetry() {
+            if (statusRetryTimer || statusSettleTimer) return;
+            const delay = Math.min(
+                STATUS_RETRY_MAX_MS,
+                STATUS_POLL_MS * Math.pow(2, Math.min(statusErrorCount, 3))
+            );
+            statusErrorCount += 1;
+            statusRetryTimer = setTimeout(() => {
+                statusRetryTimer = null;
+                refreshSubmissionStatus();
+            }, delay);
         }
 
         // A verdict returned by the AI is not a dead end: an admin override or an
@@ -3162,12 +3180,12 @@
                 if (isFreshTerminalSubmission(state)) {
                     statusSettleTimer = setTimeout(() => {
                         statusSettleTimer = null;
-                        refreshSubmissionStatus(false);
+                        refreshSubmissionStatus();
                     }, STATUS_SETTLE_MS);
                 }
                 return;
             }
-            statusPollTimer = setInterval(() => { refreshSubmissionStatus(false); }, STATUS_POLL_MS);
+            statusPollTimer = setInterval(() => { refreshSubmissionStatus(); }, STATUS_POLL_MS);
         }
 
         function persistLastSubmission(state) {
@@ -3217,14 +3235,12 @@
             if (lastSubmissionStatus) renderSubmissionStatus(lastSubmissionStatus);
         }
 
-        async function refreshSubmissionStatus(manual) {
+        async function refreshSubmissionStatus() {
             const current = lastSubmissionStatus;
             if (!current || !current.submission_id) return;
             if (statusRefreshInFlight) return;
             statusRefreshInFlight = true;
             const epoch = statusStateEpoch;
-            const refreshBtn = document.getElementById('submissionStatusRefresh');
-            if (refreshBtn && manual) refreshBtn.disabled = true;
             try {
                 const resp = await fetch(`/api/v1/survey/status/${encodeURIComponent(current.submission_id)}`, {
                     headers: { 'Accept': 'application/json' },
@@ -3250,6 +3266,7 @@
                     updated_at: data.updated_at || current.updated_at,
                     is_test_mode: data.is_test_mode
                 };
+                statusErrorCount = 0;
                 lastSubmissionStatus = next;
                 persistLastSubmission(next);
                 renderSubmissionStatus(next);
@@ -3259,14 +3276,15 @@
                 if (e && e.name === 'AbortError') return;
                 if (epoch !== statusStateEpoch) return;
                 // Transient failures (offline, 429, server hiccup) must never kill
-                // auto-refresh for the rest of the session: keep the timer alive.
-                renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_update_error }));
-                if (!statusPollTimer && !statusSettleTimer && !isTerminalSubmissionStatus(current.status)) {
-                    scheduleStatusPolling(current);
+                // auto-refresh: drop the interval, then retry with exponential backoff.
+                if (statusPollTimer) {
+                    clearInterval(statusPollTimer);
+                    statusPollTimer = null;
                 }
+                renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_update_error }));
+                scheduleStatusRetry();
             } finally {
                 statusRefreshInFlight = false;
-                if (refreshBtn) refreshBtn.disabled = false;
             }
         }
 
@@ -3282,7 +3300,7 @@
             // Always reconcile once on load: a saved terminal verdict may have been
             // reopened for appeal or overridden while the page was closed.
             scheduleStatusPolling(saved);
-            refreshSubmissionStatus(false);
+            refreshSubmissionStatus();
         }
 
         function clearSubmissionStatus() {

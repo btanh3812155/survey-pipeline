@@ -232,7 +232,9 @@ def test_form_has_bottom_status_bar_and_shared_polling_renderer():
     assert 'id="submissionStatusBar"' in html
     assert 'id="submissionStatusBadge"' in html
     assert 'id="submissionStatusReason"' in html
-    assert 'id="submissionStatusRefresh"' in html
+    # No manual refresh control: the bar must update itself.
+    assert 'submissionStatusRefresh' not in html
+    assert 'status_refresh' not in html
 
     assert "/api/v1/survey/status/" in html
     assert "tb_last_submission_" in html
@@ -250,10 +252,11 @@ def test_form_has_bottom_status_bar_and_shared_polling_renderer():
     assert "submissionStatusReason" in block and "subResultReason" in block
     assert "submissionStatusBar" in block and "submissionResultBox" in block
 
-    # Terminal statuses stop polling; manual refresh stays wired.
+    # Terminal statuses stop polling; transient failures back off and retry.
     assert "isTerminalSubmissionStatus" in html
     assert "stopStatusPolling" in html
-    assert "refreshSubmissionStatus(true)" in html
+    assert "scheduleStatusRetry" in html
+    assert "refreshSubmissionStatus(true)" not in html
 
     # Reset tears the bar down completely: timer, state, storage, DOM, layout offset.
     reset_start = html.index("function executeResetForm(")
