@@ -177,17 +177,12 @@ async def get_survey_history(
                 rate_limited = True
         except Exception as e:
             logger.warning(f"Redis rate limiting error: {e}")
-            req_count = HISTORY_RATE_LIMITER.get(clean_phone, 0)
-            if req_count >= 30:
+            req_count = HISTORY_RATE_LIMITER.incr(clean_phone)
+            if req_count > 30:
                 rate_limited = True
-            else:
-                HISTORY_RATE_LIMITER[clean_phone] = req_count + 1
     else:
-        req_count = HISTORY_RATE_LIMITER.get(clean_phone, 0)
-        if req_count >= 30:
+        if HISTORY_RATE_LIMITER.incr(clean_phone) > 30:
             rate_limited = True
-        else:
-            HISTORY_RATE_LIMITER[clean_phone] = req_count + 1
 
     if rate_limited:
         raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu lịch sử. Vui lòng thử lại sau!")
@@ -272,10 +267,8 @@ def _read_dev_submission_status(clean_id: str):
 async def get_submission_status(request: Request, submission_id: str):
     """Public, PII-free approval status lookup for a submitted survey."""
     client_ip = request.client.host if request.client else "unknown"
-    curr = STATUS_RATE_LIMITER.get(client_ip, 0)
-    if curr >= 60:
+    if STATUS_RATE_LIMITER.incr(client_ip) > 60:
         raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu trạng thái. Vui lòng thử lại sau!")
-    STATUS_RATE_LIMITER[client_ip] = curr + 1
 
     clean_id = (submission_id or "").strip().lstrip("#")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,63}", clean_id):
@@ -346,10 +339,8 @@ async def pre_check_image_slot(
         except Exception:
             pass
     else:
-        curr = PRE_CHECK_RATE_LIMITER.get(client_ip, 0)
-        if curr >= 20:
+        if PRE_CHECK_RATE_LIMITER.incr(client_ip) > 20:
             return JSONResponse(status_code=429, content={"status": "RATE_LIMITED", "detail": "Pre-check rate limit exceeded."})
-        PRE_CHECK_RATE_LIMITER[client_ip] = curr + 1
 
     try:
         raw_bytes = await photo.read()
@@ -2111,7 +2102,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s WHERE submission_id = %s;",
+                        "UPDATE survey_submissions SET status = 'APPEAL_PENDING', rejection_reason = %s, moderated_at = NOW() WHERE submission_id = %s;",
                         (appeal_note, sub_id)
                     )
                     await conn.commit()
@@ -2128,6 +2119,7 @@ async def handle_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
                     r["status"] = "APPEAL_PENDING"
                     r["reason"] = appeal_note
                     r["rejection_reason"] = appeal_note
+                    r["moderated_at"] = datetime.now(timezone.utc).isoformat()
             with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
                 json.dump(dev_records, f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -2165,7 +2157,7 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "UPDATE survey_submissions SET status = 'REJECTED', rejection_reason = 'Yêu cầu kiểm tra lại đã bị hủy bởi người dùng' WHERE submission_id = %s;",
+                        "UPDATE survey_submissions SET status = 'REJECTED', rejection_reason = 'Yêu cầu kiểm tra lại đã bị hủy bởi người dùng', moderated_at = NOW() WHERE submission_id = %s;",
                         (sub_id,)
                     )
                     await conn.commit()
@@ -2180,6 +2172,7 @@ async def cancel_survey_appeal(req: AppealRequest, background_tasks: BackgroundT
                 if r.get("submission_id") == sub_id:
                     r["status"] = "REJECTED"
                     r["reason"] = "Yêu cầu kiểm tra lại đã bị hủy bởi người dùng"
+                    r["moderated_at"] = datetime.now(timezone.utc).isoformat()
             with open(DEV_STORAGE_FILE, "w", encoding="utf-8") as f:
                 json.dump(dev_records, f, indent=2, ensure_ascii=False)
         except Exception as e:

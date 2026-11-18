@@ -6,7 +6,7 @@ Thread-safe bounded in-memory cache with OrderedDict LRU eviction and TTL expira
 import time
 import threading
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Optional
 
 
 class BoundedTTLCache:
@@ -51,6 +51,30 @@ class BoundedTTLCache:
         if val is None:
             raise KeyError(key)
         return val
+
+    def incr(self, key: str, amount: int = 1, ttl_seconds: Optional[float] = None) -> int:
+        """Fixed-window counter: the TTL starts on the first hit and is NOT extended.
+
+        Plain ``get`` + ``__setitem__`` refreshes the expiry on every request, so a
+        client that polls faster than the window never lets its counter expire and
+        eventually locks itself out forever. Use this for rate limiters.
+        """
+        with self._lock:
+            now = time.time()
+            ttl = self.ttl_seconds if ttl_seconds is None else ttl_seconds
+            entry = self._cache.get(key)
+            if entry is not None and entry[1] > now:
+                value, expires_at = entry
+                self._cache[key] = (value + amount, expires_at)
+                self._cache.move_to_end(key)
+                return value + amount
+            if key in self._cache:
+                del self._cache[key]
+            self._purge_expired(now)
+            if len(self._cache) >= self.max_size:
+                self._cache.popitem(last=False)
+            self._cache[key] = (amount, now + ttl)
+            return amount
 
     def __setitem__(self, key: str, value: Any):
         with self._lock:

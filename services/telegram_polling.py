@@ -7,6 +7,7 @@ import random
 import asyncio
 import logging
 import html
+from datetime import datetime, timezone
 from typing import Optional, Union, Dict, Any, List, Tuple
 import httpx
 from PIL import Image
@@ -858,7 +859,7 @@ class TelegramPollingRunner:
                                 return False, current_status
 
                         await cur.execute(
-                            "UPDATE survey_submissions SET status = %s, rejection_reason = %s WHERE submission_id = %s;",
+                            "UPDATE survey_submissions SET status = %s, rejection_reason = %s, moderated_at = NOW() WHERE submission_id = %s;",
                             (new_status, reason or None, sub_id),
                         )
                     await conn.commit()
@@ -887,6 +888,8 @@ class TelegramPollingRunner:
                             return False, current_status
                         r["status"] = new_status
                         r["reason"] = reason
+                        r["rejection_reason"] = reason
+                        r["moderated_at"] = datetime.now(timezone.utc).isoformat()
                         changed = True
                     if changed:
                         with open(fpath, "w", encoding="utf-8") as f_out:

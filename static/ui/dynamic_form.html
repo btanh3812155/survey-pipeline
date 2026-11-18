@@ -1164,6 +1164,7 @@
         <div class="status-bar-row" style="margin-top:8px;">
             <button type="button" class="status-bar-btn" id="submissionStatusToggle" style="display:none;" onclick="toggleSubmissionStatusReason()">Xem chi tiết</button>
             <button type="button" class="status-bar-btn" id="submissionStatusRefresh" onclick="refreshSubmissionStatus(true)">Làm mới</button>
+            <button type="button" class="status-bar-btn" id="submissionStatusRedo" onclick="resetFormFromModal()">Làm lại</button>
         </div>
         <div id="submissionStatusNote"></div>
     </div>
@@ -1185,8 +1186,12 @@
         let answers = {};
         let lastSubmissionStatus = null;
         let statusPollTimer = null;
+        let statusSettleTimer = null;
+        let statusRefreshInFlight = false;
+        let statusStateEpoch = 0;
         let statusReasonExpanded = false;
         const STATUS_POLL_MS = 15000;
+        const STATUS_SETTLE_MS = 60000;
         const TERMINAL_SUBMISSION_STATUSES = ['APPROVED', 'REJECTED'];
         let gpsCoordinates = null;
         let activeVideoStream = null;
@@ -1247,6 +1252,8 @@
                 status_approved: "Đã duyệt",
                 status_manual_review: "Đang chờ duyệt",
                 status_rejected: "Bị từ chối",
+                status_appeal_pending: "Đang chờ phúc khảo",
+                status_redo: "Làm lại",
                 status_refresh: "Làm mới",
                 status_expand: "Xem chi tiết",
                 status_collapse: "Thu gọn",
@@ -1257,6 +1264,8 @@
                 modal_approved_desc: "Khảo sát thu nhập thành công. Thông tin của bạn đã được ghi nhận.",
                 modal_review_title: "Chờ Người Thật Kiểm Tra",
                 modal_review_desc: "Hệ thống đã chuyển phiếu đến điều phối viên để kiểm tra thủ công.",
+                modal_appeal_title: "Đang Phúc Khảo",
+                modal_appeal_desc: "Yêu cầu kiểm tra lại đã được gửi. Vui lòng chờ Ban Quản Trị phản hồi.",
                 modal_rejected_title: "Chưa Đạt Yêu Cầu!",
                 modal_rejected_desc: "Vui lòng chụp lại ảnh rõ nét hoặc kiểm tra lại thông tin.",
                 btn_open_telegram: "Mở Telegram Bot",
@@ -1317,6 +1326,8 @@
                 status_approved: "Approved",
                 status_manual_review: "Pending Review",
                 status_rejected: "Rejected",
+                status_appeal_pending: "Appeal Pending",
+                status_redo: "Redo",
                 status_refresh: "Refresh",
                 status_expand: "Show details",
                 status_collapse: "Hide details",
@@ -1327,6 +1338,8 @@
                 modal_approved_desc: "Survey submitted successfully. Your submission has been recorded.",
                 modal_review_title: "Pending Manual Review",
                 modal_review_desc: "Your report has been forwarded to a coordinator for manual verification.",
+                modal_appeal_title: "Appeal In Progress",
+                modal_appeal_desc: "Your review request was sent. Please wait for the admin team to respond.",
                 modal_rejected_title: "Verification Failed!",
                 modal_rejected_desc: "Please retake a clear photo or verify your information.",
                 btn_open_telegram: "Open Telegram Bot",
@@ -1501,6 +1514,7 @@
             setTxt('btnSubResultClose', t.btn_close);
             setTxt('btnSubResultReset', t.btn_new_submission);
             setTxt('submissionStatusRefresh', t.status_refresh);
+            setTxt('submissionStatusRedo', t.status_redo);
             setTxt('lockedQuestionsNotice', t.locked_notice);
             if (lastSubmissionStatus) {
                 try { renderSubmissionStatus(lastSubmissionStatus); } catch(e) { console.error('status bar render error:', e); }
@@ -2955,6 +2969,7 @@
             const status = String(rawStatus || 'MANUAL_REVIEW').toUpperCase();
             if (status === 'APPROVED') return 'APPROVED';
             if (status === 'REJECTED') return 'REJECTED';
+            if (status === 'APPEAL_PENDING') return 'APPEAL_PENDING';
             return 'MANUAL_REVIEW';
         }
 
@@ -2985,6 +3000,17 @@
                     border: '#ef4444',
                     title: t.modal_rejected_title,
                     desc: t.modal_rejected_desc
+                };
+            }
+            if (status === 'APPEAL_PENDING') {
+                return {
+                    status: status,
+                    label: t.status_appeal_pending,
+                    color: '#fb923c',
+                    background: 'rgba(249, 115, 22, 0.2)',
+                    border: '#f97316',
+                    title: t.modal_appeal_title,
+                    desc: t.modal_appeal_desc
                 };
             }
             return {
@@ -3115,11 +3141,32 @@
                 clearInterval(statusPollTimer);
                 statusPollTimer = null;
             }
+            if (statusSettleTimer) {
+                clearTimeout(statusSettleTimer);
+                statusSettleTimer = null;
+            }
+        }
+
+        // A verdict returned by the AI is not a dead end: an admin override or an
+        // appeal can still rewrite it. Re-check once shortly after a fresh verdict,
+        // then stop for good so a terminal state never polls forever.
+        function isFreshTerminalSubmission(state) {
+            const ts = Date.parse((state && (state.updated_at || state.submitted_at)) || '');
+            return !isNaN(ts) && (Date.now() - ts) < 15 * 60 * 1000;
         }
 
         function scheduleStatusPolling(state) {
             stopStatusPolling();
-            if (!state || !state.submission_id || isTerminalSubmissionStatus(state.status)) return;
+            if (!state || !state.submission_id) return;
+            if (isTerminalSubmissionStatus(state.status)) {
+                if (isFreshTerminalSubmission(state)) {
+                    statusSettleTimer = setTimeout(() => {
+                        statusSettleTimer = null;
+                        refreshSubmissionStatus(false);
+                    }, STATUS_SETTLE_MS);
+                }
+                return;
+            }
             statusPollTimer = setInterval(() => { refreshSubmissionStatus(false); }, STATUS_POLL_MS);
         }
 
@@ -3157,6 +3204,7 @@
                 submitted_at: res.submitted_at || nowIso,
                 updated_at: res.updated_at || res.submitted_at || nowIso
             };
+            statusStateEpoch += 1;
             lastSubmissionStatus = record;
             statusReasonExpanded = false;
             persistLastSubmission(record);
@@ -3172,6 +3220,9 @@
         async function refreshSubmissionStatus(manual) {
             const current = lastSubmissionStatus;
             if (!current || !current.submission_id) return;
+            if (statusRefreshInFlight) return;
+            statusRefreshInFlight = true;
+            const epoch = statusStateEpoch;
             const refreshBtn = document.getElementById('submissionStatusRefresh');
             if (refreshBtn && manual) refreshBtn.disabled = true;
             try {
@@ -3179,6 +3230,8 @@
                     headers: { 'Accept': 'application/json' },
                     cache: 'no-store'
                 });
+                // A reset/new submission happened while this request was in flight.
+                if (epoch !== statusStateEpoch) return;
                 if (resp.status === 404) {
                     stopStatusPolling();
                     renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_not_found }));
@@ -3186,6 +3239,9 @@
                 }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
+                // ``resp.json()`` is a second await: a reset may have landed in
+                // between, so re-validate before touching shared state.
+                if (epoch !== statusStateEpoch) return;
                 const next = {
                     submission_id: data.submission_id || current.submission_id,
                     status: data.status || current.status,
@@ -3201,9 +3257,15 @@
                 else if (!statusPollTimer) scheduleStatusPolling(next);
             } catch(e) {
                 if (e && e.name === 'AbortError') return;
-                stopStatusPolling();
+                if (epoch !== statusStateEpoch) return;
+                // Transient failures (offline, 429, server hiccup) must never kill
+                // auto-refresh for the rest of the session: keep the timer alive.
                 renderSubmissionStatus(Object.assign({}, current, { _note: I18N[currentLang].status_update_error }));
+                if (!statusPollTimer && !statusSettleTimer && !isTerminalSubmissionStatus(current.status)) {
+                    scheduleStatusPolling(current);
+                }
             } finally {
+                statusRefreshInFlight = false;
                 if (refreshBtn) refreshBtn.disabled = false;
             }
         }
@@ -3214,16 +3276,18 @@
                 renderSubmissionStatus(null);
                 return;
             }
+            statusStateEpoch += 1;
             lastSubmissionStatus = saved;
             renderSubmissionStatus(saved);
-            if (!isTerminalSubmissionStatus(saved.status)) {
-                scheduleStatusPolling(saved);
-                refreshSubmissionStatus(false);
-            }
+            // Always reconcile once on load: a saved terminal verdict may have been
+            // reopened for appeal or overridden while the page was closed.
+            scheduleStatusPolling(saved);
+            refreshSubmissionStatus(false);
         }
 
         function clearSubmissionStatus() {
             stopStatusPolling();
+            statusStateEpoch += 1;
             lastSubmissionStatus = null;
             statusReasonExpanded = false;
             try { localStorage.removeItem(getLastSubmissionKey()); } catch(e) {}
@@ -3232,6 +3296,8 @@
                 bar.classList.remove('visible');
                 bar.style.borderLeftColor = '';
             }
+            const noteEl = document.getElementById('submissionStatusNote');
+            if (noteEl) { noteEl.textContent = ''; noteEl.style.display = 'none'; }
             document.body.classList.remove('has-submission-status');
             document.documentElement.style.setProperty('--status-bar-offset', '0px');
             renderSubmissionStatus(null);
