@@ -132,6 +132,29 @@ async def upload_form_schema(request: Request, admin_user: str = Depends(verify_
             f.write(schema.model_dump_json(indent=2))
     except Exception as e:
         logger.error(f"Failed to persist schema to disk: {e}")
+
+    db_pool = get_db_pool()
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    if previous_form_id and previous_form_id != schema.form_id:
+                        await cur.execute(
+                            "DELETE FROM form_tags WHERE form_id = %s;", (previous_form_id,)
+                        )
+                    await cur.execute(
+                        "DELETE FROM form_tags WHERE form_id = %s;", (schema.form_id,)
+                    )
+                    for tag in schema.settings.tags:
+                        await cur.execute(
+                            "INSERT INTO form_tags (form_id, tag) VALUES (%s, %s) "
+                            "ON CONFLICT (form_id, tag) DO NOTHING;",
+                            (schema.form_id, tag),
+                        )
+                await conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to persist form tags for {schema.form_id}: {e}")
+
     return {
         "status": "success",
         "form_id": schema.form_id,

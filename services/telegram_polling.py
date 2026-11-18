@@ -513,6 +513,7 @@ class TelegramPollingRunner:
         chat_id: Union[int, str],
         text: str,
         reply_to_message: Optional[dict] = None,
+        from_user_id: Optional[int] = None,
     ) -> None:
         """Routes and executes admin slash commands."""
         clean_text = text.strip()
@@ -555,25 +556,65 @@ class TelegramPollingRunner:
                 return
 
             await self.execute_submission_review(chat_id, sub_id)
+        elif cmd in ("/quota", "/quotas", "/hanmuc"):
+            await self.handle_quota_command(chat_id, clean_text, from_user_id)
         elif cmd in ("/start", "/help"):
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
                 "Chào mừng bạn đến với hệ thống kiểm định khảo sát Trust Bridge!\n\n"
                 "Lệnh điều hành:\n"
                 "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu khảo sát để xét duyệt\n"
+                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem hạn mức của một CTV\n"
                 "• <code>/stats</code> - Xem thống kê tiến độ duyệt phiếu\n"
                 "• <code>/close</code> - Kết thúc phiên chat hỗ trợ trực tiếp\n\n"
-                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
+                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng lệnh <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
         else:
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
                 "Lệnh điều hành:\n"
-                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu để xét duyệt\n\n"
-                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng <code>/check</code>!</i>"
+                "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu để xét duyệt\n"
+                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem hạn mức của một CTV\n\n"
+                "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng lệnh <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
+
+    async def handle_quota_command(
+        self,
+        chat_id: Union[int, str],
+        text: str,
+        from_user_id: Optional[int] = None,
+    ) -> None:
+        """Shows quotas for a CTV code (admin) or the caller's own CTV (driver bot)."""
+        from core.quotas import build_ctv_quota_report, resolve_ctv_code_for_telegram, resolve_ctv_code_from_ref
+
+        parts = text.strip().split(maxsplit=1)
+        ref = parts[1].strip().lstrip("@") if len(parts) > 1 else ""
+        code = None
+        if ref:
+            code = await resolve_ctv_code_from_ref(self.db_pool, ref)
+            if not code:
+                await self.send_message(
+                    chat_id,
+                    f"⚠️ Không tìm thấy CTV <code>{html.escape(ref)}</code> trong danh bạ.\n"
+                    "Vui lòng dùng <code>/quota &lt;mã_ctv&gt;</code>.",
+                )
+                return
+        elif from_user_id:
+            code = await resolve_ctv_code_for_telegram(self.db_pool, int(from_user_id))
+
+        if not code:
+            await self.send_message(
+                chat_id,
+                "⚠️ <b>Chưa xác định được mã CTV.</b>\n\n"
+                "• Quản trị viên: <code>/quota &lt;mã_ctv&gt;</code>\n"
+                "• CTV: liên kết tài khoản bằng link mời CTV trước, hoặc nhờ quản trị viên tra cứu.",
+            )
+            return
+
+        report = await build_ctv_quota_report(self.db_pool, code)
+        await self.send_message(chat_id, report)
     async def handle_callback_query(self, cq: dict) -> None:
         """Processes inline keyboard button interactions for admin audits."""
         cq_id = cq.get("id", "")
@@ -1090,7 +1131,9 @@ class TelegramPollingRunner:
                             logger.error(f"Failed to relay message to user: {e}")
                     return
                 if len(text) <= 4096 and text.startswith("/"):
-                    await self.handle_command(chat_id, text, reply_to_message=msg.get("reply_to_message"))
+                    await self.handle_command(
+                        chat_id, text, reply_to_message=msg.get("reply_to_message"), from_user_id=from_user_id
+                    )
         elif "callback_query" in update and update["callback_query"]:
             await self.handle_callback_query(update["callback_query"])
     async def poll_once(self) -> int:
@@ -1167,6 +1210,7 @@ class TelegramPollingRunner:
         commands = [
             {"command": "start", "description": "Bắt đầu / liên kết CTV"},
             {"command": "surveys", "description": "Khảo sát của tôi"},
+            {"command": "quota", "description": "Hạn mức nộp phiếu của tôi"},
             {"command": "appeal", "description": "Phúc khảo một phiếu"},
             {"command": "support", "description": "Yêu cầu hỗ trợ"},
             {"command": "help", "description": "Hướng dẫn sử dụng"},
@@ -1317,9 +1361,21 @@ class DriverBotRunner(TelegramPollingRunner):
                         """,
                         (telegram_user_id, ctv_code, full_name),
                     )
+                    await cur.execute(
+                        "UPDATE ctv_directory SET telegram_user_id = %s, updated_at = NOW() "
+                        "WHERE code = %s;",
+                        (telegram_user_id, ctv_code),
+                    )
                 await conn.commit()
         except Exception as e:
             logger.error(f"Failed to bind collaborator {ctv_code}: {e}")
+            return
+        try:
+            from core.ctv import refresh_ctv_directory_cache
+
+            await refresh_ctv_directory_cache(self.db_pool)
+        except Exception as e:
+            logger.debug(f"CTV cache refresh after bind failed: {e}")
 
     async def download_telegram_photo(self, file_id: str) -> bytes:
         """Downloads high-res photo bytes from Telegram Bot API."""
@@ -1839,10 +1895,10 @@ class DriverBotRunner(TelegramPollingRunner):
         if cmd == "/start" or clean == "Bắt đầu":
             parts = clean.split(" ", 1)
             payload = parts[1].strip() if len(parts) > 1 else ""
-            from core.ctv import CTV_CODES, normalize_ctv_code
+            from core.ctv import normalize_ctv_code, is_known_ctv_code
 
             ctv_payload = normalize_ctv_code(re.sub(r"^ctv[_-]?", "", payload, flags=re.IGNORECASE))
-            if payload and (payload.lower().startswith("ctv") or ctv_payload in CTV_CODES):
+            if payload and (payload.lower().startswith("ctv") or is_known_ctv_code(ctv_payload)):
                 ctv_code = ctv_payload or "UNKNOWN"
                 display = ((from_user.get("first_name") or "") + " " + (from_user.get("last_name") or "")).strip()
                 await self.bind_collaborator(user_id, from_user.get("username"), display or f"CTV {user_id}", ctv_code)
@@ -1893,6 +1949,9 @@ class DriverBotRunner(TelegramPollingRunner):
         elif cmd in ("/surveys", "/my_surveys", "/tracuu") or clean == "📋 Khảo Sát Của Tôi":
             await self.handle_driver_surveys_lookup(chat_id, user_id)
 
+        elif cmd in ("/quota", "/quotas", "/hanmuc"):
+            await self.handle_quota_command(chat_id, clean, user_id)
+
         elif cmd in ("/support", "/hotro", "/help_admin", "/lienhe") or "hỗ trợ" in clean.lower():
             if clean.startswith("/"):
                 parts = clean.split(" ", 1)
@@ -1912,10 +1971,11 @@ class DriverBotRunner(TelegramPollingRunner):
                 "❓ <b>Hướng Dẫn Sử Dụng (Dành Cho Cộng Tác Viên):</b>\n\n"
                 "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
                 "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
-                "3. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
-                "4. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"
-                "5. <b>Cần trợ giúp:</b> Gõ <code>/support &lt;nội dung&gt;</code> hoặc bấm [🆘 Yêu Cầu Hỗ Trợ].\n"
-                "6. <b>Kết thúc phiên hỗ trợ:</b> Gõ <code>/close</code> khi đã trao đổi xong với Ban Quản Trị."
+                "3. <b>Xem hạn mức:</b> Gõ <code>/quota</code> để xem hạn mức nộp phiếu của bạn.\n"
+                "4. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
+                "5. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"
+                "6. <b>Cần trợ giúp:</b> Gõ <code>/support &lt;nội dung&gt;</code> hoặc bấm [🆘 Yêu Cầu Hỗ Trợ].\n"
+                "7. <b>Kết thúc phiên hỗ trợ:</b> Gõ <code>/close</code> khi đã trao đổi xong với Ban Quản Trị."
             )
             await self.send_message(chat_id, help_text, reply_markup=self.get_driver_reply_keyboard())
 

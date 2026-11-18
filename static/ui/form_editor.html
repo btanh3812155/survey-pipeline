@@ -321,6 +321,12 @@
                         </label>
                     </div>
 
+                    <div class="field-group" style="margin-top: 10px;">
+                        <label for="formTags">Nhãn biểu mẫu (tags, phân tách bằng dấu phẩy)</label>
+                        <input type="text" id="formTags" value="" placeholder="Ví dụ: income, gsm, hcm">
+                        <span style="display:block; color:#94a3b8; font-size:0.75rem; margin-top:4px;">Dùng cho phạm vi hạn mức CTV theo nhãn (tag quota).</span>
+                    </div>
+
                     <div class="row-2" style="margin-top: 10px;">
                         <div class="field-group">
                             <label for="tgResponseSource">Nguồn nhận phản hồi Telegram</label>
@@ -1323,6 +1329,10 @@
                     tg_response_source: (document.getElementById('tgResponseSource') || {}).value || 'ctv',
                     tg_response_question_id: (document.getElementById('tgResponseQuestion') || {}).value || null,
                     ctv_ref_enabled: document.getElementById('globalEnableCtvRef') ? document.getElementById('globalEnableCtvRef').checked : true,
+                    tags: (document.getElementById('formTags') ? document.getElementById('formTags').value : '')
+                        .split(',')
+                        .map(t => t.trim().toLowerCase())
+                        .filter(t => t.length > 0),
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
                     image_checks: {
                         ...((INITIAL_SCHEMA.settings || {}).image_checks || {}),
@@ -1442,6 +1452,8 @@
             document.getElementById('accessControl').value = st.access_control || 'public';
             document.getElementById('isTestMode').value = st.is_test_mode ? 'true' : 'false';
             document.getElementById('globalEnableCtvRef').checked = st.ctv_ref_enabled !== false;
+            const tagsEl = document.getElementById('formTags');
+            if (tagsEl) tagsEl.value = Array.isArray(st.tags) ? st.tags.join(', ') : '';
             const tgSrcEl = document.getElementById('tgResponseSource');
             if (tgSrcEl) tgSrcEl.value = st.tg_response_source || 'ctv';
             refreshTgResponseQuestionOptions();

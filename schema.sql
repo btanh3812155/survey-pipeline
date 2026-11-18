@@ -277,3 +277,57 @@ CREATE TABLE IF NOT EXISTS survey_drafts (
 
 CREATE INDEX IF NOT EXISTS idx_survey_drafts_ctv 
 ON survey_drafts (ctv_id, updated_at DESC);
+
+-- ====================================================================
+-- 12-15. CTV Platform Layer (directory, form tags, per-CTV links, quotas)
+-- Codes are canonical uppercase ASCII (see core/ctv.py normalize_ctv_code).
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS ctv_directory (
+    code TEXT PRIMARY KEY,
+    display_name TEXT,
+    phone TEXT,
+    telegram_user_id BIGINT,
+    is_active BOOLEAN DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctv_directory_telegram
+ON ctv_directory (telegram_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_ctv_directory_phone
+ON ctv_directory (phone);
+
+CREATE TABLE IF NOT EXISTS form_tags (
+    form_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (form_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_form_tags_tag
+ON form_tags (tag);
+
+CREATE TABLE IF NOT EXISTS ctv_form_links (
+    ctv_code TEXT NOT NULL,
+    form_id TEXT NOT NULL,
+    url TEXT,
+    qr TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ctv_code, form_id)
+);
+
+CREATE TABLE IF NOT EXISTS ctv_quotas (
+    id SERIAL PRIMARY KEY,
+    ctv_code TEXT NOT NULL,
+    scope_type TEXT CHECK (scope_type IN ('form', 'tag', 'global')),
+    scope_value TEXT,
+    max_submissions INTEGER,
+    period_days INTEGER,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctv_quotas_code
+ON ctv_quotas (ctv_code, active);

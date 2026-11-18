@@ -1,8 +1,9 @@
 import re
 import math
+import unicodedata
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 class QuestionType(str, Enum):
     TEXT = "text"
     NUMBER = "number"
@@ -154,6 +155,8 @@ class FormSettings(BaseModel):
     notify_email: Optional[str] = None
     decree13_required: bool = True
     ctv_ref_enabled: bool = True # allow ?ref=<ctv> attribution links for this form
+    # Free-form labels used by CTV quota tag scopes (normalized to lowercase slugs).
+    tags: List[str] = Field(default_factory=list)
     # Who receives the Telegram verdict for a submission:
     #   "none"     -> do not notify anyone
     #   "ctv"      -> the collaborator/CTV recorded on the submission (default)
@@ -163,6 +166,31 @@ class FormSettings(BaseModel):
     tg_response_question_id: Optional[str] = None
     is_test_mode: bool = False
     image_checks: ImageCheckConfig = Field(default_factory=ImageCheckConfig)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _normalize_tags(cls, value: Any) -> List[str]:
+        """Accepts a list or a comma-separated string; stores unique lowercase slugs."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.split(",")
+        if not isinstance(value, (list, tuple, set)):
+            raise ValueError("tags phải là danh sách hoặc chuỗi phân tách bằng dấu phẩy")
+        tags: List[str] = []
+        for item in value:
+            tag = unicodedata.normalize("NFKD", str(item or ""))
+            tag = "".join(ch for ch in tag if not unicodedata.combining(ch))
+            tag = re.sub(r"[^a-z0-9_-]+", "_", tag.lower()).strip("_")
+            if not tag:
+                continue
+            if len(tag) > 32:
+                raise ValueError(f"tag quá dài (tối đa 32 ký tự): '{tag[:32]}...'")
+            if tag not in tags:
+                tags.append(tag)
+        if len(tags) > 20:
+            raise ValueError("tối đa 20 tag cho mỗi biểu mẫu")
+        return tags
 
 MAX_QUESTIONS_PER_FORM: int = 100
 

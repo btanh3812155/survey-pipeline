@@ -58,6 +58,7 @@ def render_forms_list_html(
             "is_test_mode": bool(f.settings and f.settings.is_test_mode),
             "access_control": f.settings.access_control if f.settings else "public",
             "ctv_ref_enabled": bool(getattr(f.settings, "ctv_ref_enabled", True)) if f.settings else True,
+            "tags": list(getattr(f.settings, "tags", []) or []) if f.settings else [],
             "ctv_options": ctv_options,
         }
 
@@ -86,6 +87,11 @@ def render_forms_list_html(
         form_id_str = f["form_id"]
         form_link = f"/forms/{form_id_str}?mode=test" if is_test else f"/forms/{form_id_str}"
         title_esc = html.escape(f["title"])
+        tags_html = (
+            f"""<div>Nhãn: <b>{html.escape(', '.join(f['tags']))}</b></div>"""
+            if f["tags"]
+            else ""
+        )
 
         forms_cards_html += f"""
         <div class="form-item-card" data-form-id="{form_id_str}" data-title="{title_esc.lower()}" data-status="{'test' if is_test else 'active'}" data-questions="{f['question_count']}" data-updated="{f['updated_at']}" data-ctv-options="{html.escape(json.dumps(f['ctv_options'], ensure_ascii=False), quote=True)}" data-ctv-ref-enabled="{'true' if f['ctv_ref_enabled'] else 'false'}">
@@ -98,6 +104,7 @@ def render_forms_list_html(
                 <div>Số câu hỏi: <b>{f['question_count']}</b></div>
                 <div>Quyền truy cập: <b>{html.escape(f['access_control'])}</b></div>
                 <div>Cập nhật: <b>{f['updated_label']}</b></div>
+                {tags_html}
             </div>
             <div class="form-actions">
                 <button type="button" class="btn-action qr" onclick="openAdminQrModal('{form_id_str}', '{title_esc}')" title="Mã QR" aria-label="Mã QR">

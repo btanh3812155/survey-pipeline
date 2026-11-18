@@ -515,11 +515,11 @@ def _build_retry_form_link(
     recipient_kind: str = "ctv",
 ) -> str:
     """Retry/submit-again link that keeps the original submission's CTV ref."""
-    from core.ctv import extract_ctv_short_code
+    from core.ctv import extract_ctv_short_code, build_ctv_form_url
 
     ref_source = ctv_ref or (collaborator_id if recipient_kind != "driver" else None)
     ref = extract_ctv_short_code(str(ref_source)) if ref_source else ""
-    return f"https://survey.trustbridgevn.com/forms/{form_id}" + (f"?ref={ref}" if ref else "")
+    return build_ctv_form_url(ref, str(form_id or ""))
 
 
 def _infer_slot_role(slot: Any) -> str:
@@ -2136,12 +2136,37 @@ async def lookup_telegram_user_by_phone(phone: str) -> Optional[int]:
 
 
 async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> Optional[int]:
-    """Resolves a collaborator code / full CTV id to a telegram_user_id."""
-    from core.ctv import extract_ctv_short_code
+    """Resolves a collaborator code / full CTV id to a telegram_user_id.
+
+    ctv_directory is the source of truth; falls back to the legacy
+    authorized_users username/phone match for codes not yet migrated.
+    """
+    from core.ctv import extract_ctv_short_code, normalize_ctv_code
 
     collab_str = str(collab_id).strip()
-    candidates = {collab_str.lower(), extract_ctv_short_code(collab_str).lower()}
+    code = normalize_ctv_code(collab_str)
     db_pool = get_db_pool()
+    if db_pool:
+        try:
+            async with db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT telegram_user_id, phone FROM ctv_directory "
+                        "WHERE UPPER(code) = %s AND is_active = TRUE LIMIT 1;",
+                        (code,),
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        if row[0]:
+                            return int(row[0])
+                        if row[1]:
+                            tg_id = await lookup_telegram_user_by_phone(str(row[1]))
+                            if tg_id:
+                                return tg_id
+        except Exception as e:
+            logger.debug(f"ctv_directory lookup failed for collaborator {collab_str}: {e}")
+
+    candidates = {collab_str.lower(), extract_ctv_short_code(collab_str).lower()}
     if db_pool:
         try:
             async with db_pool.connection() as conn:

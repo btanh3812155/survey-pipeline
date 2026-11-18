@@ -49,6 +49,7 @@ from routers import (
     admin_data_router,
     admin_audit_router,
     admin_media_router,
+    admin_ctvs_router,
     actions_router,
     webhooks_router,
     survey_router,
@@ -128,6 +129,13 @@ async def lifespan(app: FastAPI):
         state.db_pool = None
         db_pool = None
 
+    # 3b. CTV platform tables + directory cache (idempotent; static fallback on failure)
+    try:
+        from core.ctv import ensure_ctv_platform_schema
+        await ensure_ctv_platform_schema(state.db_pool)
+    except Exception as e:
+        logger.warning(f"[CTV] Platform schema/cache init failed: {e}")
+
     # 4. Seed media directory
     seed_media_storage()
 
@@ -168,6 +176,7 @@ app.include_router(admin_forms_router)
 app.include_router(admin_data_router)
 app.include_router(admin_audit_router)
 app.include_router(admin_media_router)
+app.include_router(admin_ctvs_router)
 app.include_router(actions_router)
 app.include_router(webhooks_router)
 app.include_router(survey_router)
