@@ -43,7 +43,7 @@ dev.146.190.201.32.sslip.io, admin.dev.146.190.201.32.sslip.io, dev-admin.146.19
 }
 
 # Retired submissions surface: never an app surface, never a redirect.
-submissions.146.190.201.32.sslip.io, dev-submissions.146.190.201.32.sslip.io, submissions.dev.146.190.201.32.sslip.io, submissions.trustbridgevn.com, dev-submissions.trustbridgevn.com, submissions-dev.trustbridgevn.com {
+submissions.146.190.201.32.sslip.io, dev-submissions.146.190.201.32.sslip.io, submissions.dev.146.190.201.32.sslip.io, submissions.trustbridgevn.com, dev-submissions.trustbridgevn.com, submissions-dev.trustbridgevn.com, submissions.dev.trustbridgevn.com {
     tls {
         on_demand
     }
