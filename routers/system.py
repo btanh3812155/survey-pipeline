@@ -167,7 +167,7 @@ async def root_redirect(request: Request):
         return RedirectResponse(url="/admin/audit", status_code=status.HTTP_302_FOUND)
     if any(host.startswith(p) for p in ("admin.", "dev-admin.", "admin-dev.", "admin.dev.")):
         return RedirectResponse(url="/admin/forms", status_code=status.HTTP_302_FOUND)
-    if any(host.startswith(p) for p in ("submissions.", "view.", "data.", "dev-submissions.", "dev-data.", "submissions-dev.", "data-dev.", "data.dev.", "submissions.dev.")):
+    if any(host.startswith(p) for p in ("view.", "data.", "dev-data.", "data-dev.", "data.dev.")):
         return RedirectResponse(url="/admin/submissions", status_code=status.HTTP_302_FOUND)
 
     sub_label = host.split(":")[0].split(".")[0]

@@ -35,12 +35,19 @@ def test_submissions_api_endpoint(auth_headers):
     assert "total" in data["summary"]
 
 
-def test_submissions_subdomain_routing():
+def test_submissions_subdomain_retired():
     client = TestClient(app)
-    # When accessing root / with a submissions/view subdomain header, it redirects to /admin/submissions
-    resp = client.get("/", headers={"Host": "submissions.146.190.201.32.sslip.io"}, follow_redirects=False)
-    assert resp.status_code == 302
-    assert resp.headers.get("location") == "/admin/submissions"
+    # The submissions surface is retired: root on those hosts no longer lands on /admin/submissions.
+    for host in (
+        "submissions.146.190.201.32.sslip.io",
+        "submissions.trustbridgevn.com",
+        "dev-submissions.trustbridgevn.com",
+        "submissions-dev.trustbridgevn.com",
+    ):
+        resp = client.get("/", headers={"Host": host}, follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers.get("location") != "/admin/submissions"
+        assert resp.headers.get("location", "").startswith("/forms/")
 
 
 def test_admin_subdomain_routing_defaults_to_forms():

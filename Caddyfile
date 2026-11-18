@@ -11,7 +11,7 @@
     }
 }
 
-submissions.146.190.201.32.sslip.io, data.146.190.201.32.sslip.io, view.146.190.201.32.sslip.io, audit.146.190.201.32.sslip.io, logs.146.190.201.32.sslip.io, submissions.trustbridgevn.com, data.trustbridgevn.com, audit.trustbridgevn.com {
+data.146.190.201.32.sslip.io, view.146.190.201.32.sslip.io, audit.146.190.201.32.sslip.io, logs.146.190.201.32.sslip.io, data.trustbridgevn.com, audit.trustbridgevn.com {
     reverse_proxy app:8000
     request_body {
         max_size 25MB
@@ -32,7 +32,7 @@ survey.trustbridgevn.com {
     }
 }
 
-dev.146.190.201.32.sslip.io, admin.dev.146.190.201.32.sslip.io, dev-admin.146.190.201.32.sslip.io, dev-submissions.146.190.201.32.sslip.io, dev-data.146.190.201.32.sslip.io, dev-audit.146.190.201.32.sslip.io, submissions.dev.146.190.201.32.sslip.io, data.dev.146.190.201.32.sslip.io, audit.dev.146.190.201.32.sslip.io, dev.survey.trustbridgevn.com, staging.survey.trustbridgevn.com, dev-admin.trustbridgevn.com, admin-dev.trustbridgevn.com, dev-data.trustbridgevn.com, data-dev.trustbridgevn.com, dev-submissions.trustbridgevn.com, submissions-dev.trustbridgevn.com, dev-audit.trustbridgevn.com, audit-dev.trustbridgevn.com {
+dev.146.190.201.32.sslip.io, admin.dev.146.190.201.32.sslip.io, dev-admin.146.190.201.32.sslip.io, dev-data.146.190.201.32.sslip.io, dev-audit.146.190.201.32.sslip.io, data.dev.146.190.201.32.sslip.io, audit.dev.146.190.201.32.sslip.io, dev.survey.trustbridgevn.com, staging.survey.trustbridgevn.com, dev-admin.trustbridgevn.com, admin-dev.trustbridgevn.com, dev-data.trustbridgevn.com, data-dev.trustbridgevn.com, dev-audit.trustbridgevn.com, audit-dev.trustbridgevn.com {
     tls {
         on_demand
     }
@@ -40,6 +40,14 @@ dev.146.190.201.32.sslip.io, admin.dev.146.190.201.32.sslip.io, dev-admin.146.19
     request_body {
         max_size 25MB
     }
+}
+
+# Retired submissions surface: never an app surface, never a redirect.
+submissions.146.190.201.32.sslip.io, dev-submissions.146.190.201.32.sslip.io, submissions.dev.146.190.201.32.sslip.io, submissions.trustbridgevn.com, dev-submissions.trustbridgevn.com, submissions-dev.trustbridgevn.com {
+    tls {
+        on_demand
+    }
+    respond 410
 }
 
 https:// {
