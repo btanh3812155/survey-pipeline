@@ -72,7 +72,7 @@ def test_editor_renders_every_customizable_control_type():
     src = html[html.index("function renderSlotObjectControl"):]
     src = src[:src.index("function renderSlotObjectConfig")]
 
-    for control_type in ("select", "toggle", "number", "month", "date", "textarea"):
+    for control_type in ("select", "toggle", "number", "month", "date", "textarea", "constraints"):
         assert f"type === '{control_type}'" in src
     # Anything else falls back to a plain text input.
     assert '<input type="text"' in src
@@ -137,3 +137,174 @@ def test_editor_inline_script_passes_node_syntax_check():
             assert result.returncode == 0, result.stderr
         finally:
             os.unlink(path)
+
+
+CONSTRAINTS_OBJECT = {
+    "id": "weekly_income",
+    "label": "Báo cáo thu nhập tuần",
+    "description": "Màn hình thu nhập tuần.",
+    "expected_fields": [
+        {"key": "period_raw_text", "label": "Khoảng thời gian", "type": "string", "required": True}
+    ],
+    "customizable": [
+        {
+            "key": "period_type",
+            "label": "Loại kỳ",
+            "type": "select",
+            "options": ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"],
+            "default": "WEEKLY",
+        },
+        {
+            "key": "constraints",
+            "label": "Ràng buộc kỳ",
+            "type": "constraints",
+            "default": [],
+            "help": "Mỗi ràng buộc gồm trường, điều kiện và giá trị.",
+            "item_fields": [
+                {
+                    "key": "field",
+                    "label": "Trường",
+                    "type": "select",
+                    "options": [
+                        "period_type", "period_months", "period_years",
+                        "duration_days", "period_start", "period_end",
+                    ],
+                },
+                {
+                    "key": "op",
+                    "label": "Điều kiện",
+                    "type": "select",
+                    "options": [
+                        "equals", "not_equals", "contains", "in",
+                        "gte", "lte", "between",
+                    ],
+                },
+                {"key": "value", "label": "Giá trị", "type": "text"},
+            ],
+        },
+    ],
+}
+
+
+def _run_editor_js(rendered_html: str, body_js: str) -> None:
+    """Run the editor's inline JS in a stubbed DOM and execute ``body_js``."""
+    node = shutil.which("node")
+    assert node, "node is required"
+    match = re.search(r"<script>([\s\S]*?)</script>", rendered_html)
+    assert match, "inline editor script not found"
+    script = match.group(1)
+    harness = (
+        "const vm = require('vm');\n"
+        f"const script = {json.dumps(script, ensure_ascii=True)};\n"
+        "function fakeEl() {\n"
+        "  return {\n"
+        "    innerHTML: '', style: {}, value: '', checked: false, textContent: '',\n"
+        "    classList: { add() {}, remove() {}, contains() { return false; } },\n"
+        "    appendChild() {}, querySelectorAll() { return []; }, focus() {},\n"
+        "  };\n"
+        "}\n"
+        "const els = {};\n"
+        "const sandbox = {\n"
+        "  console, setTimeout, clearTimeout,\n"
+        "  JSON, Math, Date, Object, Array, String, Number, Boolean, Set, Map, Promise, RegExp, Error,\n"
+        "  localStorage: { getItem() { return null; }, setItem() {} },\n"
+        "  fetch: async () => ({ ok: false, status: 500, json: async () => ({}) }),\n"
+        "  document: {\n"
+        "    getElementById(id) { return els[id] || (els[id] = fakeEl()); },\n"
+        "    querySelectorAll() { return []; },\n"
+        "    createElement() { return fakeEl(); },\n"
+        "    addEventListener() {},\n"
+        "    title: '',\n"
+        "  },\n"
+        "};\n"
+        "sandbox.window = { addEventListener() {}, IMAGE_OBJECTS: [], CHECK_ENGINES: [], IMAGE_OBJECTS_ERROR: '' };\n"
+        "vm.createContext(sandbox);\n"
+        "vm.runInContext(script + '\\n;globalThis.__t = { questions, setSlotObjectType, renderSlotObjectControl, "
+        "addSlotObjectConstraint, removeSlotObjectConstraint, setSlotObjectConstraintValue, "
+        "pruneSlotObjectConfig };', sandbox);\n"
+        + body_js
+    )
+    proc = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_editor_renders_constraints_repeater():
+    html = render_form_editor_html(_camera_schema([]), is_new=False)
+    assert "type === 'constraints'" in html
+    assert "function renderSlotObjectConstraints" in html
+    assert "function renderSlotObjectConstraintRow" in html
+    assert "function addSlotObjectConstraint" in html
+    assert "function removeSlotObjectConstraint" in html
+    assert "function setSlotObjectConstraintValue" in html
+    assert "function pruneSlotObjectConfig" in html
+    assert "+ Thêm ràng buộc" in html
+    assert "Chưa có ràng buộc nào." in html
+    assert "class=\"constraint-row\"" in html
+    # Save path must go through the nested-safe pruner.
+    assert "cleanSlot.object_config = pruneSlotObjectConfig(" in html
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_editor_constraints_repeater_state_and_save_pruning():
+    slot = {"slot": 0, "title": "Thu nhập", "role": "custom_object", "required": True}
+    html = render_form_editor_html(_camera_schema([slot]), is_new=False)
+    body = (
+        "const t = sandbox.__t;\n"
+        f"const objects = {json.dumps([CONSTRAINTS_OBJECT], ensure_ascii=False)};\n"
+        + r"""
+sandbox.window.IMAGE_OBJECTS = objects;
+const item = objects[0].customizable.find(i => i.type === 'constraints');
+function check(cond, msg) { if (!cond) throw new Error(msg); }
+
+t.setSlotObjectType(0, 0, 'weekly_income');
+const state = t.questions[0].image_slots[0];
+check(Array.isArray(state.object_config.constraints), 'constraints should default to []');
+check(state.object_config.constraints.length === 0, 'constraints default should be empty');
+check(state.object_config.period_type === 'WEEKLY', 'period_type default was not applied');
+
+let rendered = t.renderSlotObjectControl(0, 0, state.object_config, item);
+check(rendered.includes('+ Thêm ràng buộc'), 'add button missing');
+check(rendered.includes('Chưa có ràng buộc nào.'), 'empty state missing');
+check(rendered.includes('Ràng buộc kỳ'), 'constraints label missing');
+check(rendered.includes('Mỗi ràng buộc gồm'), 'help text missing');
+
+t.addSlotObjectConstraint(0, 0, 'constraints');
+check(state.object_config.constraints.length === 1, 'row not added');
+const row = state.object_config.constraints[0];
+check(row.field === '' && row.op === '' && row.value === '', 'new row shape is wrong');
+
+t.setSlotObjectConstraintValue(0, 0, 'constraints', 0, 'field', 'period_type', 'select');
+t.setSlotObjectConstraintValue(0, 0, 'constraints', 0, 'op', 'in', 'select');
+t.setSlotObjectConstraintValue(0, 0, 'constraints', 0, 'value', '9, 10', 'text');
+check(
+  JSON.stringify(state.object_config.constraints[0]) === JSON.stringify({ field: 'period_type', op: 'in', value: '9, 10' }),
+  'row values were not updated: ' + JSON.stringify(state.object_config.constraints[0])
+);
+
+rendered = t.renderSlotObjectControl(0, 0, state.object_config, item);
+check(rendered.includes('removeSlotObjectConstraint(0, 0, &quot;constraints&quot;, 0)'), 'remove button missing');
+check(rendered.includes('placeholder="9, 10"'), 'in placeholder missing');
+check(rendered.includes('<option value="period_type" selected>'), 'field select lost its state');
+check(rendered.includes('<option value="in" selected>'), 'op select lost its state');
+
+t.addSlotObjectConstraint(0, 0, 'constraints');
+check(state.object_config.constraints.length === 2, 'second row not added');
+t.setSlotObjectConstraintValue(0, 0, 'constraints', 1, 'value', 'second', 'text');
+t.removeSlotObjectConstraint(0, 0, 'constraints', 0);
+check(state.object_config.constraints.length === 1, 'row not removed');
+check(state.object_config.constraints[0].value === 'second', 'removed the wrong row');
+
+const pruned = t.pruneSlotObjectConfig({
+  period_type: 'WEEKLY',
+  constraints: [{ field: 'period_type', op: 'between', value: '2026-09, 2026-10' }],
+  max_days: undefined,
+}, objects[0]);
+check(!('max_days' in pruned), 'undefined config key was not pruned');
+check(
+  JSON.stringify(pruned.constraints) === JSON.stringify([{ field: 'period_type', op: 'between', value: '2026-09, 2026-10' }]),
+  'nested constraints were altered or coerced: ' + JSON.stringify(pruned.constraints)
+);
+check(Array.isArray(pruned.constraints) && typeof pruned.constraints[0] === 'object', 'constraints must stay an array of objects');
+"""
+    )
+    _run_editor_js(html, body)

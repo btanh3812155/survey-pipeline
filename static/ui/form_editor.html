@@ -121,11 +121,24 @@
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             gap: 8px;
         }
+        .constraint-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1.2fr auto;
+            gap: 6px;
+            align-items: end;
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 6px;
+            padding: 6px;
+        }
 
         /* STACK VERTICALLY ON MOBILE SO DROPDOWNS ARE NEVER SQUISHED */
         @media (max-width: 640px) {
             .row-2, .row-3, .slot-grid {
                 grid-template-columns: 1fr !important;
+            }
+            .constraint-row {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -1089,12 +1102,19 @@
             }
             return 'AI sẽ dùng prompt tự nhập bên dưới để nhận diện ảnh này.';
         }
+        function cloneConfigDefault(value) {
+            // Array/object defaults must not be shared between slots that pick the same object.
+            if (Array.isArray(value)) return value.map(v => (v && typeof v === 'object') ? { ...v } : v);
+            if (value && typeof value === 'object') return { ...value };
+            return value;
+        }
         function imageObjectConfigDefaults(obj) {
             const config = {};
             (obj.customizable || []).forEach(item => {
                 if (!item || !item.key) return;
-                if (item.default !== undefined) config[item.key] = item.default;
+                if (item.default !== undefined) config[item.key] = cloneConfigDefault(item.default);
                 else if (item.type === 'toggle') config[item.key] = false;
+                else if (item.type === 'constraints') config[item.key] = [];
             });
             return config;
         }
@@ -1128,6 +1148,113 @@
             // Text-like inputs keep their focus; selection controls re-render so the UI reflects state.
             if (type === 'select') renderQuestions();
         }
+        function constraintItemFields(item) {
+            if (item && Array.isArray(item.item_fields) && item.item_fields.length) return item.item_fields;
+            return [
+                { key: 'field', label: 'Trường', type: 'select', options: [] },
+                { key: 'op', label: 'Điều kiện', type: 'select', options: [] },
+                { key: 'value', label: 'Giá trị', type: 'text' }
+            ];
+        }
+        function slotObjectCustomizableItem(slot, key) {
+            const obj = imageObjectById(slot && slot.object_type);
+            return obj ? (obj.customizable || []).find(item => item && item.key === key) || null : null;
+        }
+        function setSlotObjectConstraintValue(qidx, sidx, key, ridx, fieldKey, value, controlType) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (!slot.object_config || typeof slot.object_config !== 'object') slot.object_config = {};
+            if (!Array.isArray(slot.object_config[key])) slot.object_config[key] = [];
+            const rows = slot.object_config[key];
+            if (!rows[ridx] || typeof rows[ridx] !== 'object') rows[ridx] = {};
+            // Keep the raw value: nested constraint objects must never be coerced to strings.
+            rows[ridx][fieldKey] = value;
+            if (controlType === 'select') renderQuestions();
+        }
+        function addSlotObjectConstraint(qidx, sidx, key) {
+            const slot = questions[qidx]?.image_slots?.[sidx];
+            if (!slot) return;
+            if (!slot.object_config || typeof slot.object_config !== 'object') slot.object_config = {};
+            if (!Array.isArray(slot.object_config[key])) slot.object_config[key] = [];
+            const row = {};
+            constraintItemFields(slotObjectCustomizableItem(slot, key)).forEach(field => {
+                if (field && field.key) row[field.key] = '';
+            });
+            slot.object_config[key].push(row);
+            renderQuestions();
+        }
+        function removeSlotObjectConstraint(qidx, sidx, key, ridx) {
+            const rows = questions[qidx]?.image_slots?.[sidx]?.object_config?.[key];
+            if (!Array.isArray(rows) || ridx < 0 || ridx >= rows.length) return;
+            rows.splice(ridx, 1);
+            renderQuestions();
+        }
+        function constraintValuePlaceholder(op, fieldKey) {
+            if (fieldKey !== 'value') return '';
+            if (op === 'in') return '9, 10';
+            if (op === 'between') return '2026-09, 2026-10';
+            return '';
+        }
+        function renderSlotObjectConstraintField(qidx, sidx, key, ridx, row, fieldDef, op) {
+            const fieldKey = String(fieldDef.key || '');
+            const type = String(fieldDef.type || 'text');
+            const value = Object.prototype.hasOwnProperty.call(row, fieldKey)
+                ? row[fieldKey]
+                : (fieldDef.default !== undefined ? fieldDef.default : '');
+            const label = escapeHtml(fieldDef.label || fieldKey);
+            const keyArg = escapeHtml(JSON.stringify(key));
+            const fieldArg = escapeHtml(JSON.stringify(fieldKey));
+            const setter = `setSlotObjectConstraintValue(${qidx}, ${sidx}, ${keyArg}, ${ridx}, ${fieldArg}, `;
+            const boxStyle = 'width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:4px;';
+            const labelHtml = `<label style="font-size:0.7rem; color:#94a3b8; display:block; margin-bottom:3px;">${label}</label>`;
+            if (type === 'select') {
+                const options = (fieldDef.options || []).map(opt => {
+                    const optValue = (opt && typeof opt === 'object') ? String(opt.value ?? opt.label ?? '') : String(opt);
+                    const optLabel = (opt && typeof opt === 'object') ? String(opt.label ?? opt.value ?? '') : String(opt);
+                    return `<option value="${escapeHtml(optValue)}" ${String(value ?? '') === optValue ? 'selected' : ''}>${escapeHtml(optLabel)}</option>`;
+                }).join('');
+                return `<div>${labelHtml}<select style="${boxStyle}" onchange="${setter}this.value, 'select')">
+                    <option value="" ${String(value ?? '') === '' ? 'selected' : ''}>-- Chọn --</option>${options}
+                </select></div>`;
+            }
+            return `<div>${labelHtml}<input type="text" style="${boxStyle}" value="${value === undefined || value === null ? '' : escapeHtml(value)}" placeholder="${escapeHtml(constraintValuePlaceholder(op, fieldKey))}" oninput="${setter}this.value, 'text')"></div>`;
+        }
+        function renderSlotObjectConstraintRow(qidx, sidx, key, ridx, row, fields) {
+            const op = row && Object.prototype.hasOwnProperty.call(row, 'op') ? row.op : '';
+            const controls = fields.map(fieldDef => renderSlotObjectConstraintField(qidx, sidx, key, ridx, row, fieldDef, op)).join('');
+            return `<div class="constraint-row">
+                ${controls}
+                <button type="button" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171; padding:6px 10px; border-radius:6px; font-size:0.72rem; cursor:pointer;" onclick="removeSlotObjectConstraint(${qidx}, ${sidx}, ${escapeHtml(JSON.stringify(key))}, ${ridx})">Xóa</button>
+            </div>`;
+        }
+        function renderSlotObjectConstraints(qidx, sidx, key, item, value) {
+            const fields = constraintItemFields(item);
+            const rows = Array.isArray(value) ? value : [];
+            const rowsHtml = rows.map((row, ridx) => renderSlotObjectConstraintRow(
+                qidx, sidx, key, ridx, (row && typeof row === 'object') ? row : {}, fields
+            )).join('');
+            const help = item.help
+                ? `<div style="font-size:0.68rem; color:#64748b; margin-top:4px; line-height:1.35;">${escapeHtml(item.help)}</div>`
+                : '';
+            return `<div style="grid-column:1 / -1; background:#0b1120; border:1px solid #1e293b; border-radius:6px; padding:8px 10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+                    <label style="font-size:0.72rem; color:#94a3b8; font-weight:700;">${escapeHtml(item.label || key)}</label>
+                    <button type="button" style="background:rgba(56,189,248,0.12); border:1px solid #38bdf8; color:#38bdf8; padding:3px 9px; border-radius:6px; font-size:0.72rem; font-weight:700; cursor:pointer;" onclick="addSlotObjectConstraint(${qidx}, ${sidx}, ${escapeHtml(JSON.stringify(key))})">+ Thêm ràng buộc</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    ${rowsHtml || '<div style="font-size:0.75rem; color:#64748b; font-style:italic;">Chưa có ràng buộc nào.</div>'}
+                </div>
+                ${help}
+            </div>`;
+        }
+        function pruneSlotObjectConfig(config, obj) {
+            const allowed = obj ? new Set((obj.customizable || []).map(item => item.key)) : null;
+            const source = (config && typeof config === 'object') ? config : {};
+            // Only undefined is pruned; nested arrays/objects (e.g. constraints) pass through intact.
+            return Object.fromEntries(
+                Object.entries(source).filter(([key, val]) => val !== undefined && (!allowed || allowed.has(key)))
+            );
+        }
         function renderSlotObjectControl(qidx, sidx, config, item) {
             const key = String(item.key || '');
             const type = String(item.type || 'text');
@@ -1140,6 +1267,9 @@
             const keyArg = escapeHtml(JSON.stringify(key));
             const setter = `setSlotObjectConfig(${qidx}, ${sidx}, ${keyArg}, `;
             const boxStyle = 'width:100%; padding:6px; font-size:0.8rem; background:#1e293b; border:1px solid #334155; color:#fff; border-radius:4px;';
+            if (type === 'constraints') {
+                return renderSlotObjectConstraints(qidx, sidx, key, item, value);
+            }
             if (type === 'select') {
                 const options = (item.options || []).map(opt => {
                     const optValue = (opt && typeof opt === 'object') ? String(opt.value ?? opt.label ?? '') : String(opt);
@@ -1550,13 +1680,8 @@
                                 delete cleanSlot.object_config;
                                 return cleanSlot;
                             }
-                            const obj = imageObjectById(cleanSlot.object_type);
-                            const allowed = obj ? new Set((obj.customizable || []).map(item => item.key)) : null;
-                            const config = (cleanSlot.object_config && typeof cleanSlot.object_config === 'object')
-                                ? cleanSlot.object_config
-                                : {};
-                            cleanSlot.object_config = Object.fromEntries(
-                                Object.entries(config).filter(([key, val]) => val !== undefined && (!allowed || allowed.has(key)))
+                            cleanSlot.object_config = pruneSlotObjectConfig(
+                                cleanSlot.object_config, imageObjectById(cleanSlot.object_type)
                             );
                             return cleanSlot;
                         });
