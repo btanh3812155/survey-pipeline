@@ -74,6 +74,44 @@ def test_status_endpoint_reads_dev_storage_and_reflects_admin_decision():
                 f.write(original)
 
 
+def test_status_endpoint_ignores_action_checklist_stub():
+    """dev_test_submissions.json also stores {submission_id, action_status} stubs.
+
+    A stub must never mask the real submission record in dev_submissions.json.
+    """
+    test_file = DEV_FILE
+    main_file = os.path.join(os.getcwd(), "data", "dev_submissions.json")
+    original_test = open(test_file, "r", encoding="utf-8").read() if os.path.exists(test_file) else None
+    original_main = open(main_file, "r", encoding="utf-8").read() if os.path.exists(main_file) else None
+    submission_id = "DEV-STATUS-TEST02"
+    try:
+        os.makedirs(os.path.dirname(test_file), exist_ok=True)
+        os.makedirs(os.path.dirname(main_file), exist_ok=True)
+        with open(test_file, "w", encoding="utf-8") as f:
+            json.dump([{"submission_id": submission_id, "action_status": {"r2_upload": {"status": "PENDING"}}}], f)
+        with open(main_file, "w", encoding="utf-8") as f:
+            json.dump([{
+                "submission_id": submission_id,
+                "status": "REJECTED",
+                "reason": "Ảnh không khớp số liệu.",
+                "submitted_at": "2026-11-18T12:00:00+00:00",
+            }], f)
+
+        resp = TestClient(app).get(f"/api/v1/survey/status/{submission_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "REJECTED"
+        assert data["reason"] == "Ảnh không khớp số liệu."
+    finally:
+        for path, original in ((test_file, original_test), (main_file, original_main)):
+            if original is None:
+                if os.path.exists(path):
+                    os.remove(path)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(original)
+
+
 def test_status_endpoint_unknown_submission_returns_404():
     client = TestClient(app)
     resp = client.get("/api/v1/survey/status/DEV-DOES-NOT-EXIST")

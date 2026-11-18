@@ -239,6 +239,10 @@ def _read_dev_submission_status(clean_id: str):
             for r in records if isinstance(records, list) else []:
                 if str(r.get("submission_id") or "").strip() != clean_id:
                     continue
+                # dev_test_submissions.json also holds action-checklist stubs
+                # ({submission_id, action_status}); they are not submission records.
+                if not (r.get("status") or r.get("reason") or r.get("rejection_reason") or r.get("submitted_at")):
+                    continue
                 return {
                     "submission_id": clean_id,
                     "status": (r.get("status") or "MANUAL_REVIEW").upper(),
