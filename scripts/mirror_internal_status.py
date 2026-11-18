@@ -90,6 +90,7 @@ async def main() -> int:
         plan_submission_mirror,
         sync_submission_mirror,
     )
+    from services.google_drive_delivery import SUBMISSION_PHOTOS_DIR
 
     with psycopg.connect(database_url) as conn:
         records = fetch_records(conn)
@@ -99,6 +100,7 @@ async def main() -> int:
         internal_root_segments=(),
         publish_customer=False,
         exclude_test=True,
+        photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
     summary = summarize(plan)
     print_plan(plan, summary)
@@ -111,6 +113,7 @@ async def main() -> int:
         publish_customer=False,
         exclude_test=True,
         skip_empty=True,
+        photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
     if args.json:
         print(json.dumps(report, indent=2, default=str))

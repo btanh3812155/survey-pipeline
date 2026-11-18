@@ -77,8 +77,7 @@ def _status_segment(status: Any) -> str:
     return segment if segment in STATUS_ORDER else "UNKNOWN"
 
 
-def _local_images(images_root: str, form_id: str, submission_id: str) -> List[Dict[str, str]]:
-    folder = os.path.join(images_root, form_id, "submissions", submission_id)
+def _images_in(folder: str) -> List[Dict[str, str]]:
     if not os.path.isdir(folder):
         return []
     images = []
@@ -87,6 +86,25 @@ def _local_images(images_root: str, form_id: str, submission_id: str) -> List[Di
         if os.path.isfile(path) and os.path.getsize(path) > 0 and os.path.splitext(name)[1].lower() in IMAGE_FILE_EXTENSIONS:
             images.append({"path": path, "name": name})
     return images
+
+
+def _local_images(
+    images_root: str,
+    form_id: str,
+    submission_id: str,
+    photo_store_dir: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Deliverables-mirror images, falling back to the raw submission photo store.
+
+    Rejected/manual-review submissions are not copied into the deliverables mirror
+    by ``save_submission_images_locally``; their captures live in
+    ``data/submission_photos/<submission_id>/``. The internal mirror reads that
+    store directly so every status can be delivered without duplicating files.
+    """
+    images = _images_in(os.path.join(images_root, form_id, "submissions", submission_id))
+    if images or not photo_store_dir:
+        return images
+    return _images_in(os.path.join(photo_store_dir, submission_id))
 
 
 def plan_submission_mirror(
@@ -98,6 +116,7 @@ def plan_submission_mirror(
     internal_root_segments: Sequence[str] = (),
     require_test: bool = False,
     exclude_test: bool = False,
+    photo_store_dir: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Builds the per-submission delivery plan without touching Google Drive."""
     images_root = images_root or LOCAL_IMAGES_DIR
@@ -121,7 +140,7 @@ def plan_submission_mirror(
                 "form_id": form_id,
                 "status": status,
                 "record": record,
-                "images": _local_images(images_root, form_id, submission_id),
+                "images": _local_images(images_root, form_id, submission_id, photo_store_dir),
                 "customer_path": ["form", "submissions", submission_id]
                 if (publish_customer and status in allowed_customer)
                 else None,
@@ -254,6 +273,7 @@ async def mirror_submissions_to_drive(
     upload_manifests: bool = False,
     upload_readme: bool = False,
     skip_empty: bool = False,
+    photo_store_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Uploads a mirror plan with an already-authenticated client."""
     plan = plan_submission_mirror(
@@ -264,6 +284,7 @@ async def mirror_submissions_to_drive(
         internal_root_segments=internal_root_segments,
         require_test=require_test,
         exclude_test=exclude_test,
+        photo_store_dir=photo_store_dir,
     )
     if skip_empty:
         plan = [item for item in plan if item["images"]]

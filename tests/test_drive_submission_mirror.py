@@ -279,3 +279,51 @@ async def test_production_sync_mirrors_all_statuses_internally_only(tmp_path, mo
         for folder in client.folders
         if folder.count("/") > 2
     )
+
+
+def test_raw_photo_store_is_used_when_mirror_is_empty(tmp_path):
+    images_root = tmp_path / "Images"
+    photo_root = tmp_path / "photos"
+    photo_dir = photo_root / "VN-REJECTED"
+    photo_dir.mkdir(parents=True)
+    (photo_dir / "slot_0.jpg").write_bytes(b"x")
+
+    plan = plan_submission_mirror(
+        [_record("VN-REJECTED", "REJECTED")],
+        images_root=str(images_root),
+        photo_store_dir=str(photo_root),
+    )
+    assert [image["name"] for image in plan[0]["images"]] == ["slot_0.jpg"]
+
+    _stage_images(images_root, "form_alpha", "VN-REJECTED", 1)
+    plan = plan_submission_mirror(
+        [_record("VN-REJECTED", "REJECTED")],
+        images_root=str(images_root),
+        photo_store_dir=str(photo_root),
+    )
+    assert [image["name"] for image in plan[0]["images"]] == ["slot_0.webp"]
+
+
+@pytest.mark.asyncio
+async def test_production_sync_uploads_rejected_images_from_raw_store(tmp_path, monkeypatch):
+    import services.drive_submission_mirror as mirror
+    import services.google_drive_delivery as delivery
+
+    images_root = tmp_path / "Images"
+    images_root.mkdir()
+    photo_root = tmp_path / "photos"
+    photo_dir = photo_root / "VN-REJECTED"
+    photo_dir.mkdir(parents=True)
+    (photo_dir / "slot_0.jpg").write_bytes(b"x")
+    monkeypatch.setattr(mirror, "LOCAL_IMAGES_DIR", str(images_root))
+    monkeypatch.setattr(delivery, "SUBMISSION_PHOTOS_DIR", str(photo_root))
+
+    client = FakeDriveClient()
+    report = await delivery.sync_internal_status_mirror(
+        FakePool([_record("VN-REJECTED", "REJECTED")]), client, FakeHttp(), "token", "ROOT"
+    )
+    files = report["forms"]["form_alpha"]["internal"]["REJECTED"]["VN-REJECTED"]["files"]
+    assert len(files) == 1
+    # b"x" is not a decodable image, so the original .jpg name is kept.
+    assert files[0]["name"] == "slot_0.jpg"
+    assert files[0]["status"] == "uploaded"

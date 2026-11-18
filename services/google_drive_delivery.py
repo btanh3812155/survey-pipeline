@@ -1761,6 +1761,7 @@ async def sync_internal_status_mirror(
         publish_customer=False,
         exclude_test=True,
         skip_empty=True,
+        photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
     logger.info(
         "🗂️ [INTERNAL MIRROR] %s submissions under Internal/<form>/submissions/<STATUS>/ "
