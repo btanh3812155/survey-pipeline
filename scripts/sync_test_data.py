@@ -395,10 +395,10 @@ def fetch_test_records(conn) -> list:
 
 
 def print_report(report: dict) -> None:
-    from services.test_data_drive import folder_url
+    from services.drive_submission_mirror import folder_url
 
     print(f"publish_customer: {report['publish_customer']}")
-    print(f"TEST_DATA root: {folder_url(report.get('test_data_folder_id'))}")
+    print(f"TEST_DATA root: {folder_url(report.get('internal_root_folder_id'))}")
     for form_id, form_report in report.get("forms", {}).items():
         print(f"  form {form_id}")
         if form_report.get("customer_folder_id"):
@@ -443,9 +443,20 @@ async def main() -> int:
                 return 0
         records = fetch_test_records(conn)
 
-    from services.test_data_drive import sync_test_data_to_drive
+    from services.drive_submission_mirror import (
+        customer_publish_enabled,
+        sync_submission_mirror,
+    )
 
-    report = await sync_test_data_to_drive(records)
+    test_data_folder = os.environ.get("GOOGLE_DRIVE_TEST_DATA_FOLDER") or "TEST_DATA"
+    report = await sync_submission_mirror(
+        records,
+        internal_root_segments=(test_data_folder,),
+        publish_customer=customer_publish_enabled(),
+        require_test=True,
+        upload_manifests=True,
+        upload_readme=True,
+    )
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:

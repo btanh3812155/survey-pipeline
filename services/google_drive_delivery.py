@@ -1726,6 +1726,53 @@ def _cursor_rows_to_records(cur: Any, rows: List[Any]) -> List[Dict[str, Any]]:
     return records
 
 
+async def sync_internal_status_mirror(
+    db_pool: Optional[Any],
+    client: Any,
+    http_client: httpx.AsyncClient,
+    token: str,
+    root_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Mirrors every real submission status under the internal Drive folder.
+
+    Layout: ``Internal/<form_id>/submissions/<STATUS>/<submission_id>/`` for
+    APPROVED, REJECTED, APPEAL_PENDING and MANUAL_REVIEW. TEST_ submissions are
+    excluded (they live under ``Internal/TEST_DATA``) and the customer side is
+    not touched.
+    """
+    if db_pool is None:
+        return None
+    from services.drive_submission_mirror import mirror_submissions_to_drive
+
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM survey_submissions "
+                "WHERE status IN ('APPROVED', 'REJECTED', 'APPEAL_PENDING', 'MANUAL_REVIEW');"
+            )
+            records = _cursor_rows_to_records(cur, await cur.fetchall())
+
+    report = await mirror_submissions_to_drive(
+        records,
+        client=client,
+        http_client=http_client,
+        token=token,
+        root_folder_id=root_id,
+        publish_customer=False,
+        exclude_test=True,
+        skip_empty=True,
+    )
+    logger.info(
+        "🗂️ [INTERNAL MIRROR] %s submissions under Internal/<form>/submissions/<STATUS>/ "
+        "(uploaded %s images, %s already present, %s failed)",
+        report.get("submissions"),
+        report.get("uploaded_files"),
+        report.get("present_files"),
+        report.get("failed_files"),
+    )
+    return report
+
+
 async def sync_all_approved_to_drive(db_pool: Optional[Any] = None) -> bool:
     """
     Pushes the Master CSV, per-form CSVs/Sheets and submission images to Google Drive.
@@ -2066,6 +2113,12 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
             )
         except Exception as e:
             logger.error(f"[AUTO DRIVE SYNC] Failed to sync form folders: {e}")
+
+        # 2b. Internal status mirror (all statuses, isolated from customer deliverables)
+        try:
+            await sync_internal_status_mirror(db_pool, client, http_client, token, root_id)
+        except Exception as e:
+            logger.error(f"[AUTO DRIVE SYNC] Internal status mirror failed: {e}")
 
         # 3. Internal CTV matrix (isolated: failures must not affect customer deliverables)
         if db_pool:
