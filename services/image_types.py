@@ -8,6 +8,7 @@ Decouples visual transcription from semantic validation:
 
 import re
 import logging
+import unicodedata
 from enum import Enum
 from datetime import date
 from typing import Optional, Dict, Any, Tuple, List
@@ -116,6 +117,22 @@ def parse_date_range_from_text(raw_text: str, default_year: int = 2026) -> Tuple
         text,
     )
     if not m:
+        # Compact form: '24 - 25/10/2026' or '24 - 25/10'
+        compact = re.search(
+            r"(\d{1,2})\s*[-–~]\s*(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b",
+            text,
+        )
+        if compact:
+            d1, d2 = int(compact.group(1)), int(compact.group(2))
+            month = int(compact.group(3))
+            year = int(compact.group(4) or default_year)
+            if year < 100:
+                year += 2000
+            try:
+                return date(year, month, d1), date(year, month, d2), d2 - d1 + 1
+            except ValueError:
+                pass
+
         # Check single date without separator
         m_single = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", text)
         if m_single and not any(sep in text for sep in ["-", "–", "đến", "to"]):
@@ -215,3 +232,68 @@ def validate_extracted_weekly_period(
         )
 
     return True, ""
+
+
+# ==============================================================================
+# OCR field aliases
+# ==============================================================================
+
+def _alias_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "_", ascii_text.lower()).strip("_")
+
+
+OCR_FIELD_ALIASES: Dict[str, str] = {
+    # Vietnamese labels returned by vision models.
+    _alias_key("Doanh thu gộp"): "gross_revenue",
+    _alias_key("Tổng thu nhập"): "gross_revenue",
+    _alias_key("Thu nhập ròng"): "net_income",
+    _alias_key("Chiết khấu và thuế"): "discount_and_tax",
+    _alias_key("Chiết khấu + thuế"): "discount_and_tax",
+    _alias_key("Tổng số chuyến"): "total_trips",
+    _alias_key("Số giờ online"): "online_hours",
+    _alias_key("Khoảng thời gian"): "period_raw_text",
+    _alias_key("Các tab kỳ"): "period_tabs",
+    _alias_key("Nhãn kỳ đang chọn"): "selected_period_label",
+    _alias_key("Chỉ số tab đang chọn"): "selected_period_index",
+    _alias_key("Ngày chi tiết đầu tiên"): "first_detail_date",
+    _alias_key("Kỳ đọc được"): "period_reliable",
+    _alias_key("Lý do không chắc chắn"): "period_uncertain_reason",
+    _alias_key("Nhãn các dòng thu nhập"): "field_labels",
+    _alias_key("Ứng dụng phát hiện"): "detected_app",
+    _alias_key("Giao diện GSM chính thức"): "is_authentic_gsm_ui",
+    _alias_key("Dấu hiệu chỉnh sửa"): "is_manipulated_or_photoshopped",
+    _alias_key("Ảnh đọc được"): "is_legible",
+    _alias_key("Độ tin cậy"): "confidence_score",
+    # Common English aliases.
+    "gross": "gross_revenue",
+    "total_income": "gross_revenue",
+    "total_revenue": "gross_revenue",
+    "revenue": "gross_revenue",
+    "net": "net_income",
+    "profit": "net_income",
+    "trips": "total_trips",
+    "hours": "online_hours",
+    "period_text": "period_raw_text",
+    "period_range": "period_raw_text",
+}
+
+
+def normalize_ocr_field_aliases(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Copy supported localized/legacy aliases onto canonical OCR keys.
+
+    Canonical values win when non-empty. An empty canonical slot (for example
+    `period_raw_text: ""` written by the layout pass) is filled from the alias.
+    """
+    if not isinstance(data, dict):
+        return {}
+    normalized = dict(data)
+    for key, value in data.items():
+        canonical = OCR_FIELD_ALIASES.get(_alias_key(key))
+        if not canonical or canonical == key:
+            continue
+        existing = normalized.get(canonical)
+        if existing in (None, "", [], {}):
+            normalized[canonical] = value
+    return normalized

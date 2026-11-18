@@ -36,6 +36,7 @@ from services.image_objects import (
     save_object,
 )
 from services.image_object_projection import project_income_totals, project_income_weeks
+from services.image_types import normalize_ocr_field_aliases
 
 
 def _weekly_config(**overrides):
@@ -272,6 +273,138 @@ def test_required_fields_engine():
 
     result = run_object_checks("weekly_income", {"gross_revenue": 1000, "period": "Tuần 1"}, _weekly_config())
     assert result["passed"] is True
+
+
+def test_ocr_localized_keys_are_normalized_to_canonical():
+    localized = {
+        "Doanh thu gộp": 1602000,
+        "Thu nhập ròng": 393928,
+        "Chiết khấu và thuế": -1208072,
+        "Tổng số chuyến": 22,
+        "Số giờ online": "27h 15m",
+        "Khoảng thời gian": "24 - 25/10/2026",
+        "Ứng dụng phát hiện": "XANH_SM",
+        "Giao diện GSM chính thức": True,
+        "Dấu hiệu chỉnh sửa": False,
+        "Ảnh đọc được": True,
+        "Độ tin cậy": 0.95,
+    }
+    normalized = normalize_ocr_field_aliases(localized)
+    assert normalized["gross_revenue"] == 1602000
+    assert normalized["period_raw_text"] == "24 - 25/10/2026"
+    assert normalized["detected_app"] == "XANH_SM"
+
+    config = {
+        "period_type": "WEEKLY",
+        "constraints": [
+            {"field": "period_months", "op": "contains", "value": 10},
+            {"field": "period_years", "op": "contains", "value": 2026},
+        ],
+    }
+    result = run_object_checks("weekly_income", localized, config)
+    assert result["passed"] is True, result["reasons"]
+    assert result["extraction"]["gross_revenue"] == 1602000
+
+
+def test_ocr_english_aliases_and_currency_formatting_are_supported():
+    payload = {
+        "gross": "1.602.000đ",
+        "profit": "393.928đ",
+        "discount_and_tax": "-1.208.072",
+        "trips": 22,
+        "period_text": "24 - 25/10/2026",
+        "detected_app": "XANH_SM",
+        "is_authentic_gsm_ui": True,
+        "is_manipulated_or_photoshopped": False,
+        "is_legible": True,
+        "confidence_score": 0.95,
+    }
+    result = run_object_checks("weekly_income", payload, _weekly_config())
+    assert result["passed"] is True, result["reasons"]
+    assert result["extraction"]["gross_revenue"] == 1602000
+    assert result["extraction"]["net_income"] == 393928
+
+
+def test_canonical_values_win_over_aliases():
+    normalized = normalize_ocr_field_aliases({
+        "gross_revenue": 100,
+        "Doanh thu gộp": 200,
+    })
+    assert normalized["gross_revenue"] == 100
+
+
+def test_day_only_period_uses_detail_date_month_context():
+    base = {
+        "Doanh thu gộp": 5160500,
+        "Thu nhập ròng": 1210380,
+        "Chiết khấu và thuế": -3950120,
+        "Tổng số chuyến": 61,
+        "Số giờ online": "82h 1m",
+        "Khoảng thời gian": "26 - 02",
+        "Ngày chi tiết đầu tiên": "Thứ bảy, 26/09/2026",
+        "Ứng dụng phát hiện": "XANH_SM",
+        "Giao diện GSM chính thức": True,
+        "Dấu hiệu chỉnh sửa": False,
+        "Ảnh đọc được": True,
+        "Độ tin cậy": 0.95,
+    }
+    config = {
+        "period_type": "WEEKLY",
+        "constraints": [
+            {"field": "period_months", "op": "contains", "value": 10},
+            {"field": "period_years", "op": "contains", "value": 2026},
+        ],
+    }
+    result = run_object_checks("weekly_income", base, config)
+    assert result["passed"] is True, result["reasons"]
+
+
+def test_week_label_uses_detail_date_month_context():
+    base = {
+        "Doanh thu gộp": 5160500,
+        "Thu nhập ròng": 1210380,
+        "Chiết khấu và thuế": -3950120,
+        "Tổng số chuyến": 61,
+        "Khoảng thời gian": "Tuần 1",
+        "Ngày chi tiết đầu tiên": "Thứ bảy, 26/09/2026",
+        "Ứng dụng phát hiện": "XANH_SM",
+        "Giao diện GSM chính thức": True,
+        "Dấu hiệu chỉnh sửa": False,
+        "Ảnh đọc được": True,
+        "Độ tin cậy": 0.95,
+    }
+    result = run_object_checks("weekly_income", base, {
+        "period_type": "WEEKLY",
+        "constraints": [
+            {"field": "period_months", "op": "contains", "value": 10},
+            {"field": "period_years", "op": "contains", "value": 2026},
+        ],
+    })
+    assert result["passed"] is True, result["reasons"]
+
+
+def test_month_only_period_satisfies_month_constraint():
+    base = {
+        "Doanh thu gộp": 6014500,
+        "Thu nhập ròng": 1410830,
+        "Chiết khấu và thuế": -4603670,
+        "Tổng số chuyến": 60,
+        "Khoảng thời gian": "10/2026",
+        "Ngày chi tiết đầu tiên": "Thứ bảy, 17/10/2026",
+        "Ứng dụng phát hiện": "XANH_SM",
+        "Giao diện GSM chính thức": True,
+        "Dấu hiệu chỉnh sửa": False,
+        "Ảnh đọc được": True,
+        "Độ tin cậy": 0.95,
+    }
+    result = run_object_checks("weekly_income", base, {
+        "period_type": "WEEKLY",
+        "constraints": [
+            {"field": "period_months", "op": "contains", "value": 10},
+            {"field": "period_years", "op": "contains", "value": 2026},
+        ],
+    })
+    assert result["passed"] is True, result["reasons"]
 
 
 @pytest.mark.parametrize(

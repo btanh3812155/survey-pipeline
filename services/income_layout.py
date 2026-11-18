@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from services.image_types import TimeGranularity, parse_date_range_from_text
+from services.image_types import TimeGranularity, normalize_ocr_field_aliases, parse_date_range_from_text
 
 logger = logging.getLogger("services.income_layout")
 
@@ -339,7 +339,7 @@ def _coerce_amount(value: Any) -> int:
 
 def apply_layout_to_ocr(model_data: Optional[Dict[str, Any]], image_bytes: bytes, reference_year: int = 2026) -> Dict[str, Any]:
     """Return the model's dict with deterministic period + app/layout fields applied."""
-    data = dict(model_data or {})
+    data = normalize_ocr_field_aliases(dict(model_data or {}))
     for key in ("gross_revenue", "net_income", "discount_and_tax", "total_trips"):
         if key in data:
             data[key] = _coerce_amount(data.get(key))
@@ -353,7 +353,10 @@ def apply_layout_to_ocr(model_data: Optional[Dict[str, Any]], image_bytes: bytes
     data["layout_matched"] = layout.matched
     data["period_tabs"] = layout.tabs
     data["active_tab_index"] = layout.selected_index
-    data["period_raw_text"] = layout.period.label
+    if layout.period.label:
+        data["period_raw_text"] = layout.period.label
+    elif not data.get("period_raw_text"):
+        data["period_raw_text"] = ""
     data["period_days"] = layout.period.days
     if layout.period.granularity != TimeGranularity.UNKNOWN:
         data["period_granularity"] = layout.period.granularity.value

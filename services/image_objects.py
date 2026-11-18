@@ -25,6 +25,7 @@ from services.image_check_engines import (
     resolve_placeholders,
     run_engine,
 )
+from services.image_types import normalize_ocr_field_aliases
 
 logger = logging.getLogger("services.image_objects")
 
@@ -344,6 +345,9 @@ def build_detection_prompt(obj: ImageObjectDefinition, slot_config: Optional[Dic
         .replace("{{config}}", json.dumps(config, ensure_ascii=False, sort_keys=True))
     )
     prompt = resolve_placeholders(prompt, config)
+    if obj.expected_fields:
+        keys = ", ".join(field.key for field in obj.expected_fields)
+        prompt = f"{prompt}\nUse exactly these snake_case JSON keys, untranslated: {keys}."
     return prompt.strip()
 
 
@@ -388,7 +392,7 @@ def normalize_extraction(obj: ImageObjectDefinition, extraction: Any) -> Tuple[D
     """Alias legacy keys and coerce declared field types; returns (values, issues)."""
     if hasattr(extraction, "model_dump"):
         extraction = extraction.model_dump()
-    data: Dict[str, Any] = dict(extraction or {})
+    data: Dict[str, Any] = normalize_ocr_field_aliases(dict(extraction or {}))
     if data.get("period_raw_text") in (None, "") and data.get("period"):
         data["period_raw_text"] = data["period"]
     if data.get("active_tab") in (None, "") and data.get("period_type"):

@@ -12,7 +12,7 @@ import ast
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from services.image_types import TimeGranularity, parse_date_range_from_text
@@ -363,6 +363,46 @@ def _period_dates(text: str) -> Tuple[Optional[date], Optional[date], int]:
     return parse_date_range_from_text(text)
 
 
+_DETAIL_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})(?:\s*/\s*(\d{2,4}))?")
+_DAY_RANGE_RE = re.compile(r"(\d{1,2})\s*[-–~]\s*(\d{1,2})")
+
+
+def _period_range_from_extraction(extraction: Dict[str, Any]) -> Tuple[Optional[date], Optional[date], int]:
+    """Parse period text, using first_detail_date as month context for day-only tabs."""
+    text = str(extraction.get("period_raw_text") or extraction.get("period") or "")
+    start, end, days = _period_dates(text)
+    if start and end:
+        return start, end, days
+    detail = _DETAIL_DATE_RE.search(str(extraction.get("first_detail_date") or ""))
+    is_week_label = bool(_DAY_RANGE_RE.search(text)) or "tuần" in text.lower()
+    if detail and is_week_label:
+        day = int(detail.group(1))
+        month = int(detail.group(2))
+        year = int(detail.group(3) or 2026)
+        if year < 100:
+            year += 2000
+        try:
+            from services.income_layout import parse_tab_period
+            info = parse_tab_period(text, f"{month:02d}/{year}", year)
+            if info.start and info.end:
+                return info.start, info.end, info.days
+        except Exception:
+            logger.warning("[PERIOD] detail-date context parse failed for %r", text)
+        try:
+            return date(year, month, day), date(year, month, day) + timedelta(days=6), 7
+        except ValueError:
+            pass
+    return None, None, 0
+
+
+def _month_year_from_text(text: str) -> Optional[Tuple[int, int]]:
+    match = re.search(r"(\d{1,2})\s*/\s*(\d{4})", text or "")
+    if not match:
+        return None
+    month, year = int(match.group(1)), int(match.group(2))
+    return (year, month) if 1 <= month <= 12 else None
+
+
 def engine_date_range(params: Dict[str, Any], extraction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     field = str(params.get("field") or "period_raw_text")
     text = str(_field_value(extraction, field) or "")
@@ -376,7 +416,7 @@ def engine_date_range(params: Dict[str, Any], extraction: Dict[str, Any], contex
     if granularity == TimeGranularity.DAILY or (("hôm nay" in lowered or "ngày" in lowered) and not any(sep in lowered for sep in ("-", "–", "đến"))):
         return _result(False, "Phát hiện tab 'Ngày' (báo cáo thu nhập theo NGÀY). Vui lòng chuyển sang tab 'Tuần' trên ứng dụng!")
 
-    start, end, days = _period_dates(text)
+    start, end, days = _period_range_from_extraction(extraction)
     if start and end:
         low, high = PERIOD_TYPE_WINDOWS[expected]
         if not (low <= days <= high):
@@ -421,7 +461,7 @@ def engine_period_granularity(params: Dict[str, Any], extraction: Dict[str, Any]
                 f"Phát hiện kỳ báo cáo {detected_value} nhưng biểu mẫu yêu cầu {expected}.",
             )
 
-    start, end, days = _period_dates(text)
+    start, end, days = _period_range_from_extraction(extraction)
     if start and end:
         low, high = PERIOD_TYPE_WINDOWS[expected]
         if not (low <= days <= high):
@@ -452,12 +492,16 @@ _CONSTRAINT_OPS = ("equals", "not_equals", "contains", "in", "gte", "lte", "betw
 def _period_facts(extraction: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Derived period facts used by the constraints engine."""
     text = str(extraction.get("period_raw_text") or extraction.get("period") or "")
-    start, end, days = _period_dates(text)
+    start, end, days = _period_range_from_extraction(extraction)
     facts = dict(extraction)
     facts["duration_days"] = days if start and end else 0
     facts["period_start"] = start.isoformat() if start else ""
     facts["period_end"] = end.isoformat() if end else ""
     months = sorted(_months_spanned(start, end)) if start and end else []
+    if not months:
+        month_year = _month_year_from_text(text)
+        if month_year:
+            months = [month_year]
     facts["period_months"] = [month for _year, month in months]
     facts["period_years"] = sorted({year for year, _month in months})
     facts["period_type"] = str(
