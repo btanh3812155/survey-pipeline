@@ -1742,6 +1742,8 @@ async def sync_internal_status_mirror(
     """
     if db_pool is None:
         return None
+    # ponytail: periodic full-table sweep; at 20k/day move to an outbox-driven
+    # per-submission mirror triggered on status change instead of this sweep.
     from services.drive_submission_mirror import mirror_submissions_to_drive
 
     async with db_pool.connection() as conn:
