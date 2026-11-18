@@ -2354,6 +2354,12 @@ async def send_telegram_direct_message(
                 f"Telegram send to chat {chat_id} failed: HTTP {resp.status_code} {resp.text[:300]}"
             )
             return False
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        message_id = (body.get("result") or {}).get("message_id") if isinstance(body, dict) else None
+        logger.info(f"Telegram send to chat {chat_id} ok: message_id={message_id}")
         return True
     except Exception as e:
         logger.error(f"Failed to dispatch Telegram message to {chat_id}: {e}")
@@ -2443,22 +2449,18 @@ async def dispatch_submission_telegram_notifications(
     main_mod = sys.modules.get("main")
     _send_direct = getattr(main_mod, "send_telegram_direct_message", send_telegram_direct_message) if main_mod else send_telegram_direct_message
     _lookup_collab = getattr(main_mod, "lookup_telegram_user_for_collaborator", lookup_telegram_user_for_collaborator) if main_mod else lookup_telegram_user_for_collaborator
-    _lookup_phone = getattr(main_mod, "lookup_telegram_user_by_phone", lookup_telegram_user_by_phone) if main_mod else lookup_telegram_user_by_phone
 
-    if not collaborator_id:
-        logger.info(f"Submission #{submission_id} has no collaborator; nothing to notify.")
+    if collaborator_id is None or str(collaborator_id).strip() == "":
+        logger.info(f"Submission #{submission_id} has no Telegram recipient; nothing to notify.")
         return
 
     if recipient_kind == "driver":
-        # Question-source recipients are phone answers. Resolve the phone directly;
-        # never require or fall back to a CTV directory/code on this path.
-        collab_tg_id = await _lookup_phone(str(collaborator_id))
-        if not collab_tg_id:
-            logger.info(
-                f"Phone recipient '{collaborator_id}' is not linked to an active Telegram user; "
-                f"skipping verdict for #{submission_id}."
-            )
-            return
+        # Question source: the answer value itself is the Telegram target. Send it
+        # verbatim (only trimming surrounding whitespace); no user/CTV lookup.
+        # Telegram accepts a numeric chat id or @username, so a phone number will
+        # be rejected by the API and must surface that error, not be remapped.
+        collab_tg_id = str(collaborator_id).strip()
+        logger.info(f"TG question-source raw recipient for #{submission_id}: {collab_tg_id!r}")
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
         if not collab_tg_id:

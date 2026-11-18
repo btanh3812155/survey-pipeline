@@ -171,50 +171,10 @@ async def test_dispatch_retries_telegram_429_with_retry_after(monkeypatch):
     assert len(client.calls) == 2
 
 
-@pytest.mark.asyncio
-async def test_phone_recipient_is_resolved_by_phone_not_as_chat_id(monkeypatch):
-    """Regression: a driver phone answer must not become chat_id=961281318."""
-    from config import settings
-    from routers import survey as survey_router
-
-    class Client:
-        def __init__(self):
-            self.calls = []
-
-        async def post(self, url, json=None):
-            self.calls.append((url, json))
-            class Resp:
-                status_code = 200
-                text = ""
-            return Resp()
-
-    client = Client()
-    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
-    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
-
-    phone_lookup = AsyncMock(return_value=None)
-    collab_lookup = AsyncMock(return_value=None)
-    with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
-         patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
-         patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
-        await dispatch_submission_telegram_notifications(
-            submission_id="VN-PHONE01",
-            status_str="REJECTED",
-            driver_phone="0961281318",
-            collaborator_id="0961281318",
-            reason_str="Ảnh mờ",
-            form_id="TB_GSM_2026_Nov_Test",
-            recipient_kind="driver",
-        )
-
-    phone_lookup.assert_awaited_once_with("0961281318")
-    collab_lookup.assert_not_awaited()
-    assert client.calls == []
-
 
 @pytest.mark.asyncio
-async def test_question_source_sends_to_phone_without_any_ctv_directory(monkeypatch):
-    """Question source resolves the phone directly; no CTV row/code is required."""
+async def test_question_source_passes_raw_answer_value_as_chat_id(monkeypatch):
+    """Question source sends the answer value verbatim; no user/CTV lookup."""
     from config import settings
     from routers import survey as survey_router
 
@@ -237,26 +197,79 @@ async def test_question_source_sends_to_phone_without_any_ctv_directory(monkeypa
     monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
     phone_lookup = AsyncMock(return_value=9241303232)
-    collab_lookup = AsyncMock(return_value=None)
+    collab_lookup = AsyncMock(return_value=987654321)
 
     with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
          patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
+         patch("routers.survey.get_db_pool", side_effect=AssertionError("question path must not use DB")), \
          patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
         await dispatch_submission_telegram_notifications(
-            submission_id="DEV-PHONE-PATH",
+            submission_id="DEV-RAW-PHONE",
             status_str="APPROVED",
             driver_phone="0932090967",
-            driver_name="[TEST] Jerry phone path",
+            driver_name="[TEST] raw phone answer",
             collaborator_id="0932090967",
-            reason_str="Phone path test",
+            reason_str="Raw answer path test",
             form_id="TB_GSM_2026_Nov_Test",
             recipient_kind="driver",
             ctv_ref="TUAN_LM_HCM_001",
         )
 
-    phone_lookup.assert_awaited_once_with("0932090967")
+    phone_lookup.assert_not_awaited()
     collab_lookup.assert_not_awaited()
     assert len(client.calls) == 1
     _, payload = client.calls[0]
-    assert payload["chat_id"] == 9241303232
-    assert "DEV-PHONE-PATH" in payload["text"]
+    assert payload["chat_id"] == "0932090967"
+    assert "DEV-RAW-PHONE" in payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_question_source_surfaces_invalid_chat_id_error(monkeypatch, caplog):
+    """A non-chat answer value goes to Telegram as-is; the API error is surfaced."""
+    import logging
+    from config import settings
+    from routers import survey as survey_router
+
+    class Resp:
+        status_code = 400
+        text = '{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}'
+
+        def json(self):
+            return {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
+    phone_lookup = AsyncMock(return_value=9241303232)
+    collab_lookup = AsyncMock(return_value=987654321)
+
+    with caplog.at_level(logging.ERROR, logger="routers.survey"):
+        with patch("main.lookup_telegram_user_by_phone", phone_lookup), \
+             patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
+             patch("routers.survey.get_db_pool", side_effect=AssertionError("question path must not use DB")), \
+             patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+            await dispatch_submission_telegram_notifications(
+                submission_id="DEV-BAD-PHONE",
+                status_str="REJECTED",
+                driver_phone="0961281318",
+                collaborator_id="0961281318",
+                reason_str="Invalid chat target",
+                form_id="TB_GSM_2026_Nov_Test",
+                recipient_kind="driver",
+            )
+
+    phone_lookup.assert_not_awaited()
+    collab_lookup.assert_not_awaited()
+    assert len(client.calls) == 1
+    _, payload = client.calls[0]
+    assert payload["chat_id"] == "0961281318"
+    assert "chat not found" in caplog.text
