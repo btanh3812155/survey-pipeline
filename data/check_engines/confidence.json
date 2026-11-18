@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "confidence",
+  "label": "Độ tin cậy tối thiểu",
+  "description": "Điểm tin cậy OCR phải đạt ngưỡng tối thiểu.",
+  "implementation": "number_range",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "min", "label": "Tối thiểu", "type": "number"},
+    {"key": "max", "label": "Tối đa", "type": "number"},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": []
+}

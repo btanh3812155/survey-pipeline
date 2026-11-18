@@ -1,0 +1,1079 @@
+{
+  "form_id": "TB_GSM_2026_Nov_Test",
+  "title": "KHẢO SÁT THÔNG TIN HOẠT ĐỘNG TÀI XẾ CÔNG NGHỆ (GSM)",
+  "description": "Kính gửi Quý anh/chị tài xế, Bảng khảo sát này được thực hiện nhằm phục vụ mục đích nghiên cứu thị trường và học thuật về hoạt động vận tải công nghệ. Mọi thông tin thu thập được cam kết bảo mật tuyệt đối và chỉ sử dụng dưới dạng số liệu thống kê ẩn danh.",
+  "settings": {
+    "response_limit": null,
+    "current_responses": 0,
+    "access_control": "public",
+    "allow_anonymous": false,
+    "allow_edit_after_submit": false,
+    "notify_telegram_chat_id": null,
+    "notify_email": null,
+    "decree13_required": true,
+    "ctv_ref_enabled": true,
+    "tags": [],
+    "tg_response_source": "ctv",
+    "tg_response_question_id": null,
+    "is_test_mode": false,
+    "image_checks": {
+      "enable_blur_check": true,
+      "blur_threshold": 40.0,
+      "enable_ai_vision": true,
+      "enable_object_detection": false,
+      "enable_vehicle_match": false,
+      "enable_anti_fraud": true,
+      "require_unique": true,
+      "enable_ai_generated_check": true,
+      "enable_screen_photo_check": false
+    }
+  },
+  "questions": [
+    {
+      "id": "c_1",
+      "title": "Câu 1: XÁC NHẬN ĐỒNG Ý CUNG CẤP DỮ LIỆU (BẮT BUỘC)",
+      "type": "signature",
+      "required": true,
+      "description": "CTV đọc cho tài xế: bằng việc xác nhận dưới đây, tôi tự nguyện đồng ý cung cấp thông tin cho CÔNG TY TNHH TRUST BRIDGE với các giới hạn và mục đích cụ thể sau: 1. Đối với Hình ảnh thu nhập: Tôi đồng ý chia sẻ để đủ điều kiện nhận khoản tiền thưởng trực tiếp từ Cộng tác viên. Tôi xác nhận đã tự tay che/loại bỏ (hoặc trực tiếp giám sát Cộng tác viên che/loại bỏ) mọi thông tin định danh cá nhân trực tiếp trên hình ảnh (bao gồm nhưng không giới hạn: tên, mã tài xế, biển số xe, ảnh đại diện, số tài khoản, v.v.). Công ty chỉ sử dụng dữ liệu này để nghiên cứu, phân tích thị trường và lập báo cáo thống kê. Công ty cam kết tuyệt đối không chia sẻ, không cung cấp và không mua bán dữ liệu chi tiết cho bất kỳ đối tác hay bên thứ ba nào. Tôi hoàn toàn hiểu rõ và xác nhận đồng ý với các giới hạn, mục đích trên. (Chi tiết chính sách bảo vệ dữ liệu: [Xem chi tiết Bản cam kết bảo mật](https://drive.google.com/file/d/1zPsRGEF1nH7YQZ-kKdEQ8rOKqrZKGjfs/view?usp=drive_link))",
+      "tooltip": "Vẽ ký trực tiếp trên màn hình",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [],
+      "is_consent_gate": true,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_2",
+      "title": "Câu 2: Dành cho CTV: Tôi xác nhận tài xế đã ký đồng ý cung cấp thông tin.",
+      "type": "single_choice",
+      "required": true,
+      "description": "Lưu ý dành cho CTV: Cần xác nhận để tiếp tục.\"",
+      "tooltip": "Nếu \"Từ chối\" vui lòng bấm phím \"LÀM LẠI\" ở góc dưới bên phải màn hình để làm mẫu mới",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Đúng - Xác nhận và tiếp tục",
+        "Không - Chưa có chữ ký hợp lệ của tài xế"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [],
+      "is_consent_gate": true,
+      "consent_accept_values": [
+        "Đúng - Xác nhận và tiếp tục"
+      ],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_3",
+      "title": "Câu 3: Hiện tại anh/chị đang chạy dòng phương tiện nào cho hệ thống GSM?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV hỏi và chọn loại phương tiện chính mà tài xế đang vận hành trên hệ thống GSM.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Xe máy",
+        "Xe ô tô"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "c_1",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_2",
+            "operator": "equals",
+            "expected_value": [
+              "Đúng - Xác nhận và tiếp tục"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_4",
+      "title": "Câu 4: Anh/chị đang chạy xe máy cho GSM theo hình thức hợp tác nào dưới đây?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV xác nhận đúng nguồn gốc xe máy điện tài xế đang chạy để hệ thống mở đúng nhánh câu hỏi tiếp theo.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Taxi - Xe GSM (Tài xế nhân viên GSM)",
+        "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)",
+        "Xe RTO của GSM (Thuê mua xe từ GSM)",
+        "Khác"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_3",
+            "operator": "equals",
+            "expected_value": [
+              "Xe máy"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_5",
+      "title": "Câu 5: Anh/chị đang chạy xe ô tô cho GSM theo hình thức hợp tác nào dưới đây?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV phân biệt rõ: Xe biên chế GSM (A), xe cá nhân Platform (B), xe chạy qua HTX/Doanh nghiệp đối tác (C), hay xe thuê mua RTO (D).",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Taxi - Xe GSM (Tài xế nhân viên GSM)",
+        "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)",
+        "Xe Partner (Chạy qua HTX / Công ty đối tác)",
+        "Xe RTO của GSM (Thuê mua xe từ GSM)",
+        "Khác"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_3",
+            "operator": "equals",
+            "expected_value": [
+              "Xe ô tô"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_6",
+      "title": "Câu 6: Anh/chị đang đăng ký chạy xe máy Platform theo gói / chế độ nào?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Toàn thời gian: chạy từ 8 tiếng/ngày trở lên và chỉ tiêu cao. Đa nền tảng: có bật thêm app gọi xe/giao hàng khác (Grab, Be, ShopeeFood...).",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Toàn thời gian - Độc quyền",
+        "Bán thời gian - Độc quyền",
+        "Toàn thời gian - Đa nền tảng",
+        "Bán thời gian - Đa nền tảng"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_4",
+            "operator": "equals",
+            "expected_value": [
+              "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_7",
+      "title": "Câu 7: Anh/chị đang đăng ký chạy xe máy Taxi theo gói / chế độ nào?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Toàn thời gian: chạy từ 8 tiếng/ngày trở lên và chỉ tiêu cao.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Toàn thời gian",
+        "Bán thời gian"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_4",
+            "operator": "equals",
+            "expected_value": [
+              "Taxi - Xe GSM (Tài xế nhân viên GSM)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_8",
+      "title": "Câu 8: Anh/chị đang đăng ký chạy ô tô Platform theo gói / chế độ nào?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Toàn thời gian: chạy từ 8 tiếng/ngày trở lên và chỉ tiêu cao. Đa nền tảng: có chạy song song hoặc xen kẽ thêm ứng dụng khác (Grab, Be, chạy riêng ngoài)",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Toàn thời gian - Độc quyền",
+        "Bán thời gian - Độc quyền",
+        "Toàn thời gian - Đa nền tảng",
+        "Bán thời gian - Đa nền tảng"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_5",
+            "operator": "equals",
+            "expected_value": [
+              "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_9",
+      "title": "Câu 9: Anh/chị đã tham gia hoặc chuẩn bị tham gia chương trình \"Mùa đông xanh\" (08/11/2026 – 28/02/2027) chưa?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV hỏi xác nhận về việc đăng ký/tham gia gói chính sách \"Mùa đông xanh\" giai đoạn 08/11/2026 – 28/02/2027.\n[Ảnh minh họa](https://submissions.trustbridgevn.com/media/forms/1794671557035_5134717958652068992_5134717958652068992_df12ad5f16aaa136886970056c2d1688.webp)\n",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Có",
+        "Không"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_4",
+            "operator": "equals",
+            "expected_value": [
+              "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)"
+            ]
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_5",
+            "operator": "equals",
+            "expected_value": [
+              "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_10",
+      "title": "Câu 10: Anh/chị đang chạy xe GSM Partner theo hình thức hợp tác (hợp đồng) nào với công ty / đối tác vận tải?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Xác định rõ quyền sở hữu xe và hình thức hợp đồng giữa tài xế với HTX / Công ty đối tác vận tải.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Góp xe cá nhân (xe riêng & đăng ký chạy qua đối tác)",
+        "Chạy xe do công ty / HTX cung cấp (xe công ty & chia % doanh thu)",
+        "Thuê xe khoán từ đối tác (thuê xe ngày / tuần / tháng từ công ty / HTX)",
+        "Thuê mua RTO từ đối tác (Trả góp mua xe từ công ty / HTX - không phải GSM)"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_5",
+            "operator": "equals",
+            "expected_value": [
+              "Xe Partner (Chạy qua HTX / Công ty đối tác)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_11",
+      "title": "Câu 11: HTX / công ty đối tác có bắt buộc anh/chị phải chạy độc quyền cho GSM hay được chạy đa nền tảng?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Hỏi quy định vận hành thực tế mà HTX / Công ty đối tác áp dụng cho tài xế.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Bắt buộc chạy độc quyền Xanh SM (Chỉ được chạy app Xanh SM - nếu bật app khác sẽ bị phạt)",
+        "Chạy Xanh SM khoán chỉ tiêu (được bật app khác kiếm thêm - miễn đủ chỉ tiêu của GSM từ công ty giao)",
+        "Tự do đa nền tảng (Miễn đủ chỉ tiêu doanh thu hay số chuyến do công ty / HTX đưa ra - chạy nhiều app)",
+        "Khác"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_5",
+            "operator": "equals",
+            "expected_value": [
+              "Xe Partner (Chạy qua HTX / Công ty đối tác)"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_12",
+      "title": "Câu 12: Trung bình 1 ngày anh/chị chạy bao nhiêu chuyến để hoàn thành chỉ tiêu?",
+      "type": "number",
+      "required": true,
+      "description": "CTV hỏi số cuốc/chuyến bình quân mỗi ngày tài xế cần chạy để hoàn thành mức khoán/chỉ tiêu của công ty.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_4",
+            "operator": "in",
+            "expected_value": [
+              "Taxi - Xe GSM (Tài xế nhân viên GSM)",
+              "Xe RTO của GSM (Thuê mua xe từ GSM)",
+              "Khác"
+            ]
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_5",
+            "operator": "equals",
+            "expected_value": [
+              "Taxi - Xe GSM (Tài xế nhân viên GSM)",
+              "Xe RTO của GSM (Thuê mua xe từ GSM)",
+              "Khác"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_13",
+      "title": "Câu 13: Hiện tại anh/chị đang chạy dòng xe máy điện nào của VinFast?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV đối chiếu trực tiếp xe thực tế của tài xế để chọn đúng phiên bản xe.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Feliz",
+        "Feliz S",
+        "Feliz 2",
+        "Evo",
+        "Evo Max - Đổi pin",
+        "Klara",
+        "Khác"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_6",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_9",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_3",
+            "operator": "equals",
+            "expected_value": [
+              "Xe máy"
+            ]
+          },
+          {
+            "depends_on_question_id": "cau_12",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_14",
+      "title": "Câu 14: Hiện tại anh/chị đang chạy dòng xe ô tô điện nào của VinFast?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV đối chiếu trực tiếp dòng xe ô tô tài xế đang vận hành để chọn chính xác.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Minio",
+        "VF5",
+        "Herio",
+        "VF e34",
+        "Nerio",
+        "Limo Green",
+        "VF8",
+        "Khác"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_8",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_9",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_10",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_11",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_12",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_3",
+            "operator": "equals",
+            "expected_value": [
+              "Xe ô tô"
+            ]
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_15",
+      "title": "Câu 15: Anh/chị đã chạy xe cho hệ thống GSM được bao lâu rồi?",
+      "type": "single_choice",
+      "required": true,
+      "description": "Tính tổng thời gian hoạt động từ lúc kích hoạt tài khoản tài xế GSM đến thời điểm khảo sát.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Dưới 3 tháng",
+        "Từ 3 - 6 tháng",
+        "Từ 6 - 12 tháng",
+        "Từ 1 - 2 năm",
+        "Trên 2 năm"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_9",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_10",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_11",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_12",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_17",
+      "title": "Câu 16: Hạng thành viên GSM (Tài xế thân thiết) hiện tại của anh/chị trên ứng dụng là gì?",
+      "type": "single_choice",
+      "required": true,
+      "description": "CTV kiểm tra trực tiếp trên mục Hồ sơ / Tài xế thân thiết trong app Tài xế Xanh SM.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [
+        "Không xếp hạng",
+        "Hạng thành viên",
+        "Hạng vàng",
+        "Hạng kim cương"
+      ],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_6",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_9",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_12",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    },
+    {
+      "id": "cau_2_21",
+      "title": "Câu 17: Chụp ảnh Profile tài xế trên app & ảnh thân / đầu xe máy",
+      "type": "camera_webrtc",
+      "required": true,
+      "description": "Chụp rõ nét: (1) Màn hình Profile trên app tài xế hiển thị họ tên/ID/hạng; (2) Toàn cảnh thân hoặc đầu xe máy kèm biển số.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_13",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": true,
+      "min_images": 2,
+      "max_images": 2,
+      "exact_image_count": 2,
+      "image_slots": [
+        {
+          "slot": 0,
+          "title": "Ảnh 1: Màn hình chính / profile của app tài xế GSM",
+          "role": "app_profile",
+          "required": true,
+          "require_unique": false,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "app_profile",
+          "object_config": {},
+          "image_checks": {
+            "enable_blur_check": true,
+            "blur_threshold": 40,
+            "enable_ai_vision": true,
+            "enable_vehicle_match": false,
+            "enable_anti_fraud": true,
+            "enable_ai_generated_check": true,
+            "enable_screen_photo_check": false
+          }
+        },
+        {
+          "slot": 1,
+          "title": "Ảnh 2: Thân xe / đầu xe máy của tài xế",
+          "role": "vehicle_exterior",
+          "required": true,
+          "require_unique": false,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "vehicle_exterior_or_interior",
+          "object_config": {},
+          "image_checks": {
+            "enable_blur_check": true,
+            "blur_threshold": 40,
+            "enable_ai_vision": true,
+            "enable_vehicle_match": false,
+            "enable_anti_fraud": false,
+            "enable_ai_generated_check": true,
+            "enable_screen_photo_check": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "cau_2_24",
+      "title": "Câu 18: Chụp ảnh Profile tài xế trên app & ảnh thân / vô lăng / đầu xe ô tô",
+      "type": "camera_webrtc",
+      "required": true,
+      "description": "Chụp rõ nét: (1) Màn hình Profile trên app tài xế; (2) Góc chụp khoang lái/vô lăng hoặc đầu/thân xe ô tô kèm biển số.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_14",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": true,
+      "min_images": 2,
+      "max_images": 2,
+      "exact_image_count": 2,
+      "image_slots": [
+        {
+          "slot": 0,
+          "title": "Ảnh 1: Màn hình chính / profile của app tài xế GSM",
+          "role": "app_profile",
+          "required": true,
+          "require_unique": false,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "app_profile",
+          "object_config": {}
+        },
+        {
+          "slot": 1,
+          "title": "Ảnh 2: thân xe / đầu xe / vô lăng xe oto của tài xế",
+          "role": "vehicle_exterior",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "vehicle_exterior_or_interior",
+          "object_config": {},
+          "image_checks": {
+            "enable_blur_check": true,
+            "blur_threshold": 40,
+            "enable_ai_vision": true,
+            "enable_vehicle_match": false,
+            "enable_anti_fraud": true,
+            "enable_ai_generated_check": true,
+            "enable_screen_photo_check": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "cau_2_25",
+      "title": "Câu 19: Chụp ảnh lịch sử 5 tuần thu nhập gần nhất của \"tháng\" trên ứng dụng",
+      "type": "camera_webrtc",
+      "required": true,
+      "description": "Chụp rõ màn hình mục Thu nhập trên app Xanh SM hiển thị đủ dữ liệu doanh thu 5 tuần gần nhất, đảm bảo đọc được rõ con số.",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_13",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_14",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": true,
+      "min_images": 5,
+      "max_images": 5,
+      "exact_image_count": 5,
+      "image_slots": [
+        {
+          "slot": 0,
+          "title": "Ảnh 1: Tuần thu nhập Tháng 10 / 2026 (Anh tuần 1/5)",
+          "role": "app_income_week_1",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "weekly_income",
+          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+        },
+        {
+          "slot": 1,
+          "title": "Ảnh 2: Tuần thu nhập Tháng 10 / 2026 (Anh tuần 2/5)",
+          "role": "app_income_week_2",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "weekly_income",
+          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+        },
+        {
+          "slot": 2,
+          "title": "Ảnh 3: Tuần thu nhập Tháng 10 / 2026 (Anh tuần 3/5)",
+          "role": "app_income_week_3",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "weekly_income",
+          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+        },
+        {
+          "slot": 3,
+          "title": "Ảnh 4: Tuần thu nhập Tháng 10 / 2026 (Anh tuần 4/5)",
+          "role": "app_income_week_4",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "weekly_income",
+          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+        },
+        {
+          "slot": 4,
+          "title": "Ảnh 5: Tuần thu nhập Tháng 10 / 2026 (Anh tuần 5/5)",
+          "role": "app_income_week_5",
+          "required": true,
+          "require_unique": true,
+          "ai_check": false,
+          "ai_detection_prompt": "",
+          "allow_upload": true,
+          "tooltip": "",
+          "object_type": "weekly_income",
+          "object_config": {"granularity": "WEEKLY", "target_month": "2026-10", "max_days": 24, "require_range": true}
+        }
+      ]
+    },
+    {
+      "id": "cau_2_26",
+      "title": "Câu 20: Nhập số điện thoại / Zalo của tài xế",
+      "type": "number",
+      "required": false,
+      "description": "CTV nhập chính xác số điện thoại / zalo tài xế dùng để kết nối cho những lần khảo sát tiếp theo có thưởng",
+      "tooltip": "",
+      "ai_detection_prompt": "",
+      "sample_response": "",
+      "show_sample_response": true,
+      "sample_images": null,
+      "options": [],
+      "group_compatibility": null,
+      "validation": null,
+      "condition_groups": [
+        [
+          {
+            "depends_on_question_id": "cau_13",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ],
+        [
+          {
+            "depends_on_question_id": "cau_14",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_15",
+            "operator": "not_empty",
+            "expected_value": null
+          },
+          {
+            "depends_on_question_id": "cau_17",
+            "operator": "not_empty",
+            "expected_value": null
+          }
+        ]
+      ],
+      "is_consent_gate": false,
+      "consent_accept_values": [],
+      "image_checks": null,
+      "allow_multiple_images": false,
+      "min_images": null,
+      "max_images": null,
+      "exact_image_count": null,
+      "image_slots": null
+    }
+  ]
+}

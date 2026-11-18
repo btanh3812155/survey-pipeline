@@ -151,6 +151,8 @@ def parse_date_range_from_text(raw_text: str, default_year: int = 2026) -> Tuple
 def validate_extracted_weekly_period(
     header: PeriodHeaderMetadata,
     expected_week_num: int = 1,
+    max_days: int = 24,
+    require_range: bool = True,
 ) -> Tuple[bool, str]:
     """
     Deterministic rule engine validating that the extracted period strictly matches
@@ -183,8 +185,8 @@ def validate_extracted_weekly_period(
                 f"Biểu mẫu yêu cầu báo cáo thu nhập tổng hợp theo TUẦN (7 ngày)!"
             )
 
-        # Check full-month duration (>= 25 days)
-        if duration_days >= 25:
+        # Check full-month duration (> configured weekly max, default 24)
+        if duration_days > max_days:
             return False, (
                 f"Ảnh Tuần {expected_week_num}: Khoảng thời gian ghi nhận ({duration_days} ngày) là báo cáo cả THÁNG. "
                 f"Biểu mẫu yêu cầu chụp riêng từng tuần!"
@@ -193,6 +195,15 @@ def validate_extracted_weekly_period(
         # Week placement is order-agnostic: screens are sorted by their detected
         # period before mapping to slots, so a correct weekly statement is accepted
         # in any upload slot. Only the statement TYPE is enforced below.
+
+    if require_range and not (dt_start and dt_end) and raw_str:
+        # An unreadable week label ("Tuần 1") is not proof of a non-range report;
+        # only text that claims a date must actually contain a range.
+        if re.search(r"\d{1,2}\s*[/-]\s*\d{1,2}", raw_str):
+            return False, (
+                f"Ảnh Tuần {expected_week_num}: Bắt buộc phải có khoảng ngày (từ ngày - đến ngày) "
+                f"trên báo cáo thu nhập tuần!"
+            )
 
     # If text is present but no dash and contains 'hôm nay'
     if ("hôm nay" in raw_str or "ngày" in raw_str) and not any(s in raw_str for s in ["-", "–", "đến"]):

@@ -50,6 +50,7 @@ from routers import (
     admin_audit_router,
     admin_media_router,
     admin_ctvs_router,
+    admin_image_objects_router,
     actions_router,
     webhooks_router,
     survey_router,
@@ -139,6 +140,18 @@ async def lifespan(app: FastAPI):
     # 4. Seed media directory
     seed_media_storage()
 
+    # 4b. Load and validate file-defined image objects + check engines.
+    try:
+        from services.image_objects import load_registry
+        registry = load_registry(force=True)
+        logger.info(
+            "[IMAGE OBJECTS] loaded %d object type(s) and %d check engine(s)",
+            len(registry["objects"]),
+            len(registry["engines"]),
+        )
+    except Exception as e:
+        logger.error("[IMAGE OBJECTS] registry load failed: %s", e)
+
     # 5. Register the CTV bot command menu (webhook mode never calls start_polling)
     try:
         from services.telegram_polling import configure_driver_bot_menu
@@ -177,6 +190,7 @@ app.include_router(admin_data_router)
 app.include_router(admin_audit_router)
 app.include_router(admin_media_router)
 app.include_router(admin_ctvs_router)
+app.include_router(admin_image_objects_router)
 app.include_router(actions_router)
 app.include_router(webhooks_router)
 app.include_router(survey_router)

@@ -24,11 +24,18 @@ client_secret.json
 credentials.json
 
 # Local data & sqlite
-data/
+data/*
 data_dev/
 *.db
 *.sqlite
 *.sqlite3
+
+# File-defined image object contracts are code-like and versioned.
+!data/image_objects/
+!data/check_engines/
+!data/forms/
+data/forms/*
+!data/forms/TB_GSM_2026_Nov_Test.json
 
 # Logs & artifacts
 *.log

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "authentic_app",
+  "label": "Ứng dụng Xanh SM chính thức",
+  "description": "Chỉ chấp nhận giao diện XANH_SM.",
+  "implementation": "enum",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "allowed", "label": "Giá trị cho phép", "type": "array", "required": true},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": []
+}

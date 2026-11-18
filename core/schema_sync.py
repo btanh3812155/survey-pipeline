@@ -27,6 +27,8 @@ REQUIRED_SLOT_FIELDS = {
     "ai_detection_prompt": str,
     "allow_upload": bool,
     "tooltip": str,
+    "object_type": str,
+    "object_config": dict,
 }
 
 SLOT_DEFAULTS = {
@@ -39,6 +41,8 @@ SLOT_DEFAULTS = {
     "ai_detection_prompt": "",
     "allow_upload": True,
     "tooltip": "",
+    "object_type": "",
+    "object_config": {},
 }
 
 
@@ -56,6 +60,8 @@ def normalize_slot_definition(slot_raw: dict, fallback_index: int = 0) -> dict:
                     normalized[k] = fallback_index
             elif k in ("required", "require_unique", "ai_check", "allow_upload"):
                 normalized[k] = bool(v)
+            elif k == "object_config":
+                normalized[k] = dict(v) if isinstance(v, dict) else {}
             else:
                 normalized[k] = str(v) if v is not None else ""
         else:

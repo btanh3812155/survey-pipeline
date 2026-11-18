@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "id": "weekly_income",
+  "label": "Báo cáo thu nhập tuần",
+  "description": "Màn hình thu nhập của ứng dụng tài xế",
+  "prompt": "You are an expert OCR transcription engine for Vietnamese ride-hailing driver income screens (GSM, Xanh SM, Grab, Be). Analyze the image and output strictly a single valid JSON object. Detect: {{objects}}. Expected fields: {{fields}}. Configuration: {{config}}. Extract the exact visible values only; never guess. gross_revenue = Tong thu nhap / Doanh so (VND); net_income = Thu nhap rong; discount_and_tax = Chiet khau + thue (may be negative); period_raw_text = the date range inside the selected period tab; period_tabs = day-range tab labels left to right; selected_period_label = date range inside the teal-highlighted tab; selected_period_index = 0-based index of the teal tab; first_detail_date = first date under 'Chi tiet'; period_reliable = false when the active tab is clipped, hidden or ambiguous; field_labels = visible income row labels in order; detected_app = XANH_SM, GRAB, BE, GOJEK or OTHER_MOCKUP; is_authentic_gsm_ui = true only for the official Xanh SM / GSM interface; is_manipulated_or_photoshopped = true when digits/text look digitally edited; is_legible and confidence_score describe readability. Output JSON only.",
+  "objects": [
+    "driver income screen",
+    "period tab row",
+    "revenue figures"
+  ],
+  "expected_fields": [
+    {
+      "key": "period_raw_text",
+      "label": "Khoảng thời gian",
+      "type": "string",
+      "required": true
+    },
+    {
+      "key": "gross_revenue",
+      "label": "Doanh thu gộp",
+      "type": "integer",
+      "required": false
+    },
+    {
+      "key": "net_income",
+      "label": "Thu nhập ròng",
+      "type": "integer",
+      "required": false
+    },
+    {
+      "key": "discount_and_tax",
+      "label": "Chiết khấu và thuế",
+      "type": "integer",
+      "required": false
+    },
+    {
+      "key": "total_trips",
+      "label": "Tổng số chuyến",
+      "type": "integer",
+      "required": false
+    },
+    {
+      "key": "online_hours",
+      "label": "Số giờ online",
+      "type": "string",
+      "required": false
+    },
+    {
+      "key": "period_tabs",
+      "label": "Các tab kỳ",
+      "type": "array",
+      "required": false
+    },
+    {
+      "key": "selected_period_label",
+      "label": "Nhãn kỳ đang chọn",
+      "type": "string",
+      "required": false
+    },
+    {
+      "key": "selected_period_index",
+      "label": "Chỉ số tab đang chọn",
+      "type": "integer",
+      "required": false
+    },
+    {
+      "key": "first_detail_date",
+      "label": "Ngày chi tiết đầu tiên",
+      "type": "string",
+      "required": false
+    },
+    {
+      "key": "period_reliable",
+      "label": "Kỳ đọc được",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "key": "period_uncertain_reason",
+      "label": "Lý do không chắc chắn",
+      "type": "string",
+      "required": false
+    },
+    {
+      "key": "field_labels",
+      "label": "Nhãn các dòng thu nhập",
+      "type": "array",
+      "required": false
+    },
+    {
+      "key": "detected_app",
+      "label": "Ứng dụng phát hiện",
+      "type": "string",
+      "required": false
+    },
+    {
+      "key": "is_authentic_gsm_ui",
+      "label": "Giao diện GSM chính thức",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "key": "is_manipulated_or_photoshopped",
+      "label": "Dấu hiệu chỉnh sửa",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "key": "is_legible",
+      "label": "Ảnh đọc được",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "key": "confidence_score",
+      "label": "Độ tin cậy",
+      "type": "number",
+      "required": false
+    }
+  ],
+  "customizable": [
+    {
+      "key": "granularity",
+      "label": "Kỳ báo cáo",
+      "type": "select",
+      "options": [
+        "DAILY",
+        "WEEKLY",
+        "MONTHLY"
+      ],
+      "default": "WEEKLY",
+      "help": "Loại báo cáo mong đợi"
+    },
+    {
+      "key": "target_month",
+      "label": "Tháng mục tiêu",
+      "type": "month",
+      "default": "2026-10"
+    },
+    {
+      "key": "max_days",
+      "label": "Số ngày tối đa",
+      "type": "number",
+      "default": 24
+    },
+    {
+      "key": "require_range",
+      "label": "Bắt buộc có khoảng ngày",
+      "type": "toggle",
+      "default": true
+    }
+  ],
+  "engines": [
+    {
+      "id": "required_fields",
+      "label": "Trường bắt buộc",
+      "params": {
+        "fields": [
+          "gross_revenue"
+        ]
+      }
+    },
+    {
+      "id": "period_granularity",
+      "label": "Kiểm tra loại kỳ",
+      "params": {
+        "expected": "{{granularity}}",
+        "max_days": "{{max_days}}",
+        "require_range": "{{require_range}}",
+        "target_month": "{{target_month}}"
+      }
+    },
+    {
+      "id": "arithmetic_net_within_gross",
+      "label": "Thu nhập ròng không vượt doanh thu",
+      "params": {
+        "expression": "net_income / max(gross_revenue, 1) - 1.15",
+        "tolerance": 0,
+        "direction": "lte",
+        "message": "Số học không khớp: Thu nhập ròng lớn hơn tổng doanh thu."
+      }
+    },
+    {
+      "id": "arithmetic_income_minus_costs",
+      "label": "Doanh thu - chi phí = thực nhận",
+      "params": {
+        "expression": "(gross_revenue - abs(discount_and_tax) - net_income) / max(gross_revenue, 1)",
+        "tolerance": 0.08,
+        "message": "Số học không khớp: Doanh thu trừ chi phí không bằng Thu nhập thực nhận."
+      }
+    },
+    {
+      "id": "authentic_app",
+      "label": "Ứng dụng Xanh SM chính thức",
+      "params": {
+        "field": "detected_app",
+        "allowed": [
+          "XANH_SM"
+        ],
+        "message": "Phát hiện giao diện không phải ứng dụng Tài xế Xanh SM chính thức. Vui lòng chụp đúng màn hình ứng dụng Tài xế Xanh SM!"
+      }
+    },
+    {
+      "id": "authentic_ui_flag",
+      "label": "Giao diện GSM hợp lệ",
+      "params": {
+        "field": "is_authentic_gsm_ui",
+        "expected": true,
+        "message": "Phát hiện giao diện không phải ứng dụng Tài xế Xanh SM chính thức."
+      }
+    },
+    {
+      "id": "not_photoshopped",
+      "label": "Không chỉnh sửa ảnh",
+      "params": {
+        "field": "is_manipulated_or_photoshopped",
+        "expected": false,
+        "message": "Phát hiện dấu hiệu chỉnh sửa ảnh kỹ thuật số (Photoshop/splicing) trên màn hình thu nhập!"
+      }
+    },
+    {
+      "id": "legible",
+      "label": "Ảnh đọc được",
+      "params": {
+        "field": "is_legible",
+        "expected": true,
+        "message": "Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
+      }
+    },
+    {
+      "id": "net_when_no_gross",
+      "label": "Có số liệu thu nhập",
+      "params": {
+        "field": "net_income",
+        "min": 1,
+        "message": "Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
+      },
+      "conditions": [
+        {
+          "field": "gross_revenue",
+          "op": "equals",
+          "value": 0
+        },
+        {
+          "field": "net_income",
+          "op": "not_empty"
+        }
+      ]
+    },
+    {
+      "id": "confidence",
+      "label": "Độ tin cậy tối thiểu",
+      "params": {
+        "field": "confidence_score",
+        "min": 0.6,
+        "message": "Không thể đọc rõ các số liệu thu nhập trên màn hình với độ tin cậy cần thiết. Vui lòng chụp lại rõ nét hơn!"
+      }
+    }
+  ],
+  "extractor": "income_statement",
+  "classify_role": "app_income"
+}

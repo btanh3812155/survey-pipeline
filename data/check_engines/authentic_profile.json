@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "authentic_profile",
+  "label": "Hồ sơ chính thức",
+  "description": "Cờ is_authentic của màn hình hồ sơ phải là true khi có giá trị.",
+  "implementation": "boolean",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "expected", "label": "Giá trị mong đợi", "type": "toggle", "default": true},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": []
+}

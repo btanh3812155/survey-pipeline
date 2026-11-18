@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "authentic_ui_flag",
+  "label": "Giao diện GSM hợp lệ",
+  "description": "Cờ is_authentic_gsm_ui phải là true khi có giá trị.",
+  "implementation": "boolean",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "expected", "label": "Giá trị mong đợi", "type": "toggle", "default": true},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": []
+}

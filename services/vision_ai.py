@@ -281,7 +281,7 @@ class DualModelVisionClient:
 
         return "unknown"
 
-    async def ocr_driver_app_profile(self, image_bytes: bytes) -> Dict[str, Any]:
+    async def ocr_driver_app_profile(self, image_bytes: bytes, prompt: Optional[str] = None) -> Dict[str, Any]:
         """
         Extracts driver profile details including membership tier/rank from app profile screen (Slot 0).
         """
@@ -302,26 +302,27 @@ class DualModelVisionClient:
 
         norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
         b64_img = base64.b64encode(norm_b).decode("utf-8")
+        system_prompt = prompt or (
+            "You are an expert OCR transcription engine for Vietnamese ride-hailing driver profiles (Xanh SM, GSM, Grab, Be). "
+            "Classify this screen as the driver app profile screen and extract a JSON object: "
+            "app ('XANH_SM', 'GRAB', 'BE', 'OTHER'), "
+            "membership_type (the tier card text without the 'Tài xế hạng' prefix, e.g. 'Vàng', 'Bạch Kim', 'Kim Cương', 'Bạc', 'Tiêu chuẩn'), "
+            "membership_period (the period printed on the tier card, e.g. '10/2026', or null), "
+            "driver_rank (English equivalent: 'Gold', 'Platinum', 'Diamond', 'Silver', 'Standard'), "
+            "partner_id (driver/partner code if visible, or null), "
+            "wallet_visible, rewards_visible, trip_history_visible (booleans for the top shortcuts 'Ví tài xế', 'Chương trình thưởng', 'Lịch sử chuyến đi'), "
+            "utility_items (array of visible menu labels under 'Tiện ích bổ trợ', verbatim Vietnamese), "
+            "app_version (footer 'Phiên bản x.y.z' value, or null), "
+            "is_authentic (true only if this is a real official driver app screen, false for mockups, edited screenshots, or a screen that is not a driver profile screen). "
+            "CRITICAL: only transcribe what is actually visible. If a tier card, period, partner code, "
+            "shortcut, menu section, or the version footer is absent or unreadable, return null (or [] for "
+            "utility_items) for that field. Never guess, infer, or substitute a default value. "
+            "Output strictly a single valid JSON object."
+        )
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are an expert OCR transcription engine for Vietnamese ride-hailing driver profiles (Xanh SM, GSM, Grab, Be). "
-                    "Classify this screen as the driver app profile screen and extract a JSON object: "
-                    "app ('XANH_SM', 'GRAB', 'BE', 'OTHER'), "
-                    "membership_type (the tier card text without the 'Tài xế hạng' prefix, e.g. 'Vàng', 'Bạch Kim', 'Kim Cương', 'Bạc', 'Tiêu chuẩn'), "
-                    "membership_period (the period printed on the tier card, e.g. '10/2026', or null), "
-                    "driver_rank (English equivalent: 'Gold', 'Platinum', 'Diamond', 'Silver', 'Standard'), "
-                    "partner_id (driver/partner code if visible, or null), "
-                    "wallet_visible, rewards_visible, trip_history_visible (booleans for the top shortcuts 'Ví tài xế', 'Chương trình thưởng', 'Lịch sử chuyến đi'), "
-                    "utility_items (array of visible menu labels under 'Tiện ích bổ trợ', verbatim Vietnamese), "
-                    "app_version (footer 'Phiên bản x.y.z' value, or null), "
-                    "is_authentic (true only if this is a real official driver app screen, false for mockups, edited screenshots, or a screen that is not a driver profile screen). "
-                    "CRITICAL: only transcribe what is actually visible. If a tier card, period, partner code, "
-                    "shortcut, menu section, or the version footer is absent or unreadable, return null (or [] for "
-                    "utility_items) for that field. Never guess, infer, or substitute a default value. "
-                    "Output strictly a single valid JSON object."
-                ),
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -371,7 +372,9 @@ class DualModelVisionClient:
 
         return ProfileScreenExtraction().model_dump()
 
-    async def ocr_driver_app_income(self, image_bytes: bytes, week_idx: Optional[int] = None) -> Dict[str, Any]:
+    async def ocr_driver_app_income(
+        self, image_bytes: bytes, week_idx: Optional[int] = None, prompt: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Performs high-precision OCR on driver app income/earnings screens.
         Extracts gross revenue, net income, discounts, trips, online hours, and tampering flags.
@@ -397,32 +400,10 @@ class DualModelVisionClient:
             }
         norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
         b64_img = base64.b64encode(norm_b).decode("utf-8")
-        prompt = (
-            "You are an expert OCR engine for Vietnamese driver app screens.\n"
-            "Extract the exact financial and operational numbers from this image into a JSON object:\n"
-            "- gross_revenue (int, Tong thu nhap or Doanh so, in VND, or 0 if unreadable)\n"
-            "- net_income (int, Thu nhap rong, in VND, or 0 if unreadable)\n"
-            "- discount_and_tax (int, Chiet khau + thue, can be negative, or 0 if unreadable)\n"
-            "- period (string, e.g. 08/2026 31 - 06, or '' if unreadable; never guess)\n"
-            "- period_month (string, the selected month tab at the top, e.g. 09/2026, or '' if unreadable)\n"
-            "- period_tabs (array of strings, ONLY the day-range tabs in the row BELOW the month tabs, from left to right, e.g. ['31 - 06', '07 - 13', '14 - 20']; never the month tabs)\n"
-            "- selected_period_label (string, the DATE RANGE written inside the teal-highlighted tab, e.g. '16 - 22'; do NOT return the 'Tuần N' caption)\n"
-            "- selected_period_index (int, 0-based index inside period_tabs of the tab rendered with white text on a teal/blue background)\n"
-            "- first_detail_date (string, the FIRST date listed under the 'Chi tiết' heading, e.g. '17/10/2026'; it is the first day of the selected week)\n"
-            "- period_reliable (bool, false when the active week tab/pill is clipped, offscreen, hidden, ambiguous, or you cannot tell which week is selected; true ONLY when the selected tab is fully visible and unambiguous)\n"
-            "- period_uncertain_reason (string, short reason when period_reliable is false, else ''; say so instead of guessing)\n"
-            "- field_labels (array of strings, the visible income row labels in reading order, e.g. ['Tong thu nhap', 'Doanh so', 'Chiet khau + thue', 'Thu nhap rong', 'So gio online', 'So gio van doanh', 'Tong so chuyen'])\n"
-            "- confidence_score (float 0.0 to 1.0, your confidence in reading the numbers accurately)\n"
-            "- is_legible (bool, true if income numbers are clearly readable, false if too blurry, distorted, or unreadable)\n"
-            "- is_manipulated_or_photoshopped (bool, true if digits or text appear digitally edited/spliced)\n"
-            "- detected_app (string, 'XANH_SM' if official Xanh SM / GSM driver app, 'GRAB', 'BE', 'GOJEK', or 'OTHER_MOCKUP')\n"
-            "- is_authentic_gsm_ui (bool, true if official Xanh SM / GSM interface and teal/cyan theme, false for other apps/mockups)\n"
-            "Output strictly valid JSON with these keys."
-        )
         messages = [
             {
                 "role": "system",
-                "content": (
+                "content": prompt or (
                     "You are an expert OCR transcription engine for Vietnamese ride-hailing driver apps (GSM, Xanh SM, Grab, Be). "
                     "Analyze the driver income screen and output strictly a single valid JSON object containing the exact numbers and text visible on the screen: "
                     "gross_revenue (integer, Tong thu nhap / Doanh so, or 0 if unreadable), "
@@ -496,6 +477,54 @@ class DualModelVisionClient:
                     continue
 
         return {"gross_revenue": 0, "net_income": 0, "total_trips": 0, "error": "OCR failed"}
+
+    async def extract_object_fields(self, image_bytes: bytes, prompt: str) -> Dict[str, Any]:
+        """Generic, prompt-driven extraction for file-defined image objects."""
+        if os.environ.get("MOCK_AI") == "1" or (not self.gemini_client and not self.deepseek_client):
+            return {}
+        norm_b, _ = sanitize_and_normalize_image(image_bytes, max_dimension=1024)
+        b64_img = base64.b64encode(norm_b).decode("utf-8")
+        messages = [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract the requested fields strictly as JSON:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/webp;base64,{b64_img}", "detail": "auto"},
+                    },
+                ],
+            },
+        ]
+        if self.deepseek_client:
+            try:
+                resp = await self.deepseek_client.chat.completions.create(
+                    model=DEEPSEEK_VISION_MODEL,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                    reasoning_effort="none",
+                    max_tokens=1024,
+                    timeout=10.0,
+                )
+                return robust_json_parse(resp.choices[0].message.content or "{}")
+            except Exception as e:
+                logger.error("[OCR OBJECT ERROR] DeepSeek generic OCR failed: %s", e)
+        if self.gemini_client:
+            for model in GEMINI_VISION_MODELS:
+                try:
+                    resp = await self.gemini_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=0.0,
+                        max_tokens=1024,
+                        timeout=10.0,
+                    )
+                    return robust_json_parse(resp.choices[0].message.content or "{}")
+                except Exception:
+                    continue
+        return {}
 
     async def extract_facts(self, webp_bytes: bytes) -> ExtractedReceiptFacts:
         # offline / development mock mode

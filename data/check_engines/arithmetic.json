@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "arithmetic",
+  "label": "Kiểm tra số học",
+  "description": "Đánh giá biểu thức số học an toàn (AST, không eval) trên các trường trích xuất.",
+  "implementation": "arithmetic",
+  "params_schema": [
+    {"key": "expression", "label": "Biểu thức", "type": "text", "required": true},
+    {"key": "tolerance", "label": "Sai số cho phép", "type": "number", "default": 0},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

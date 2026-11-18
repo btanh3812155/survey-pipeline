@@ -32,6 +32,11 @@ export interface ImageSlot {
   required: boolean;
   ai_check?: boolean;
   tooltip?: string;
+  allow_upload?: boolean;
+  require_unique?: boolean;
+  ai_detection_prompt?: string;
+  object_type?: string;
+  object_config?: Record<string, unknown>;
 }
 
 export interface ImageCheckConfig {

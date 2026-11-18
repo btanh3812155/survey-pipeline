@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "id": "period_granularity",
+  "label": "Kiểm tra loại kỳ",
+  "description": "x",
+  "implementation": "period_granularity",
+  "params_schema": [
+    {
+      "key": "expected",
+      "label": "Kỳ mong đợi",
+      "type": "select",
+      "options": [
+        "DAILY",
+        "WEEKLY",
+        "MONTHLY"
+      ],
+      "default": null,
+      "required": true
+    },
+    {
+      "key": "max_days",
+      "label": "Số ngày tối đa",
+      "type": "number",
+      "options": null,
+      "default": 24,
+      "required": false
+    },
+    {
+      "key": "require_range",
+      "label": "Bắt buộc khoảng ngày",
+      "type": "toggle",
+      "options": null,
+      "default": true,
+      "required": false
+    }
+  ],
+  "conditions_schema": [
+    {
+      "key": "field",
+      "label": "Trường dữ liệu",
+      "type": "text",
+      "options": null,
+      "default": null,
+      "required": true
+    },
+    {
+      "key": "op",
+      "label": "Điều kiện",
+      "type": "select",
+      "options": [
+        "not_empty",
+        "empty",
+        "equals",
+        "not_equals",
+        "contains",
+        "regex",
+        "gte",
+        "lte"
+      ],
+      "default": null,
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "number_range",
+  "label": "Khoảng số",
+  "description": "Kiểm tra một trường số nằm trong khoảng min/max.",
+  "implementation": "number_range",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "min", "label": "Tối thiểu", "type": "number"},
+    {"key": "max", "label": "Tối đa", "type": "number"},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

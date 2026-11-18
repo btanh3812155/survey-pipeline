@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "not_photoshopped",
+  "label": "Không chỉnh sửa ảnh",
+  "description": "Cờ is_manipulated_or_photoshopped phải là false.",
+  "implementation": "boolean",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "expected", "label": "Giá trị mong đợi", "type": "toggle", "default": false},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": []
+}

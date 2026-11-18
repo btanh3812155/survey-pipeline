@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "date_range",
+  "label": "Kiểm tra khoảng ngày",
+  "description": "Kiểm tra khoảng ngày, tháng mục tiêu và độ dài tối đa.",
+  "implementation": "date_range",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "default": "period_raw_text"},
+    {"key": "granularity", "label": "Kỳ mong đợi", "type": "select", "options": ["DAILY", "WEEKLY", "MONTHLY"], "default": "WEEKLY"},
+    {"key": "target_month", "label": "Tháng mục tiêu", "type": "month"},
+    {"key": "max_days", "label": "Số ngày tối đa", "type": "number", "default": 24},
+    {"key": "require_range", "label": "Bắt buộc khoảng ngày", "type": "toggle", "default": true}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

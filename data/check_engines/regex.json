@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "regex",
+  "label": "Khớp biểu thức chính quy",
+  "description": "Kiểm tra giá trị trích xuất khớp regex.",
+  "implementation": "regex",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "pattern", "label": "Mẫu regex", "type": "text", "required": true},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}

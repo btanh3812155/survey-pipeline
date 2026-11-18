@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "vehicle_exterior_or_interior",
+  "label": "Phương tiện (thân xe, đầu xe, vô lăng)",
+  "description": "Ảnh chụp phương tiện thực tế: thân xe, đầu xe hoặc vô lăng khoang lái",
+  "prompt": "Analyze the vehicle photo. Detect: {{objects}}. Expected fields: {{fields}}. Configuration: {{config}}. Extract vehicle_type (CAR/BIKE), view (EXTERIOR/COCKPIT/STEERING_WHEEL/ODOMETER), license_plate (verbatim or null) and is_authentic (false for stock/mockup images). Output JSON only.",
+  "objects": [
+    "vehicle body",
+    "front of vehicle",
+    "steering wheel or cockpit"
+  ],
+  "expected_fields": [
+    {"key": "vehicle_type", "label": "Loại phương tiện", "type": "string", "required": false},
+    {"key": "view", "label": "Góc chụp", "type": "string", "required": false},
+    {"key": "license_plate", "label": "Biển số", "type": "string", "required": false},
+    {"key": "is_authentic", "label": "Ảnh thật", "type": "boolean", "required": false}
+  ],
+  "customizable": [
+    {"key": "require_plate", "label": "Bắt buộc biển số", "type": "toggle", "default": false}
+  ],
+  "engines": [],
+  "extractor": "vehicle",
+  "classify_role": "vehicle_exterior"
+}

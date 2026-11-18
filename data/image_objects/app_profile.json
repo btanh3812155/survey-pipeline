@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "id": "app_profile",
+  "label": "Hồ sơ tài xế trên ứng dụng",
+  "description": "Màn hình hồ sơ / tài khoản của ứng dụng tài xế Xanh SM / GSM",
+  "prompt": "You are an expert OCR transcription engine for Vietnamese ride-hailing driver profiles (Xanh SM, GSM, Grab, Be). Detect: {{objects}}. Expected fields: {{fields}}. Configuration: {{config}}. Only transcribe what is actually visible: app (XANH_SM/GRAB/BE/OTHER), membership_type (tier card text without the 'Tai xe hang' prefix), membership_period (e.g. 10/2026), driver_rank (Gold/Platinum/Diamond/Silver/Standard), partner_id, wallet_visible, rewards_visible, trip_history_visible, utility_items (verbatim Vietnamese labels), app_version, is_authentic (false for mockups, edited screenshots or non-profile screens). Never guess or substitute defaults; absent fields are null (or [] for utility_items). Output JSON only.",
+  "objects": [
+    "driver app profile screen",
+    "membership tier card",
+    "utility menu"
+  ],
+  "expected_fields": [
+    {"key": "app", "label": "Ứng dụng", "type": "string", "required": false},
+    {"key": "membership_type", "label": "Hạng thành viên", "type": "string", "required": false},
+    {"key": "membership_period", "label": "Kỳ hạng thành viên", "type": "string", "required": false},
+    {"key": "driver_rank", "label": "Cấp tài xế", "type": "string", "required": false},
+    {"key": "partner_id", "label": "Mã đối tác", "type": "string", "required": false},
+    {"key": "wallet_visible", "label": "Ví tài xế hiển thị", "type": "boolean", "required": false},
+    {"key": "rewards_visible", "label": "Chương trình thưởng hiển thị", "type": "boolean", "required": false},
+    {"key": "trip_history_visible", "label": "Lịch sử chuyến đi hiển thị", "type": "boolean", "required": false},
+    {"key": "utility_items", "label": "Tiện ích hiển thị", "type": "array", "required": false},
+    {"key": "app_version", "label": "Phiên bản ứng dụng", "type": "string", "required": false},
+    {"key": "is_authentic", "label": "Hồ sơ chính thức", "type": "boolean", "required": false}
+  ],
+  "customizable": [
+    {"key": "require_authentic", "label": "Bắt buộc giao diện chính thức", "type": "toggle", "default": true}
+  ],
+  "engines": [
+    {"id": "authentic_profile", "label": "Hồ sơ chính thức", "params": {"field": "is_authentic", "expected": true, "required": false, "message": "Không phát hiện màn hình hồ sơ ứng dụng tài xế Xanh SM chính thức."}, "conditions": [{"field": "is_authentic", "op": "not_empty"}]}
+  ],
+  "extractor": "profile",
+  "classify_role": "app_profile"
+}

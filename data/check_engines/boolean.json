@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "boolean",
+  "label": "Cờ đúng/sai",
+  "description": "Kiểm tra một trường boolean khớp giá trị mong đợi.",
+  "implementation": "boolean",
+  "params_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "expected", "label": "Giá trị mong đợi", "type": "toggle", "default": true},
+    {"key": "required", "label": "Bắt buộc có giá trị", "type": "toggle", "default": false},
+    {"key": "message", "label": "Thông báo lỗi", "type": "text"}
+  ],
+  "conditions_schema": [
+    {"key": "field", "label": "Trường dữ liệu", "type": "text", "required": true},
+    {"key": "op", "label": "Điều kiện", "type": "select", "options": ["not_empty", "empty", "equals", "not_equals", "contains", "regex", "gte", "lte"], "required": true}
+  ]
+}
