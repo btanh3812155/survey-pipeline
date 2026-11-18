@@ -858,12 +858,14 @@ class TelegramPollingRunner:
                             if current_status in ("APPROVED", "REJECTED") and not reopened_for_review:
                                 return False, current_status
 
-                        await cur.execute(
-                            "UPDATE survey_submissions SET status = %s, rejection_reason = %s, moderated_at = NOW() WHERE submission_id = %s;",
-                            (new_status, reason or None, sub_id),
-                        )
-                    await conn.commit()
-                    return True, new_status
+                            await cur.execute(
+                                "UPDATE survey_submissions SET status = %s, rejection_reason = %s, moderated_at = NOW() WHERE submission_id = %s;",
+                                (new_status, reason or None, sub_id),
+                            )
+                            await conn.commit()
+                            return True, new_status
+                        # No DB row: TEST/DEV submissions live in dev storage only.
+                        # Fall through instead of reporting a phantom success.
             except Exception as e:
                 logger.error(f"Failed to update submission status in DB: {e}")
 

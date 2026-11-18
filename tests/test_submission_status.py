@@ -353,3 +353,64 @@ def test_form_exposes_appeal_and_redo_state():
     assert "statusSettleTimer" in html
     assert "statusStateEpoch" in html
     assert "statusRefreshInFlight" in html
+
+
+class _FakeCursor:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, *args, **kwargs):
+        return None
+
+    async def fetchone(self):
+        return None
+
+
+class _FakeConn:
+    def cursor(self):
+        return _FakeCursor()
+
+    async def commit(self):
+        return None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakePool:
+    def connection(self):
+        return _FakeConn()
+
+
+@pytest.mark.asyncio
+async def test_dev_submission_verdict_falls_through_when_db_row_is_missing():
+    """Production has a DB pool; DEV/TEST ids have no DB row and must hit dev storage."""
+    submission_id = "DEV-FALLTHROUGH01"
+    backups = {p: _backup(p) for p in (DEV_FILE, MAIN_DEV_FILE)}
+    try:
+        _write_json(DEV_FILE, [])
+        _write_json(MAIN_DEV_FILE, [{
+            "submission_id": submission_id,
+            "status": "MANUAL_REVIEW",
+            "reason": "Chờ duyệt.",
+            "submitted_at": "2026-11-18T10:00:00+00:00",
+        }])
+
+        runner = TelegramPollingRunner(bot_token="mock_token", role="admin", db_pool=_FakePool())
+        success, final_status = await runner._update_submission_status(
+            submission_id, "APPROVED", reason="Duyệt bản thử nghiệm"
+        )
+        assert success is True and final_status == "APPROVED"
+        record = next(r for r in json.load(open(MAIN_DEV_FILE, encoding="utf-8")) if r["submission_id"] == submission_id)
+        assert record["status"] == "APPROVED"
+        assert record["reason"] == "Duyệt bản thử nghiệm"
+        assert record.get("moderated_at")
+    finally:
+        for path, content in backups.items():
+            _restore(path, content)
