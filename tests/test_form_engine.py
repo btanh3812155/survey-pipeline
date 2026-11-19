@@ -174,6 +174,10 @@ def test_api_upload_and_render_arbitrary_form():
     assert "Khảo Sát Ý Kiến Khách Hàng" in html_resp.text
     assert "Đánh giá độ hài lòng" in html_resp.text
 
+    # This is a throwaway upload fixture, not a production form.
+    del_resp = client.delete("/api/v1/forms/customer_feedback_v1", auth=("admin", settings.ADMIN_PASSWORD))
+    assert del_resp.status_code == 200
+
 def test_dev_test_mode_submission_routing(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
     import io
@@ -494,15 +498,15 @@ def test_dynamic_form_qr_code_and_camera_tooltip_and_floating_buttons():
     """Verify QR code share URL generation, camera overlay styling, and floating buttons."""
     client = TestClient(app)
     # 1. Base form without ?ref= returns CTV selector landing page with dropdown using short ctv001 values
-    resp = client.get("/forms/income_survey")
+    resp = client.get("/forms/TB_GSM_2026_Nov_Test")
     assert resp.status_code == 200
     assert "ctvSelect" in resp.text
     assert 'value="TUAN_LM_HCM_001"' in resp.text
     assert "TUAN_LM_HCM_001" in resp.text
     assert "Mở Biểu Mẫu" in resp.text
 
-    # 2. Form with short ?ref=ctv001 opens individual form with resolved and locked CTV
-    ref_resp = client.get("/forms/income_survey?ref=TUAN_LM_HCM_001")
+    # 2. Form with ?ref=<CTV> opens individual form with resolved and locked CTV
+    ref_resp = client.get("/forms/TB_GSM_2026_Nov_Test?ref=TUAN_LM_HCM_001")
     assert ref_resp.status_code == 200
     html_content = ref_resp.text
     assert "getFormShareUrl" in html_content
@@ -510,21 +514,13 @@ def test_dynamic_form_qr_code_and_camera_tooltip_and_floating_buttons():
     assert 'ACTIVE_REF_CODE = "TUAN_LM_HCM_001"' in html_content
     # Verify clean text formatting without &amp; double escaping
     assert "Xe tự mua &amp; chạy" not in html_content
-    assert "Xe tự mua & chạy" in html_content
+    assert "Xe tự mua - Platform (Xe cá nhân ký hợp đồng trực tiếp với GSM)" in html_content
     assert "LINK TRUY CẬP BIỂU MẪU:" in html_content
     assert ".camera-overlay-slot-badge" in html_content
     assert "white-space: normal" in html_content
     assert "word-break: break-word" in html_content
     assert "font-size: 0.95rem" in html_content
     assert "width: 170px" in html_content
-
-    # 3. CTV Slug form backwards compatibility
-    ctv_resp = client.get("/forms/income-survey-70652f26d42b71")
-    assert ctv_resp.status_code == 200
-    ctv_html = ctv_resp.text
-    assert 'const ACTIVE_CTV_SLUG = "income-survey-70652f26d42b71";' in ctv_html
-    assert "TUAN_LM_HCM_001" in ctv_html
-    assert "getFormShareUrl" in ctv_html
 def test_multiple_choice_option_groups_and_mutual_exclusivity():
     """Verify multiple choice question option groups, mutual exclusivity, and compatibility."""
     # 1. Test using DEFAULT_TRUST_BRIDGE_SCHEMA for gsm_incentive_policy

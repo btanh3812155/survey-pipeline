@@ -40,6 +40,11 @@ data/forms/*
 # Logs & artifacts
 *.log
 
+# Local notebooks & archives
+*.ipynb
+.ipynb_checkpoints/
+archives/
+
 # Virtual environments
 .venv/
 venv/
