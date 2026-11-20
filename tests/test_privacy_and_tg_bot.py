@@ -108,11 +108,22 @@ def test_mask_license_plate():
 # 2. Public History Leak Prevention (Privacy Protection) Tests
 # ===========================================================================
 
-def test_survey_history_unauthorized_returns_401():
+def test_survey_history_unauthorized_returns_401(monkeypatch, tmp_path):
     """
     Prevents scraping of driver survey histories by unauthenticated outsiders.
     Access to /api/v1/surveys/history without valid credentials MUST return 401 Unauthorized.
     """
+    from core.cache import BoundedTTLCache
+    from routers import survey as survey_router
+
+    storage = tmp_path / "dev_submissions.json"
+    storage.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "history_test_admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "history_test_password")
+    monkeypatch.setattr(survey_router, "DEV_STORAGE_FILE", str(storage))
+    monkeypatch.setattr(survey_router, "get_db_pool", lambda: None)
+    monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
+    monkeypatch.setattr(survey_router, "HISTORY_RATE_LIMITER", BoundedTTLCache(max_size=10, ttl_seconds=60))
     client = TestClient(app)
 
     # 1. Unauthenticated request without Authorization header

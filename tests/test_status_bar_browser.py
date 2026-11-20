@@ -90,6 +90,7 @@ def page():
         ctx = browser.new_context()
         page = ctx.new_page()
         # Register the catch-all first: Playwright checks routes in reverse order.
+        page.route("**/*", lambda route: route.abort())
         page.route(
             f"{ORIGIN}/**",
             lambda route: route.fulfill(status=200, content_type="text/html", body=_render_html())
@@ -246,3 +247,73 @@ def test_transient_error_keeps_auto_refresh_alive(page):
     assert page.evaluate("() => document.querySelectorAll('#submissionStatusBar button').length") == 2
     assert page.evaluate("() => document.getElementById('submissionStatusRefresh')") is None
     assert "Làm mới" not in page.inner_text("#submissionStatusBar")
+
+
+def test_public_history_modal_is_disabled_and_translated(page):
+    history_requests = []
+    page.on(
+        "request",
+        lambda request: history_requests.append(request.url)
+        if "/api/v1/surveys/history" in request.url
+        else None,
+    )
+
+    page.evaluate("() => openHistoryModal()")
+    assert page.locator("#historyModal").is_visible()
+    assert "Tính năng tra cứu lịch sử bằng số điện thoại hiện đang tạm ngưng" in page.inner_text(
+        "#txtHistoryMaintenance"
+    )
+    assert page.locator("#historyModal input, #historyModal select, #historyModal textarea").count() == 0
+    assert page.locator("#historyPhoneInput, #btnHistoryQuery").count() == 0
+    assert page.evaluate("() => typeof fetchHistoryAttempts") == "undefined"
+    assert page.locator("#btnHistoryClose").is_visible()
+    assert page.locator("#btnHistoryClose").inner_text() == "Đóng"
+
+    page.evaluate("() => toggleLanguage()")
+    assert "Phone-based submission history is temporarily unavailable" in page.inner_text(
+        "#txtHistoryMaintenance"
+    )
+    assert page.locator("#btnHistoryClose").inner_text() == "Close"
+    assert history_requests == []
+
+    page.click("#btnHistoryClose")
+    assert not page.locator("#historyModal").is_visible()
+
+
+def test_lost_response_retry_reuses_attempt_key_and_success_rotates(page):
+    requests = []
+    initial_key = page.evaluate("localStorage.getItem(ATTEMPT_STORAGE_KEY)")
+
+    def handle_submit(route):
+        body = route.request.post_data or ""
+        key = ""
+        for part in body.split("name=\"idempotency_key\"", 1)[1:]:
+            key = part.split("\r\n\r\n", 1)[1].split("\r\n", 1)[0]
+        requests.append(key)
+        if len(requests) == 1:
+            # Simulate a server that accepted the upload but whose response was lost.
+            route.abort("failed")
+        else:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"status": "APPROVED", "submission_id": "SUB-BROWSER-1"}),
+            )
+
+    page.route("**/api/v1/survey/submit-webrtc", handle_submit)
+    page.evaluate("answers['driver_phone'] = '0912345678'")
+    page.click("#btnSubmitForm")
+    page.wait_for_selector("#btnSubResultClose", state="visible")
+    assert requests[0] == initial_key
+    assert page.evaluate("localStorage.getItem(ATTEMPT_STORAGE_KEY)") == initial_key
+
+    page.click("#btnSubResultClose")
+    page.click("#btnSubmitForm")
+    page.wait_for_function(
+        "(key) => localStorage.getItem(ATTEMPT_STORAGE_KEY) !== key", arg=initial_key
+    )
+    assert len(requests) == 2
+    assert requests[1] == initial_key
+    rotated = page.evaluate("localStorage.getItem(ATTEMPT_STORAGE_KEY)")
+    assert rotated and rotated != initial_key
+    assert page.locator("#subResultId").inner_text().strip() == "#SUB-BROWSER-1"

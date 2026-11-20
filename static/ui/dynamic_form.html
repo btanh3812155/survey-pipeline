@@ -1076,13 +1076,7 @@
                 <h3 style="color:#f8fafc !important;" id="txtHistoryModalTitle">Lịch Sử Các Lần Nộp</h3>
                 <button type="button" class="btn-modal cancel" style="flex:0 0 auto; padding:6px 12px; font-size:0.8rem;" onclick="closeHistoryModal()" id="btnHistoryClose">Đóng</button>
             </div>
-            <div style="display:flex; gap:8px;">
-                <input type="tel" id="historyPhoneInput" class="q-input" placeholder="Nhập số điện thoại để tra cứu...">
-                <button type="button" class="btn" style="flex-shrink:0; padding:10px 14px; background:var(--accent); color:#fff; border:none; border-radius:8px; font-weight:700;" onclick="fetchHistoryAttempts()" id="btnHistoryQuery">Tra cứu</button>
-            </div>
-            <div id="historyResultsList" style="max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; font-size:0.8rem; margin-top:8px;">
-                <div style="color:#94a3b8; text-align:center; padding:12px;" id="txtHistoryPrompt">Nhập số điện thoại và bấm Tra cứu để xem các lần nộp trước.</div>
-            </div>
+            <div id="txtHistoryMaintenance" style="color:#94a3b8; text-align:center; padding:12px; margin-top:8px;">Tính năng tra cứu lịch sử bằng số điện thoại hiện đang tạm ngưng. Vui lòng liên hệ qua Telegram để được hỗ trợ.</div>
         </div>
     </div>
     <!-- Submission Result Modal with Telegram Bot Link -->
@@ -1216,7 +1210,6 @@
                 btn_to_test: "Bật thử nghiệm",
                 btn_to_prod: "Về Chính thức",
                 bypass_label: "Bỏ qua kiểm tra ảnh (Test nhanh dữ liệu)",
-                btn_history_nav: "Xem lịch sử nộp",
                 sig_prompt: "Bấm vào đây để ký tên trên giấy",
                 sig_done: "Chữ ký đã ghi nhận (Bấm vào đây để ký lại)",
                 sig_title: "Bảng Ký Tên Khảo Sát",
@@ -1242,10 +1235,7 @@
                 btn_sample_ans: "Xem câu trả lời mẫu",
                 decree_footer: "Thông tin khảo sát thu nhập được lưu trữ bảo mật nội bộ theo Nghị định 13.",
                 history_title: "Lịch Sử Các Lần Nộp",
-                history_ph: "Nhập số điện thoại để tra cứu...",
-                history_query: "Tra cứu",
-                history_prompt: "Nhập số điện thoại và bấm Tra cứu để xem các lần nộp trước.",
-                history_empty: "Chưa có lần nộp nào được ghi nhận cho số điện thoại này.",
+                history_maintenance: "Tính năng tra cứu lịch sử bằng số điện thoại hiện đang tạm ngưng. Vui lòng liên hệ qua Telegram để được hỗ trợ.",
                 missing_required: "Vui lòng trả lời câu hỏi bắt buộc: ",
                 verdict_approved: "BÁO CÁO HỢP LỆ! Khảo sát đã được ghi nhận thành công.",
                 verdict_rejected: "CẦN KIỂM TRA LẠI!",
@@ -1289,7 +1279,6 @@
                 btn_to_test: "Switch to Test",
                 btn_to_prod: "Switch to Prod",
                 bypass_label: "Bypass image audit (Fast test data flow)",
-                btn_history_nav: "View History",
                 sig_prompt: "Tap here to sign on paper",
                 sig_done: "Signature recorded (Tap to resign)",
                 sig_title: "Driver Signature Sheet",
@@ -1315,10 +1304,7 @@
                 btn_sample_ans: "View Sample Answer",
                 decree_footer: "Survey data is encrypted and securely stored in compliance with Decree 13.",
                 history_title: "Submission History",
-                history_ph: "Enter phone number to look up...",
-                history_query: "Search",
-                history_prompt: "Enter phone number and click Search to view history.",
-                history_empty: "No submissions found for this phone number.",
+                history_maintenance: "Phone-based submission history is temporarily unavailable. Please contact us via Telegram for support.",
                 missing_required: "Please answer required question: ",
                 verdict_approved: "REPORT APPROVED! Survey submitted successfully.",
                 verdict_rejected: "VERIFICATION FAILED!",
@@ -1486,7 +1472,6 @@
             setTxt('gpsStatusText', t.gps_prompt);
             setTxt('btnRequestGps', t.gps_btn);
             setTxt('txtModeLabel', t.mode_label);
-            setTxt('btnHistoryNav', t.btn_history_nav);
             setTxt('txtBypassLabel', t.bypass_label);
             setTxt('txtSubmitBtn', t.btn_submit);
             setTxt('txtResetFloatBtn', t.btn_reset);
@@ -1505,8 +1490,7 @@
             setTxt('btnResetConfirm', t.btn_confirm_reset);
 
             setTxt('txtHistoryModalTitle', t.history_title);
-            setPlaceholder('historyPhoneInput', t.history_ph);
-            setTxt('btnHistoryQuery', t.history_query);
+            setTxt('txtHistoryMaintenance', t.history_maintenance);
             setTxt('btnHistoryClose', t.btn_close);
 
             setTxt('txtSubResultHistory', t.btn_view_history_web);
@@ -1528,8 +1512,86 @@
             renderForm();
         }
 
-        // Client Idempotency Key
-        let clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+        // Client attempt identity: persist the key and unresolved metadata only.
+        // Raw photos, signatures and GPS never enter browser storage.
+        const ATTEMPT_STORAGE_KEY = `tb_attempt_${SCHEMA.form_id || 'income_survey'}`;
+        const ATTEMPT_META_KEY = `tb_attempt_meta_${SCHEMA.form_id || 'income_survey'}`;
+        function newClientAttemptKey() {
+            if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+                throw new Error('Secure random generation is required to create a submission attempt.');
+            }
+            const random = new Uint8Array(16);
+            window.crypto.getRandomValues(random);
+            return 'IDEMP-' + Array.from(random, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        }
+        function readAttemptMeta() {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(ATTEMPT_META_KEY) || '{}');
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch(e) { return {}; }
+        }
+        function persistClientAttemptKey(key, unresolved) {
+            try {
+                localStorage.setItem(ATTEMPT_STORAGE_KEY, key);
+                localStorage.setItem(ATTEMPT_META_KEY, JSON.stringify({
+                    key,
+                    unresolved: Boolean(unresolved === undefined ? attemptUnresolved : unresolved),
+                    form_id: SCHEMA.form_id || 'income_survey'
+                }));
+            } catch(e) {}
+        }
+        function storedClientAttemptKey() {
+            try { return localStorage.getItem(ATTEMPT_STORAGE_KEY) || ''; } catch(e) { return ''; }
+        }
+        function clearClientAttemptKey() {
+            try {
+                localStorage.removeItem(ATTEMPT_STORAGE_KEY);
+                localStorage.removeItem(ATTEMPT_META_KEY);
+            } catch(e) {}
+        }
+        const initialAttemptMeta = readAttemptMeta();
+        let clientSubmissionId = storedClientAttemptKey() || newClientAttemptKey();
+        let attemptUnresolved = initialAttemptMeta.unresolved === true;
+        let pendingAttempt = null;
+        let bypassPreparationToken = 0;
+        let bypassPreparationActive = false;
+        const blobIdentities = new WeakMap();
+        let blobIdentitySeq = 0;
+        function blobIdentity(value) {
+            if (!blobIdentities.has(value)) {
+                blobIdentities.set(value, ++blobIdentitySeq);
+            }
+            return blobIdentities.get(value);
+        }
+        persistClientAttemptKey(clientSubmissionId, attemptUnresolved);
+        function attemptSignature() {
+            const parts = [];
+            for (const key of Object.keys(answers).sort()) {
+                const value = answers[key];
+                if (value instanceof Blob) {
+                    parts.push(`${key}:blob:${blobIdentity(value)}:${value.size}:${value.type || ''}`);
+                } else if (Array.isArray(value)) {
+                    parts.push(`${key}:${JSON.stringify(value)}`);
+                } else {
+                    parts.push(`${key}:${String(value)}`);
+                }
+            }
+            parts.push(`gps:${JSON.stringify(gpsCoordinates)}`);
+            parts.push(`mode:${isTestMode ? 'test' : 'prod'}:${isBypassImg ? 'bypass' : 'normal'}`);
+            return parts.join('|');
+        }
+        function removeDummyAnswers() {
+            for (const key of Object.keys(answers)) {
+                const value = answers[key];
+                if (value && value.isDummy) {
+                    delete answers[key];
+                } else if (Array.isArray(value) && value.some(item => item && item.isDummy)) {
+                    const kept = value.filter(item => !(item && item.isDummy));
+                    if (kept.length) answers[key] = kept;
+                    else delete answers[key];
+                }
+            }
+        }
 
         // Test Mode State
         let isTestMode = Boolean(SCHEMA.settings && SCHEMA.settings.is_test_mode) || window.location.search.includes('test=1') || window.location.search.includes('mode=test');
@@ -1559,18 +1621,30 @@
         }
 
         function toggleTestMode() {
+            bypassPreparationToken += 1;
             isTestMode = !isTestMode;
+            if (!isTestMode) removeDummyAnswers();
             updateTestModeUI();
         }
 
         function toggleBypassImg(checked) {
-            isBypassImg = checked;
-            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-            if (!checked) {
-                if (answers['camera_receipt'] && answers['camera_receipt'].isDummy) {
-                    delete answers['camera_receipt'];
+            bypassPreparationToken += 1;
+            if (attemptUnresolved || pendingAttempt) {
+                if (!window.confirm(
+                    'Lượt gửi trước chưa có kết quả xác định. Thay đổi chế độ ảnh sẽ bắt đầu một lượt mới; '
+                    + 'chọn OK để xác nhận, Cancel để giữ nguyên lượt cũ.'
+                )) {
+                    const checkbox = document.getElementById('bypassImgToggle');
+                    if (checkbox) checkbox.checked = !checked;
+                    return;
                 }
             }
+            isBypassImg = checked;
+            pendingAttempt = null;
+            attemptUnresolved = false;
+            clientSubmissionId = newClientAttemptKey();
+            persistClientAttemptKey(clientSubmissionId, false);
+            if (!checked) removeDummyAnswers();
         }
 
         const container = document.getElementById('questionsContainer');
@@ -2883,6 +2957,12 @@
         function promptResetForm() { document.getElementById('confirmResetModal').style.display = 'flex'; }
         function closeResetModal() { document.getElementById('confirmResetModal').style.display = 'none'; }
         function executeResetForm(silent = false) {
+            bypassPreparationToken += 1;
+            if (attemptUnresolved && !window.confirm(
+                'Lượt gửi trước chưa có kết quả xác định. Bạn có chắc muốn bắt đầu một lượt mới và bỏ qua lượt cũ không?'
+            )) {
+                return;
+            }
             const storageKey = `tb_draft_${ACTIVE_CTV_SLUG || SCHEMA.form_id || 'income_survey'}`;
             try { localStorage.removeItem(storageKey); } catch(e) {}
             for (let k in answers) delete answers[k];
@@ -2952,7 +3032,10 @@
             hasModalSignature = false;
             if (sigCtx && sigCanvas) sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
 
-            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+            pendingAttempt = null;
+            attemptUnresolved = false;
+            clientSubmissionId = newClientAttemptKey();
+            persistClientAttemptKey(clientSubmissionId, false);
             closeResetModal();
             clearSubmissionStatus();
             evaluateConditionals();
@@ -3341,33 +3424,6 @@
             document.getElementById('historyModal').style.display = 'none';
         }
 
-        async function fetchHistoryAttempts() {
-            const phone = document.getElementById('historyPhoneInput').value.trim();
-            const list = document.getElementById('historyResultsList');
-            const t = I18N[currentLang];
-            if (!phone) return;
-            list.innerHTML = '<div>Loading...</div>';
-            try {
-                const resp = await fetch(`/api/v1/surveys/history?phone=${encodeURIComponent(phone)}`);
-                const data = await resp.json();
-                if (!data.attempts || data.attempts.length === 0) {
-                    list.innerHTML = `<div style="padding:12px; text-align:center;">${t.history_empty}</div>`;
-                    return;
-                }
-                list.innerHTML = data.attempts.map(a => `
-                    <div style="background:#1e293b; border-left:3px solid ${a.status==='APPROVED'?'#10b981':'#ef4444'}; padding:8px 10px; border-radius:6px;">
-                        <div style="display:flex; justify-content:space-between; font-weight:700;">
-                            <span>#${a.submission_id} (${a.mode})</span>
-                            <span style="color:${a.status==='APPROVED'?'#34d399':'#f87171'};">${a.status}</span>
-                        </div>
-                        <div style="color:#cbd5e1; margin-top:2px;">${a.reason || ''}</div>
-                        <div style="font-size:0.7rem; color:#64748b; margin-top:2px;">${a.submitted_at || ''}</div>
-                    </div>
-                `).join('');
-            } catch(e) {
-                list.innerHTML = '<div style="color:#f87171; text-align:center;">Error fetching history!</div>';
-            }
-        }
 
         // 8. Submit Handler
         async function handleSubmit() {
@@ -3375,45 +3431,94 @@
             const bypassCb = document.getElementById('bypassImgToggle');
             const shouldBypass = Boolean(isTestMode && bypassCb && bypassCb.checked);
 
-            if (!shouldBypass) {
-                if (answers['camera_receipt'] && answers['camera_receipt'].isDummy) {
-                    delete answers['camera_receipt'];
+            if (attemptUnresolved && !pendingAttempt) {
+                const startSeparate = window.confirm(
+                    'Lượt gửi trước chưa có kết quả xác định và ảnh gốc không còn trong bộ nhớ trang này. '
+                    + 'Chọn OK để xác nhận bắt đầu một lượt mới; chọn Cancel để giữ nguyên và liên hệ hỗ trợ.'
+                );
+                if (!startSeparate) {
+                    return;
                 }
+                clientSubmissionId = newClientAttemptKey();
+                attemptUnresolved = false;
+                persistClientAttemptKey(clientSubmissionId, false);
+            }
+
+            if (pendingAttempt && pendingAttempt.key === clientSubmissionId
+                && pendingAttempt.signature !== attemptSignature()) {
+                const startSeparate = window.confirm(
+                    'Nội dung đã thay đổi trong khi lượt gửi trước chưa có kết quả xác định. '
+                    + 'Chọn OK để xác nhận bắt đầu một lượt mới; chọn Cancel để giữ nguyên lượt cũ.'
+                );
+                if (!startSeparate) {
+                    return;
+                }
+                pendingAttempt = null;
+                attemptUnresolved = false;
+                clientSubmissionId = newClientAttemptKey();
+                persistClientAttemptKey(clientSubmissionId, false);
+            }
+
+            if (shouldBypass && bypassPreparationActive) return;
+            const preparationToken = ++bypassPreparationToken;
+            const preparationKey = clientSubmissionId;
+            const preparationMode = isTestMode;
+            if (!shouldBypass) {
+                removeDummyAnswers();
             } else {
-                SCHEMA.questions.forEach(q => {
-                    if (q.type === 'camera_webrtc') {
-                        const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
-                        if (hasSlots) {
-                            q.image_slots.forEach(async (s, sIdx) => {
-                                const slotKey = `${q.id}_${sIdx}`;
-                                if (!answers[slotKey] && s.required) {
+                bypassPreparationActive = true;
+                const dummyPromises = [];
+                for (const q of SCHEMA.questions) {
+                    if (q.type !== 'camera_webrtc') continue;
+                    const hasSlots = Array.isArray(q.image_slots) && q.image_slots.length > 0;
+                    if (hasSlots) {
+                        for (let sIdx = 0; sIdx < q.image_slots.length; sIdx++) {
+                            const slotKey = `${q.id}_${sIdx}`;
+                            if (!answers[slotKey] && q.image_slots[sIdx].required) {
+                                dummyPromises.push((async () => {
                                     const dummyCvs = document.createElement('canvas');
                                     dummyCvs.width = 100; dummyCvs.height = 100;
                                     const dctx = dummyCvs.getContext('2d');
                                     dctx.fillStyle = '#10b981';
                                     dctx.fillRect(0,0,100,100);
-                                    canvasWebpBlob(dummyCvs).then(b => {
-                                        if (!b) return;
-                                        b.isDummy = true;
-                                        answers[slotKey] = b;
-                                        syncAnswersImageList(q.id);
-                                    });
-                                }
-                            });
-                        } else if (!answers[q.id]) {
+                                    const b = await canvasWebpBlob(dummyCvs);
+                                    if (!b || preparationToken !== bypassPreparationToken
+                                        || preparationMode !== isTestMode
+                                        || preparationKey !== clientSubmissionId) return;
+                                    b.isDummy = true;
+                                    answers[slotKey] = b;
+                                    syncAnswersImageList(q.id);
+                                })());
+                            }
+                        }
+                    } else if (!answers[q.id]) {
+                        dummyPromises.push((async () => {
                             const dummyCvs = document.createElement('canvas');
                             dummyCvs.width = 100; dummyCvs.height = 100;
                             const dctx = dummyCvs.getContext('2d');
                             dctx.fillStyle = '#10b981';
                             dctx.fillRect(0,0,100,100);
-                            canvasWebpBlob(dummyCvs).then(b => {
-                                if (!b) return;
-                                b.isDummy = true;
-                                answers[q.id] = b;
-                            });
-                        }
+                            const b = await canvasWebpBlob(dummyCvs);
+                            if (!b || preparationToken !== bypassPreparationToken
+                                || preparationMode !== isTestMode
+                                || preparationKey !== clientSubmissionId) return;
+                            b.isDummy = true;
+                            answers[q.id] = b;
+                        })());
                     }
-                });
+                }
+                try {
+                    await Promise.all(dummyPromises);
+                } finally {
+                    bypassPreparationActive = false;
+                }
+            }
+
+            if (preparationToken !== bypassPreparationToken
+                || preparationMode !== isTestMode
+                || preparationKey !== clientSubmissionId) {
+                removeDummyAnswers();
+                return;
             }
 
             evaluateConditionals();
@@ -3452,8 +3557,12 @@
 
             const btn = document.getElementById('btnSubmitForm');
 
-            const formData = new FormData();
-            for (let k in answers) {
+            let formData;
+            if (pendingAttempt && pendingAttempt.key === clientSubmissionId) {
+                formData = pendingAttempt.body;
+            } else {
+                formData = new FormData();
+                for (let k in answers) {
                 if (answers[k] instanceof Blob) {
                     // Skip individual slot blobs if handled separately or let them append
                     if (!k.includes('_')) {
@@ -3489,7 +3598,6 @@
 
             formData.append('is_test_mode', isTestMode ? 'true' : 'false');
             formData.append('form_id', SCHEMA.form_id || 'income_survey');
-            clientSubmissionId = 'IDEMP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             formData.append('idempotency_key', clientSubmissionId);
             formData.append('bypass_img_check', shouldBypass ? 'true' : 'false');
             if (LOCKED_CTV_CODE) {
@@ -3505,7 +3613,11 @@
                 formData.append('gps_latitude', gpsCoordinates.latitude);
                 formData.append('gps_longitude', gpsCoordinates.longitude);
             }
+                pendingAttempt = {key: clientSubmissionId, body: formData, signature: attemptSignature()};
+            }
 
+            attemptUnresolved = true;
+            persistClientAttemptKey(clientSubmissionId, true);
             btn.disabled = true;
             btn.textContent = t.btn_submitting;
 
@@ -3537,6 +3649,11 @@
                 const storageKey = `tb_draft_${SCHEMA.form_id || 'income_survey'}`;
                 try { localStorage.removeItem(storageKey); } catch(e) {}
                 rememberSubmissionStatus(res);
+                pendingAttempt = null;
+                attemptUnresolved = false;
+                clearClientAttemptKey();
+                clientSubmissionId = newClientAttemptKey();
+                persistClientAttemptKey(clientSubmissionId, false);
                 showSubmissionResultModal(res);
             } catch(e) {
                 showSubmissionResultModal({

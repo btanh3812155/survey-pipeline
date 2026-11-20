@@ -86,8 +86,32 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     moderated_at TIMESTAMPTZ,
     moderation_notes TEXT,
     action_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+    media_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
+    media_version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Wave 3 fresh-install mirror (migration 001 also applies these idempotently).
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS media_manifest JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS media_version BIGINT NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    checksum TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS submission_idempotency (
+    scope TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint CHAR(64) NOT NULL,
+    submission_id VARCHAR(64),
+    response_json JSONB,
+    state VARCHAR(16) NOT NULL CHECK (state IN ('RESERVED', 'COMMITTED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    PRIMARY KEY (scope, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_submission_idempotency_expiry
+ON submission_idempotency (expires_at)
+WHERE expires_at IS NOT NULL;
 -- Auto-migration: ensure columns exist for existing databases
 ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS action_status JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE survey_submissions ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32);

@@ -9,6 +9,9 @@ on:
     branches:
       - dev
       - master
+  # Deployments are manual until Wave 7 protects mutable storage and the
+  # production cutover checks are implemented.
+  workflow_dispatch:
 
 jobs:
   test:
@@ -34,7 +37,8 @@ jobs:
         env:
           ENVIRONMENT: test
           SECRET_KEY: test_secret_key_ci_cd_32_bytes_long_here
-          DATABASE_URL: sqlite:///test_pipeline.db
+          # Unit tests must mock persistence. Real PostgreSQL behavior is gated
+          # in postgres-harness below; do not advertise SQLite as PostgreSQL.
         run: |
           PYTHONPATH=. pytest tests/ -v --maxfail=5
 
@@ -50,10 +54,53 @@ jobs:
           fi
           echo "[RELEASE GATE PASSED] Production master is 100% free of placeholder forms."
 
+  postgres-harness:
+    name: Disposable PostgreSQL/pgvector Harness
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_only
+          POSTGRES_DB: survey_pipeline_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d survey_pipeline_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+
+      - name: Run isolated PostgreSQL harness
+        env:
+          ENVIRONMENT: test
+          UPGRADE_TEST_REQUIRE: "1"
+          UPGRADE_TEST_DATABASE_URL: postgresql://postgres:test_only@127.0.0.1:55432/survey_pipeline_test
+        run: |
+          PYTHONPATH=. pytest -q -m postgres tests/test_postgres_harness.py tests/test_phone_links.py tests/test_h1_corrections.py tests/test_wave3_attempts.py tests/test_wave3_route.py tests/test_wave3_process_crash.py
+          PYTHONPATH=. pytest -q -m 'not postgres' tests/test_h1_corrections.py
+          PYTHONPATH=. pytest -q tests/test_postgres_runner.py
+
   deploy-staging:
     name: Deploy to Staging (Droplet /root/survey-pipeline-dev)
-    needs: test
-    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: [test, postgres-harness]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
@@ -88,11 +135,13 @@ jobs:
         run: |
           curl -sk --fail --connect-timeout 10 https://dev.146.190.201.32.sslip.io/health || \
           ssh root@146.190.201.32 "docker exec survey-dev-app-1 curl -sf http://127.0.0.1:8000/health"
+          curl -sk --fail --connect-timeout 10 https://dev.146.190.201.32.sslip.io/ready || \
+          ssh root@146.190.201.32 "docker exec survey-dev-app-1 curl -sf http://127.0.0.1:8000/ready"
 
   deploy-production:
     name: Zero-Downtime Deploy to Production (Droplet /root/survey-pipeline)
-    needs: test
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    needs: [test, postgres-harness]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
@@ -132,3 +181,4 @@ jobs:
       - name: Verify Production Health Check
         run: |
           curl -sf --connect-timeout 10 https://survey.trustbridgevn.com/health
+          curl -sf --connect-timeout 10 https://survey.trustbridgevn.com/ready

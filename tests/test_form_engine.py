@@ -299,32 +299,54 @@ async def test_idempotency_duplicate_submission(monkeypatch):
     assert sub_id_1 == sub_id_2
     assert data1["status"] == data2["status"]
 
-def test_survey_history_public_access():
+def test_survey_history_admin_access(monkeypatch, tmp_path):
+    from core.cache import BoundedTTLCache
+    from routers import survey as survey_mod
+
+    class FakeRedis:
+        def __init__(self):
+            self.counts = {}
+
+        async def incr(self, key):
+            self.counts[key] = self.counts.get(key, 0) + 1
+            return self.counts[key]
+
+        async def expire(self, _key, _seconds):
+            return True
+
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "test-history-admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "test-history-password")
+    monkeypatch.setattr(survey_mod, "DEV_STORAGE_FILE", str(tmp_path / "history.json"))
+    (tmp_path / "history.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(survey_mod, "get_db_pool", lambda: None)
+    redis = FakeRedis()
+    monkeypatch.setattr(survey_mod, "get_redis_client", lambda: redis)
+    monkeypatch.setattr(survey_mod, "HISTORY_RATE_LIMITER", BoundedTTLCache(max_size=8, ttl_seconds=60))
+
     client = TestClient(app)
-    # 1. Unauthenticated public request succeeds without Basic Auth
     unauth_resp = client.get("/api/v1/surveys/history?phone=0988123456")
-    assert unauth_resp.status_code == 200
-    assert unauth_resp.json()["phone"] == "0988123456"
+    assert unauth_resp.status_code == 401
 
-    admin_auth = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
-
-    # 2. Authenticated request succeeds and sanitizes input with spaces/dashes
-    sanitized_resp = client.get("/api/v1/surveys/history?phone=%200988-123-456%20", auth=admin_auth)
+    admin_auth = ("test-history-admin", "test-history-password")
+    sanitized_resp = client.get(
+        "/api/v1/surveys/history?phone=%200988-123-456%20", auth=admin_auth
+    )
     assert sanitized_resp.status_code == 200
     assert sanitized_resp.json()["phone"] == "0988123456"
 
-    # 3. Rejects invalid phone numbers
     bad_resp = client.get("/api/v1/surveys/history?phone=invalid_phone", auth=admin_auth)
     assert bad_resp.status_code == 400
 
-    # 4. Rate-limiting triggers on excessive queries
     rate_limited = False
     for _ in range(35):
-        r = client.get("/api/v1/surveys/history?phone=0999888777", auth=admin_auth)
-        if r.status_code == 429:
+        resp = client.get("/api/v1/surveys/history?phone=0999888777", auth=admin_auth)
+        if resp.status_code == 429:
             rate_limited = True
             break
     assert rate_limited is True
+    assert len(redis.counts) == 1
+    assert "0988123456" not in next(iter(redis.counts))
+    assert "0999888777" not in next(iter(redis.counts))
 
 def test_multi_image_validation_count_enforcement():
     # Test schema with exact_image_count, min_images, max_images

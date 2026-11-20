@@ -12,7 +12,7 @@ import secrets
 from typing import Optional
 import httpx
 from fastapi import APIRouter, Request, Header, HTTPException, BackgroundTasks, Depends, status
-from config import settings
+from config import settings, BUILTIN_TELEGRAM_WEBHOOK_SECRET
 from core.state import verify_admin_auth, get_redis_client, get_db_pool
 from services.auth_lark import verify_lark_signature, handle_lark_challenge_handshake
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score
@@ -49,8 +49,19 @@ def get_driver_bot_runner() -> Optional[DriverBotRunner]:
 
 
 def verify_telegram_webhook_secret(secret_token: Optional[str] = None):
-    if settings.ENVIRONMENT != "development" and getattr(settings, "TELEGRAM_WEBHOOK_SECRET", None):
-        if not secrets.compare_digest(secret_token or "", settings.TELEGRAM_WEBHOOK_SECRET):
+    """Authenticate webhook provenance before any body parsing or dispatch."""
+    configured = str(getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+    if settings.ENVIRONMENT == "production":
+        if not configured or configured == BUILTIN_TELEGRAM_WEBHOOK_SECRET:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="telegram webhook authentication is unavailable",
+            )
+        if not secrets.compare_digest(secret_token or "", configured):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+        return
+    if settings.ENVIRONMENT != "development" and configured:
+        if not secrets.compare_digest(secret_token or "", configured):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
 
@@ -200,7 +211,12 @@ async def set_telegram_webhooks(
 ):
     """Registers production webhooks with Telegram Bot API for both Admin and Driver bots."""
     base = (domain or "https://survey.trustbridgevn.com").rstrip("/")
-    sec = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or ""
+    sec = str(getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+    if settings.ENVIRONMENT == "production" and (not sec or sec == BUILTIN_TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="telegram webhook authentication is unavailable",
+        )
     results = {}
 
     admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN

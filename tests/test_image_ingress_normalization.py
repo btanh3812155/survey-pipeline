@@ -68,12 +68,36 @@ async def test_telegram_replacement_is_persisted_as_webp(tmp_path, monkeypatch):
     (slot_dir / "slot_0.jpg").write_bytes(_image_bytes("JPEG"))
     (slot_dir / "slot_1.jpg").write_bytes(_image_bytes("JPEG"))
 
-    await runner._store_replacement_photo("VN-TG0001", "slot_0", _image_bytes("JPEG"))
+    import pytest
+    with pytest.raises(PermissionError):
+        await runner._store_replacement_photo("VN-TG0001", "slot_0", _image_bytes("JPEG"))
 
     names = sorted(os.listdir(slot_dir))
-    assert names == ["slot_0.webp", "slot_1.jpg"]
-    with open(slot_dir / "slot_0.webp", "rb") as f:
-        assert f.read()[8:12] == b"WEBP"
+    assert names == ["slot_0.jpg", "slot_1.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_no_pool_repair_fails_closed_without_ack(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from services.telegram_polling import DriverBotRunner
+
+    monkeypatch.chdir(tmp_path)
+    runner = DriverBotRunner(bot_token="mock_driver")
+    runner.pending_fixes[444] = {"sub_id": "VN-NOPOOL", "slot": "slot_0"}
+    runner.send_message = AsyncMock()
+    image = Image.new("RGB", (600, 800), (255, 255, 255))
+    draw = __import__("PIL.ImageDraw", fromlist=["ImageDraw"]).Draw(image)
+    for y in range(100, 700, 20):
+        draw.line([(50, y), (550, y)], fill=(0, 0, 0), width=4)
+    import io
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG")
+    runner.download_telegram_photo = AsyncMock(return_value=buf.getvalue())
+    await runner.handle_photo_upload(444, 444, [{"file_id": "sharp"}])
+    assert not (tmp_path / "data" / "submission_photos" / "VN-NOPOOL").exists()
+    text = runner.send_message.await_args.args[1]
+    assert "không có quyền" in text.lower()
+    assert "thành công" not in text.lower()
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from core.state import verify_admin_auth, FORM_REGISTRY, DEV_STORAGE_FILE, STATI
 from core.repositories import fetch_aggregated_submissions
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.google_drive_delivery import has_google_credentials, sync_all_approved_to_drive
+from services.submission_media import load_manifest, manifest_paths, safe_media_path
 
 logger = logging.getLogger("routers.admin_data")
 router = APIRouter(tags=["Submissions Data Hub"])
@@ -77,25 +78,18 @@ async def get_all_submissions_api(
 async def list_submission_photos(sub_id: str, admin_user: str = Depends(verify_admin_auth)):
     """Lists stored photos for one submission (all camera questions)."""
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "", sub_id)
-    base = os.path.join(os.getcwd(), "data", "submission_photos", safe_id)
-    if not os.path.isdir(base):
-        return {"photos": []}
-    exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
-    names = sorted(
-        name for name in os.listdir(base)
-        if os.path.isfile(os.path.join(base, name)) and name.lower().endswith(exts)
-    )
-    return {"photos": [f"/admin/submissions/{safe_id}/photos/{name}" for name in names]}
+    manifest = await load_manifest(get_db_pool(), safe_id)
+    paths = manifest_paths(safe_id, manifest)
+    return {"photos": [f"/admin/submissions/{safe_id}/photos/{os.path.basename(path)}" for path in paths]}
 
 
 @router.get("/admin/submissions/{sub_id}/photos/{filename}")
 async def serve_submission_photo(sub_id: str, filename: str, admin_user: str = Depends(verify_admin_auth)):
     """Serves a stored submission photo to the admin viewer."""
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "", sub_id)
-    safe_name = os.path.basename(filename)
-    base = os.path.realpath(os.path.join(os.getcwd(), "data", "submission_photos", safe_id))
-    target = os.path.realpath(os.path.join(base, safe_name))
-    if not target.startswith(base + os.sep) or not os.path.isfile(target):
+    try:
+        target = safe_media_path(safe_id, filename)
+    except (ValueError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Ảnh không tồn tại")
     return FileResponse(target)
 

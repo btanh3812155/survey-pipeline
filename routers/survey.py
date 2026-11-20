@@ -18,19 +18,22 @@ import logging
 import asyncio
 import functools
 import inspect
+from psycopg import errors as pg_errors
 from typing import Optional, Dict, Any, Union, List, Tuple
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, BackgroundTasks, File, UploadFile, Form, HTTPException, status
+from fastapi import APIRouter, Request, BackgroundTasks, Depends, File, UploadFile, Form, HTTPException, status
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from config import settings
-from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk
+from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk, verify_admin_auth
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug, get_deterministic_ctv_slug
-from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone
+from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone, phone_normalization_sql
 from core.submission_ids import normalize_submission_id
+from core.submission_attempts import attempt_scope, request_fingerprint, reserve, commit_response
+from core.schema_gate import writer_schema_ready
 from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone, hash_plate, generate_driver_tag
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation, normalize_image_to_webp
@@ -38,6 +41,7 @@ from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.duplicate_detector import compute_image_dhash_str, compute_dinov2_embedding, check_intra_submission_duplicates, check_inter_submission_duplicates
 from services.vehicle_tracker import VehiclePersistenceTracker, normalize_license_plate
 from services.image_types import parse_date_range_from_text
+from services.submission_media import build_manifest
 from services.image_objects import (
     ImageObjectDefinitionError,
     build_detection_prompt,
@@ -160,9 +164,11 @@ async def get_form_schema_api(form_id: str):
     return schema.model_dump()
 @router.get("/api/v1/surveys/history")
 async def get_survey_history(
+    request: Request,
     phone: str,
+    admin_user: str = Depends(verify_admin_auth),
 ):
-    """Retrieves previous survey attempts and rejection reasons for a given driver phone number."""
+    """Admin-only phone history; Telegram verification never grants web access."""
     if not phone:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp số điện thoại hợp lệ.")
 
@@ -171,10 +177,11 @@ async def get_survey_history(
         raise HTTPException(status_code=400, detail="Số điện thoại không hợp lệ.")
 
     rate_limited = False
+    principal_key = f"{admin_user}:{request.client.host if request.client else 'unknown'}"
     redis_client = get_redis_client()
     if redis_client:
         try:
-            rkey = f"rate_limit:history:{clean_phone}"
+            rkey = f"rate_limit:history:{principal_key}"
             count = await redis_client.incr(rkey)
             if count == 1:
                 await redis_client.expire(rkey, 60)
@@ -182,24 +189,24 @@ async def get_survey_history(
                 rate_limited = True
         except Exception as e:
             logger.warning(f"Redis rate limiting error: {e}")
-            req_count = HISTORY_RATE_LIMITER.incr(clean_phone)
+            req_count = HISTORY_RATE_LIMITER.incr(principal_key)
             if req_count > 30:
                 rate_limited = True
     else:
-        if HISTORY_RATE_LIMITER.incr(clean_phone) > 30:
+        if HISTORY_RATE_LIMITER.incr(principal_key) > 30:
             rate_limited = True
 
     if rate_limited:
         raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu tra cứu lịch sử. Vui lòng thử lại sau!")
 
-    phone = clean_phone
+    phone = normalize_vn_phone(clean_phone) or clean_phone
     results = []
     if os.path.exists(DEV_STORAGE_FILE):
         try:
             with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                 dev_records = json.load(f)
             for r in dev_records:
-                if r.get("driver_phone") == phone:
+                if normalize_vn_phone(r.get("driver_phone")) == phone:
                     results.append({
                         "submission_id": r.get("submission_id"),
                         "mode": "DEV_TEST",
@@ -216,10 +223,10 @@ async def get_survey_history(
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        """
+                        f"""
                         SELECT submission_id, status, rejection_reason, created_at
-                        FROM survey_submissions
-                        WHERE driver_phone = %s
+                        FROM survey_submissions AS s
+                        WHERE {phone_normalization_sql("s.driver_phone")} = %s
                         ORDER BY created_at DESC
                         LIMIT 20;
                         """,
@@ -1063,6 +1070,29 @@ INTERRUPTED_CHECK_REASON = (
 )
 
 
+async def _replay_committed_attempt(pending: dict) -> Optional[Dict[str, Any]]:
+    """Read back a committed attempt on a fresh connection after an uncertain commit."""
+    db_pool = pending.get("db_pool")
+    key = pending.get("attempt_key")
+    if not db_pool or not key:
+        return None
+    try:
+        async with db_pool.connection() as conn:
+            state, response = await reserve(
+                conn,
+                pending.get("attempt_scope"),
+                key,
+                pending.get("attempt_fingerprint"),
+            )
+            await conn.rollback()
+    except Exception as exc:
+        logger.warning("[SUBMIT] uncertain-commit lookup failed: %s", type(exc).__name__)
+        return None
+    if state == "replay" and isinstance(response, dict):
+        return response
+    return None
+
+
 async def _persist_interrupted_submission(request: Request) -> None:
     """Writes the one-shot interruption row when checks/verdict/persist died."""
     pending = getattr(getattr(request, "state", None), "pending_submission", None)
@@ -1074,12 +1104,33 @@ async def _persist_interrupted_submission(request: Request) -> None:
     submission_id = pending.get("submission_id")
     try:
         async with pending["db_pool"].connection() as conn:
+            attempt_key = pending.get("attempt_key")
+            if attempt_key:
+                state, replay = await reserve(
+                    conn,
+                    pending.get("attempt_scope"),
+                    attempt_key,
+                    pending.get("attempt_fingerprint"),
+                )
+                if state == "replay" and replay is not None:
+                    pending["final_written"] = True
+                    pending["recovery_response"] = replay
+                    return
+                if state != "new":
+                    return
+            interruption_response = dict(pending.get("response_snapshot") or {})
+            interruption_response.update({
+                "status": "MANUAL_REVIEW",
+                "submission_id": submission_id,
+                "reason": INTERRUPTED_CHECK_REASON,
+            })
             await conn.execute(
                 """
                 INSERT INTO survey_submissions (
                     submission_id, form_id, ctv_code, driver_phone, driver_name,
-                    receipt_serial_no, status, rejection_reason, form_data
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'MANUAL_REVIEW', %s, %s)
+                    receipt_serial_no, status, rejection_reason, form_data, created_at,
+                    media_manifest, media_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'MANUAL_REVIEW', %s, %s, %s, %s, 1)
                 ON CONFLICT (submission_id) DO NOTHING;
                 """,
                 (
@@ -1094,8 +1145,21 @@ async def _persist_interrupted_submission(request: Request) -> None:
                         "status": "INTERRUPTED",
                         "interrupted_at": datetime.now(timezone.utc).isoformat(),
                     }),
+                    pending.get("received_at") or datetime.now(timezone.utc),
+                    json.dumps(pending.get("media_manifest") or []),
                 ),
             )
+            await conn.execute(
+                "INSERT INTO outbox_events (event_type, flow_target, aggregate_id, payload, status) "
+                "VALUES ('survey.interrupted', 'ALL', %s, %s::jsonb, 'PENDING');",
+                (submission_id, json.dumps({"submission_id": submission_id, "status": "MANUAL_REVIEW"})),
+            )
+            if attempt_key:
+                await commit_response(
+                    conn, pending.get("attempt_scope"), attempt_key,
+                    pending.get("attempt_fingerprint"), submission_id, interruption_response,
+                )
+            await conn.commit()
         pending["final_written"] = True
         logger.warning(f"[SUBMIT] Persisted interruption row for #{submission_id}")
     except Exception as e:
@@ -1121,39 +1185,109 @@ def _submission_crash_guard(endpoint):
                 await asyncio.shield(_persist_interrupted_submission(request))
             raise
         except Exception:
+            pending = getattr(getattr(request, "state", None), "pending_submission", None) if request is not None else None
             if request is not None:
                 await asyncio.shield(_persist_interrupted_submission(request))
+            if pending and isinstance(pending.get("recovery_response"), dict):
+                return JSONResponse(status_code=200, content=pending["recovery_response"])
             raise
 
     return _wrapped
 
 
-def _store_submission_photos(sub_photo_dir: str, raw_bytes_list: List[bytes]) -> None:
-    """
-    Single write boundary for the raw photo store.
+def _store_submission_photos(
+    sub_photo_dir: str,
+    raw_bytes_list: List[bytes],
+    upload_items: Optional[List[dict]] = None,
+) -> List[dict]:
+    """Durably write every received slot once, preserving ingestion identity.
 
-    Every slot is re-encoded to WebP (unless it already is WebP, which is copied
-    untouched), so filename, bytes and MIME always agree no matter which client,
-    script or test posted the upload. Undecodable payloads are kept as .bin for
-    forensics instead of being mislabeled as images.
+    A required write failure aborts the submission before any database success.
+    Undecodable payloads are retained as .bin evidence, not acknowledged as
+    images. The manifest is built from the ingestion descriptors, not from a
+    sorted directory listing, so question/slot identity is stable.
     """
     try:
         os.makedirs(sub_photo_dir, exist_ok=True)
     except OSError as e:
         logger.error(f"Cannot create photo dir {sub_photo_dir}: {e}")
-        return
-    for i_idx, r_b in enumerate(raw_bytes_list):
-        target = os.path.join(sub_photo_dir, f"slot_{i_idx}.webp")
+        raise
+    files = []
+    for index, raw in enumerate(raw_bytes_list):
+        item = upload_items[index] if upload_items and index < len(upload_items) else {}
+        flat_index = int(item.get("flat_index", index))
+        target_base = os.path.join(sub_photo_dir, f"slot_{flat_index}")
         try:
-            webp_bytes = normalize_image_to_webp(r_b)
+            webp_bytes = normalize_image_to_webp(raw)
             if webp_bytes is None:
-                target = os.path.join(sub_photo_dir, f"slot_{i_idx}.bin")
-                webp_bytes = r_b
-                logger.warning(f"Undecodable slot {i_idx} upload; stored raw bytes at {target}")
+                target = target_base + ".bin"
+                payload = raw
+                logger.warning(f"Undecodable slot {flat_index} upload; stored raw bytes at {target}")
+            else:
+                target = target_base + ".webp"
+                payload = webp_bytes
             with open(target, "wb") as fp:
-                fp.write(webp_bytes)
+                fp.write(payload)
+        except OSError as e:
+            logger.error(f"Required photo write failed for slot {flat_index}: {e}")
+            raise
         except Exception as e:
-            logger.warning(f"Failed to store slot {i_idx} photo: {e}")
+            logger.error(f"Required photo normalization failed for slot {flat_index}: {e}")
+            raise
+        files.append({
+            "name": os.path.basename(target),
+            "question_id": item.get("question_id"),
+            "slot_index": item.get("slot_index", index),
+            "flat_index": flat_index,
+        })
+    if not upload_items:
+        # Compatibility for direct callers/tests that provide only bytes.
+        files = []
+        for name in sorted(os.listdir(sub_photo_dir)) if os.path.isdir(sub_photo_dir) else []:
+            if os.path.isfile(os.path.join(sub_photo_dir, name)):
+                files.append({"name": name})
+    return build_manifest(os.path.basename(sub_photo_dir), files, base_dir=sub_photo_dir)
+
+
+async def _production_writer_ready(db_pool: Any) -> bool:
+    """Production writes fail closed when PostgreSQL is unavailable."""
+    if settings.ENVIRONMENT != "production":
+        return True
+    if db_pool is None:
+        return False
+    try:
+        async with db_pool.connection() as conn:
+            return await writer_schema_ready(conn)
+    except Exception:
+        return False
+
+
+def _authorize_test_flags(schema: Any, is_test_mode: bool, bypass_img_check: bool) -> None:
+    """Server-side authority for client test/bypass flags.
+
+    Non-production environments may use labelled DEV/test storage. Production
+    only permits these flags when the server-side form schema itself is a test
+    form; a client flag never authorizes a normal production form.
+    """
+    wants_test = bool(is_test_mode)
+    wants_bypass = bool(bypass_img_check)
+    if not wants_test and not wants_bypass:
+        return
+    if wants_bypass and not wants_test:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bypass_img_check requires an authorized test mode",
+        )
+    server_test_form = bool(
+        schema
+        and getattr(schema, "settings", None)
+        and getattr(schema.settings, "is_test_mode", False)
+    )
+    if settings.ENVIRONMENT == "production" and not server_test_form:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="test/bypass flags are not authorized for this production form",
+        )
 
 
 @router.post("/api/v1/survey/submit-webrtc")
@@ -1180,7 +1314,19 @@ async def submit_webrtc_survey(
     """Ingests live WebRTC canvas captures and performs real-time blur and vision audit."""
     refresh_form_registry_from_disk()
     db_pool = get_db_pool()
+    if settings.ENVIRONMENT == "production" and not await _production_writer_ready(db_pool):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Cơ sở dữ liệu chưa sẵn sàng; vui lòng thử lại sau."},
+        )
     redis_client = get_redis_client()
+    requested_form_id = (form_id or "").strip()
+    active_form_id = requested_form_id or "income_survey"
+    schema = FORM_REGISTRY.get(requested_form_id) if requested_form_id else None
+    # Authorization must precede every cached return. A cache hit is not a
+    # bypass for a production test/bypass flag.
+    _authorize_test_flags(schema, bool(is_test_mode), bool(bypass_img_check))
+    received_at = datetime.now(timezone.utc)
     clean_phone = driver_phone.strip() if driver_phone and driver_phone.strip() else None
     driver_phone = clean_phone
     driver_phone_hash = hash_phone(clean_phone) if clean_phone else None
@@ -1189,7 +1335,7 @@ async def submit_webrtc_survey(
 
     submission_id = f"{'DEV' if is_test_mode else 'VN'}-{secrets.token_hex(8).upper()}"
     # 0. Idempotency Check: return cached response if key was already submitted
-    if idempotency_key:
+    if idempotency_key and not (db_pool and not is_test_mode):
         idemp_cache_key = f"idemp:{clean_phone or 'anon'}:{idempotency_key}"
         cached_payload = None
         redis_client = get_redis_client()
@@ -1202,8 +1348,18 @@ async def submit_webrtc_survey(
             cached_payload = LOCAL_IDEMP_CACHE[idemp_cache_key]
 
         if cached_payload:
+            cached_data = json.loads(cached_payload)
+            cached_mode = str(cached_data.get("mode") or "")
+            current_mode = "TEST_DEV_MODE" if is_test_mode else "PROD_MODE"
+            if cached_mode != current_mode:
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={
+                        "detail": "Cached submission mode does not match the authorized request mode.",
+                    },
+                )
             logger.info(f"[IDEMPOTENCY HIT] Returning cached survey for key: {idemp_cache_key}")
-            return JSONResponse(status_code=200, content=json.loads(cached_payload))
+            return JSONResponse(status_code=200, content=cached_data)
 
     # Extract all submitted form parameters and support multiple image uploads
     form_data = await request.form()
@@ -1217,11 +1373,8 @@ async def submit_webrtc_survey(
         or request.query_params.get("collaborator_id")
         or request.query_params.get("ctv")
     )
-    requested_form_id = (form_id or "").strip()
-    active_form_id = requested_form_id or "income_survey"
     # Only validate against the schema the client actually submitted. A missing or
     # unknown form_id must not silently validate against the default form.
-    schema = FORM_REGISTRY.get(requested_form_id) if requested_form_id else None
     if requested_form_id and schema is None:
         logger.warning(f"[SUBMIT] form_id '{requested_form_id}' is not registered; schema validation skipped.")
     explicit_question_id = (question_id or "").strip() or None
@@ -1255,12 +1408,27 @@ async def submit_webrtc_survey(
     }
     if not driver_phone:
         driver_phone = _infer_driver_phone(schema, answers)
-    if not answers.get("driver_phone"):
+    if driver_phone:
+        canonical_phone = normalize_vn_phone(driver_phone)
+        if canonical_phone:
+            driver_phone = canonical_phone
+            clean_phone = canonical_phone
+            driver_phone_hash = hash_phone(canonical_phone)
+            driver_tag = generate_driver_tag(canonical_phone)
+    if driver_phone:
         answers["driver_phone"] = driver_phone
     if "driver_name" not in answers and driver_name:
         answers["driver_name"] = driver_name
-    if "driver_signature" not in answers and signature_png:
+    if signature_png and answers.get("driver_signature") and str(signature_png) != str(answers["driver_signature"]):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "Conflicting signature aliases in one submission."},
+        )
+    if signature_png:
+        # One effective signature wins consistently for validation, persistence
+        # and fingerprinting; a conflicting alias cannot select different data.
         answers["driver_signature"] = signature_png
+    effective_signature = answers.get("driver_signature") or signature_png
     is_bypassed = bool(is_test_mode and str(bypass_img_check).lower() in ("true", "1", "t", "yes"))
     camera_questions = [
         q for q in (getattr(schema, "questions", None) or [])
@@ -1311,9 +1479,98 @@ async def submit_webrtc_survey(
         raw_bytes_list.append(b)
         await img.seek(0)
 
+    clean_form_data = {
+        k: v for k, v in answers.items()
+        if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")
+    }
+    attempt_key = str(idempotency_key).strip() if idempotency_key else None
+    attempt_scope_value = attempt_scope(active_form_id, "TEST_DEV_MODE" if is_test_mode else "PROD_MODE", driver_phone)
+    phone_markers = ("phone", "điện thoại", "dien thoai", "sđt", "sdt", "zalo")
+    phone_question_id = next(
+        (
+            question.id for question in (getattr(schema, "questions", None) or [])
+            if any(
+                marker in f"{question.id} {getattr(question, 'title', '')}".lower()
+                for marker in phone_markers
+            )
+        ),
+        None,
+    )
+    camera_question_ids = {
+        question.id for question in camera_questions
+    }
+    transport_keys = {
+        "driver_phone", "signature_png", "driver_signature",
+        *camera_question_ids,
+    }
+    if phone_question_id:
+        transport_keys.add(phone_question_id)
+    for camera_id in camera_question_ids:
+        transport_keys.update(
+            key for key in clean_form_data
+            if key.startswith(f"{camera_id}_") and key[len(camera_id) + 1:].isdigit()
+        )
+    transport_keys.update(key for key in clean_form_data if key.startswith("survey_photo"))
+    fingerprint_answers = {
+        k: v for k, v in clean_form_data.items()
+        if k not in transport_keys
+    }
+    upload_slots = [
+        (item.get("question_id"), item.get("slot_index"))
+        for item in upload_items
+    ]
+    attempt_fingerprint = request_fingerprint(
+        active_form_id,
+        "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+        fingerprint_answers,
+        raw_bytes_list,
+        upload_slots,
+        signature=effective_signature,
+        gps={
+            "lat": answers.get("gps_latitude") or form_data.get("gps_latitude"),
+            "lng": answers.get("gps_longitude") or form_data.get("gps_longitude"),
+            "acc": answers.get("gps_accuracy") or answers.get("gps_accuracy_meters"),
+        },
+        ctv=str(collab_param or "").strip() or None,
+    )
+    # Canonical identity is available before evaluation. A committed matching
+    # attempt must replay without rerunning AI or touching media again.
+    if attempt_key and db_pool and not is_test_mode:
+        try:
+            async with db_pool.connection() as lookup_conn:
+                lookup_state, lookup_response = await reserve(
+                    lookup_conn, attempt_scope_value, attempt_key, attempt_fingerprint
+                )
+                await lookup_conn.rollback()
+        except Exception as lookup_err:
+            logger.warning("[SUBMIT] attempt lookup failed: %s", type(lookup_err).__name__)
+            if settings.ENVIRONMENT == "production":
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"detail": "Không thể xác minh lượt gửi; vui lòng thử lại sau."},
+                )
+        else:
+            if lookup_state == "replay":
+                if lookup_response is None:
+                    return JSONResponse(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        content={"detail": "Lượt gửi đã hoàn tất nhưng phản hồi chưa sẵn sàng."},
+                    )
+                return JSONResponse(status_code=200, content=lookup_response)
+            if lookup_state == "conflict":
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={"detail": "Idempotency key was used with a different request payload."},
+                )
+            if lookup_state == "reserved":
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"detail": "Submission attempt is still unresolved; retry after reconciliation."},
+                )
+
     # Save photos locally so admin Telegram bot can send them in /check response
     sub_photo_dir = os.path.join(SUBMISSION_PHOTOS_DIR, submission_id)
-    _store_submission_photos(sub_photo_dir, raw_bytes_list)
+    media_manifest = _store_submission_photos(sub_photo_dir, raw_bytes_list, upload_items)
 
     raw_bytes = raw_bytes_list[0] if raw_bytes_list else b""
 
@@ -1330,6 +1587,11 @@ async def submit_webrtc_survey(
         "license_plate": license_plate,
         "db_pool": db_pool,
         "is_test_mode": bool(is_test_mode),
+        "received_at": received_at,
+        "media_manifest": media_manifest,
+        "attempt_scope": attempt_scope_value,
+        "attempt_key": attempt_key,
+        "attempt_fingerprint": attempt_fingerprint,
         "final_written": False,
     }
 
@@ -1823,15 +2085,41 @@ async def submit_webrtc_survey(
     tot_gross_val = int(computed_tot_g if computed_tot_g > 0 else (ai_res.get("gross_revenue") or gross_revenue or 0))
     tot_net_val = int(computed_tot_n if computed_tot_n > 0 else (ai_res.get("net_income") or 0))
     tot_trips_val = int(computed_tot_t if computed_tot_t > 0 else (trip_count or 0))
-    clean_form_data = {
-        k: v for k, v in answers.items()
-        if not k.startswith("survey_photo") and not isinstance(v, (bytes, bytearray)) and not hasattr(v, "filename")
+    response_snapshot = {
+        "status": status_str,
+        "submission_id": submission_id,
+        "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
+        "reason": reason_str,
+        "driver_tag": driver_tag,
+        "driver_phone": driver_phone,
+        "detected_plate": ai_res.get("detected_plate") or license_plate,
+        "gross_revenue": ai_res.get("gross_revenue") or gross_revenue,
+        "net_income": ai_res.get("net_income"),
+        "trip_count": ai_res.get("total_trips") or trip_count,
+        "ocr_data": ai_res.get("ocr_data"),
     }
-
+    if ai_res.get("duplicate_detected"):
+        response_snapshot["duplicate_detected"] = ai_res.get("duplicate_detected")
+        response_snapshot["duplicate_type"] = ai_res.get("duplicate_type")
+    if blur_var is not None:
+        response_snapshot["blur_score"] = blur_var
+    request.state.pending_submission.update({
+        "attempt_scope": attempt_scope_value,
+        "attempt_key": attempt_key,
+        "attempt_fingerprint": attempt_fingerprint,
+        "response_snapshot": response_snapshot,
+        "media_manifest": media_manifest,
+    })
     action_checklist_init = init_action_checklist(is_approved, bool(collab_param))
+    if settings.ENVIRONMENT == "production" and not await _production_writer_ready(db_pool):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Cơ sở dữ liệu chưa sẵn sàng; khảo sát chưa được lưu."},
+        )
     if is_test_mode:
         dev_record = {
             "submission_id": submission_id,
+            "form_id": active_form_id,
             "mode": "TEST_DEV_MODE",
             "status": status_str,
             "action_status": action_checklist_init,
@@ -1867,13 +2155,15 @@ async def submit_webrtc_survey(
             "daily_trips": daily_trips_val,
             "ai_result": ai_res,
             "image_dhash_int": compute_dhash_int(pil_im) if pil_im is not None else None,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "submitted_at": received_at.isoformat(),
+            "media_manifest": media_manifest,
+            "media_version": 1,
             "net_income": tot_net_val,
             "trip_count": tot_trips_val,
             "license_plate": license_plate or ai_res.get("detected_plate"),
             "reason": reason_str,
             "ai_result": ai_res,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "submitted_at": received_at.isoformat(),
         }
         append_dev_submission(dev_record)
         logger.info(f"[DEV TEST MODE] Saved #{submission_id} to temporary dev storage: {DEV_STORAGE_FILE}")
@@ -1885,6 +2175,25 @@ async def submit_webrtc_survey(
                 if hasattr(cur_res, "__await__"):
                     cur_res = await cur_res
                 cur = await cur_res.__aenter__() if hasattr(cur_res, "__aenter__") else cur_res
+                if attempt_key:
+                    attempt_state, replay_response = await reserve(
+                        conn, attempt_scope_value, attempt_key, attempt_fingerprint
+                    )
+                    if attempt_state == "replay" and replay_response is not None:
+                        await conn.rollback()
+                        return JSONResponse(status_code=200, content=replay_response)
+                    if attempt_state == "conflict":
+                        await conn.rollback()
+                        return JSONResponse(
+                            status_code=status.HTTP_409_CONFLICT,
+                            content={"detail": "Idempotency key was used with a different request payload."},
+                        )
+                    if attempt_state == "reserved":
+                        await conn.rollback()
+                        return JSONResponse(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            content={"detail": "Submission attempt is still unresolved; retry after reconciliation."},
+                        )
                 vault_driver_id = None
                 try:
                     if not is_dissent and persisted_phone:
@@ -1937,7 +2246,7 @@ async def submit_webrtc_survey(
                         "income_week_4_gross", "income_week_4_net", "income_week_4_trips",
                         "income_week_5_gross", "income_week_5_net", "income_week_5_trips",
                         "total_gross_revenue", "total_net_income", "total_trips",
-                        "action_status",
+                        "action_status", "created_at", "media_manifest", "media_version",
                     ]
                     insert_vals_full = (
                         submission_id,
@@ -1975,34 +2284,43 @@ async def submit_webrtc_survey(
                         w5_g, w5_n, w5_t,
                         tot_gross_val, tot_net_val, tot_trips_val,
                         json.dumps(action_checklist_init),
+                        received_at,
+                        json.dumps(media_manifest),
+                        1,
                     )
                     placeholders = ", ".join(["%s"] * len(insert_cols))
                     update_cols = ", ".join(
-                        f"{col} = EXCLUDED.{col}" for col in insert_cols if col != "submission_id"
+                        f"{col} = EXCLUDED.{col}" for col in insert_cols
+                        if col not in ("submission_id", "created_at")
                     )
                     insert_query = (
                         f"INSERT INTO survey_submissions ({', '.join(insert_cols)}) "
                         f"VALUES ({placeholders}) "
                         f"ON CONFLICT (submission_id) DO UPDATE SET {update_cols};"
                     )
+                    await cur.execute("SAVEPOINT survey_extended_insert")
                     try:
                         await cur.execute(insert_query, insert_vals_full)
-                    except Exception as ins_err:
+                    except pg_errors.UndefinedColumn as ins_err:
+                        # A legacy writer may lack a non-required extended column.
+                        # Roll back only that failed statement; connection, constraint,
+                        # serialization and schema-critical failures still abort.
                         logger.warning(f"Extended column insert failed for #{submission_id}: {ins_err}")
-                        # Minimal fallback must stay FK-safe: omitting driver_id means a
-                        # stale/missing driver_identity_vault row can never abort the whole
-                        # persistence (that silently lost 5 submissions on 2026-11-16).
+                        await cur.execute("ROLLBACK TO SAVEPOINT survey_extended_insert")
                         await cur.execute(
                             """
                             INSERT INTO survey_submissions (
                                 submission_id, form_id, ctv_code, driver_phone, driver_name, receipt_serial_no,
-                                status, rejection_reason, form_data, raw_extracted_facts
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                status, rejection_reason, form_data, raw_extracted_facts, created_at,
+                                media_manifest, media_version
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (submission_id) DO UPDATE SET
                                 status = EXCLUDED.status,
                                 rejection_reason = EXCLUDED.rejection_reason,
                                 form_data = EXCLUDED.form_data,
-                                raw_extracted_facts = EXCLUDED.raw_extracted_facts;
+                                raw_extracted_facts = EXCLUDED.raw_extracted_facts,
+                                media_manifest = EXCLUDED.media_manifest,
+                                media_version = EXCLUDED.media_version;
                             """,
                             (
                                 submission_id,
@@ -2015,8 +2333,12 @@ async def submit_webrtc_survey(
                                 reason_str if not is_approved else None,
                                 json.dumps(clean_form_data),
                                 json.dumps(ai_res),
+                                received_at,
+                                json.dumps(media_manifest),
+                                1,
                             ),
                         )
+                    await cur.execute("RELEASE SAVEPOINT survey_extended_insert")
                     if license_plate and not is_dissent:
                         vtype_db = "BIKE" if "BIKE" in str(vehicle_type).upper() or "MÁY" in str(vehicle_type).upper() else "CAR"
                         await cur.execute(
@@ -2056,14 +2378,28 @@ async def submit_webrtc_survey(
                             json.dumps(outbox_payload),
                         ),
                     )
+                    if attempt_key:
+                        await commit_response(
+                            conn, attempt_scope_value, attempt_key, attempt_fingerprint,
+                            submission_id, response_snapshot,
+                        )
                     await conn.commit()
                 finally:
                     if hasattr(cur_res, "__aexit__"):
                         await cur_res.__aexit__(None, None, None)
         except Exception as e:
-            # Re-raise so the crash guard writes the interruption row instead of
-            # answering 200 with nothing persisted (silent-loss bug 2026-11-16).
+            # Production must not answer 200 when the writer failed. Development
+            # keeps the crash-guard interruption path for local diagnostics.
             logger.error(f"failed to persist survey to DB: {e}")
+            if settings.ENVIRONMENT == "production":
+                committed = await _replay_committed_attempt(request.state.pending_submission)
+                if committed is not None:
+                    request.state.pending_submission["final_written"] = True
+                    return JSONResponse(status_code=200, content=committed)
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"detail": "Không thể lưu khảo sát vào cơ sở dữ liệu; vui lòng thử lại sau."},
+                )
             raise
 
     request.state.pending_submission["final_written"] = True
@@ -2164,27 +2500,11 @@ async def submit_webrtc_survey(
                 form_id=active_form_id,
                 recipient_kind=notify_kind,
                 ctv_ref=collab_param,
+                submitted_at=received_at,
             )
     except Exception as party_err:
         logger.error(f"Failed to dispatch party Telegram notifications: {party_err}")
-    resp_data = {
-        "status": status_str,
-        "submission_id": submission_id,
-        "mode": "TEST_DEV_MODE" if is_test_mode else "PROD_MODE",
-        "reason": reason_str,
-        "driver_tag": driver_tag,
-        "driver_phone": driver_phone,
-        "detected_plate": ai_res.get("detected_plate") or license_plate,
-        "gross_revenue": ai_res.get("gross_revenue") or gross_revenue,
-        "net_income": ai_res.get("net_income"),
-        "trip_count": ai_res.get("total_trips") or trip_count,
-        "ocr_data": ai_res.get("ocr_data"),
-    }
-    if ai_res.get("duplicate_detected"):
-        resp_data["duplicate_detected"] = ai_res.get("duplicate_detected")
-        resp_data["duplicate_type"] = ai_res.get("duplicate_type")
-    if blur_var is not None:
-        resp_data["blur_score"] = blur_var
+    resp_data = dict(response_snapshot)
 
     # Cache response under idempotency key for 24 hours
     if idempotency_key:
@@ -2665,6 +2985,7 @@ async def dispatch_submission_telegram_notifications(
     form_id: Optional[str] = None,
     recipient_kind: str = "ctv",
     ctv_ref: Optional[str] = None,
+    submitted_at: Optional[Union[str, datetime]] = None,
 ):
     """
     Notifies the configured Telegram recipient for a submission: the owning CTV
@@ -2685,38 +3006,32 @@ async def dispatch_submission_telegram_notifications(
         return
 
     if recipient_kind == "driver":
-        # Question source: resolve the answer through the standalone phone link
-        # table, or send a numeric chat id / @username directly. Driver rows and
-        # the CTV directory are never consulted on this path.
-        answer_value = str(collaborator_id).strip()
-        normalized_phone = normalize_vn_phone(answer_value)
-        if answer_value.startswith("@"):
-            collab_tg_id = answer_value
-            target_source = "username"
-        elif answer_value.lstrip("-").isdigit() and normalized_phone is None:
-            collab_tg_id = answer_value
-            target_source = "numeric_chat_id"
-        elif normalized_phone:
-            mapped = await get_telegram_id_for_phone(normalized_phone)
-            if not mapped:
-                logger.warning(
-                    f"TG question source for #{submission_id}: phone {normalized_phone} "
-                    f"(answer={answer_value!r}) has no phone_telegram_links mapping; skipping "
-                    f"(no driver/CTV fallback)."
-                )
-                return
-            collab_tg_id = mapped
-            target_source = f"phone_telegram_links:{normalized_phone}"
-        else:
+        # A question's phone answer authorizes delivery only through a verified
+        # standalone binding. Never interpret its digits as a chat id or fall
+        # back to a driver/CTV record or an arbitrary @username.
+        normalized_phone = normalize_vn_phone(collaborator_id)
+        if not normalized_phone:
             logger.warning(
-                f"TG question source for #{submission_id}: answer {answer_value!r} is neither "
-                f"a mapped phone, numeric chat id, nor @username; skipping."
+                "TG question source for #%s: invalid phone answer; verdict delivery skipped.",
+                submission_id,
             )
             return
-        logger.info(
-            f"TG question-source recipient for #{submission_id}: answer={answer_value!r} "
-            f"-> chat_id={collab_tg_id!r} via {target_source}"
-        )
+        try:
+            original_time = submitted_at if isinstance(submitted_at, datetime) else datetime.fromisoformat(str(submitted_at or "").replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            original_time = None
+        if original_time is None or original_time.utcoffset() is None:
+            logger.warning("TG question source for #%s: original submission time unknown; phone verdict skipped.", submission_id)
+            return
+        collab_tg_id = await get_telegram_id_for_phone(normalized_phone, submitted_at=original_time)
+        if not collab_tg_id:
+            logger.warning(
+                "TG question source for #%s: no verified phone_telegram_links mapping; "
+                "valid for the original submission time; party verdict skipped (no driver/CTV fallback). Admin notification is independent.",
+                submission_id,
+            )
+            return
+        logger.info("TG question source for #%s resolved through a verified phone link.", submission_id)
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
         if not collab_tg_id:
@@ -2754,12 +3069,12 @@ async def dispatch_submission_telegram_notifications(
             )
     if sent:
         logger.info(
-            f"TG verdict sent for #{submission_id} to {recipient_kind} telegram_id={collab_tg_id} "
-            f"(recipient={collaborator_id}, status={status_str})."
+            "TG verdict sent for #%s to %s telegram_id=%s",
+            submission_id, recipient_kind, collab_tg_id,
         )
     else:
         logger.error(
-            f"TG verdict send FAILED for #{submission_id} to {recipient_kind} telegram_id={collab_tg_id} "
-            f"(recipient={collaborator_id}); user may not have started the driver bot."
+            "TG verdict send FAILED for #%s to %s telegram_id=%s; user may not have started the bot.",
+            submission_id, recipient_kind, collab_tg_id,
         )
 

@@ -16,6 +16,7 @@ The production sync uses ``internal_root_segments=()`` and
 """
 import csv
 import io
+import json
 import logging
 import os
 import re
@@ -23,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import httpx
 
+from services.submission_media import manifest_paths
 from services.google_drive_delivery import (
     IMAGE_FILE_EXTENSIONS,
     LOCAL_IMAGES_DIR,
@@ -93,16 +95,32 @@ def _local_images(
     form_id: str,
     submission_id: str,
     photo_store_dir: Optional[str] = None,
+    manifest=None,
+    refresh_failed: bool = False,
 ) -> List[Dict[str, str]]:
-    """Deliverables-mirror images, falling back to the raw submission photo store.
+    """Resolve current private revisions through the manifest adapter.
 
-    Rejected/manual-review submissions are not copied into the deliverables mirror
-    by ``save_submission_images_locally``; their captures live in
-    ``data/submission_photos/<submission_id>/``. The internal mirror reads that
-    store directly so every status can be delivered without duplicating files.
+    Deliverables-mirror images are preferred when present. Historical empty
+    manifests fall back to the private flat-file store; a non-empty manifest is
+    authoritative and never silently falls back to stale revisions.
     """
+    if isinstance(manifest, str):
+        try:
+            manifest = json.loads(manifest)
+        except Exception:
+            manifest = None
+    if refresh_failed:
+        return []
+    if isinstance(manifest, list) and manifest:
+        return [
+            {"path": path, "name": os.path.basename(path)}
+            for path in manifest_paths(submission_id, manifest)
+            if os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
+        ]
     images = _images_in(os.path.join(images_root, form_id, "submissions", submission_id))
-    if images or not photo_store_dir:
+    if images:
+        return images
+    if not photo_store_dir:
         return images
     return _images_in(os.path.join(photo_store_dir, submission_id))
 
@@ -140,7 +158,10 @@ def plan_submission_mirror(
                 "form_id": form_id,
                 "status": status,
                 "record": record,
-                "images": _local_images(images_root, form_id, submission_id, photo_store_dir),
+                "images": _local_images(
+                    images_root, form_id, submission_id, photo_store_dir,
+                    record.get("media_manifest"), bool(record.get("_media_refresh_failed")),
+                ),
                 "customer_path": ["form", "submissions", submission_id]
                 if (publish_customer and status in allowed_customer)
                 else None,

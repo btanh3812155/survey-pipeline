@@ -8,11 +8,15 @@ Telegram chat without requiring a driver record, CTV code, or role.
 
 import logging
 import re
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Tuple
 
 from core.state import get_db_pool
 
 logger = logging.getLogger("core.phone_links")
+VERIFIED_PHONE_LINK_SOURCES = ("verified_contact", "admin_verified")
+CONFLICTED_PHONE_LINK_SOURCE = "ownership_conflict"
+
 
 PHONE_LINK_TABLE_STATEMENTS = (
     """
@@ -51,6 +55,27 @@ def normalize_vn_phone(phone) -> Optional[str]:
     return digits
 
 
+
+
+def phone_normalization_sql(column: str = "driver_phone") -> str:
+    """SQL expression with the same accepted VN forms as normalize_vn_phone.
+
+    Keeps '+' while removing spaces/dashes, then canonicalizes only exact
+    country-code/bare forms. It deliberately does not use suffix matching.
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", column or ""):
+        raise ValueError("invalid SQL phone column")
+    raw = f"regexp_replace(COALESCE({column}, ''), '[^0-9+]', '', 'g')"
+    return (
+        "CASE "
+        f"WHEN {raw} LIKE '+84' || chr(37) THEN '0' || substr({raw}, 4) "
+        f"WHEN {raw} LIKE '0084' || chr(37) THEN '0' || substr({raw}, 5) "
+        f"WHEN {raw} LIKE '84' || chr(37) AND length({raw}) = 11 THEN '0' || substr({raw}, 3) "
+        f"WHEN {raw} ~ '^[0-9]{{9}}$' THEN '0' || {raw} "
+        f"ELSE {raw} END"
+    )
+
+
 async def ensure_phone_link_schema(db_pool=None) -> bool:
     """Create the standalone mapping table idempotently."""
     pool = db_pool or get_db_pool()
@@ -69,10 +94,12 @@ async def ensure_phone_link_schema(db_pool=None) -> bool:
     return True
 
 
-async def get_telegram_id_for_phone(phone, db_pool=None) -> Optional[int]:
-    """Look up a Telegram chat id by phone. No driver/CTV tables are consulted."""
+async def get_telegram_id_for_phone(phone, db_pool=None, *, submitted_at: Optional[datetime] = None) -> Optional[int]:
+    """Trusted directory lookup; delivery also supplies the original record's aware timestamp."""
     normalized = normalize_vn_phone(phone)
-    if not normalized:
+    if not normalized or (submitted_at is not None and (
+        not isinstance(submitted_at, datetime) or submitted_at.utcoffset() is None
+    )):
         return None
     pool = db_pool or get_db_pool()
     if not pool:
@@ -82,14 +109,60 @@ async def get_telegram_id_for_phone(phone, db_pool=None) -> Optional[int]:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT telegram_user_id FROM phone_telegram_links "
-                    "WHERE phone_normalized = %s LIMIT 1;",
-                    (normalized,),
+                    "WHERE phone_normalized = %s AND source IN (%s, %s) "
+                    "AND telegram_user_id > 0 "
+                    "AND (%s::timestamptz IS NULL OR updated_at <= %s) LIMIT 1;",
+                    (normalized, *VERIFIED_PHONE_LINK_SOURCES, submitted_at, submitted_at),
                 )
                 row = await cur.fetchone()
-                if row and row[0]:
+                if row and row[0] and int(row[0]) > 0:
                     return int(row[0])
     except Exception as e:
-        logger.debug(f"phone_telegram_links lookup failed for {normalized}: {e}")
+        logger.debug("phone_telegram_links lookup failed (%s)", type(e).__name__)
+    return None
+
+
+async def get_verified_phone_for_telegram_user(
+    telegram_user_id, db_pool=None
+) -> Optional[str]:
+    """Return the latest trusted phone; history must use the binding's time window."""
+    binding = await get_verified_phone_binding_for_telegram_user(telegram_user_id, db_pool=db_pool)
+    return binding[0] if binding else None
+
+
+async def get_verified_phone_binding_for_telegram_user(
+    telegram_user_id, db_pool=None
+) -> Optional[Tuple[str, datetime]]:
+    """Return (phone, verified_since), using the stable trusted-binding updated_at."""
+    # ponytail: legacy submissions have no immutable Telegram owner. History is
+    # limited to this binding's verification period; older access needs an
+    # explicit per-submission ownership contract, not phone-number possession.
+    try:
+        telegram_user_id = int(telegram_user_id)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if telegram_user_id <= 0:
+        return None
+    pool = db_pool or get_db_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT phone_normalized, updated_at FROM phone_telegram_links "
+                    "WHERE telegram_user_id = %s AND telegram_user_id > 0 "
+                    "AND source IN (%s, %s) "
+                    "ORDER BY updated_at DESC, phone_normalized ASC LIMIT 1;",
+                    (telegram_user_id, *VERIFIED_PHONE_LINK_SOURCES),
+                )
+                row = await cur.fetchone()
+                if row and len(row) >= 2:
+                    verified_since = row[1]
+                    if isinstance(verified_since, datetime) and verified_since.utcoffset() is not None:
+                        return str(row[0]), verified_since
+    except Exception as e:
+        logger.debug("phone_telegram_links reverse lookup failed (%s)", type(e).__name__)
     return None
 
 
@@ -99,9 +172,13 @@ async def upsert_phone_telegram_link(
     source: str = "unknown",
     db_pool=None,
 ) -> bool:
-    """Upsert a phone -> Telegram chat link. Independent of driver/CTV rows."""
+    """Create/refresh a binding, but never transfer a trusted phone to another account."""
     normalized = normalize_vn_phone(phone)
-    if not normalized or not telegram_user_id:
+    try:
+        telegram_user_id = int(telegram_user_id)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not normalized or telegram_user_id <= 0:
         return False
     pool = db_pool or get_db_pool()
     if not pool:
@@ -117,21 +194,58 @@ async def upsert_phone_telegram_link(
                     ON CONFLICT (phone_normalized) DO UPDATE SET
                         telegram_user_id = EXCLUDED.telegram_user_id,
                         source = EXCLUDED.source,
-                        updated_at = NOW();
+                        updated_at = CASE
+                            WHEN phone_telegram_links.source IN (%s, %s)
+                            THEN phone_telegram_links.updated_at
+                            ELSE NOW()
+                        END
+                    WHERE COALESCE(phone_telegram_links.source, '') <> %s
+                      AND (phone_telegram_links.source IS NULL
+                           OR phone_telegram_links.source NOT IN (%s, %s)
+                           OR (EXCLUDED.source IN (%s, %s)
+                               AND phone_telegram_links.telegram_user_id = EXCLUDED.telegram_user_id))
+                    RETURNING phone_normalized;
                     """,
-                    (normalized, int(telegram_user_id), str(source or "unknown")),
+                    (
+                        normalized,
+                        telegram_user_id,
+                        str(source or "unknown"),
+                        *VERIFIED_PHONE_LINK_SOURCES,
+                        CONFLICTED_PHONE_LINK_SOURCE,
+                        *VERIFIED_PHONE_LINK_SOURCES,
+                        *VERIFIED_PHONE_LINK_SOURCES,
+                    ),
                 )
+                row = await cur.fetchone()
+                if not row and source in VERIFIED_PHONE_LINK_SOURCES:
+                    # Only a proved conflicting claim pauses a disputed number.
+                    # Unverified command/seed writes cannot suspend its owner.
+                    await cur.execute(
+                        "UPDATE phone_telegram_links SET source = %s "
+                        "WHERE phone_normalized = %s AND telegram_user_id <> %s "
+                        "AND source IN (%s, %s);",
+                        (CONFLICTED_PHONE_LINK_SOURCE, normalized, telegram_user_id, *VERIFIED_PHONE_LINK_SOURCES),
+                    )
             await conn.commit()
-        return True
+        if not row and source in VERIFIED_PHONE_LINK_SOURCES:
+            logger.warning(
+                "Verified phone ownership conflict refused; the disputed binding is paused. "
+                "Administrator revocation and re-verification are required; no owner was reassigned."
+            )
+        return bool(row)
     except Exception as e:
-        logger.warning(f"phone_telegram_links upsert failed for {normalized}: {e}")
+        logger.warning("phone_telegram_links upsert failed (%s)", type(e).__name__)
         return False
 
 
-async def delete_phone_telegram_link(phone, db_pool=None) -> bool:
-    """Remove one phone -> Telegram link."""
+async def revoke_phone_telegram_link(phone, expected_telegram_user_id, db_pool=None) -> bool:
+    """Privileged maintenance primitive; callers must authorize/audit the expected owner."""
     normalized = normalize_vn_phone(phone)
-    if not normalized:
+    try:
+        expected_telegram_user_id = int(expected_telegram_user_id)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not normalized or expected_telegram_user_id <= 0:
         return False
     pool = db_pool or get_db_pool()
     if not pool:
@@ -140,11 +254,13 @@ async def delete_phone_telegram_link(phone, db_pool=None) -> bool:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "DELETE FROM phone_telegram_links WHERE phone_normalized = %s;",
-                    (normalized,),
+                    "DELETE FROM phone_telegram_links WHERE phone_normalized = %s "
+                    "AND telegram_user_id = %s RETURNING phone_normalized;",
+                    (normalized, expected_telegram_user_id),
                 )
+                revoked = await cur.fetchone()
             await conn.commit()
-        return True
+        return bool(revoked)
     except Exception as e:
-        logger.warning(f"phone_telegram_links delete failed for {normalized}: {e}")
+        logger.warning("phone_telegram_links revocation failed (%s)", type(e).__name__)
         return False

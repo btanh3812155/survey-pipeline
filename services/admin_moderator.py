@@ -5,6 +5,7 @@ import json
 import re
 import html
 import logging
+from services.submission_media import manifest_paths
 import httpx
 from typing import Optional, List, Dict, Any, Union
 from config import settings
@@ -100,28 +101,14 @@ async def forward_flagged_survey_to_admin_group(
         logger.error(f"failed to escalate to admin group: {e}")
 
 
-def _collect_submission_photos(submission_id: str) -> list:
-    """All stored images for a submission, across every camera question, in slot order."""
-    candidates = [
-        os.path.join(os.getcwd(), "data", "submission_photos", submission_id),
-        os.path.join(os.getcwd(), "data", "google_drive_deliverables", "Images", submission_id),
-        os.path.join(os.getcwd(), "data", "uploads", "surveys", submission_id),
-    ]
-    exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
-    for c_dir in candidates:
-        if not os.path.isdir(c_dir):
-            continue
-        found = []
-        for root, _dirs, files in os.walk(c_dir):
-            for fn in files:
-                if fn.lower().endswith(exts):
-                    found.append(os.path.join(root, fn))
-        if found:
-            def _sort_key(path):
-                m = re.search(r"(\d+)", os.path.basename(path))
-                return (int(m.group(1)) if m else 10**9, path)
-            return sorted(found, key=_sort_key)
-    return []
+def _collect_submission_photos(submission_id: str, manifest=None) -> list:
+    """Use the private manifest adapter for both current and historical rows."""
+    if isinstance(manifest, str):
+        try:
+            manifest = json.loads(manifest)
+        except Exception:
+            manifest = None
+    return manifest_paths(submission_id, manifest if isinstance(manifest, list) else None)
 
 
 _WEEK_KEYS = ("week_1", "week_2", "week_3", "week_4", "week_5")
@@ -202,13 +189,14 @@ def _dev_record_dossier(submission_id: str, r: dict) -> dict:
         "collaborator_id": r.get("collaborator_id") or r.get("ctv_code") or r.get("form_data", {}).get("ctv_code"),
         "ctv_code": r.get("ctv_code") or r.get("collaborator_id") or r.get("form_data", {}).get("ctv_code"),
         "created_at": r.get("submitted_at", "Vừa xong"),
+        "submitted_at": r.get("submitted_at"),
         "vehicle_type": r.get("vehicle_type", "Chưa xác định"),
         "car_model": r.get("car_model", ""),
         "gross_income": gross,
         "net_income": net,
         "trips_count": trips,
         "weekly_incomes": weekly_incomes,
-        "photo_paths": _collect_submission_photos(submission_id),
+        "photo_paths": _collect_submission_photos(submission_id, r.get("media_manifest")),
         "raw_data": r,
         "form_id": r.get("form_id"),
     }
@@ -279,7 +267,7 @@ async def query_submission_dossier(
                        total_gross_revenue, total_net_income, total_trips,
                        vehicle_type, car_model, form_data,
                        income_week_1_gross, income_week_2_gross, income_week_3_gross, income_week_4_gross, income_week_5_gross,
-                       collaborator_id, ctv_code, form_id
+                       collaborator_id, ctv_code, form_id, media_manifest
                 FROM survey_submissions
                 WHERE UPPER(submission_id) = UPPER(%s);
             """,
@@ -323,7 +311,7 @@ async def query_submission_dossier(
                 v_type = form_data.get("vehicle_type") or v_type
 
             # Locate every stored photo (all camera questions, including nested dirs)
-            photo_paths = _collect_submission_photos(submission_id)
+            photo_paths = _collect_submission_photos(submission_id, sub[31] if len(sub) > 31 else None)
 
             db_weekly = {
                 f"week_{i}": {"gross_revenue": _as_int(sub[22 + i])}
@@ -346,6 +334,7 @@ async def query_submission_dossier(
                 "signature_url": sub[12],
                 "image_url": sub[13],
                 "created_at": sub[14].strftime("%d/%m/%Y %H:%M:%S") if sub[14] else "N/A",
+                "submitted_at": sub[14].isoformat() if sub[14] else None,
                 "vehicle_type": v_type,
                 "car_model": c_model,
                 "gross_income": tot_gross,

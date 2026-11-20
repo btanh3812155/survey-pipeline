@@ -4,13 +4,21 @@ import base64
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from main import app, MEDIA_STORAGE_DIR
+from config import settings
+from main import app
+from routers import admin_media
 
 client = TestClient(app)
-auth_header = {"Authorization": "Basic " + base64.b64encode(b"admin:12345678").decode("ascii")}
+@pytest.fixture
+def auth_header(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "media-test-admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "media-test-password")
+    monkeypatch.setattr(admin_media, "MEDIA_STORAGE_DIR", str(tmp_path))
+    credentials = base64.b64encode(b"media-test-admin:media-test-password").decode("ascii")
+    return {"Authorization": f"Basic {credentials}"}
 
 
-def test_media_manager_html_and_dir_tree():
+def test_media_manager_html_and_dir_tree(auth_header):
     resp = client.get("/admin/media", headers=auth_header)
     assert resp.status_code == 200
     assert "Quản Lý Media" in resp.text
@@ -26,7 +34,7 @@ def test_media_manager_html_and_dir_tree():
     assert "🗑" not in resp.text
 
 
-def test_media_manager_api_crud_lifecycle():
+def test_media_manager_api_crud_lifecycle(auth_header):
     # 1. Create a dummy image buffer
     img_buf = io.BytesIO()
     Image.new("RGB", (300, 200), (200, 100, 50)).save(img_buf, format="JPEG")

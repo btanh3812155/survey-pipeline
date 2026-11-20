@@ -1288,6 +1288,7 @@ async def test_decision_recipient_follows_tg_response_source():
             "submission_id": sub_id, "form_id": "SIM_TG_SRC", "status": "APPROVED",
             "collaborator_id": "CTV01", "driver_phone": "0912345678", "driver_name": "A",
             "raw_data": {"form_data": {"phone_q": "0912345678"}},
+            "submitted_at": "2021-01-01T00:00:00+00:00", "moderated_at": "2099-01-01T00:00:00+00:00",
         }
 
     runner = TelegramPollingRunner(bot_token="mock")
@@ -1302,6 +1303,7 @@ async def test_decision_recipient_follows_tg_response_source():
             await runner._notify_parties_of_decision("S2", "APPROVED")
             assert calls[-1]["collaborator_id"] == "0912345678"
             assert calls[-1]["recipient_kind"] == "driver"
+            assert calls[-1]["submitted_at"] == "2021-01-01T00:00:00+00:00"
 
             before = len(calls)
             FORM_REGISTRY["SIM_TG_SRC"] = make_schema("none")

@@ -624,3 +624,71 @@ def test_extract_income_prefers_populated_db_columns():
     assert col("Doanh Thu Tuần 1 (28/09 - 04/10)") == 9999
     assert col("Thực Nhận Tuần 1") == 8888
     assert col("Số Chuyến Tuần 1") == 77
+
+
+def test_customer_export_blocks_failed_and_evidence_only_records(monkeypatch, tmp_path):
+    import asyncio
+    import hashlib
+    import io
+    from pathlib import Path
+    from PIL import Image
+
+    gd, write_dev, _add_photo = _patch_sync_env(monkeypatch, tmp_path)
+
+    def webp(path, color):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), color).save(buf, format="WEBP")
+        payload = buf.getvalue()
+        path.write_bytes(payload)
+        return payload
+
+    from services import submission_media
+    private = Path(gd.SUBMISSION_PHOTOS_DIR)
+    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(private))
+    valid = webp(private / "VN-VALID" / "slot_0.webp", (1, 2, 3))
+    legacy_jpg = webp(private / "VN-LEGACY-REPAIR" / "slot_0.jpg", (4, 5, 6))
+    legacy_rev = webp(private / "VN-LEGACY-REPAIR" / "slot_0_v2.webp", (7, 8, 9))
+    (private / "VN-EVIDENCE").mkdir(parents=True)
+    (private / "VN-EVIDENCE" / "slot_0.bin").write_bytes(b"binary-evidence")
+    records = [
+        {"submission_id": "VN-VALID", "form_id": "form_alpha", "status": "APPROVED",
+         "media_manifest": [{"slot_index": 0, "flat_index": 0, "relative_path": "slot_0.webp",
+                             "sha256": hashlib.sha256(valid).hexdigest(), "mime": "image/webp"}]},
+        {"submission_id": "VN-FAILED", "form_id": "form_alpha", "status": "APPROVED",
+         "media_manifest": [{"slot_index": 0, "flat_index": 0, "relative_path": "missing.webp",
+                             "sha256": "0" * 64, "mime": "image/webp"}]},
+        {"submission_id": "VN-EVIDENCE", "form_id": "form_alpha", "status": "APPROVED",
+         "media_manifest": [{"slot_index": 0, "flat_index": 0, "relative_path": "slot_0.bin",
+                             "sha256": hashlib.sha256(b"binary-evidence").hexdigest(),
+                             "mime": "application/octet-stream"}]},
+        {"submission_id": "VN-LEGACY-REPAIR", "form_id": "form_alpha", "status": "APPROVED",
+         "media_manifest": [
+             {"question_id": None, "slot_index": 0, "flat_index": 0, "relative_path": "slot_0.jpg",
+              "sha256": hashlib.sha256(legacy_jpg).hexdigest(), "mime": "image/jpeg"},
+             {"question_id": None, "slot_index": 0, "flat_index": 1, "relative_path": "slot_0_v2.webp",
+              "sha256": hashlib.sha256(legacy_rev).hexdigest(), "mime": "image/webp"},
+         ]},
+    ]
+    write_dev(records)
+    target_root = Path(gd.LOCAL_IMAGES_DIR) / "form_alpha" / "submissions"
+    for sid in ("VN-VALID", "VN-FAILED", "VN-EVIDENCE", "VN-LEGACY-REPAIR"):
+        target = target_root / sid
+        target.mkdir(parents=True)
+        (target / "slot_0.webp").write_bytes(b"stale-" + sid.encode())
+
+    assert asyncio.run(gd.sync_all_approved_to_drive()) is True
+    client = _FakeDriveClient.instances[0]
+    form_folder_id = client.folders[("form_alpha", "root_folder")]
+    submissions_folder_id = client.folders[("submissions", form_folder_id)]
+
+    def uploaded(sid):
+        folder = client.folders.get((sid, submissions_folder_id))
+        return sorted(name for parent, name, _data, _mime in client.uploads if parent == folder)
+
+    assert uploaded("VN-VALID") == ["slot_0.webp"]
+    assert uploaded("VN-FAILED") == []
+    assert uploaded("VN-EVIDENCE") == []
+    assert uploaded("VN-LEGACY-REPAIR") == ["slot_0.webp", "slot_0_v2.webp"]
+    assert (target_root / "VN-FAILED" / "slot_0.webp").read_bytes() == b"stale-VN-FAILED"
+    assert (target_root / "VN-EVIDENCE" / "slot_0.webp").read_bytes() == b"stale-VN-EVIDENCE"

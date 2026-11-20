@@ -1,11 +1,14 @@
 import pytest
 from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from main import (
     app,
     dispatch_submission_telegram_notifications,
     render_driver_submission_verdict_message,
 )
+
+SUBMITTED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
@@ -56,16 +59,26 @@ async def test_dispatch_notifications_unlinked_collaborator_graceful():
         assert mock_send.await_count == 0
 
 
-def test_submit_webrtc_schedules_party_notifications(monkeypatch):
+def test_submit_webrtc_schedules_party_notifications(monkeypatch, tmp_path):
     """Submitting a survey schedules dispatch_submission_telegram_notifications in background tasks."""
     monkeypatch.setenv("MOCK_AI", "1")
+    from config import settings
+    from routers import survey as survey_router
+
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100999")
+    monkeypatch.setattr(survey_router, "get_db_pool", lambda: None)
+    monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
+    monkeypatch.setattr(survey_router, "SUBMISSION_PHOTOS_DIR", str(tmp_path / "photos"))
+    monkeypatch.setattr(survey_router, "append_dev_submission", lambda _record: None)
     client = TestClient(app)
 
     mock_dispatch = AsyncMock()
     mock_admin_notify = AsyncMock()
 
     with patch("main.dispatch_submission_telegram_notifications", mock_dispatch), \
-         patch("main.send_telegram_notification", mock_admin_notify):
+         patch("routers.survey.send_telegram_notification", mock_admin_notify), \
+         patch("routers.survey.dispatch_action_checklist", AsyncMock()):
         resp = client.post(
             "/api/v1/survey/submit-webrtc",
             data={
@@ -80,6 +93,7 @@ def test_submit_webrtc_schedules_party_notifications(monkeypatch):
         )
         assert resp.status_code == 200
         mock_dispatch.assert_awaited_once()
+        mock_admin_notify.assert_awaited_once()
         kwargs = mock_dispatch.await_args.kwargs
         assert kwargs["driver_phone"] == "0988777888"
         assert kwargs["collaborator_id"] == "ctv_01"
@@ -174,7 +188,7 @@ async def test_dispatch_retries_telegram_429_with_retry_after(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_question_source_resolves_phone_mapping_to_chat_id(monkeypatch):
-    """Question answer -> standalone phone mapping -> chat id; no driver/CTV lookup."""
+    """Question phone -> verified standalone mapping -> chat, without driver/CTV lookup."""
     from config import settings
     from routers import survey as survey_router
 
@@ -214,10 +228,11 @@ async def test_question_source_resolves_phone_mapping_to_chat_id(monkeypatch):
             reason_str="Mapped phone path test",
             form_id="TB_GSM_2026_Nov_Test",
             recipient_kind="driver",
+            submitted_at=SUBMITTED_AT,
             ctv_ref="TUAN_LM_HCM_001",
         )
 
-    mapping.assert_awaited_once_with("0932090967")
+    mapping.assert_awaited_once_with("0932090967", submitted_at=SUBMITTED_AT)
     phone_lookup.assert_not_awaited()
     collab_lookup.assert_not_awaited()
     assert len(client.calls) == 1
@@ -265,19 +280,20 @@ async def test_question_source_without_mapping_skips_send(monkeypatch, caplog):
                 reason_str="Unmapped phone",
                 form_id="TB_GSM_2026_Nov_Test",
                 recipient_kind="driver",
+                submitted_at=SUBMITTED_AT,
             )
 
-    mapping.assert_awaited_once_with("0932090967")
+    mapping.assert_awaited_once_with("0932090967", submitted_at=SUBMITTED_AT)
     phone_lookup.assert_not_awaited()
     collab_lookup.assert_not_awaited()
     assert client.calls == []
-    assert "no phone_telegram_links mapping" in caplog.text
-    assert "0932090967" in caplog.text
+    assert "no verified phone_telegram_links mapping" in caplog.text
+    assert "0932090967" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_question_source_direct_numeric_chat_id_and_username(monkeypatch):
-    """Numeric chat ids and @usernames bypass the phone mapping and send directly."""
+async def test_question_source_rejects_raw_chat_id_and_username(monkeypatch):
+    """Question-source phone delivery never accepts a direct recipient bypass."""
     from config import settings
     from routers import survey as survey_router
 
@@ -312,10 +328,11 @@ async def test_question_source_direct_numeric_chat_id_and_username(monkeypatch):
                 reason_str="Direct chat id",
                 form_id="TB_GSM_2026_Nov_Test",
                 recipient_kind="driver",
+                submitted_at=SUBMITTED_AT,
             )
 
     mapping.assert_not_awaited()
-    assert [payload["chat_id"] for _, payload in client.calls] == ["9241303232", "@JerryTest"]
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -350,8 +367,84 @@ async def test_question_source_non_phone_answer_skips_send(monkeypatch, caplog):
                 collaborator_id="not-a-phone",
                 form_id="TB_GSM_2026_Nov_Test",
                 recipient_kind="driver",
+                submitted_at=SUBMITTED_AT,
             )
 
     mapping.assert_not_awaited()
     assert client.calls == []
-    assert "neither" in caplog.text
+    assert "invalid phone answer" in caplog.text
+
+
+def test_unmapped_question_phone_still_notifies_admin(monkeypatch, tmp_path):
+    """A missing verified party link never suppresses the independent admin card."""
+    from config import settings
+    from routers import survey as survey_router
+    from services.form_engine import FormQuestion, FormSchema, FormSettings, QuestionType
+
+    schema = FormSchema(
+        form_id="h1_admin_independent",
+        title="H1 delivery boundary",
+        settings=FormSettings(
+            is_test_mode=True, decree13_required=False, ctv_ref_enabled=False,
+            tg_response_source="question", tg_response_question_id="driver_phone",
+        ),
+        questions=[FormQuestion(id="driver_phone", title="Phone", type=QuestionType.TEXT, required=True)],
+    )
+    monkeypatch.setitem(survey_router.FORM_REGISTRY, schema.form_id, schema)
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:boundary-test")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100999")
+    monkeypatch.setattr(survey_router, "refresh_form_registry_from_disk", lambda: None)
+    monkeypatch.setattr(survey_router, "get_db_pool", lambda: None)
+    monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
+    monkeypatch.setattr(survey_router, "SUBMISSION_PHOTOS_DIR", str(tmp_path / "photos"))
+    monkeypatch.setattr(survey_router, "append_dev_submission", lambda _record: None)
+    admin = AsyncMock()
+    direct = AsyncMock(return_value=True)
+    mapping = AsyncMock(return_value=None)
+    driver_lookup = AsyncMock(side_effect=AssertionError("driver records must not authorize phone delivery"))
+    ctv_lookup = AsyncMock(side_effect=AssertionError("CTV records must not authorize phone delivery"))
+    with patch.object(survey_router, "send_telegram_notification", admin), \
+         patch.object(survey_router, "dispatch_action_checklist", AsyncMock()), \
+         patch.object(survey_router, "get_telegram_id_for_phone", mapping), \
+         patch("main.send_telegram_direct_message", direct), \
+         patch("main.lookup_telegram_user_by_phone", driver_lookup), \
+         patch("main.lookup_telegram_user_for_collaborator", ctv_lookup):
+        response = TestClient(app).post(
+            "/api/v1/survey/submit-webrtc",
+            data={
+                "form_id": schema.form_id, "driver_phone": "0932090967",
+                "is_test_mode": "true", "bypass_img_check": "true",
+                "submitted_at": "2099-01-01T00:00:00+00:00",
+            },
+        )
+    assert response.status_code == 200, response.text
+    admin.assert_awaited_once()
+    assert admin.await_args.args[0] == "-100999"
+    mapping.assert_awaited_once()
+    assert mapping.await_args.args == ("0932090967",)
+    original_time = mapping.await_args.kwargs["submitted_at"]
+    assert isinstance(original_time, datetime) and original_time.utcoffset() is not None
+    assert original_time != datetime(2099, 1, 1, tzinfo=timezone.utc)
+    direct.assert_not_awaited()
+    driver_lookup.assert_not_awaited()
+    ctv_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("submitted_at", [None, "unknown", "2026-01-01T00:00:00"])
+async def test_question_verdict_requires_original_aware_submission_time(monkeypatch, submitted_at):
+    from config import settings
+    from routers import survey
+
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:offline-time-check")
+    mapping = AsyncMock(return_value=333)
+    sender = AsyncMock(return_value=True)
+    with patch.object(survey, "get_telegram_id_for_phone", mapping), \
+         patch("main.send_telegram_direct_message", sender):
+        await survey.dispatch_submission_telegram_notifications(
+            submission_id="DEV-TIME-UNKNOWN", status_str="APPROVED",
+            collaborator_id="0932090967", recipient_kind="driver", submitted_at=submitted_at,
+        )
+    mapping.assert_not_awaited()
+    sender.assert_not_awaited()

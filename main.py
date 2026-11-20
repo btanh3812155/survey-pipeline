@@ -88,16 +88,18 @@ logger = logging.getLogger("main_api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client, redis_client, db_pool
+    startup_pool = None
 
-    # 1. Initialize HTTP client pool
-    state.http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(10.0, connect=3.0),
-        limits=httpx.Limits(max_keepalive_connections=50, max_connections=200),
-    )
-    http_client = state.http_client
-
-    # 2. Initialize Redis async connection pool
     try:
+        # 1. Initialize HTTP client pool
+        state.http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=3.0),
+            limits=httpx.Limits(max_keepalive_connections=50, max_connections=200),
+        )
+        http_client = state.http_client
+
+        # 2. Initialize Redis async connection pool. Redis is an optional
+        # accelerator; PostgreSQL is the required production dependency.
         state.redis_client = aioredis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
@@ -105,79 +107,118 @@ async def lifespan(app: FastAPI):
             socket_connect_timeout=2.0,
             max_connections=50,
         )
-        await state.redis_client.ping()
-        redis_client = state.redis_client
-        logger.info("[REDIS] Successfully connected to Redis pool.")
-    except Exception as e:
-        logger.warning(f"[REDIS] Redis unavailable: {e}. Falling back to in-memory cache.")
-        state.redis_client = None
-        redis_client = None
-
-    # 3. Initialize PostgreSQL async connection pool
-    try:
-        state.db_pool = AsyncConnectionPool(
-            conninfo=settings.DATABASE_URL,
-            min_size=2,
-            max_size=20,
-            timeout=10.0,
-            open=False,
-        )
-        await state.db_pool.open()
-        db_pool = state.db_pool
-        logger.info("[POSTGRES] Successfully connected to PostgreSQL pool.")
-    except Exception as e:
-        logger.warning(f"[POSTGRES] PostgreSQL unavailable: {e}. Falling back to dev storage.")
-        state.db_pool = None
-        db_pool = None
-
-    # 3b. CTV platform tables + directory cache (idempotent; static fallback on failure)
-    try:
-        from core.ctv import ensure_ctv_platform_schema
-        await ensure_ctv_platform_schema(state.db_pool)
-    except Exception as e:
-        logger.warning(f"[CTV] Platform schema/cache init failed: {e}")
-
-    # 3c. Standalone phone <-> Telegram mapping (no driver/CTV dependency)
-    try:
-        from core.phone_links import ensure_phone_link_schema
-        await ensure_phone_link_schema(state.db_pool)
-    except Exception as e:
-        logger.warning(f"[PHONE LINKS] Schema init failed: {e}")
-
-    # 4. Seed media directory
-    seed_media_storage()
-
-    # 4b. Load and validate file-defined image objects + check engines.
-    try:
-        from services.image_objects import load_registry
-        registry = load_registry(force=True)
-        logger.info(
-            "[IMAGE OBJECTS] loaded %d object type(s) and %d check engine(s)",
-            len(registry["objects"]),
-            len(registry["engines"]),
-        )
-    except Exception as e:
-        logger.error("[IMAGE OBJECTS] registry load failed: %s", e)
-
-    # 5. Register the CTV bot command menu (webhook mode never calls start_polling)
-    try:
-        from services.telegram_polling import configure_driver_bot_menu
-        await configure_driver_bot_menu()
-    except Exception as e:
-        logger.debug(f"Driver bot command menu setup failed: {e}")
-
-    yield
-
-    # Teardown resources
-    if state.db_pool:
-        await state.db_pool.close()
-    if state.redis_client:
         try:
-            await state.redis_client.aclose()
-        except Exception:
-            pass
-    if state.http_client:
-        await state.http_client.aclose()
+            await state.redis_client.ping()
+            redis_client = state.redis_client
+            logger.info("[REDIS] Successfully connected to Redis pool.")
+        except Exception as e:
+            logger.warning("[REDIS] Redis unavailable: %s. Falling back to in-memory cache.", e)
+            try:
+                await state.redis_client.aclose()
+            except Exception:
+                pass
+            state.redis_client = None
+            redis_client = None
+
+        # 3. Initialize PostgreSQL. Production fails closed; development/test
+        # retains the explicit labelled fallback for local workflows.
+        try:
+            startup_pool = AsyncConnectionPool(
+                conninfo=settings.DATABASE_URL,
+                min_size=2,
+                max_size=20,
+                timeout=10.0,
+                open=False,
+            )
+            await startup_pool.open()
+            async with startup_pool.connection() as conn:
+                await conn.execute("SELECT 1")
+            state.db_pool = startup_pool
+            db_pool = startup_pool
+            startup_pool = None
+            logger.info("[POSTGRES] Successfully connected to PostgreSQL pool.")
+        except Exception as e:
+            if startup_pool is not None:
+                try:
+                    await startup_pool.close()
+                except Exception:
+                    pass
+                startup_pool = None
+            state.db_pool = None
+            db_pool = None
+            if settings.ENVIRONMENT == "production":
+                logger.error("[POSTGRES] production startup failed; refusing to start without the writer database.")
+                raise RuntimeError("production PostgreSQL startup failed") from e
+            logger.warning("[POSTGRES] PostgreSQL unavailable: %s. Falling back to dev storage.", e)
+
+        # 3b. CTV platform tables + directory cache (idempotent; optional in dev)
+        try:
+            from core.ctv import ensure_ctv_platform_schema
+            await ensure_ctv_platform_schema(state.db_pool)
+        except Exception as e:
+            logger.warning(f"[CTV] Platform schema/cache init failed: {e}")
+
+        # 3c. Standalone phone <-> Telegram mapping (no driver/CTV dependency)
+        try:
+            from core.phone_links import ensure_phone_link_schema
+            await ensure_phone_link_schema(state.db_pool)
+        except Exception as e:
+            logger.warning(f"[PHONE LINKS] Schema init failed: {e}")
+
+        # 4. Seed media directory
+        seed_media_storage()
+
+        # 4b. Load and validate file-defined image objects + check engines.
+        try:
+            from services.image_objects import load_registry
+            registry = load_registry(force=True)
+            logger.info(
+                "[IMAGE OBJECTS] loaded %d object type(s) and %d check engine(s)",
+                len(registry["objects"]),
+                len(registry["engines"]),
+            )
+        except Exception as e:
+            logger.error("[IMAGE OBJECTS] registry load failed: %s", e)
+
+        # 5. Register the CTV bot command menu (webhook mode never calls start_polling)
+        try:
+            from services.telegram_polling import configure_driver_bot_menu
+            await configure_driver_bot_menu()
+        except Exception as e:
+            logger.debug(f"Driver bot command menu setup failed: {e}")
+
+        yield
+    finally:
+        # Cancellation during pool.open()/connection() bypasses `except Exception`;
+        # this local reference guarantees the unpublished pool is still closed.
+        if startup_pool is not None:
+            try:
+                await startup_pool.close()
+            except Exception as e:
+                logger.warning("[POSTGRES] unpublished pool cleanup failed: %s", e)
+            startup_pool = None
+        # Partial startup and normal shutdown share this cleanup path.
+        if state.db_pool:
+            try:
+                await state.db_pool.close()
+            except Exception as e:
+                logger.warning("[POSTGRES] pool cleanup failed: %s", e)
+            state.db_pool = None
+            db_pool = None
+        if state.redis_client:
+            try:
+                await state.redis_client.aclose()
+            except Exception:
+                pass
+            state.redis_client = None
+            redis_client = None
+        if state.http_client:
+            try:
+                await state.http_client.aclose()
+            except Exception:
+                pass
+            state.http_client = None
+            http_client = None
 
 
 # Create FastAPI application

@@ -1,4 +1,6 @@
 import io
+import json
+from datetime import datetime, timezone
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from PIL import Image
@@ -49,16 +51,18 @@ async def test_driver_bot_start_deep_link_fix(driver_runner):
 
 @pytest.mark.asyncio
 async def test_driver_bot_contact_sharing(driver_runner):
-    """Sharing contact card binds phone number and welcomes driver."""
+    """A matching self-contact stores only the independent verified binding."""
     mock_send = AsyncMock()
+    store = AsyncMock(return_value=True)
     with patch.object(driver_runner, "send_message", mock_send), \
-         patch.object(driver_runner, "bind_driver_phone", AsyncMock()):
+         patch("core.phone_links.upsert_phone_telegram_link", store):
         await driver_runner.handle_contact_sharing(
             chat_id=333,
             user_id=333,
-            contact={"phone_number": "0988123456", "first_name": "Nguyễn", "last_name": "Văn A"},
-            from_user={"username": "driver_a"},
+            contact={"user_id": 333, "phone_number": "0988123456", "first_name": "Nguyễn", "last_name": "Văn A"},
+            from_user={"id": 333, "username": "driver_a"},
         )
+        store.assert_awaited_once_with("0988123456", 333, source="verified_contact", db_pool=None)
         mock_send.assert_awaited_once()
         text = mock_send.await_args[0][1]
         assert "Xác thực số điện thoại thành công" in text
@@ -237,3 +241,56 @@ async def test_driver_bot_support_interactive_flow(driver_runner):
         mock_client.post.assert_awaited_once()
         admin_payload = mock_client.post.await_args[1]["json"]
         assert "Tôi không chụp được ảnh đồng hồ xe máy" in admin_payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_unverified_bot_history_never_reads_storage(driver_runner):
+    """An unverified sender must not fall back to everyone else's DEV rows."""
+    lookup = AsyncMock(return_value=None)
+    send = AsyncMock()
+    pool = MagicMock()
+    driver_runner.db_pool = pool
+    with patch("core.phone_links.get_verified_phone_binding_for_telegram_user", lookup), \
+         patch.object(driver_runner, "send_message", send), \
+         patch("builtins.open", side_effect=AssertionError("unverified history must not read files")):
+        await driver_runner.handle_driver_surveys_lookup(chat_id=333, user_id=333)
+    lookup.assert_awaited_once_with(333, db_pool=pool)
+    pool.connection.assert_not_called()
+    assert "chưa xác thực" in send.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_verified_bot_history_uses_only_bound_phone(driver_runner, tmp_path, monkeypatch):
+    """A verified phone never grants pre-verification or undated DEV history."""
+    storage = tmp_path / "dev_submissions.json"
+    storage.write_text(json.dumps([
+        {"submission_id": "DEV-OWN-H1", "driver_phone": "0988123456", "status": "APPROVED", "submitted_at": "2026-01-02T00:00:00+00:00"},
+        {"submission_id": "DEV-OTHER-H1", "driver_phone": "0911111111", "status": "REJECTED", "submitted_at": "2026-01-02T00:00:00+00:00"},
+        {"submission_id": "DEV-OLD-OWNER", "driver_phone": "0988123456", "status": "APPROVED", "submitted_at": "2020-01-01T00:00:00+00:00"},
+        {"submission_id": "DEV-UNKNOWN-DATE", "driver_phone": "0988123456", "status": "APPROVED"},
+        {"submission_id": "DEV-NAIVE-DATE", "driver_phone": "0988123456", "status": "APPROVED", "submitted_at": "2026-01-02T00:00:00"},
+    ]), encoding="utf-8")
+    monkeypatch.setattr("services.telegram_polling.DEV_STORAGE_FILE", str(storage))
+    lookup = AsyncMock(return_value=("0988123456", datetime(2026, 1, 1, tzinfo=timezone.utc)))
+    send = AsyncMock()
+    with patch("core.phone_links.get_verified_phone_binding_for_telegram_user", lookup), \
+         patch.object(driver_runner, "send_tracked", send):
+        await driver_runner.handle_driver_surveys_lookup(chat_id=333, user_id=333)
+    lookup.assert_awaited_once_with(333, db_pool=None)
+    body = send.await_args.args[2]
+    assert "DEV-OWN-H1" in body
+    assert "DEV-OTHER-H1" not in body
+    assert "DEV-OLD-OWNER" not in body
+    assert "DEV-UNKNOWN-DATE" not in body
+    assert "DEV-NAIVE-DATE" not in body
+
+
+@pytest.mark.asyncio
+async def test_bot_history_is_not_disclosed_to_group_chat(driver_runner):
+    lookup = AsyncMock(side_effect=AssertionError("group request must not read identity"))
+    send = AsyncMock()
+    with patch("core.phone_links.get_verified_phone_binding_for_telegram_user", lookup), \
+         patch.object(driver_runner, "send_message", send):
+        await driver_runner.handle_driver_surveys_lookup(chat_id=-100, user_id=333)
+    lookup.assert_not_awaited()
+    assert "trò chuyện riêng" in send.await_args.args[1]

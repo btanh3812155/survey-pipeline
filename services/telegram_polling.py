@@ -985,6 +985,7 @@ class TelegramPollingRunner:
                 form_id=form_id,
                 recipient_kind=recipient_kind,
                 ctv_ref=collab_id,
+                submitted_at=dossier.get("submitted_at"),
             )
             logger.info(
                 f"Dispatched decision verdict for #{clean_sub_id} to {recipient_kind} "
@@ -1320,59 +1321,11 @@ class DriverBotRunner(TelegramPollingRunner):
             "one_time_keyboard": False,
         }
     async def get_driver_phone(self, telegram_user_id: int) -> Optional[str]:
-        """Looks up driver phone from authorized_users table or memory."""
-        if self.db_pool:
-            try:
-                async with self.db_pool.connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            "SELECT driver_phone FROM authorized_users WHERE telegram_user_id = %s;",
-                            (telegram_user_id,),
-                        )
-                        row = await cur.fetchone()
-                        if row and row[0]:
-                            return str(row[0])
-            except Exception as e:
-                logger.debug(f"DB lookup for driver phone failed: {e}")
-        return None
+        """Resolve only the sender's verified standalone phone binding."""
+        from core.phone_links import get_verified_phone_for_telegram_user
 
-    async def bind_driver_phone(
-        self, telegram_user_id: int, username: str, full_name: str, phone: str
-    ) -> None:
-        """Saves verified driver phone link to authorized_users & identity vault."""
-        clean_phone = re.sub(r"[^\d+]", "", phone.strip())
-        if clean_phone.startswith("+84"):
-            clean_phone = "0" + clean_phone[3:]
-        elif clean_phone.startswith("84") and len(clean_phone) == 11:
-            clean_phone = "0" + clean_phone[2:]
+        return await get_verified_phone_for_telegram_user(telegram_user_id, db_pool=self.db_pool)
 
-        if self.db_pool:
-            try:
-                async with self.db_pool.connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            """
-                            INSERT INTO authorized_users 
-                                (telegram_user_id, username, full_name, role, driver_phone, is_active)
-                            VALUES (%s, %s, %s, 'DRIVER', %s, TRUE)
-                            ON CONFLICT (telegram_user_id) DO UPDATE SET 
-                                driver_phone = EXCLUDED.driver_phone,
-                                full_name = EXCLUDED.full_name;
-                            """,
-                            (telegram_user_id, username or None, full_name, clean_phone),
-                        )
-                        driver_id = f"DRV-{telegram_user_id % 100000:05d}"
-                        await cur.execute(
-                            """
-                            INSERT INTO driver_identity_vault (driver_id, driver_phone, driver_name)
-                            VALUES (%s, %s, %s)
-                            ON CONFLICT (driver_phone) DO UPDATE SET driver_name = EXCLUDED.driver_name;
-                            """,
-                            (driver_id, clean_phone, full_name),
-                        )
-                    await conn.commit()
-            except Exception as e:
-                logger.error(f"Failed to bind driver phone in database: {e}")
 
     async def bind_collaborator(self, telegram_user_id: int, username: str, full_name: str, ctv_code: str) -> None:
         """Links a Telegram account to a collaborator (CTV) code."""
@@ -1420,32 +1373,62 @@ class DriverBotRunner(TelegramPollingRunner):
         return photo_resp.content
 
     async def handle_contact_sharing(self, chat_id: int, user_id: int, contact: dict, from_user: dict) -> None:
-        """Handles native contact card sharing."""
-        phone = contact.get("phone_number", "")
-        name = contact.get("first_name", "") + (" " + contact.get("last_name", "") if contact.get("last_name") else "")
-        if not name.strip():
-            name = from_user.get("first_name", "Thành viên")
+        """Verify a self-contact before storing a standalone delivery binding."""
+        sender_id = from_user.get("id")
+        contact_id = contact.get("user_id")
+        if (
+            type(sender_id) is not int or type(contact_id) is not int
+            or sender_id <= 0 or sender_id != user_id or contact_id != sender_id
+        ):
+            await self.send_message(
+                chat_id,
+                "⚠️ Chỉ có thể xác thực danh bạ của chính bạn. "
+                "Vui lòng dùng nút [📱 Xác Thực Số Điện Thoại] để chia sẻ số của tài khoản này.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
 
-        username = from_user.get("username", "")
-        await self.bind_driver_phone(user_id, username, name, phone)
-        from core.phone_links import upsert_phone_telegram_link
-        await upsert_phone_telegram_link(phone, user_id, source="contact_share", db_pool=self.db_pool)
+        from core.phone_links import normalize_vn_phone, upsert_phone_telegram_link
 
-        clean_phone = re.sub(r"[^\d+]", "", phone.strip())
-        masked_phone = clean_phone[:3] + "****" + clean_phone[-3:] if len(clean_phone) >= 7 else clean_phone
+        phone = normalize_vn_phone(contact.get("phone_number"))
+        if not phone:
+            await self.send_message(chat_id, "⚠️ Số điện thoại không hợp lệ; chưa xác thực liên kết.")
+            return
+        stored = await upsert_phone_telegram_link(
+            phone, sender_id, source="verified_contact", db_pool=self.db_pool
+        )
+        if not stored:
+            await self.send_message(
+                chat_id,
+                "⚠️ Chưa thể xác thực liên kết. Hệ thống không tự chuyển số giữa các tài khoản; "
+                "nếu số đã đổi chủ, vui lòng liên hệ quản trị viên để thu hồi và xác minh lại.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
 
+        name = str(contact.get("first_name") or from_user.get("first_name") or "Thành viên")
+        if contact.get("last_name"):
+            name += " " + str(contact["last_name"])
+        masked_phone = phone[:3] + "****" + phone[-3:]
         welcome_text = (
-            f"✅ <b>Xác thực số điện thoại thành công!</b>\n\n"
-            f"• <b>Họ tên:</b> {name}\n"
+            "✅ <b>Xác thực số điện thoại thành công!</b>\n\n"
+            f"• <b>Họ tên:</b> {html.escape(name)}\n"
             f"• <b>Số điện thoại liên kết:</b> <code>{masked_phone}</code>\n"
-            f"• <b>Vai trò:</b> Tài xế & Cộng tác viên\n"
-            f"• <b>Trạng thái:</b> Đã kích hoạt liên kết tài khoản\n\n"
-            f"Từ bây giờ, mọi thông báo duyệt phiếu khảo sát, thông báo trả thưởng và yêu cầu bổ sung ảnh sẽ được gửi tự động trực tiếp vào khung chat này!\n\n"
-            f"👉 <i>Bấm <b>[📋 Khảo Sát Của Tôi]</b> để xem danh sách phiếu đã nộp.</i>"
+            "• <b>Liên kết:</b> Đã xác thực cho tài khoản Telegram này.\n\n"
+            "Thông báo khảo sát được cấu hình gửi theo số điện thoại có thể dùng liên kết này. "
+            "Liên kết không cấp quyền tra cứu lịch sử trên web.\n\n"
+            "👉 Bấm <b>[📋 Khảo Sát Của Tôi]</b> để xem các phiếu của số đã xác thực."
         )
         await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
-    async def _store_replacement_photo(self, sub_id: str, slot_name: str, raw_bytes: bytes) -> None:
+    async def _store_replacement_photo(
+        self,
+        sub_id: str,
+        slot_name: str,
+        raw_bytes: bytes,
+        requester_telegram_id: Optional[int] = None,
+        approve_reason: Optional[str] = None,
+    ) -> bool:
         """
         Persists a Telegram-replaced photo into the raw store as WebP.
 
@@ -1453,23 +1436,34 @@ class DriverBotRunner(TelegramPollingRunner):
         disk. Only a concrete `slot_<n>` target can be replaced; the generic
         `slot_photo` placeholder carries no index and is left unpersisted.
         """
-        match = re.fullmatch(r"slot_(\d+)", str(slot_name or ""))
-        if not match:
-            return
+        from services.submission_media import write_replacement
+
+        token = str(slot_name or "").strip()
+        flat_match = re.fullmatch(r"flat_(\d+)", token)
+        slot_match = re.fullmatch(r"(?:(?P<qid>[A-Za-z0-9_.-]+)__)?slot_(?P<slot>\d+)", token)
+        if not flat_match and not slot_match:
+            return False
+        if not self.db_pool:
+            # Without the authoritative transaction store there is no way to
+            # authenticate the requester, binding epoch, or committed transition.
+            raise PermissionError("authoritative submission store is unavailable")
         webp_bytes = await asyncio.to_thread(normalize_image_to_webp, raw_bytes)
         if not webp_bytes:
-            return
-        target_dir = os.path.join(os.getcwd(), "data", "submission_photos", sub_id)
-        os.makedirs(target_dir, exist_ok=True)
-        slot_idx = match.group(1)
-        for name in os.listdir(target_dir):
-            if re.fullmatch(rf"slot_{slot_idx}\.[A-Za-z0-9]+", name):
-                try:
-                    os.remove(os.path.join(target_dir, name))
-                except OSError:
-                    pass
-        with open(os.path.join(target_dir, f"slot_{slot_idx}.webp"), "wb") as f:
-            f.write(webp_bytes)
+            return False
+        flat_idx = int(flat_match.group(1)) if flat_match else None
+        slot_idx = int(slot_match.group("slot")) if slot_match else None
+        qid = slot_match.group("qid") if slot_match else None
+        await write_replacement(
+            self.db_pool,
+            sub_id,
+            slot_idx,
+            webp_bytes,
+            question_id=qid,
+            flat_index=flat_idx,
+            requester_telegram_id=requester_telegram_id,
+            approve_reason=approve_reason,
+        )
+        return True
 
     async def handle_photo_upload(self, chat_id: int, user_id: int, photos: list) -> None:
         """Handles in-chat replacement of blurry survey photos."""
@@ -1478,7 +1472,7 @@ class DriverBotRunner(TelegramPollingRunner):
 
         fix_info = self.pending_fixes.get(chat_id)
         sub_id = fix_info.get("sub_id") if fix_info else None
-        slot_name = fix_info.get("slot", "slot_photo") if fix_info else "Ảnh khảo sát"
+        slot_name = fix_info.get("slot", "flat_0") if fix_info else "Ảnh khảo sát"
 
         try:
             photo_bytes = await self.download_telegram_photo(file_id)
@@ -1496,12 +1490,40 @@ class DriverBotRunner(TelegramPollingRunner):
                 )
                 return
 
-            # Image is sharp! Update the record
+            # Image is sharp! Authorize the concrete requester and commit the
+            # manifest revision plus approval in the same database transaction.
             if sub_id:
-                await self._store_replacement_photo(sub_id, slot_name, photo_bytes)
-                await self._update_submission_status(
-                    sub_id, "APPROVED", reason=f"Bổ sung ảnh đạt chuẩn qua Telegram DM (Độ nét: {blur_score:.1f})"
-                )
+                reason = f"Bổ sung ảnh đạt chuẩn qua Telegram DM (Độ nét: {blur_score:.1f})"
+                try:
+                    stored = await self._store_replacement_photo(
+                        sub_id,
+                        slot_name,
+                        photo_bytes,
+                        requester_telegram_id=user_id,
+                        approve_reason=reason,
+                    )
+                except PermissionError:
+                    await self.send_message(
+                        chat_id,
+                        "⚠️ Bạn không có quyền bổ sung ảnh cho phiếu này. "
+                        "Vui lòng dùng tài khoản đã xác thực đúng số điện thoại của phiếu.",
+                        reply_markup=self.get_driver_reply_keyboard(),
+                    )
+                    return
+                except (ValueError, FileNotFoundError):
+                    await self.send_message(
+                        chat_id,
+                        "⚠️ Phiếu này không còn nhận bổ sung ảnh hoặc mục ảnh không hợp lệ.",
+                        reply_markup=self.get_driver_reply_keyboard(),
+                    )
+                    return
+                if not stored:
+                    await self.send_message(
+                        chat_id,
+                        "⚠️ Mục ảnh không hợp lệ; chưa có thay đổi nào được lưu.",
+                        reply_markup=self.get_driver_reply_keyboard(),
+                    )
+                    return
                 if chat_id in self.pending_fixes:
                     del self.pending_fixes[chat_id]
 
@@ -1546,23 +1568,41 @@ class DriverBotRunner(TelegramPollingRunner):
             )
 
     async def handle_driver_surveys_lookup(self, chat_id: int, user_id: int) -> None:
-        """Fetches and displays driver's submissions with quick action buttons."""
-        phone = await self.get_driver_phone(user_id)
+        """Private history only within the sender's current verified ownership period."""
+        if chat_id != user_id:
+            await self.send_message(chat_id, "Vui lòng mở cuộc trò chuyện riêng với bot để xem lịch sử khảo sát.")
+            return
+        from core.phone_links import get_verified_phone_binding_for_telegram_user, VERIFIED_PHONE_LINK_SOURCES, phone_normalization_sql, normalize_vn_phone
+        binding = await get_verified_phone_binding_for_telegram_user(user_id, db_pool=self.db_pool)
+        if not binding:
+            await self.send_message(
+                chat_id,
+                "ℹ️ <b>Bạn chưa xác thực số điện thoại.</b>\n\n"
+                "Hãy dùng nút [📱 Xác Thực Số Điện Thoại] để chia sẻ danh bạ của chính bạn. "
+                "Số nhập qua /linkphone không cho phép tra cứu lịch sử.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
+        phone, verified_since = binding
         submissions = []
 
-        if self.db_pool and phone:
+        if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
                     async with conn.cursor() as cur:
                         await cur.execute(
-                            """
-                            SELECT submission_id, status, rejection_reason, created_at
-                            FROM survey_submissions
-                            WHERE driver_phone = %s
-                            ORDER BY created_at DESC
+                            f"""
+                            SELECT s.submission_id, s.status, s.rejection_reason, s.created_at
+                            FROM survey_submissions AS s
+                            JOIN phone_telegram_links AS link
+                              ON link.phone_normalized = {phone_normalization_sql("s.driver_phone")}
+                            WHERE link.phone_normalized = %s AND link.telegram_user_id = %s
+                              AND link.source IN (%s, %s) AND link.updated_at = %s
+                              AND s.created_at >= link.updated_at
+                            ORDER BY s.created_at DESC
                             LIMIT 5;
                             """,
-                            (phone,),
+                            (phone, user_id, *VERIFIED_PHONE_LINK_SOURCES, verified_since),
                         )
                         rows = await cur.fetchall()
                         for row in rows:
@@ -1573,7 +1613,9 @@ class DriverBotRunner(TelegramPollingRunner):
                                 "created_at": row[3].strftime("%d/%m/%Y %H:%M") if hasattr(row[3], "strftime") else str(row[3])[:16],
                             })
             except Exception as e:
-                logger.warning(f"Could not read surveys for driver: {e}")
+                logger.warning("Could not read ownership-scoped bot history (%s)", type(e).__name__)
+                await self.send_message(chat_id, "Chưa thể kiểm tra lịch sử an toàn. Vui lòng thử lại sau.")
+                return
 
         # Check dev test storage as fallback
         if not submissions and os.path.exists(DEV_STORAGE_FILE):
@@ -1581,27 +1623,28 @@ class DriverBotRunner(TelegramPollingRunner):
                 with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                     records = json.load(f)
                     for r in records[-5:]:
-                        if not phone or r.get("driver_phone") == phone:
-                            submissions.append({
-                                "submission_id": r.get("submission_id", "DEV"),
-                                "status": r.get("status", "SUBMITTED"),
-                                "reason": r.get("reason", ""),
-                                "created_at": str(r.get("submitted_at", ""))[:16],
-                            })
+                        if normalize_vn_phone(r.get("driver_phone")) != phone:
+                            continue
+                        try:
+                            submitted_at = datetime.fromisoformat(str(r.get("submitted_at") or "").replace("Z", "+00:00"))
+                        except (TypeError, ValueError):
+                            continue
+                        if submitted_at.utcoffset() is None or submitted_at < verified_since:
+                            continue
+                        submissions.append({
+                            "submission_id": r.get("submission_id", "DEV"),
+                            "status": r.get("status", "SUBMITTED"),
+                            "reason": r.get("reason", ""),
+                            "created_at": str(r["submitted_at"])[:16],
+                        })
             except Exception:
                 pass
 
         if not submissions:
-            if not phone:
-                msg = (
-                    "ℹ️ <b>Bạn chưa liên kết số điện thoại!</b>\n\n"
-                    "Vui lòng bấm nút <b>[📱 Xác Thực Số Điện Thoại]</b> bên dưới để hệ thống tự động tìm các phiếu khảo sát của bạn."
-                )
-            else:
-                msg = (
-                    f"📋 <b>Chưa tìm thấy phiếu khảo sát nào cho số điện thoại <code>{phone}</code>.</b>\n\n"
-                    f"👉 Bấm <b>[📝 Nộp Form Mới]</b> để tham gia khảo sát ngay nhé!"
-                )
+            msg = (
+                f"📋 <b>Chưa tìm thấy phiếu khảo sát nào cho số điện thoại <code>{phone}</code>.</b>\n\n"
+                "Chỉ hiển thị phiếu từ khi liên kết được xác thực. Phiếu cũ cần quản trị viên hỗ trợ."
+            )
             await self.send_message(chat_id, msg, reply_markup=self.get_driver_reply_keyboard())
             return
 
@@ -1627,7 +1670,7 @@ class DriverBotRunner(TelegramPollingRunner):
 
             if st == "REJECTED":
                 buttons.append([
-                    {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:slot_photo"},
+                    {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:flat_0"},
                 ])
 
         inline_markup = {"inline_keyboard": buttons} if buttons else None
@@ -2050,7 +2093,7 @@ class DriverBotRunner(TelegramPollingRunner):
                 # Deep link: /start fix_<sub_id>_<slot>
                 fix_data = payload[4:].split("_", 1)
                 sub_id = normalize_submission_id(fix_data[0])
-                slot_name = fix_data[1] if len(fix_data) > 1 else "slot_photo"
+                slot_name = fix_data[1] if len(fix_data) > 1 else "flat_0"
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
                 await self.send_message(
                     chat_id,
@@ -2102,10 +2145,11 @@ class DriverBotRunner(TelegramPollingRunner):
             await self.send_message(
                 chat_id,
                 (
-                    f"✅ Đã liên kết <code>{masked}</code> với Telegram này."
-                    if ok
-                    else "⚠️ Không thể lưu liên kết số điện thoại. Vui lòng thử lại sau."
-                ),
+                    f"Đã ghi nhận <code>{masked}</code> (chưa xác thực). "
+                    if ok else "Không thay đổi liên kết số điện thoại. "
+                )
+                + "Số nhập qua /linkphone không xác minh quyền sở hữu, không cho phép nhận kết quả hay tra cứu. "
+                "Hãy dùng nút [📱 Xác Thực Số Điện Thoại] để chia sẻ danh bạ của chính bạn.",
                 reply_markup=self.get_driver_reply_keyboard(),
             )
 
@@ -2231,7 +2275,7 @@ class DriverBotRunner(TelegramPollingRunner):
             elif data.startswith("driver_fix:"):
                 parts = data.split(":")
                 sub_id = normalize_submission_id(parts[1])
-                slot_name = parts[2] if len(parts) > 2 else "slot_photo"
+                slot_name = parts[2] if len(parts) > 2 else "flat_0"
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
                 await self.answer_callback_query(cq_id, "Đang chờ gửi ảnh mới")
                 await self.send_message(

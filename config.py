@@ -1,10 +1,17 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
+VALID_ENVIRONMENTS = {"production", "development", "test"}
+BUILTIN_ADMIN_PASSWORD = "12345678"
+BUILTIN_APP_SECRET = "survey_secret_salt_pepper_survey_pipeline_2026"
+BUILTIN_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/surveydb"
+BUILTIN_TELEGRAM_WEBHOOK_SECRET = "mock_webhook_secret"
+
 
 class Settings(BaseSettings):
-    # environment
-    ENVIRONMENT: str = "development"
+    # environment: no implicit development fallback
+    ENVIRONMENT: str
     DEBUG: bool = False
 
     # server
@@ -63,7 +70,32 @@ class Settings(BaseSettings):
     IMAGE_MAX_DIMENSION: int = 1024
     WEBP_QUALITY: int = 82
     AI_TIMEOUT_SECONDS: float = 10.0
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
+
+    @model_validator(mode="after")
+    def _validate_environment_and_production_settings(self):
+        environment = str(self.ENVIRONMENT or "").strip().lower()
+        if environment not in VALID_ENVIRONMENTS:
+            raise ValueError(
+                f"ENVIRONMENT must be one of {sorted(VALID_ENVIRONMENTS)}, got {self.ENVIRONMENT!r}"
+            )
+        self.ENVIRONMENT = environment
+
+        if environment == "production":
+            if not self.ADMIN_PASSWORD or self.ADMIN_PASSWORD == BUILTIN_ADMIN_PASSWORD:
+                raise ValueError("production ADMIN_PASSWORD must not be empty or the built-in default")
+            if (
+                not self.APP_SECRET
+                or self.APP_SECRET == BUILTIN_APP_SECRET
+                or len(self.APP_SECRET) < 32
+            ):
+                raise ValueError("production APP_SECRET must be a random value of at least 32 characters")
+            database_url = str(self.DATABASE_URL or "").strip()
+            if not database_url.startswith(("postgresql://", "postgres://")):
+                raise ValueError("production DATABASE_URL must be a PostgreSQL URL")
+            if database_url == BUILTIN_DATABASE_URL:
+                raise ValueError("production DATABASE_URL must not be the built-in default")
+        return self
 
 
 settings = Settings()

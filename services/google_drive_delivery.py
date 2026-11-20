@@ -1,5 +1,8 @@
 import os
 import io
+import re
+import hashlib
+import time
 import csv
 import mimetypes
 import glob
@@ -1388,7 +1391,71 @@ def save_submission_images_locally(
     return subfolder_path
 
 
-def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, Any]]) -> int:
+def _refresh_manifest_mirror(
+    submission_id: str,
+    target_dir: str,
+    manifest: List[Dict[str, Any]],
+) -> tuple[int, int, str]:
+    """Stage current deliverable images; verify evidence without exporting it."""
+    from services.submission_media import safe_media_path
+
+    parent = os.path.dirname(target_dir)
+    os.makedirs(parent, exist_ok=True)
+    stage_dir = tempfile.mkdtemp(prefix=".media-refresh-", dir=parent)
+    backup_dir = None
+    try:
+        staged_names = set()
+        evidence_count = 0
+        for entry in manifest:
+            if not isinstance(entry, dict):
+                raise RuntimeError("manifest entry is not an object")
+            relative_path = str(entry.get("relative_path") or "")
+            source = safe_media_path(submission_id, relative_path)
+            expected = str(entry.get("sha256") or "").lower()
+            with open(source, "rb") as handle:
+                raw_bytes = handle.read()
+            if expected and hashlib.sha256(raw_bytes).hexdigest() != expected:
+                raise RuntimeError(f"manifest hash mismatch for {relative_path}")
+            suffix = os.path.splitext(relative_path)[1].lower()
+            mime = str(entry.get("mime") or "").lower()
+            deliverable = suffix in IMAGE_FILE_EXTENSIONS and (not mime or mime.startswith("image/"))
+            if not deliverable:
+                evidence_count += 1
+                continue
+            normalized = normalize_image_bytes(raw_bytes)
+            if normalized is None:
+                raise RuntimeError(f"manifest image cannot be decoded: {relative_path}")
+            name = normalized_image_name(source)
+            if name in staged_names:
+                raise RuntimeError(f"duplicate mirror image name: {name}")
+            with open(os.path.join(stage_dir, name), "wb") as handle:
+                handle.write(normalized)
+            staged_names.add(name)
+        if not staged_names:
+            if evidence_count:
+                return 0, evidence_count, "evidence_only"
+            raise RuntimeError("manifest contains no replacement images")
+
+        if os.path.isdir(target_dir):
+            backup_dir = f"{target_dir}.backup-{os.getpid()}-{time.time_ns()}"
+            os.replace(target_dir, backup_dir)
+        try:
+            os.replace(stage_dir, target_dir)
+        except Exception:
+            if backup_dir and os.path.isdir(backup_dir) and not os.path.exists(target_dir):
+                os.replace(backup_dir, target_dir)
+            raise
+        if backup_dir:
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        return len(staged_names), evidence_count, "published"
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def backfill_mirror_images_from_submission_photos(
+    records: Dict[str, Dict[str, Any]],
+    report: Optional[Dict[str, Any]] = None,
+) -> int:
     """
     Normalizes the mirror's images and fills missing slots from the raw photo store.
 
@@ -1398,6 +1465,10 @@ def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, A
     the number of files created or rewritten.
     """
     changed = 0
+    outcome = report if report is not None else {}
+    outcome.setdefault("changed", 0)
+    outcome.setdefault("evidence_only", [])
+    outcome.setdefault("failed", {})
     for submission_id, record in records.items():
         form_id = str(record.get("form_id") or "unknown_form")
         target_dir = os.path.join(LOCAL_IMAGES_DIR, form_id, "submissions", submission_id)
@@ -1407,12 +1478,33 @@ def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, A
             path for path in glob.glob(os.path.join(target_dir, "*"))
             if os.path.isfile(path) and os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
         ]
-        source_files = [
-            path for path in glob.glob(os.path.join(source_dir, "*"))
-            if os.path.isfile(path)
-            and os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
-            and os.path.getsize(path) > 0
-        ]
+        manifest = record.get("media_manifest")
+        if isinstance(manifest, str):
+            try:
+                import json as _json
+                manifest = _json.loads(manifest)
+            except Exception:
+                manifest = None
+        if isinstance(manifest, list) and manifest:
+            try:
+                published, evidence, status = _refresh_manifest_mirror(submission_id, target_dir, manifest)
+            except Exception as exc:
+                record["_media_refresh_failed"] = True
+                outcome["failed"][submission_id] = str(exc)
+                logger.error(f"[DRIVE MIRROR] refresh failed for #{submission_id}; existing files preserved: {exc}")
+                continue
+            if status == "evidence_only":
+                outcome["evidence_only"].append(submission_id)
+                logger.warning(f"[DRIVE MIRROR] #{submission_id} has evidence-only media; no deliverable image published")
+            changed += published
+            continue
+        else:
+            source_files = [
+                path for path in glob.glob(os.path.join(source_dir, "*"))
+                if os.path.isfile(path)
+                and os.path.splitext(path)[1].lower() in IMAGE_FILE_EXTENSIONS
+                and os.path.getsize(path) > 0
+            ]
         if not existing_files and not source_files:
             continue
 
@@ -1445,7 +1537,7 @@ def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, A
                     f.write(normalized)
                 changed += 1
 
-        # Copy missing slots from the raw store.
+        # Copy missing slots from the private store.
         for src in source_files:
             stem = os.path.splitext(os.path.basename(src))[0]
             if stem in present_stems:
@@ -1465,6 +1557,7 @@ def backfill_mirror_images_from_submission_photos(records: Dict[str, Dict[str, A
             present_stems.add(stem)
             changed += 1
 
+    outcome["changed"] = changed
     if changed:
         logger.info(f"📁 [DRIVE IMAGES MIRROR] Normalized/backfilled {changed} images from {SUBMISSION_PHOTOS_DIR}")
     return changed
@@ -1961,10 +2054,19 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
             logger.warning(f"[AUTO DRIVE SYNC] unknown_form migration failed: {e}")
 
         # 1d. Normalize mirrored images and backfill raw photos for older approved submissions
+        mirror_report: Dict[str, Any] = {}
         try:
-            backfill_mirror_images_from_submission_photos(approved_records)
+            backfill_mirror_images_from_submission_photos(approved_records, report=mirror_report)
         except Exception as e:
-            logger.warning(f"[AUTO DRIVE SYNC] Photo mirror backfill failed: {e}")
+            logger.error(f"[AUTO DRIVE SYNC] Photo mirror backfill failed; preserving existing mirror: {e}")
+            return False
+        if mirror_report.get("evidence_only"):
+            logger.warning(f"[AUTO DRIVE SYNC] Evidence-only records (not exported as images): {mirror_report['evidence_only']}")
+        if mirror_report.get("failed"):
+            logger.error(f"[AUTO DRIVE SYNC] Image refresh failed for records; exports skipped: {mirror_report['failed']}")
+        blocked_export_ids = set(mirror_report.get("failed") or {}) | set(mirror_report.get("evidence_only") or [])
+        if blocked_export_ids:
+            logger.warning(f"[AUTO DRIVE SYNC] Customer image export blocked for: {sorted(blocked_export_ids)}")
 
         # 2. Upload approved submissions under <root>/<form_id>/submissions/<submission_id>/
         uploaded_count = 0
@@ -2048,6 +2150,8 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
                     if is_test_submission(sub_id):
                         continue
                     if sub_id not in approved_ids:
+                        continue
+                    if sub_id in blocked_export_ids:
                         continue
                     files = [
                         f for f in glob.glob(os.path.join(sub_dir, "*.*"))

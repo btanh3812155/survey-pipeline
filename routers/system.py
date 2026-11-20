@@ -12,9 +12,10 @@ import ipaddress
 from typing import Optional
 import httpx
 from fastapi import APIRouter, Request, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from config import settings
-from core.state import FORM_REGISTRY, get_redis_client, get_http_client, refresh_form_registry_from_disk
+from core.state import FORM_REGISTRY, get_db_pool, get_redis_client, get_http_client, refresh_form_registry_from_disk
+from core.schema_gate import MIGRATION_001_CHECKSUM, REQUIRED_WRITER_TABLES, writer_schema_state
 from services.dynamic_form_html import render_dynamic_form_html
 
 logger = logging.getLogger("routers.system")
@@ -32,7 +33,58 @@ DEFAULT_GEO_FALLBACK = {
 
 @router.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
+    """Liveness only: do not use this endpoint to gate traffic or writes."""
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
+
+
+
+
+@router.get("/ready")
+async def readiness_check():
+    """Readiness requires the enabled PostgreSQL writer and its current schema."""
+    db_pool = get_db_pool()
+    if db_pool is None:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "reason": "postgresql_unavailable"},
+        )
+    try:
+        async with db_pool.connection() as conn:
+            state = await writer_schema_state(conn)
+        missing = state["missing"]
+        missing_columns = state["missing_columns"]
+        migration_checksum = state["migration_checksum"]
+        if missing:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "status": "not_ready",
+                    "reason": "schema_incomplete",
+                    "missing": missing,
+                },
+            )
+        if (
+            missing_columns
+            or not migration_checksum
+            or not MIGRATION_001_CHECKSUM
+            or migration_checksum != MIGRATION_001_CHECKSUM
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "status": "not_ready",
+                    "reason": "schema_incomplete",
+                    "missing_columns": sorted(missing_columns),
+                    "missing_migration": "001" if not migration_checksum else None,
+                },
+            )
+    except Exception as exc:
+        logger.warning("[READY] PostgreSQL readiness check failed: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "reason": "postgresql_unavailable"},
+        )
+    return {"status": "ready", "environment": settings.ENVIRONMENT}
 
 
 @router.get("/api/v1/caddy-check", include_in_schema=False)

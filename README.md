@@ -1,155 +1,58 @@
-# High-Performance Survey Verification Pipeline
+# Survey Verification Pipeline
 
-Production-ready, sub-3-second automated survey verification and anti-fraud pipeline. Replaces legacy n8n visual workflows with a lightweight asynchronous Python (FastAPI) microservice, dual-model AI vision failover (DeepSeek-V4.1 Flash primary + Gemini 3.5 Flash fallback), Cloudflare R2 zero-egress storage, and PostgreSQL transactional outbox.
+FastAPI-based survey intake and verification application with dynamic forms, image/AI checks, PostgreSQL persistence, Redis-backed runtime support, and Telegram/admin workflows.
 
-Designed to scale from 300 submissions/month to **20,000+ submissions/day** for under **$90/month** in total infrastructure.
+## Current architecture
 
----
+The repository is a modular monolith: one FastAPI application with `routers/`, `core/`, and `services/` packages, plus PostgreSQL outbox worker code. Keep planned changes within these boundaries unless measured operational needs justify a service split.
 
-## 1. Core Architectural Pillars
+- `main.py`: application construction, shared client/pool setup, router registration, shutdown.
+- `routers/`: HTTP endpoints; `routers/survey.py` owns the dynamic form and submission route today.
+- `core/`: runtime state, repositories, schema synchronization, domain helpers.
+- `services/`: form/image/AI processing and external integrations.
+- `workers/outbox_worker.py`: PostgreSQL outbox and periodic Drive worker routines.
+- `schema.sql`, `data/forms/`, `static/ui/`: database schema, form definitions, browser interfaces.
 
-- **Sub-3s Response SLA**: Replaces 30s-2m delays with a deterministic fast-path (< 2.5s nominal, < 3.8s p99 with full AI failover).
-- **Zero Double-Rotation & Alpha Black-out Bugs**: `ImageOps.exif_transpose` forces upright orientation before stripping EXIF headers; RGBA and palette `P` modes are composited over a pure white canvas.
-- **Two-Tier Anti-Fraud**:
-  - *Tier 1 (Synchronous, < 2ms)*: B-tree partial unique index on `(receipt_serial_no, store_tax_id) WHERE status = 'APPROVED'`.
-  - *Tier 2 (Asynchronous background)*: Meta DINOv2 ONNX visual vector embeddings stored via `pgvector` HNSW index.
-- **Layered Vision Failover**: Primary DeepSeek-V4.1 Flash (`deepseek-flash`, reasoning disabled) with automated circuit-breaker failover to Gemini 3.5 Flash. A deterministic layout layer (`services/income_layout.py`) locates the period tab row, reads the selected teal pill, and derives DAILY / WEEKLY / MONTHLY from the date span before compliance math runs.
-- **Prompt Injection Immunity**: Extract-then-Evaluate pattern — the LLM only outputs raw JSON facts; Python deterministically evaluates compliance rules and arithmetic ($\sum \text{items} + \text{VAT} == \text{Total}$).
-- **100% Financial Integrity**: PostgreSQL Transactional Outbox pattern processed via `SELECT ... FOR UPDATE SKIP LOCKED`, preventing dropped collaborator payouts during server reboots.
+The code review found unresolved persistence, privacy, idempotency, delivery, moderation and deployment risks. The [module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md) separates observed defects from required behavior and proposed-regression prevention. The [corrected implementation plan](docs/MODULE_IMPLEMENTATION_PLANS.md) supplies the migration contracts; a documentation correction is not evidence that runtime fixes or deployment checks passed.
 
----
+No throughput, cost, or response-time target is claimed here. Establish those from repeatable measurements before using them as design constraints.
 
-## 2. Directory Structure
+## Upgrade handoff status
 
-```text
-survey-pipeline/
-├── Caddyfile                  # Automated Let's Encrypt TLS reverse proxy
-├── docker-compose.yml         # Container stack: Caddy, FastAPI, PostgreSQL, Redis
-├── Dockerfile                 # Python 3.12-slim production container
-├── requirements.txt           # Python dependencies
-├── schema.sql                 # PostgreSQL DDL (pgvector, partial indexes, outbox)
-├── config.py                  # Pydantic Settings configuration
-├── main.py                    # FastAPI entrypoint & webhook endpoints
-├── services/
-│   ├── auth_lark.py           # Lark raw SHA256 signature verification & challenge handshake
-│   ├── normalizer.py          # Memory-safe WebP converter, EXIF transposition, Laplacian blur
-│   ├── vision_ai.py           # Dual-model AI client with circuit breaker & mock support
-│   ├── evaluator.py           # Deterministic Python compliance & arithmetic evaluation
-│   ├── templates_vn.py        # Standardized Vietnamese HTML Telegram templates
-│   └── storage_r2.py          # Cloudflare R2 / S3 async upload client
-├── workers/
-│   └── outbox_worker.py       # Asynchronous outbox processor for billing & sync
-└── tests/
-    └── test_pipeline.py       # 9 comprehensive unit & integration tests
-```
+Implement one independently executable wave using the plan's access, use-case/test, quota and activation/rollback matrices. H1 is approved and locally implemented: admin-only web phone history, public maintenance, and verified standalone phone mappings for question-source Telegram delivery/private bot history. See [the H1 boundary and evidence](docs/WAVE2_H1_PHONE_BOUNDARY.md). A verified phone link is not web authentication.
 
----
+The checked-in workflow restricts deployment to manual dispatch, but manual synchronization still needs mutable-data protection and operator approval. H1 alone changed no deployment path and authorized no production access; pausing production test-mode authority and operator gates remain separate. Historical specifications do not override the corrected handoff.
 
-## 3. Quick Start (Local Development)
+Wave 3 is locally implemented, not deployed: migration `001_submission_attempts.sql` must be applied and verified before the writer is activated. `/ready` fails closed unless the migration ledger checksum, `submission_idempotency`, and the private-media columns are present. Start with an approved database backup, apply the additive migration with `scripts/apply_migration.sh`, then deploy a writer that requires it. Rollback means stop new writes and retain the additive schema; do not drop committed attempts or private media. Do not treat this repository state as production evidence.
 
-### Running Automated Tests
-```bash
-PYTHONPATH=. uv run pytest tests/test_pipeline.py -v
-```
+## Local development
 
-### Running Locally with Docker Compose
-1. Copy environment template:
-   ```bash
-   cp .env.example .env
-   ```
-2. Start the stack:
-   ```bash
-   docker compose up -d
-   ```
-3. Verify health:
-   ```bash
-   curl http://localhost:8000/health
-   # {"status": "healthy", "environment": "production"}
-   ```
+Run the test target with `make test` (uses `.venv/bin/python -m pytest tests -q`).
 
----
+Wave 3 local acceptance: `make test-postgres` uses an owned disposable PostgreSQL/pgvector container and includes the submit-worker SIGKILL/retry regression. `node tests/test_wave3_browser.cjs` exercises real Chromium attempt/retry and encoder-race behavior with provider requests stubbed or blocked; it requires Node.js with `fs.globSync`, the Playwright package, and an installed Chromium build. These checks do not authorize staging/production access or activation.
 
-## 4. Environment Variables (`.env`)
+The checked-in `docker-compose.yml` is not a self-contained stack: it declares `app-dev`, uses a prebuilt image, and attaches to the external `survey-pipeline_default` network. It does not create PostgreSQL, Redis, or an outbox worker. Configure dependencies explicitly before running the app; do not treat development fallback behavior as production persistence.
 
-```ini
-ENVIRONMENT=production
-DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb
-REDIS_URL=redis://redis:6379/0
+Copy `.env.example` only as a local-development starting point. Production must supply explicit credentials and secrets; see the [module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md).
 
-# Bytedance Lark / Feishu Base
-LARK_APP_ID=cli_xxxxxxxx
-LARK_APP_SECRET=xxxxxxxxxxxxxxxx
-LARK_ENCRYPT_KEY=xxxxxxxxxxxxxxxx
-LARK_VERIFICATION_TOKEN=xxxxxxxx
+## HTTP entry points
 
-# Telegram Bot
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
-TELEGRAM_WEBHOOK_SECRET=your_random_high_entropy_secret_string
+- `POST /webhook/lark-survey`: Lark webhook ingress.
+- `POST /webhook/telegram` and `/webhook/telegram/driver`: Telegram webhook handlers.
+- `POST /api/v1/survey/submit-webrtc`: dynamic survey submission endpoint.
+- `GET /health`: liveness-style response; it does not establish database readiness.
 
-# AI Providers
-GEMINI_API_KEY=AIzaSy...
-DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_BASE_URL=https://api.deepseek.com # or Alibaba Cloud Singapore endpoint
+## Operational notes
 
-# Cloudflare R2 Object Storage
-R2_ACCOUNT_ID=xxxxxxxxxxxxxxxx
-R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxx
-R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxx
-R2_BUCKET_NAME=surveys
-R2_PUBLIC_URL_PREFIX=https://cdn.yourdomain.com
+Do not run production data synchronization from a local workstation. Verify the target deployment, credentials, and worker supervision before triggering a production sync.
 
-# Google Drive & Administrative Account
-GOOGLE_ADMIN_EMAIL=admin@trustbridgevn.com
-GOOGLE_DRIVE_ROOT_FOLDER_ID=
-GOOGLE_SERVICE_ACCOUNT_JSON=
-```
+Google Drive integrations exist in `services/google_drive_delivery.py`; the periodic loop is in `workers/outbox_worker.py`. The FastAPI lifespan does not start that worker, and the checked-in Compose file does not declare it. The outbox worker also contains placeholder logging for several downstream flows. See the handoff document before relying on those paths.
 
-> **Authoritative Administrative Account Notice**:
-> `admin@trustbridgevn.com` is the authoritative administrative account to be used for this project, Google Drive deliverables, and all work regarding Trust Bridge. All deliverables synchronization, target shared drives, and project assets must be granted to or owned by `admin@trustbridgevn.com`.
+## Current documentation
 
----
-
-## 5. Webhook Endpoints
-
-- `POST /webhook/lark-survey`: Receives Bytedance Lark Base webhook events, verifies raw SHA256 signature, validates challenge, extracts facts via AI, and pushes instant verdict to Telegram.
-- `POST /webhook/telegram`: Handles collaborator commands (`/start`) and conversational follow-up questions via Redis context cache.
-- `GET /health`: Returns service health status.
-
----
-
-## 6. Google Drive Synchronization (Autonomous Server-Side Architecture)
-
-Google Drive sync is an autonomous **server-side process** running continuously in the background on the production droplet (`146.190.201.32`) inside container `survey-pipeline-app-1`.
-
-- **No Individual Survey Uploads**: Individual survey submissions are recorded strictly into the local structured deliverables mirror (`Sheets/Master_Survey_Deliverables.csv` and `Images/{submission_id}/`) and never uploaded directly to Google Drive as loose per-survey folders.
-- **Clean Drive Deliverables**: Only two synchronized deliverables exist on Google Drive:
-  1. The master data sheet (`Master_Survey_Deliverables.csv`) in the root folder.
-  2. The organized photo archive (`Images/` folder containing approved subfolders).
-- **Autonomous Background Loop**: Managed by FastAPI lifespan (`run_periodic_drive_sync`) running on startup and repeating every 15 minutes (`interval_seconds: 900s`).
-- **Deliverables Directory**: Server-side structured deliverables and Master CSV are located at `/survey-pipeline/data/google_drive_deliverables/` on the server droplet.
-- **Local Workstation Policy**: **Never** run production data sync from your local machine. All sync operations and Google Drive credentials reside on the production server.
-
-### Manual Sync Execution
-
-#### Method 1: Via HTTP API (No SSH Required)
-Trigger an immediate background synchronization via authenticated curl:
-```bash
-curl -X POST https://survey.trustbridgevn.com/api/v1/admin/sync-drive \
-     -u admin:<ADMIN_PASSWORD>
-```
-
-#### Method 2: Via Server Terminal (Remote SSH)
-Run the standalone sync script inside the production Docker container:
-```bash
-ssh root@146.190.201.32 "docker exec -it survey-pipeline-app-1 python scripts/sync_to_drive.py"
-```
-
-To perform a dry-run preview (checks local deliverables without pushing files to Drive):
-```bash
-ssh root@146.190.201.32 "docker exec -it survey-pipeline-app-1 python scripts/sync_to_drive.py --dry-run"
-```
-
-#### Method 3: Local Development
-```bash
-python3 scripts/sync_to_drive.py [--dry-run]
-```
+- [Module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md): current architecture review, active bugs, and acceptance criteria.
+- [Wave 3 idempotency/media boundary](docs/WAVE3_IDEMPOTENCY_MEDIA_BOUNDARY.md): local implementation, migration activation and observed evidence.
+- [Bug and safeguards archive](docs/BUGS_AND_SAFEGUARDS_ARCHIVE.md): active-review summary and historical safeguards.
+- [Module implementation plans](docs/MODULE_IMPLEMENTATION_PLANS.md): corrected contracts, use-case/test and access matrices, versioned migration commands, recipient reconciliation, approval gates and per-wave activation/rollback; implementation evidence is still required.
+- [Complete architecture manual](docs/PIPELINE_COMPLETE_ARCHITECTURE_MANUAL.md): historical design reference; verify implementation claims against code.
+- [Operations and API reference](docs/PIPELINE_OPERATIONS_AND_API_REFERENCE.md): operational reference; verify deployment commands against the current environment.
