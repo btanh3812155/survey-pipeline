@@ -236,13 +236,15 @@ async def check_inter_submission_duplicates(
     weekly_incomes: Optional[Dict[str, Any]] = None,
     tot_gross: Optional[int] = None,
     tot_trips: Optional[int] = None,
+    form_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Checks if an uploaded photo OR extracted financial dataset was already submitted in a previously APPROVED submission.
     Queries PostgreSQL survey_submissions using:
-    0. Tier 0: Identical weekly earnings figures across past approved submissions
-    1. Tier 1: dHash Hamming distance <= 6 using PostgreSQL bit operations bit_count(image_dhash # %s::bit(64)) <= 6
-    2. Tier 2: Meta DINOv2 vector cosine similarity >= 0.88 via pgvector HNSW index
+    0. Active per-form image exception (skips every tier below until expires_at)
+    1. Tier 0: Identical weekly earnings figures across past approved submissions
+    2. Tier 1: dHash Hamming distance <= 6 using PostgreSQL bit operations bit_count(image_dhash # %s::bit(64)) <= 6
+    3. Tier 2: Meta DINOv2 vector cosine similarity >= 0.88 via pgvector HNSW index
     """
     if not db_pool:
         return False, None, None
@@ -252,7 +254,29 @@ async def check_inter_submission_duplicates(
     try:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
-                # 0. Tier 0: Check identical weekly revenue numbers to past approved submissions
+                if form_id and primary_embedding is not None and len(primary_embedding) == 384:
+                    vec_str = "[" + ",".join(str(x) for x in primary_embedding) + "]"
+                    await cur.execute("SAVEPOINT dinov2_exception")
+                    try:
+                        await cur.execute(
+                            """
+                            SELECT 1 FROM image_dinov2_exceptions
+                            WHERE form_id = %s AND expires_at > NOW() AND embedding IS NOT NULL
+                              AND (1 - (embedding <=> %s::vector)) >= 0.99
+                            LIMIT 1;
+                            """,
+                            (form_id, vec_str),
+                        )
+                        exempt = await cur.fetchone()
+                        await cur.execute("RELEASE SAVEPOINT dinov2_exception")
+                    except Exception:
+                        await cur.execute("ROLLBACK TO SAVEPOINT dinov2_exception")
+                        exempt = None
+                    if exempt:
+                        logger.info("✅ [DINOV2 EXCEPTION] Active form-scoped exception matched; inter-submission tiers skipped.")
+                        return False, None, None
+
+                # 1. Tier 0: Check identical weekly revenue numbers to past approved submissions
                 if weekly_incomes and isinstance(weekly_incomes, dict):
                     w1_g = int(weekly_incomes.get("week_1", {}).get("gross_revenue") or 0)
                     w2_g = int(weekly_incomes.get("week_2", {}).get("gross_revenue") or 0)

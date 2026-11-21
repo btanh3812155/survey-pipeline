@@ -72,7 +72,7 @@ Before historical transfer, quiesce/drain the legacy producer and inspect provid
 
 ## Schema and worker behavior
 
-Migration 001 retains the Wave 3 attempt/private-media contract. Migration 002 adds durable owner/decision revisions, target/action identities, token leases and receipts while retaining legacy rows/four statuses. Migration 003 adds operational heartbeat/build evidence. `schema.sql` mirrors fresh-install structure; it is not an upgrade command. For an owned disposable target, the isolated helper applies each version explicitly:
+Migration 001 retains the Wave 3 attempt/private-media contract. Migration 002 adds durable owner/decision revisions, target/action identities, token leases and receipts while retaining legacy rows/four statuses. Migration 003 adds operational heartbeat/build evidence. Migration 004 adds `image_dinov2_exceptions`, a time-bound per-form allowlist for the inter-submission fraud tiers; the detector requires a 384-d DINOv2 cosine match (`>= 0.99`) and ignores rows once `expires_at` passes, so revocation needs no cron. `schema.sql` mirrors fresh-install structure; it is not an upgrade command. For an owned disposable target, the isolated helper applies each version explicitly:
 
 ```bash
 bash scripts/apply_migration.sh scripts/migrations/001_submission_attempts.sql

@@ -1199,6 +1199,7 @@ async def _evaluate(
                                             weekly_incomes=compat_income,
                                             tot_gross=compat_totals["total_gross_revenue"],
                                             tot_trips=compat_totals["total_trips"],
+                                            form_id=input.form_id,
                                         )
                                         if inter_dup:
                                             is_approved = False

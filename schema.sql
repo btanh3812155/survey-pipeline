@@ -254,6 +254,21 @@ CREATE TABLE IF NOT EXISTS online_stock_images (
 CREATE INDEX IF NOT EXISTS idx_stock_dhash 
 ON online_stock_images (image_dhash);
 
+-- 6b. Time-bound per-form image exceptions for the inter-submission fraud tiers.
+CREATE TABLE IF NOT EXISTS image_dinov2_exceptions (
+    id BIGSERIAL PRIMARY KEY,
+    form_id VARCHAR(64) NOT NULL,
+    image_sha256 CHAR(64) NOT NULL,
+    embedding vector(384),
+    note TEXT,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (form_id, image_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_dinov2_exceptions_active
+ON image_dinov2_exceptions (form_id, expires_at);
+
 -- 7. Vehicle Change Audit & History Ledger
 CREATE TABLE IF NOT EXISTS vehicle_change_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

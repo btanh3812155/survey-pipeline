@@ -225,7 +225,8 @@ if (( pending )); then
     { guard_sql; cat -- "${MIGRATIONS[i]}"; } | target_sql write \
       -v "migration_sha256=${EXPECTED_LEDGER[i]#*|}" \
       -v "migration_001_sha256=${EXPECTED_LEDGER[0]#*|}" \
-      -v "migration_002_sha256=${EXPECTED_LEDGER[1]#*|}" >/dev/null
+      -v "migration_002_sha256=${EXPECTED_LEDGER[1]#*|}" \
+      -v "migration_003_sha256=${EXPECTED_LEDGER[2]#*|}" >/dev/null
     check_ledger
     (( ${#LEDGER[@]} > i )) || die 'migration did not record the expected checksum'
   done
