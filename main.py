@@ -20,7 +20,7 @@ from typing import Optional
 import httpx
 import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
@@ -51,6 +51,7 @@ from routers import (
     admin_media_router,
     admin_ctvs_router,
     admin_image_objects_router,
+    admin_accounts_router,
     actions_router,
     webhooks_router,
     survey_router,
@@ -165,6 +166,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"[PHONE LINKS] Schema init failed: {e}")
 
+        # 3d. Admin accounts: create the table and seed the environment admin once.
+        try:
+            from core.admin_accounts import ensure_admin_accounts, seed_env_admin
+            await ensure_admin_accounts(state.db_pool)
+            await seed_env_admin(state.db_pool)
+        except Exception as e:
+            logger.warning(f"[ADMIN ACCOUNTS] init failed: {e}")
+
         # 4. Seed media directory
         seed_media_storage()
 
@@ -227,6 +236,37 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def inject_admin_nav(request, call_next):
+    """Add the shared admin top bar without editing every page template."""
+    response = await call_next(request)
+    if request.url.path.startswith("/admin") and response.headers.get(
+        "content-type", ""
+    ).startswith("text/html"):
+        if hasattr(response, "body_iterator"):
+            body = b"".join([chunk async for chunk in response.body_iterator])
+        else:
+            body = getattr(response, "body", b"")
+        if b"</body>" in body:
+            body = body.replace(
+                b"</body>",
+                b'<script src="/static/ui/admin_nav.js" defer></script></body>',
+                1,
+            )
+        headers = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() != "content-length"
+        }
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=response.media_type,
+        )
+    return response
+
 # Mount static asset endpoints
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -242,6 +282,7 @@ app.include_router(admin_audit_router)
 app.include_router(admin_media_router)
 app.include_router(admin_ctvs_router)
 app.include_router(admin_image_objects_router)
+app.include_router(admin_accounts_router)
 app.include_router(actions_router)
 app.include_router(webhooks_router)
 app.include_router(survey_router)

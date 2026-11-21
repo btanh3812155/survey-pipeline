@@ -270,6 +270,15 @@ CREATE TABLE IF NOT EXISTS image_dinov2_exceptions (
 CREATE INDEX IF NOT EXISTS idx_image_dinov2_exceptions_active
 ON image_dinov2_exceptions (form_id, expires_at);
 
+-- 6c. Database-backed admin web accounts.
+CREATE TABLE IF NOT EXISTS admin_accounts (
+    username VARCHAR(64) PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 7. Vehicle Change Audit & History Ledger
 CREATE TABLE IF NOT EXISTS vehicle_change_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -131,19 +131,57 @@ def _verify_admin_password(password: str, encoded: str) -> bool:
     return True
 
 
-def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)) -> str:
-    """Protects administrative endpoints with HTTP Basic Authentication."""
+async def _load_admin_account(username: str) -> Optional[Dict[str, Any]]:
+    pool = get_db_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT password_hash, is_active FROM admin_accounts WHERE username=%s",
+                    (username,),
+                )
+                row = await cur.fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return {"password_hash": row.get("password_hash"), "is_active": row.get("is_active")}
+    return {"password_hash": row[0], "is_active": row[1]}
+
+
+def _auth_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Thông tin đăng nhập quản trị viên không chính xác",
+        headers={"WWW-Authenticate": "Basic"},
+    )
+
+
+async def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)) -> str:
+    """Protects administrative endpoints with HTTP Basic Authentication.
+
+    A database account is authoritative when its row exists; the environment
+    credential is a break-glass fallback only when no row exists.
+    """
+    account = await _load_admin_account(credentials.username)
+    if account is not None:
+        valid = bool(account.get("is_active")) and _verify_admin_password(
+            credentials.password, str(account.get("password_hash") or "")
+        )
+        if not valid:
+            raise _auth_error()
+        return credentials.username
+
     is_user_ok = secrets.compare_digest(credentials.username, settings.ADMIN_USERNAME)
     if settings.ADMIN_PASSWORD_HASH:
         is_pass_ok = _verify_admin_password(credentials.password, settings.ADMIN_PASSWORD_HASH)
     else:
         is_pass_ok = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
     if not (is_user_ok and is_pass_ok):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Thông tin đăng nhập quản trị viên không chính xác",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+        raise _auth_error()
     return credentials.username
 
 

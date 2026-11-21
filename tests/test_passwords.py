@@ -56,15 +56,17 @@ def test_production_rejects_malformed_or_weak_hash():
         _production_settings(ADMIN_PASSWORD_HASH=weak)
 
 
-def test_admin_auth_uses_hash(monkeypatch):
+@pytest.mark.asyncio
+async def test_admin_auth_uses_hash(monkeypatch):
     encoded = hash_password("admin-secret", iterations=1_000)
     monkeypatch.setattr(runtime_settings, "ADMIN_PASSWORD_HASH", encoded)
     monkeypatch.setattr(runtime_settings, "ADMIN_PASSWORD", "")
     monkeypatch.setattr(runtime_settings, "ADMIN_USERNAME", "admin")
+    monkeypatch.setattr("core.state.get_db_pool", lambda: None)
 
-    assert verify_admin_auth(
+    assert await verify_admin_auth(
         HTTPBasicCredentials(username="admin", password="admin-secret")
     ) == "admin"
     with pytest.raises(HTTPException) as exc:
-        verify_admin_auth(HTTPBasicCredentials(username="admin", password="wrong"))
+        await verify_admin_auth(HTTPBasicCredentials(username="admin", password="wrong"))
     assert exc.value.status_code == 401
