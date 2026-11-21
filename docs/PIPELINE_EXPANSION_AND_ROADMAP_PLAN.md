@@ -95,7 +95,7 @@ Following direct directive and timeline alignment with leadership on 2026-11-07,
 ### 2.2 Architectural Scope Calibration
 To guarantee uncompromised reliability for the 11.11 live run, non-critical automations are cleanly staged:
 * **Telegram Operations -> Admin Manual Moderation Prioritized (COMPLETED & ACTIVE):**
-  - The Telegram dual-bot network (`@TrustBridgeVNAdmin_Bot` and `@TrustBridgeVN_bot`) operates with human supervisor oversight in the Admin Moderation Group (`-5445563473`).
+  - The Telegram dual-bot network (`@TrustBridgeVNAdmin_Bot` admin side and `@TrustBridgeVN_bot` CTV/user side) operates with human supervisor oversight in the Admin Moderation Group (`-5445563473`). Drivers are planned to move to a Zalo notification flow rather than a Telegram bot.
   - Features active: 2-way live relay chat between admins and requesters, 1-click dossier inspection, 1-tap manual review decisions, request locking, cancellation (`/cancel`), and 5/2h rolling rate limits.
   - *Automated Chatbot Revamp* (conversational auto-agent dialogue tree) is deferred post-11.11 launch as confirmed by client directive (*"luồng revamp auto ko kịp mình để sau (aka Admin manual done)"*).
 * **Customer Deliverable -> Google Sheets Fast-Path Bridge Prioritized:**
@@ -110,7 +110,7 @@ To guarantee uncompromised reliability for the 11.11 live run, non-critical auto
 - **Media Normalization:** Raw multipart uploads stream into memory buffer (`io.BytesIO()`); zero disk contention; EXIF auto-rotation; RGBA/CMYK flattened to white RGB canvas.
 - **Fast Quality Gates:** Laplacian blur pre-check rejects unreadable receipts in `< 25ms`; BIT(64) Hamming distance queries detect duplicates in `< 15ms`.
 - **Dual-Model AI Vision:** Primary DeepSeek Flash / Gemini 3.5 Flash transcription with deterministic Python compliance evaluator; zero prompt injection exposure.
-- **Dual Telegram Bots & Lark Base Sync:** `@TrustBridgeVNAdmin_Bot` (Admin group `-5445563473`) + `@TrustBridgeVN_bot` (Driver DM) live on DigitalOcean; automated row writes into Lark Base (`UwVabU53laZe5OsKgEGjy7QRpOh` / `tblTpiVhUtY98Zc8`).
+- **Dual Telegram Bots:** `@TrustBridgeVNAdmin_Bot` (Admin group `-5445563473`) + `@TrustBridgeVN_bot` (CTV/user DM; drivers are planned to move to a Zalo notification flow) live on DigitalOcean; Lark Base row sync is paused under current requirements (`UwVabU53laZe5OsKgEGjy7QRpOh` / `tblTpiVhUtY98Zc8`).
 - **Request Hardening:** Active request locking, `/cancel` support, and 5 requests per 2-hour rolling rate limits active.
 
 ## 3. Downstream Expansion Plan
