@@ -206,6 +206,10 @@ async def enqueue_submission_work(conn, submission_id, transition="SUBMITTED", *
             enabled = enabled and bool(settings.R2_PRIVATE_BUCKET_NAME) and settings.R2_PRIVATE_BUCKET_NAME != settings.R2_BUCKET_NAME and bool(base["media_manifest"])
             payload["destination"] = {"private": True, "bucket": settings.R2_PRIVATE_BUCKET_NAME}
         elif target == "LARK_SYNC":
+            enabled = enabled and bool(
+                settings.LARK_APP_ID and settings.LARK_APP_ID != "cli_mock_id"
+                and settings.LARK_APP_SECRET and settings.LARK_BASE_APP_TOKEN and settings.LARK_BASE_TABLE_ID
+            )
             payload.update(app_token=settings.LARK_BASE_APP_TOKEN, table_id=settings.LARK_BASE_TABLE_ID,
                            fields={"Mã Phiếu (Submission ID)": sid, "Trạng Thái (Status)": status,
                                    "Doanh Thu (Gross Revenue)": row.get("total_gross_revenue") or 0,

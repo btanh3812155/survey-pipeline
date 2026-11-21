@@ -92,6 +92,7 @@ def decision(conn, sid):
 
 async def test_approval_rederives_old_skips_once_without_direct_dispatch(moderation, monkeypatch):
     dsn, conn, make, users = moderation
+    monkeypatch.setattr(settings, "LARK_APP_ID", "cli_mock_id")
     sid, _, ctv = make()
     users.append(ctv)
     conn.execute("INSERT INTO authorized_users(telegram_user_id,full_name,role) VALUES (%s,'Test','COLLABORATOR')", (ctv,))
@@ -120,6 +121,9 @@ async def test_approval_rederives_old_skips_once_without_direct_dispatch(moderat
     assert sorted(e["flow_target"] for e in derived) == [
         "BILLING", "GDRIVE_EXPORT", "LARK_SYNC", "R2_UPLOAD", "TELEGRAM_NOTIFY", "TELEGRAM_NOTIFY",
     ]
+    lark = next(e for e in derived if e["flow_target"] == "LARK_SYNC")
+    assert lark["payload"]["policy"]["enabled"] is False
+    assert lark["payload"]["policy"]["skip_reason"] == "INELIGIBLE_OR_UNCONFIGURED"
     assert {e["payload"]["chat_id"] for e in derived if e["flow_target"] == "TELEGRAM_NOTIFY"} == {str(ADMIN_GROUP), ctv}
     assert conn.execute("SELECT count(*) AS n FROM system_audit_log WHERE entity_id=%s AND action='STATUS_TRANSITION'", (sid,)).fetchone()["n"] == 1
     await queue.process(dsn, flow_target="BILLING")
