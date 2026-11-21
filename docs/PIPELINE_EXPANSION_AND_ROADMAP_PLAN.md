@@ -1,10 +1,12 @@
 # Survey Verification Pipeline: Master Execution, Migration & Expansion Roadmap Plan
 
-**Document Classification:** Authoritative Strategic Roadmap, Rollout Battle Plan & Operational Expansion Plan  
+**Document Classification:** Historical strategic roadmap and expansion requirements; not current implementation or deployment authority
 **System Baseline:** Survey Verification Pipeline v3.0.0  
 **Target Infrastructure:** DigitalOcean SGP1 (Singapore) + Cloudflare R2 + PostgreSQL (pgvector) + Redis  
 **Nominal Service Level Agreement (SLA):** Synchronous review loop < 2,500 ms (p50), < 3,800 ms (p99)  
 **Target Throughput Scale:** 2,000 -> 20,000 -> 50,000+ daily submissions  
+
+> **Hardening scope/authority:** Follow [MODULE_DESIGNER_HANDOFF.md](MODULE_DESIGNER_HANDOFF.md) and [MODULE_IMPLEMENTATION_PLANS.md](MODULE_IMPLEMENTATION_PLANS.md) for the checked-out baseline, preserved per-channel quotas and executable upgrade gates. Dates, completed bars, broker/service diagrams, SLAs and future Zalo/BI/payroll features below are historical intent, not implementation evidence or implicit scope. A new product/policy change needs its own approval; do not revive removed commands or introduce a message broker during hardening.
 
 ---
 

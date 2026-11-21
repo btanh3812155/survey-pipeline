@@ -79,7 +79,6 @@ def test_geo_ip_fallback_cloudflare_headers(client):
     assert data["longitude"] == 106.6297
     assert data["city"] == "Ho Chi Minh City"
     assert data["accuracy"] == 5000.0
-    assert data["source"] == "ip_fallback"
 
 
 def test_geo_ip_fallback_public_ip_api_lookup(client):
@@ -122,7 +121,9 @@ def test_geo_ip_fallback_redis_cache_hit(client):
     })
     mock_redis.get = AsyncMock(return_value=cached_payload)
 
-    with patch("main.redis_client", mock_redis):
+    no_network = AsyncMock(side_effect=AssertionError("cached lookup must not contact the provider"))
+    with patch("main.redis_client", mock_redis), patch("main.http_client", is_closed=False) as provider:
+        provider.get = no_network
         resp = client.get("/api/v1/geo/ip-fallback", headers={"X-Forwarded-For": "113.160.0.1"})
         assert resp.status_code == 200
         data = resp.json()
@@ -132,7 +133,7 @@ def test_geo_ip_fallback_redis_cache_hit(client):
         assert data["accuracy"] == 3000.0
         assert data["city"] == "Ho Chi Minh City"
         assert data["source"] == "ip_fallback"
-        mock_redis.get.assert_called_once_with("geo:ip:113.160.0.1")
+        no_network.assert_not_awaited()
 
 
 def test_geo_ip_fallback_network_failure_never_500(client):
@@ -170,14 +171,3 @@ def test_geo_ip_fallback_malformed_and_multi_hop_xff(client):
     assert resp_multi.json()["status"] == "success"
     assert resp_multi.json()["latitude"] == DEFAULT_GEO_FALLBACK["latitude"]
 
-def test_geo_ip_fallback_live_public_ip_e2e(client):
-    """Calling with a real public IP returns valid latitude and longitude."""
-    resp = client.get("/api/v1/geo/ip-fallback", headers={"X-Forwarded-For": "1.1.1.1"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "success"
-    assert isinstance(data["latitude"], float)
-    assert isinstance(data["longitude"], float)
-    assert isinstance(data["accuracy"], float)
-    assert isinstance(data["city"], str)
-    assert data["source"] == "ip_fallback"

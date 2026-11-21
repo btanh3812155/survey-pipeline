@@ -12,8 +12,9 @@ SUBMITTED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
-async def test_dispatch_notifications_goes_to_collaborator_only():
+async def test_dispatch_notifications_goes_to_collaborator_only(monkeypatch):
     """The Telegram flow is CTV-facing: only the collaborator receives the verdict."""
+    monkeypatch.setattr("routers.survey.settings.TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver")
     mock_send = AsyncMock(return_value=True)
 
     with patch("main.lookup_telegram_user_by_phone", AsyncMock(return_value=123456789)), \
@@ -33,19 +34,21 @@ async def test_dispatch_notifications_goes_to_collaborator_only():
         assert mock_send.await_count == 1
         call = mock_send.await_args_list[0]
         assert call.kwargs["chat_id"] == 987654321
-        assert "Cập Nhật Khảo Sát #VN-TEST99" in call.kwargs["text"]
+        assert "VN-TEST99" in call.kwargs["text"]
         assert "REJECTED" in call.kwargs["text"]
         # rejection carries a return-to-form link with the CTV ref
         assert "/forms/TB_GSM_2026_Nov_Test?ref=CTV001" in call.kwargs["text"]
 
 
 @pytest.mark.asyncio
-async def test_dispatch_notifications_unlinked_collaborator_graceful():
+async def test_dispatch_notifications_unlinked_collaborator_graceful(monkeypatch):
     """An unlinked collaborator is skipped cleanly; no driver message is sent."""
+    monkeypatch.setattr("routers.survey.settings.TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver")
     mock_send = AsyncMock(return_value=True)
+    lookup = AsyncMock(return_value=None)
 
     with patch("main.lookup_telegram_user_by_phone", AsyncMock(return_value=111222333)), \
-         patch("main.lookup_telegram_user_for_collaborator", AsyncMock(return_value=None)), \
+         patch("main.lookup_telegram_user_for_collaborator", lookup), \
          patch("main.send_telegram_direct_message", mock_send):
         await dispatch_submission_telegram_notifications(
             submission_id="VN-REJ88",
@@ -56,7 +59,8 @@ async def test_dispatch_notifications_unlinked_collaborator_graceful():
             reason_str="Ảnh mờ không đọc được",
         )
 
-        assert mock_send.await_count == 0
+        lookup.assert_awaited_once_with("ctv_unlinked_99")
+        mock_send.assert_not_awaited()
 
 
 def test_submit_webrtc_schedules_party_notifications(monkeypatch, tmp_path):

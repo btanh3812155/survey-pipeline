@@ -1,7 +1,14 @@
 import io
 import hashlib
+import json
+import secrets
+import time
+from unittest.mock import AsyncMock
+
+import pytest
 import numpy as np
 from PIL import Image, ImageDraw
+from fastapi.testclient import TestClient
 
 from services.auth_lark import (
     verify_lark_signature,
@@ -20,8 +27,35 @@ from services.evaluator import evaluate_survey_compliance
 from services.templates_vn import render_telegram_verdict
 
 
+@pytest.fixture
+def lark_webhook(monkeypatch):
+    from main import app
+    from routers import webhooks
+
+    key = "offline-lark-test-key"
+    monkeypatch.setattr(webhooks.settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(webhooks.settings, "LARK_ENCRYPT_KEY", key)
+    monkeypatch.setattr(webhooks.settings, "DURABLE_LARK_ENABLED", False)
+    monkeypatch.setattr(webhooks, "get_redis_client", lambda: None)
+    monkeypatch.setattr(webhooks, "send_telegram_notification", AsyncMock())
+    monkeypatch.setattr(webhooks.r2_client, "upload_image", AsyncMock())
+    client = TestClient(app)
+
+    def post(body: bytes, *, signed: bool = True):
+        headers = {"Content-Type": "application/json"}
+        if signed:
+            timestamp, nonce = str(int(time.time())), secrets.token_hex(16)
+            headers.update({
+                "X-Lark-Request-Timestamp": timestamp,
+                "X-Lark-Request-Nonce": nonce,
+                "X-Lark-Signature": hashlib.sha256((timestamp + nonce + key).encode() + body).hexdigest(),
+            })
+        return client.post("/webhook/lark-survey", content=body, headers=headers)
+
+    return post
+
+
 def test_lark_signature_raw_sha256_verification():
-    import time
     timestamp = str(int(time.time()))
     nonce = "abc123nonce"
     encrypt_key = "my_secret_key"
@@ -166,11 +200,9 @@ def test_fastapi_health_endpoint():
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
 
-def test_fastapi_lark_webhook_full_flow(monkeypatch):
+def test_fastapi_lark_webhook_full_flow(monkeypatch, lark_webhook):
     monkeypatch.setenv("MOCK_AI", "1")
     import base64
-    from fastapi.testclient import TestClient
-    from main import app
 
     # create a clean synthetic receipt image
     img = Image.new("RGB", (600, 800), (255, 255, 255))
@@ -181,7 +213,6 @@ def test_fastapi_lark_webhook_full_flow(monkeypatch):
     img.save(buf, format="JPEG")
     img_b64 = base64.b64encode(buf.getvalue()).decode()
 
-    client = TestClient(app)
     payload = {
         "type": "event_callback",
         "event": {
@@ -190,7 +221,9 @@ def test_fastapi_lark_webhook_full_flow(monkeypatch):
             "image_base64": img_b64
         }
     }
-    resp = client.post("/webhook/lark-survey", json=payload)
+    body = json.dumps(payload).encode()
+    assert lark_webhook(body, signed=False).status_code == 401
+    resp = lark_webhook(body)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "processed"

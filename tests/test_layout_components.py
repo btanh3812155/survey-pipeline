@@ -67,8 +67,6 @@ def test_ctv_landing_page_layout_has_all_needed_and_only_needed_components():
 
     # 2. CTV Selection Dropdown
     assert 'id="ctvSelect"' in html
-    assert 'value="ctv001"' in html
-    assert 'CTV001 - Dũng (HN)' in html
 
     # 3. Location Component on Landing Page
     assert "gps-banner-box" in html

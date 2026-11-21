@@ -116,8 +116,9 @@ async def test_reverse_lookup_uses_trusted_sources_and_latest_mapping_order():
 
     assert resolved == "0932090967"
     lookup = pool.conn.cur.calls[0]
-    assert lookup[1] == (9241303232, *VERIFIED_PHONE_LINK_SOURCES)
-    assert "source IN" in lookup[0]
+    assert lookup[1] == (9241303232, list(VERIFIED_PHONE_LINK_SOURCES))
+    await get_verified_phone_binding_for_telegram_user(9241303232, db_pool=pool, sources=("verified_contact",))
+    assert pool.conn.cur.calls[-1][1] == (9241303232, ["verified_contact"])
     assert "telegram_user_id > 0" in lookup[0]
     assert "ORDER BY updated_at DESC, phone_normalized ASC" in lookup[0]
     assert await get_verified_phone_for_telegram_user(0, db_pool=pool) is None
@@ -398,6 +399,7 @@ async def test_real_postgres_reassignment_hides_previous_owner_history(monkeypat
     phone = f"09{secrets.randbelow(100_000_000):08d}"
     owner_a, owner_b = (secrets.randbelow(2**48) + 1 for _ in range(2))
     old_id, new_id = f"TEST-H1-{phone}-A", f"TEST-H1-{phone}-B"
+    policy = json.dumps({"_delivery_policy": {"source": "question", "question_id": "notify_phone"}, "notify_phone": phone})
     history_file = tmp_path / "dev_submissions.json"
     history_file.write_text(json.dumps([{
         "submission_id": "DEV-PREVIOUS-OWNER", "driver_phone": phone,
@@ -422,8 +424,8 @@ async def test_real_postgres_reassignment_hides_previous_owner_history(monkeypat
                 "updated_at = '2020-01-01T00:00:00Z' WHERE phone_normalized = %s;", (phone,),
             )
             await conn.execute(
-                "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at) "
-                "VALUES (%s, %s, 'APPROVED', '2021-01-01T00:00:00Z');", (old_id, phone),
+                "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
+                "VALUES (%s, %s, 'APPROVED', '2021-01-01T00:00:00Z', %s::jsonb);", (old_id, phone, policy),
             )
             await conn.commit()
         await runner.handle_driver_surveys_lookup(owner_a, owner_a)
@@ -480,8 +482,8 @@ async def test_real_postgres_reassignment_hides_previous_owner_history(monkeypat
 
         async with pool.connection() as conn:
             await conn.execute(
-                "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at) "
-                "VALUES (%s, %s, 'APPROVED', %s);", (new_id, phone, binding[1] + timedelta(seconds=1)),
+                "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
+                "VALUES (%s, %s, 'APPROVED', %s, %s::jsonb);", (new_id, phone, binding[1] + timedelta(seconds=1), policy),
             )
             await conn.commit()
         await runner.handle_driver_surveys_lookup(owner_b, owner_b)

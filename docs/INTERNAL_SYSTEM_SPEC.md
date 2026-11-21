@@ -1,10 +1,12 @@
 # Master Internal System Specification: Survey Verification Pipeline
 
-**Document Version:** 1.4.0 (Production Release)  
+**Document Version:** 1.4.0 (historical product/design requirements; not a verified production-release description)
 **System Target:** 2,000 to 20,000+ submissions/day (~600,000/month)  
 **Nominal Latency SLA:** < 2,500 ms (p50), < 3,800 ms (p99 under complete AI failover)  
 **Target Operating Budget:** ~$83.00 - $93.00 / month (at 20k/day scale)
 **Authoritative Administrative Account:** `admin@trustbridgevn.com` (Designated for Google Drive deliverables and all Trust Bridge operations)
+
+> **Upgrade authority:** Use [MODULE_DESIGNER_HANDOFF.md](MODULE_DESIGNER_HANDOFF.md) for the observed baseline and [MODULE_IMPLEMENTATION_PLANS.md](MODULE_IMPLEMENTATION_PLANS.md), especially sections 1.6-1.8, for this migration's dispositions and tests. Claims below about completed behavior, quotas, infrastructure, privacy commands, performance or legal compliance are historical requirements/claims, not proof or permission to override the current source and explicit approval gates. In particular, this upgrade preserves the plan's per-channel quota table rather than silently adopting 3 appeals/8h.
 
 ---
 

@@ -180,14 +180,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("[IMAGE OBJECTS] registry load failed: %s", e)
 
-        # 5. Register the CTV bot command menu (webhook mode never calls start_polling)
+        # Webhook mode never calls start_polling to install the command menus.
         try:
-            from services.telegram_polling import configure_driver_bot_menu
-            await configure_driver_bot_menu()
+            from services.telegram_polling import configure_bot_menus
+            await configure_bot_menus()
         except Exception as e:
-            logger.debug(f"Driver bot command menu setup failed: {e}")
+            logger.debug(f"Bot command menu setup failed: {e}")
 
-        yield
+        from core.embedding_executor import embedding_executor_lifespan
+
+        async with embedding_executor_lifespan():
+            yield
     finally:
         # Cancellation during pool.open()/connection() bypasses `except Exception`;
         # this local reference guarantees the unpublished pool is still closed.

@@ -1,7 +1,11 @@
 import re
-import inspect
 from typing import Optional, Tuple
+
+from psycopg.rows import tuple_row
 from pydantic import BaseModel
+
+from core.phone_links import normalize_vn_phone, phone_normalization_sql
+from services.privacy_crypto import hash_phone
 
 
 class VehicleMatchResult(BaseModel):
@@ -17,9 +21,24 @@ def normalize_license_plate(plate: Optional[str]) -> str:
     """Normalizes Vietnamese license plate: '29E-123.45' -> '29E12345'"""
     if not plate:
         return ""
-    if not isinstance(plate, (str, bytes)):
+    if not isinstance(plate, str):
         return ""
     return re.sub(r"[^A-Z0-9]", "", plate.upper().strip())
+
+
+def stored_vehicle_candidate(driver_phone, facts, vehicle_type):
+    """Accept only unambiguous plate and type facts on the reviewed submission."""
+    phone = normalize_vn_phone(driver_phone)
+    if not phone or not isinstance(facts, dict):
+        return None
+    raw_plate = facts.get("detected_plate")
+    if not isinstance(raw_plate, str) or not re.fullmatch(r"[A-Za-z0-9. -]+", raw_plate):
+        return None
+    plate = normalize_license_plate(raw_plate)
+    types = {str(value).strip().upper() for value in (vehicle_type, facts.get("detected_vehicle_type"), facts.get("vehicle_type")) if value}
+    if len(types) != 1 or not types <= {"CAR", "BIKE"} or not re.fullmatch(r"[0-9]{2}[A-Z][A-Z0-9]{3,7}", plate):
+        return None
+    return phone, plate, types.pop()
 
 
 class VehiclePersistenceTracker:
@@ -33,10 +52,12 @@ class VehiclePersistenceTracker:
         detected_vehicle_type: str,  # 'BIKE' or 'CAR'
         detected_color: Optional[str] = None,
         driver_phone_hash: Optional[str] = None,
+        *,
+        persist: bool = True,
     ) -> VehicleMatchResult:
         """
         Ensures vehicle consistency per driver.
-        - First survey: Registers the vehicle plate & type to the driver.
+        - First survey: Registers the vehicle plate & type unless persist=False.
         - Subsequent surveys: Flags if the driver submits a different vehicle.
         """
         norm_detected = normalize_license_plate(detected_plate)
@@ -64,35 +85,30 @@ class VehiclePersistenceTracker:
         conn_ctx = self.db_pool.connection()
         conn = await conn_ctx.__aenter__() if hasattr(conn_ctx, "__aenter__") else (await conn_ctx if hasattr(conn_ctx, "__await__") else conn_ctx)
         try:
-            cur_ctx = conn.cursor()
+            cur_ctx = conn.cursor(row_factory=tuple_row)
             if hasattr(cur_ctx, "__await__"):
                 cur_ctx = await cur_ctx
             cur = await cur_ctx.__aenter__() if hasattr(cur_ctx, "__aenter__") else cur_ctx
             try:
                 # 1. lookup existing registered vehicle for this driver by raw phone or phone hash
-                phone_hash = driver_phone_hash
-                if not phone_hash and driver_phone:
-                    try:
-                        from services.privacy_crypto import hash_phone
-                        phone_hash = hash_phone(driver_phone)
-                    except Exception:
-                        phone_hash = driver_phone
+                canonical_phone = normalize_vn_phone(driver_phone)
+                phone_hash = driver_phone_hash or hash_phone(driver_phone)
 
                 await cur.execute(
-                    """
+                    f"""
                     SELECT license_plate, vehicle_type, vehicle_color
                     FROM driver_registered_vehicles
-                    WHERE driver_phone = %s OR driver_phone = %s;
-                """,
-                    (driver_phone, phone_hash or driver_phone),
+                    WHERE driver_phone IN (%s, %s, %s) OR {phone_normalization_sql('driver_phone')} = %s
+                    ORDER BY (driver_phone = %s) DESC, driver_phone;
+                    """,
+                    (driver_phone, canonical_phone or driver_phone, phone_hash or driver_phone,
+                     canonical_phone, canonical_phone or driver_phone),
                 )
                 existing = await cur.fetchone()
-                if existing is not None and not isinstance(existing, (tuple, list)):
-                    existing = None
 
                 # 2. first survey -> register this vehicle
-                if not existing:
-                    if norm_detected:
+                if existing is None:
+                    if persist and norm_detected:
                         await cur.execute(
                             """
                             INSERT INTO driver_registered_vehicles (
@@ -100,7 +116,7 @@ class VehiclePersistenceTracker:
                             ) VALUES (%s, %s, %s, %s)
                             ON CONFLICT (driver_phone) DO NOTHING;
                         """,
-                            (driver_phone, norm_detected, vtype, detected_color),
+                            (canonical_phone or driver_phone, norm_detected, vtype, detected_color),
                         )
                         await conn.commit()
                     return VehicleMatchResult(
@@ -133,10 +149,7 @@ class VehiclePersistenceTracker:
                         is_match=False,
                         is_first_registration=False,
                         status_code="VEHICLE_UNREGISTERED",
-                        flag_reason=(
-                            f"Phát hiện phương tiện không khớp: Tài xế đăng ký xe biển số [{reg_plate}] "
-                            f"nhưng ảnh nộp là biển số [{detected_plate}]."
-                        ),
+                        flag_reason="Biển số trên ảnh không khớp với phương tiện đã đăng ký.",
                         registered_plate=reg_plate,
                         detected_plate=detected_plate,
                     )
@@ -147,7 +160,7 @@ class VehiclePersistenceTracker:
                         is_match=False,
                         is_first_registration=False,
                         status_code="VEHICLE_TYPE_UNREGISTERED",
-                        flag_reason=f"Sai loại xe: Tài xế đăng ký [{reg_type}] nhưng gửi ảnh kiểm tra xe [{vtype}].",
+                        flag_reason="Loại xe trên ảnh không khớp với phương tiện đã đăng ký.",
                         registered_plate=reg_plate,
                         detected_plate=detected_plate,
                     )
@@ -174,88 +187,58 @@ class VehiclePersistenceTracker:
         admin_id: int,
         reason: str = "Tài xế đổi xe công ty",
         driver_phone_hash: Optional[str] = None,
+        *,
+        conn=None,
     ) -> Tuple[bool, int, str]:
-        """
-        Pathway for admins to allow legitimate vehicle changes while monitoring frequency & recency.
-        Returns (success: bool, changes_in_last_30d: int, audit_note: str).
-        """
-        norm_new = normalize_license_plate(new_plate)
-        vtype = "BIKE" if "BIKE" in new_vehicle_type.upper() else "CAR"
-
-        if not self.db_pool:
-            return True, 1, "Mock: Đã cập nhật xe mới thành công."
-
-        conn_ctx = self.db_pool.connection()
-        conn = await conn_ctx.__aenter__() if hasattr(conn_ctx, "__aenter__") else (await conn_ctx if hasattr(conn_ctx, "__await__") else conn_ctx)
-        try:
-            cur_ctx = conn.cursor()
-            if hasattr(cur_ctx, "__await__"):
-                cur_ctx = await cur_ctx
-            cur = await cur_ctx.__aenter__() if hasattr(cur_ctx, "__aenter__") else cur_ctx
-            try:
-                phone_hash = driver_phone_hash
-                if not phone_hash and driver_phone:
-                    try:
-                        from services.privacy_crypto import hash_phone
-                        phone_hash = hash_phone(driver_phone)
-                    except Exception:
-                        phone_hash = driver_phone
-
-                # 1. get current vehicle
-                await cur.execute(
-                    "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone = %s OR driver_phone = %s;",
-                    (driver_phone, phone_hash or driver_phone),
-                )
-                curr = await cur.fetchone()
-                if curr is not None and not isinstance(curr, (tuple, list)):
-                    curr = None
-                old_plate = curr[0] if curr else "UNKNOWN"
-                old_type = curr[1] if curr else vtype
-
-                # 2. check change frequency in last 30 days
-                await cur.execute(
-                    """
-                    SELECT COUNT(*) FROM vehicle_change_history 
-                    WHERE (driver_phone = %s OR driver_phone = %s) AND created_at > NOW() - INTERVAL '30 DAYS';
-                """,
-                    (driver_phone, phone_hash or driver_phone),
-                )
-                recent_changes = (await cur.fetchone())[0] + 1
-                # 3. log to audit ledger
-                await cur.execute(
-                    """
-                    INSERT INTO vehicle_change_history (
-                        driver_phone, previous_plate, new_plate, previous_vehicle_type, new_vehicle_type, changed_by_admin_id, change_reason
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s);
-                """,
-                    (driver_phone, old_plate, norm_new, old_type, vtype, admin_id, reason),
+        """Change the binding and write its history in the same transaction."""
+        phone = normalize_vn_phone(driver_phone)
+        plate = normalize_license_plate(new_plate)
+        vtype = str(new_vehicle_type or "").upper()
+        if not phone or not plate or vtype not in ("CAR", "BIKE"):
+            return False, 0, "Cần bổ sung số điện thoại, biển số và loại xe đã xác minh."
+        if conn is None:
+            if not self.db_pool:
+                return False, 0, "Chưa cập nhật được xe: thiếu kết nối cơ sở dữ liệu."
+            async with self.db_pool.connection() as own_conn:
+                return await self.approve_vehicle_change(
+                    driver_phone, plate, vtype, admin_id, reason, driver_phone_hash, conn=own_conn,
                 )
 
-                # 4. update active registered vehicle
+        async with conn.cursor(row_factory=tuple_row) as cur:
+            await cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"vehicle:{phone}",))
+            await cur.execute(
+                f"SELECT driver_phone, license_plate, vehicle_type FROM driver_registered_vehicles "
+                f"WHERE {phone_normalization_sql('driver_phone')}=%s OR driver_phone=%s FOR UPDATE",
+                (phone, driver_phone_hash or hash_phone(phone)),
+            )
+            registrations = await cur.fetchall()
+            if len(registrations) > 1:
+                return False, 0, "Có nhiều đăng ký xe cho tài xế; cần đối soát trước khi đổi xe."
+            if registrations:
+                key, old_plate, old_type = registrations[0]
+                if normalize_license_plate(old_plate) == plate and old_type == vtype:
+                    return False, 0, "Xe này đã được đăng ký; không có thay đổi mới."
                 await cur.execute(
-                    """
-                    INSERT INTO driver_registered_vehicles (driver_phone, license_plate, vehicle_type)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (driver_phone) DO UPDATE 
-                    SET license_plate = EXCLUDED.license_plate, vehicle_type = EXCLUDED.vehicle_type, updated_at = NOW();
-                """,
-                    (driver_phone, norm_new, vtype),
+                    "UPDATE driver_registered_vehicles SET license_plate=%s, vehicle_type=%s, "
+                    "vehicle_color=NULL, vehicle_model=NULL, updated_at=NOW() WHERE driver_phone=%s",
+                    (plate, vtype, key),
                 )
-
-                commit_fn = getattr(conn, "commit", None)
-                if callable(commit_fn):
-                    res = commit_fn()
-                    if inspect.isawaitable(res):
-                        await res
-
-                warning = ""
-                if recent_changes >= 3:
-                    warning = f" ⚠️ Cảnh báo: Tài xế này đã đổi xe {recent_changes} lần trong 30 ngày qua!"
-
-                return True, recent_changes, f"Đã duyệt đổi sang xe {norm_new} ({vtype}).{warning}"
-            finally:
-                if hasattr(cur_ctx, "__aexit__"):
-                    await cur_ctx.__aexit__(None, None, None)
-        finally:
-            if hasattr(conn_ctx, "__aexit__"):
-                await conn_ctx.__aexit__(None, None, None)
+            else:
+                key, old_plate, old_type = phone, "UNKNOWN", "UNKNOWN"
+                await cur.execute(
+                    "INSERT INTO driver_registered_vehicles(driver_phone, license_plate, vehicle_type) VALUES (%s,%s,%s)",
+                    (key, plate, vtype),
+                )
+            await cur.execute(
+                "INSERT INTO vehicle_change_history "
+                "(driver_phone, previous_plate, new_plate, previous_vehicle_type, new_vehicle_type, changed_by_admin_id, change_reason) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (key, old_plate, plate, old_type, vtype, admin_id, reason),
+            )
+            await cur.execute(
+                "SELECT COUNT(*) FROM vehicle_change_history WHERE driver_phone=%s AND created_at>NOW()-INTERVAL '30 days'",
+                (key,),
+            )
+            recent_changes = (await cur.fetchone())[0]
+        warning = f" ⚠️ Cảnh báo: Tài xế đã đổi xe {recent_changes} lần trong 30 ngày." if recent_changes >= 3 else ""
+        return True, recent_changes, f"Đã duyệt đổi sang xe {plate} ({vtype}).{warning}"

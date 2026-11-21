@@ -1,4 +1,6 @@
 import io
+import json
+import pytest
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -20,6 +22,7 @@ from services.income_sanitizer import (
     analyze_driver_income,
     INCOME_BENCHMARKS,
 )
+from tests.test_architect_fixes import make_test_image, submit_camera, weekly_ocr
 
 
 def test_license_plate_normalization():
@@ -213,256 +216,110 @@ def test_mask_aware_quality_checks_on_transparent_images():
     is_glared, _ = detect_specular_glare_obliteration(norm_img)
     assert is_glared is False
 
-def test_admin_query_submission_dossier():
-    import asyncio
-    from services.admin_moderator import query_submission_dossier, render_dossier_message
+@pytest.mark.asyncio
+async def test_admin_query_submission_dossier(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from main import app
+    from unittest.mock import AsyncMock
 
-    async def _test():
-        dossier = await query_submission_dossier("VN-9921", db_pool=None)
-        assert dossier["submission_id"] == "VN-9921"
-        assert dossier["status"] == "REJECTED"
-        assert "0988123456" in dossier["driver_phone"]
-
-        # test HTML message formatting for admins
-        report_text = render_dossier_message(dossier)
-        assert "HỒ SƠ TRA CỨU DỮ LIỆU PHIẾU #VN-9921" in report_text
-        assert "0988123456" in report_text
-        assert "29E-123.45" in report_text
-
-    asyncio.run(_test())
-
-    # test Telegram webhook /query command integration
     from config import settings
-    client = TestClient(app)
-    admin_gid = int(settings.TELEGRAM_ADMIN_GROUP_ID) if settings.TELEGRAM_ADMIN_GROUP_ID.lstrip("-").isdigit() else -1001234567890
-    payload = {
-        "message": {
-            "chat": {"id": admin_gid},
-            "from": {"id": 111222},
-            "text": "/query VN-9921"
-        }
+    from main import app
+    from routers import webhooks
+    from services.admin_moderator import query_submission_dossier, render_dossier_message
+    from services.telegram_polling import TelegramPollingRunner
+
+    record = {
+        "submission_id": "VN-9921", "status": "REJECTED", "reason": "Ảnh thu nhập bị trùng lặp",
+        "driver_phone": "0988123456", "license_plate": "29E-123.45",
+        "vehicle_type": "CAR", "car_model": "VF 5 Plus", "form_id": "income_survey",
+        "submitted_at": "2026-11-20T08:00:00+00:00",
     }
-    resp = client.post("/webhook/telegram", json=payload)
-    assert resp.status_code == 200
-    assert resp.json()["status"] in ("ok", "query_command_handled")
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "dev_test_submissions.json").write_text(json.dumps([record]), encoding="utf-8")
+
+    dossier = await query_submission_dossier("VN-9921", db_pool=None)
+    assert dossier["submission_id"] == record["submission_id"]
+    assert dossier["status"] == "REJECTED"
+    assert dossier["driver_phone"] == record["driver_phone"]
+    assert dossier["raw_data"]["license_plate"] == record["license_plate"]
+    assert dossier["form_id"] == record["form_id"]
+    assert dossier["submitted_at"] == record["submitted_at"]
+
+    report_text = render_dossier_message(dossier)
+    for detail in ("VN-9921", "REJECTED", record["driver_phone"], record["car_model"], record["reason"]):
+        assert detail in report_text
+
+    admin_gid = -1001234567890
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "dossier-test-secret")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", str(admin_gid))
+    runner = TelegramPollingRunner(bot_token="mock_tg_token", db_pool=None, role="admin")
+    deliver = AsyncMock()
+    monkeypatch.setattr(runner, "send_dossier_bundle", deliver)
+    monkeypatch.setattr(webhooks, "admin_bot_runner", runner)
+    response = TestClient(app).post(
+        "/webhook/telegram",
+        json={"message": {"chat": {"id": admin_gid, "type": "supergroup"},
+                          "from": {"id": 111222}, "text": "/query VN-9921"}},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "dossier-test-secret"},
+    )
+    assert response.status_code == 200, response.text
+    deliver.assert_awaited_once()
+    chat_id, _key, delivered_dossier, _caption, attachment = deliver.await_args.args
+    assert chat_id == admin_gid
+    assert delivered_dossier == dossier
+    assert json.loads(attachment)["status"] == "REJECTED"
 
 
-def test_reject_unauthorized_app_spoofing():
-    """Verify that screenshots from competitor apps (e.g. Grab/Be) or mockups are rejected."""
-    from fastapi.testclient import TestClient
-    from unittest.mock import patch
-    import main
-    client = TestClient(main.app)
-    buf = io.BytesIO()
-    im = Image.new("RGB", (600, 600), (255, 255, 255))
-    ImageDraw.Draw(im).text((50, 50), "APP INCOME 2500000", fill=(0, 0, 0))
-    im.save(buf, "JPEG")
-    sharp_img = buf.getvalue()
-    async def mock_role(img_bytes, filename=None, expected_slots=None):
-        fn = (filename or "").lower()
-        if "0" in fn or "profile" in fn:
-            return "app_profile"
-        return "app_income"
+@pytest.mark.asyncio
+async def test_reject_unauthorized_app_spoofing(submit_camera):
+    """Competitor app screenshots are rejected even when all numbers reconcile."""
+    async def extract(_image_bytes, *, week_idx, prompt):
+        return weekly_ocr(
+            week_idx, detected_app="GRAB", is_authentic_gsm_ui=False,
+        ) if week_idx == 1 else weekly_ocr(week_idx)
 
-    async def mock_ocr_grab(img_bytes, *args, **kwargs):
-        return {
-            "gross_revenue": 2500000,
-            "net_income": 1900000,
-            "total_trips": 20,
-            "detected_app": "GRAB",
-            "is_authentic_gsm_ui": False,
-            "confidence_score": 0.95,
-            "is_legible": True,
-            "is_manipulated_or_photoshopped": False,
-        }
+    response = await submit_camera(extract)
+    assert response["status"] == "REJECTED", response
+    assert "không phải ứng dụng Tài xế Xanh SM chính thức" in response["reason"]
+    assert response["ocr_data"]["detected_app"] == "GRAB"
+    assert response["ocr_data"]["is_authentic_gsm_ui"] is False
 
-    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
-         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_grab):
-        resp = client.post(
-            "/api/v1/survey/submit-webrtc",
-                data={
-                    "driver_phone": "0988123456",
-                    "license_plate": "29E-123.45",
-                    "driver_name": "Tài xế Test",
-                    "consent_choice": "Tôi đồng ý",
-                    "signature_png": "data:image/png;base64,mock",
-                    "vehicle_type": "Ô tô",
-                    "car_model": "VF 5 Plus",
-                    "gsm_duration": "Từ 6 – 12 tháng",
-                    "gsm_contract_type": "Xe Taxi xanh GSM",
-                    "daily_trips": "18",
-                    "monthly_income_range": "12 – 20 triệu VNĐ",
-                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                    "is_test_mode": "true",
-                },
-            files={
-                "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_1": ("vehicle.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_2": ("income1.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_3": ("income2.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_4": ("income3.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_5": ("income4.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_6": ("income5.jpg", sharp_img, "image/jpeg"),
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "REJECTED"
-        assert "không phải ứng dụng Tài xế Xanh SM chính thức" in data["reason"]
-        assert data["ocr_data"]["detected_app"] == "GRAB"
-        assert data["ocr_data"]["is_authentic_gsm_ui"] is False
 
-def test_reject_intra_submission_duplicates_same_screen():
-    """Verify that uploading the exact same screen for multiple weeks is rejected for duplication."""
-    from fastapi.testclient import TestClient
-    from unittest.mock import patch
-    import main
-    client = TestClient(main.app)
-    buf = io.BytesIO()
-    im = Image.new("RGB", (600, 600), (255, 255, 255))
-    ImageDraw.Draw(im).text((50, 50), "APP INCOME 3500000", fill=(0, 0, 0))
-    im.save(buf, "JPEG")
-    sharp_img = buf.getvalue()
-    
-    async def mock_role(img_bytes, filename=None, *args, **kwargs):
-        fn = (filename or "").lower()
-        if "0" in fn or "profile" in fn:
-            return "app_profile"
-        return "app_income"
-        
-    async def mock_ocr_same(img_bytes, *args, **kwargs):
-        return {
-            "is_authentic_gsm_ui": True,
-            "detected_app": "XANH_SM",
-            "gross_revenue": 3500000,
-            "net_income": 3000000,
-            "total_trips": 40,
-            "period": "Tuần 1",
-            "discount_and_tax": 500000,
-            "online_hours": "35h",
-            "confidence_score": 0.95,
-            "is_legible": True,
-            "is_manipulated_or_photoshopped": False,
-        }
-    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
-         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_same):
-        resp = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0988123456",
-                "license_plate": "29E-123.45",
-                "driver_name": "Tài xế Test",
-                "consent_choice": "Tôi đồng ý",
-                "signature_png": "data:image/png;base64,mock",
-                "vehicle_type": "Ô tô",
-                "car_model": "VF 5 Plus",
-                "gsm_duration": "Từ 6 – 12 tháng",
-                "gsm_contract_type": "Xe Taxi xanh GSM",
-                "daily_trips": "18",
-                "monthly_income_range": "12 – 20 triệu VNĐ",
-                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                "is_test_mode": "true",
-            },
-            files={
-                "survey_photo_0": ("profile.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_1": ("vehicle.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_2": ("income1.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_3": ("income2.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_4": ("income3.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_5": ("income4.jpg", sharp_img, "image/jpeg"),
-                "survey_photo_6": ("income5.jpg", sharp_img, "image/jpeg"),
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "REJECTED"
-        assert "trùng lặp" in data["reason"]
-        assert data.get("duplicate_detected") is True
-        assert data.get("duplicate_type") == "INTRA_SUBMISSION"
+@pytest.mark.asyncio
+async def test_reject_intra_submission_duplicates_same_screen(submit_camera):
+    """Identical photos and financials are duplicates even if OCR assigns two different periods."""
+    photos = [make_test_image(f"duplicate-slot-{i}") for i in range(7)]
+    photos[3] = photos[2]
 
-def test_censored_profile_slot_allowed_when_require_unique_false(monkeypatch):
-    """Verify that identical censored profile images are allowed when slot has require_unique: False."""
-    monkeypatch.setenv("MOCK_AI", "1")
-    import time, random
-    from fastapi.testclient import TestClient
-    from unittest.mock import patch
-    import main
-    client = TestClient(main.app)
-    
-    # Shared static "censored profile" image used by multiple drivers
-    buf_prof = io.BytesIO()
-    im_prof = Image.new("RGB", (600, 600), (240, 240, 240))
-    ImageDraw.Draw(im_prof).text((50, 50), "CENSORED PROFILE", fill=(0, 0, 0))
-    im_prof.save(buf_prof, "JPEG")
-    censored_profile_bytes = buf_prof.getvalue()
-    
-    def make_random_income_buf(pattern):
-        im = Image.new("RGB", (600, 800), (255, 255, 255))
-        d = ImageDraw.Draw(im)
-        rng = random.Random(f"{pattern}_{time.time()}")
-        for _ in range(30):
-            x1 = rng.randint(0, 500)
-            y1 = rng.randint(0, 700)
-            d.rectangle([(x1, y1), (x1 + rng.randint(20, 80), y1 + rng.randint(20, 80))], fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
-        b = io.BytesIO()
-        im.save(b, "JPEG")
-        return b.getvalue()
+    async def extract(_image_bytes, *, week_idx, prompt):
+        if week_idx == 2:
+            return weekly_ocr(week_idx, gross_revenue=3_000_000, net_income=2_500_000,
+                              discount_and_tax=500_000, total_trips=20)
+        return weekly_ocr(week_idx)
 
-    async def mock_role(img_bytes, filename=None, *args, **kwargs):
-        fn = (filename or "").lower()
-        if "0" in fn or "profile" in fn:
-            return "app_profile"
-        return "app_income"
-        
-    async def mock_ocr_distinct(img_bytes, week_idx=None, *args, **kwargs):
-        w = week_idx or 1
-        return {
-            "is_authentic_gsm_ui": True,
-            "detected_app": "XANH_SM",
-            "gross_revenue": 3000000 * w,
-            "net_income": 2500000 * w,
-            "total_trips": 30 * w,
-            "period": f"Tuần {w}",
-            "discount_and_tax": 500000 * w,
-            "online_hours": f"{20 * w}h",
-            "confidence_score": 0.95,
-            "is_legible": True,
-            "is_authentic_gsm_ui": True,
-            "is_manipulated_or_photoshopped": False,
-        }
-        
-    with patch.object(main.vision_client, "classify_image_role", side_effect=mock_role), \
-         patch.object(main.vision_client, "ocr_driver_app_income", side_effect=mock_ocr_distinct):
-        resp = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0988654321",
-                "license_plate": "30F-999.88",
-                "driver_name": "Tài xế Hồ Sơ Che",
-                "consent_choice": "Tôi đồng ý",
-                "signature_png": "data:image/png;base64,mock",
-                "vehicle_type": "Ô tô",
-                "car_model": "VF 5 Plus",
-                "gsm_duration": "Từ 6 – 12 tháng",
-                "gsm_contract_type": "Xe Taxi xanh GSM",
-                "daily_trips": "18",
-                "monthly_income_range": "12 – 20 triệu VNĐ",
-                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                "is_test_mode": "true",
-            },
-            files={
-                "survey_photo_0": ("profile.jpg", censored_profile_bytes, "image/jpeg"),
-                "survey_photo_1": ("vehicle.jpg", make_random_income_buf("veh"), "image/jpeg"),
-                "survey_photo_2": ("income1.jpg", make_random_income_buf("inc1"), "image/jpeg"),
-                "survey_photo_3": ("income2.jpg", make_random_income_buf("inc2"), "image/jpeg"),
-                "survey_photo_4": ("income3.jpg", make_random_income_buf("inc3"), "image/jpeg"),
-                "survey_photo_5": ("income4.jpg", make_random_income_buf("inc4"), "image/jpeg"),
-                "survey_photo_6": ("income5.jpg", make_random_income_buf("inc5"), "image/jpeg"),
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "APPROVED"
-        assert data.get("duplicate_detected") is not True
+    response = await submit_camera(extract, photos=photos)
+    assert response["status"] == "REJECTED", response
+    assert "trùng lặp" in response["reason"]
+    assert response["duplicate_detected"] is True
+    assert response["duplicate_type"] == "INTRA_SUBMISSION"
+
+
+@pytest.mark.asyncio
+async def test_censored_profile_slot_allowed_when_require_unique_false(submit_camera):
+    """Different drivers may submit the same profile photo with distinct weekly statements."""
+    profile = make_test_image("shared-censored-profile")
+
+    async def extract_first(_image_bytes, *, week_idx, prompt):
+        return weekly_ocr(week_idx)
+
+    async def extract_second(_image_bytes, *, week_idx, prompt):
+        return weekly_ocr(week_idx, gross_revenue=4_000_000 * week_idx,
+                          net_income=3_500_000 * week_idx, total_trips=25 * week_idx)
+
+    for phone, extract in [("0988654321", extract_first), ("0988654322", extract_second)]:
+        photos = [profile, *(make_test_image(f"{phone}-{i}") for i in range(1, 7))]
+        response = await submit_camera(extract, photos=photos, phone=phone)
+        assert response["status"] == "APPROVED", response
+        assert response.get("duplicate_detected") is not True

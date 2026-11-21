@@ -9,9 +9,13 @@ on:
     branches:
       - dev
       - master
-  # Deployments are manual until Wave 7 protects mutable storage and the
-  # production cutover checks are implemented.
+  # Stage/production releases require a manual dispatch and environment approval.
   workflow_dispatch:
+    inputs:
+      apply_migrations:
+        description: Permit pending migrations on the selected target after backup
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -36,6 +40,7 @@ jobs:
       - name: Run Pytest Test Suite
         env:
           ENVIRONMENT: test
+          MOCK_AI: "1"
           SECRET_KEY: test_secret_key_ci_cd_32_bytes_long_here
           # Unit tests must mock persistence. Real PostgreSQL behavior is gated
           # in postgres-harness below; do not advertise SQLite as PostgreSQL.
@@ -90,17 +95,20 @@ jobs:
       - name: Run isolated PostgreSQL harness
         env:
           ENVIRONMENT: test
+          MOCK_AI: "1"
           UPGRADE_TEST_REQUIRE: "1"
           UPGRADE_TEST_DATABASE_URL: postgresql://postgres:test_only@127.0.0.1:55432/survey_pipeline_test
         run: |
-          PYTHONPATH=. pytest -q -m postgres tests/test_postgres_harness.py tests/test_phone_links.py tests/test_h1_corrections.py tests/test_wave3_attempts.py tests/test_wave3_route.py tests/test_wave3_process_crash.py
+          PYTHONPATH=. pytest -q -m postgres tests/
           PYTHONPATH=. pytest -q -m 'not postgres' tests/test_h1_corrections.py
           PYTHONPATH=. pytest -q tests/test_postgres_runner.py
+          PYTHONPATH=. pytest -q tests/test_outbox_notifications.py tests/test_outbox_exports.py tests/test_outbox_delivery.py -m 'not postgres'
 
-  deploy-staging:
-    name: Deploy to Staging (Droplet /root/survey-pipeline-dev)
+  deploy:
+    name: Guarded code release
     needs: [test, postgres-harness]
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/master')
+    environment: ${{ github.ref_name == 'master' && 'production' || 'staging' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
@@ -111,74 +119,28 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
 
-      - name: Add Droplet Host Key to Known Hosts
+      - name: Install pinned SSH host key
+        env:
+          PINNED_HOST_KEYS: ${{ secrets.DROPLET_KNOWN_HOSTS }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H 146.190.201.32 >> ~/.ssh/known_hosts
+          test -n "$PINNED_HOST_KEYS"
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$PINNED_HOST_KEYS" > "$HOME/.ssh/known_hosts"
 
-      - name: Deploy Code to Staging Directory
+      - name: Run guarded schema, code and smoke release
+        env:
+          TARGET: ${{ github.ref_name == 'master' && 'production' || 'staging' }}
+          APPLY_MIGRATIONS: ${{ inputs.apply_migrations }}
+          RELEASE_HOST: ${{ vars.RELEASE_HOST }}
+          RELEASE_ROOT: ${{ vars.RELEASE_ROOT }}
+          RELEASE_APP: ${{ vars.RELEASE_APP }}
+          RELEASE_WORKER: ${{ vars.RELEASE_WORKER }}
+          RELEASE_DB_CONTAINER: ${{ vars.RELEASE_DB_CONTAINER }}
+          RELEASE_DB_NAME: ${{ vars.RELEASE_DB_NAME }}
+          RELEASE_DB_USER: ${{ vars.RELEASE_DB_USER }}
+          RELEASE_BUILD_ID: ${{ github.sha }}
         run: |
-          rsync -avz --delete \
-            --exclude '.git' \
-            --exclude '.env' \
-            --exclude '__pycache__' \
-            --exclude '.venv' \
-            --exclude 'archives/' \
-            --exclude 'models/' \
-            ./ root@146.190.201.32:/root/survey-pipeline-dev/
-
-      - name: Restart Dev Staging Service
-        run: |
-          ssh root@146.190.201.32 "docker restart survey-dev-app-1"
-
-      - name: Verify Staging Health Check
-        run: |
-          curl -sk --fail --connect-timeout 10 https://dev.146.190.201.32.sslip.io/health || \
-          ssh root@146.190.201.32 "docker exec survey-dev-app-1 curl -sf http://127.0.0.1:8000/health"
-          curl -sk --fail --connect-timeout 10 https://dev.146.190.201.32.sslip.io/ready || \
-          ssh root@146.190.201.32 "docker exec survey-dev-app-1 curl -sf http://127.0.0.1:8000/ready"
-
-  deploy-production:
-    name: Zero-Downtime Deploy to Production (Droplet /root/survey-pipeline)
-    needs: [test, postgres-harness]
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-
-      - name: Strip Dev Placeholders before Production Sync
-        run: |
-          chmod +x scripts/strip_dev_placeholders.sh
-          ./scripts/strip_dev_placeholders.sh
-
-      - name: Set up SSH Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
-
-      - name: Add Droplet Host Key to Known Hosts
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H 146.190.201.32 >> ~/.ssh/known_hosts
-
-      - name: Deploy Code to Production Directory
-        run: |
-          rsync -avz --delete \
-            --exclude '.git' \
-            --exclude '.env' \
-            --exclude '__pycache__' \
-            --exclude '.venv' \
-            --exclude 'archives/' \
-            --exclude 'models/' \
-            --exclude 'data/forms/placeholder_*.json' \
-            ./ root@146.190.201.32:/root/survey-pipeline/
-
-      - name: Restart Production Service
-        run: |
-          ssh root@146.190.201.32 "docker restart survey-pipeline-app-1"
-
-      - name: Verify Production Health Check
-        run: |
-          curl -sf --connect-timeout 10 https://survey.trustbridgevn.com/health
-          curl -sf --connect-timeout 10 https://survey.trustbridgevn.com/ready
+          args=(--target "$TARGET" --schema 002 --all-code)
+          if [[ "$APPLY_MIGRATIONS" == true ]]; then args+=(--apply-migrations); fi
+          bash scripts/deploy_prod.sh "${args[@]}"

@@ -121,10 +121,7 @@ async def trigger_manual_drive_sync(
     background_tasks: BackgroundTasks,
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """
-    Triggers an immediate Google Drive deliverables synchronization in the background.
-    Syncs the Master_Survey_Deliverables.csv data sheet and the Images folder.
-    """
+    """Queue a full Google Drive sync, or use the legacy background sync before cutover."""
     import sys
     main_mod = sys.modules.get("main")
     _has_creds = getattr(main_mod, "has_google_credentials", has_google_credentials) if main_mod else has_google_credentials
@@ -134,6 +131,27 @@ async def trigger_manual_drive_sync(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google Drive credentials (OAuth2 / Service Account) are not configured.",
         )
+    if settings.DURABLE_DRIVE_ENABLED:
+        from core.durable_work import queue_drive_sync
+
+        try:
+            pool = get_db_pool()
+            if pool is None:
+                raise RuntimeError("database pool unavailable")
+            async with pool.connection() as conn:
+                job_id = await queue_drive_sync(conn, actor=admin_user)
+                await conn.commit()
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Google Drive sync queue is unavailable.",
+            ) from None
+        return {
+            "status": "QUEUED",
+            "message": "Đã kích hoạt đồng bộ Google Drive thành công trong nền.",
+            "target_account": settings.GOOGLE_ADMIN_EMAIL,
+            "job_id": job_id,
+        }
     background_tasks.add_task(_sync_all, db_pool=get_db_pool())
     return {
         "status": "QUEUED",

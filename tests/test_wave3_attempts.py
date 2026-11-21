@@ -364,10 +364,16 @@ async def test_replacement_requires_bound_requester_and_commits_manifest_with_ap
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_interruption_recovery_shares_one_attempt_owner_and_retains_media(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+    from datetime import datetime, timezone
     from psycopg_pool import AsyncConnectionPool
-    from core.submission_attempts import attempt_scope
-    from routers.survey import _persist_interrupted_submission, INTERRUPTED_CHECK_REASON
+    from services.submission_pipeline import (
+        INTERRUPTED_CHECK_REASON,
+        SubmissionDependencies,
+        SubmissionInput,
+        SubmissionUpload,
+        _prepare,
+        _recover_interruption,
+    )
     from tests.postgres_harness import apply_schema
 
     dsn = _require_pg()
@@ -379,39 +385,35 @@ async def test_interruption_recovery_shares_one_attempt_owner_and_retains_media(
         sync.commit()
     finally:
         sync.close()
-    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(tmp_path))
     sid = f"VN-RECOVERY-{secrets.token_hex(4).upper()}"
     key = f"RECOVERY-{secrets.token_hex(4)}"
     phone = "0988123456"
     folder = tmp_path / sid
     folder.mkdir()
     (folder / "slot_0.webp").write_bytes(b"preserved-media")
-    manifest = [{"slot_index": 0, "relative_path": "slot_0.webp", "sha256": hashlib.sha256(b"preserved-media").hexdigest()}]
-    fp = request_fingerprint("income_survey", "PROD_MODE", {"driver_phone": phone}, [b"preserved-media"])
-    pending = {
-        "submission_id": sid,
-        "form_id": "income_survey",
-        "driver_phone": phone,
-        "driver_name": "Tài xế",
-        "ctv_code": None,
-        "received_at": None,
-        "media_manifest": manifest,
-        "db_pool": None,
-        "is_test_mode": False,
-        "attempt_scope": attempt_scope("income_survey", "PROD_MODE", phone),
-        "attempt_key": key,
-        "attempt_fingerprint": fp,
-        "response_snapshot": {"submission_id": sid, "status": "MANUAL_REVIEW"},
-        "final_written": False,
-    }
+    manifest = [{"slot_index": 0, "flat_index": 0, "question_id": "__legacy__",
+                 "relative_path": "slot_0.webp", "sha256": hashlib.sha256(b"preserved-media").hexdigest()}]
+    received_at = datetime.now(timezone.utc)
+    request = SubmissionInput(
+        form_id="income_survey", driver_phone=phone, driver_name="Tài xế",
+        idempotency_key=key, received_at=received_at,
+        uploads=(SubmissionUpload("__legacy__", 0, "slot_0.webp", b"preserved-media"),),
+    )
+    prepared = _prepare(request)
     pool = AsyncConnectionPool(conninfo=dsn, min_size=1, max_size=2, open=False)
     await pool.open()
     await pool.wait()
-    pending["db_pool"] = pool
+    dependencies = SubmissionDependencies(
+        vision=None, media_root=str(tmp_path), dev_storage_file=str(tmp_path / "dev.json"),
+        append_dev_record=lambda _record: None, image_max_dimension=600, blur_threshold=40,
+        db_pool=pool,
+    )
     try:
-        request = SimpleNamespace(state=SimpleNamespace(pending_submission=pending))
-        await _persist_interrupted_submission(request)
-        assert pending["final_written"] is True
+        first = await _recover_interruption(
+            request, dependencies, prepared, sid, manifest,
+            {"submission_id": sid, "status": "MANUAL_REVIEW"}, durable=False,
+        )
+        assert first is not None and first.status == "MANUAL_REVIEW"
         assert (folder / "slot_0.webp").read_bytes() == b"preserved-media"
         async with pool.connection() as conn:
             row = await conn.execute(
@@ -428,14 +430,18 @@ async def test_interruption_recovery_shares_one_attempt_owner_and_retains_media(
             state, stored_id, response = await row.fetchone()
             assert state == "COMMITTED" and stored_id == sid
             assert response["status"] == "MANUAL_REVIEW"
-            count = await conn.execute("SELECT count(*) FROM survey_submissions WHERE submission_id=%s;", (sid,))
-            assert await count.fetchone() == (1,)
-        pending2 = dict(pending, final_written=False, recovery_response=None)
-        await _persist_interrupted_submission(SimpleNamespace(state=SimpleNamespace(pending_submission=pending2)))
-        assert pending2["recovery_response"]["submission_id"] == sid
+            assert await (await conn.execute(
+                "SELECT count(*) FROM survey_submissions WHERE submission_id=%s;", (sid,),
+            )).fetchone() == (1,)
+        replay = await _recover_interruption(
+            request, dependencies, prepared, sid, manifest,
+            {"submission_id": sid, "status": "MANUAL_REVIEW"}, durable=False,
+        )
+        assert replay.replayed and replay.response["submission_id"] == sid
         async with pool.connection() as conn:
-            count = await conn.execute("SELECT count(*) FROM survey_submissions WHERE submission_id=%s;", (sid,))
-            assert await count.fetchone() == (1,)
+            assert await (await conn.execute(
+                "SELECT count(*) FROM survey_submissions WHERE submission_id=%s;", (sid,),
+            )).fetchone() == (1,)
             await conn.execute("DELETE FROM outbox_events WHERE aggregate_id=%s;", (sid,))
             await conn.execute("DELETE FROM survey_submissions WHERE submission_id=%s;", (sid,))
             await conn.execute("DELETE FROM submission_idempotency WHERE idempotency_key=%s;", (key,))
@@ -611,7 +617,7 @@ def test_actual_checked_in_migration_command_first_apply_rerun_reject_and_rollba
 
 
 def test_media_store_preserves_ingestion_identity_order(tmp_path):
-    from routers.survey import _store_submission_photos
+    from services.submission_pipeline import _store_submission_photos
     items = [
         {"question_id": "q_second", "slot_index": 4, "flat_index": 7},
         {"question_id": "q_first", "slot_index": 1, "flat_index": 2},
@@ -628,7 +634,7 @@ def test_media_store_preserves_ingestion_identity_order(tmp_path):
 
 def test_media_store_required_write_failure_aborts(tmp_path, monkeypatch):
     import builtins
-    from routers.survey import _store_submission_photos
+    from services.submission_pipeline import _store_submission_photos
     original_open = builtins.open
     def fail_target(path, mode="r", *args, **kwargs):
         if str(path).endswith(".bin"):

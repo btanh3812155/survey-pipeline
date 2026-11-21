@@ -4,7 +4,7 @@ import os
 import pytest
 from PIL import Image
 
-from routers.survey import _store_submission_photos
+from services.submission_pipeline import _store_submission_photos
 from services.normalizer import normalize_image_to_webp
 from services.telegram_polling import DriverBotRunner
 

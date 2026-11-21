@@ -1,7 +1,9 @@
 # Standardized Formal Testing Specification & Verification Protocol
 
-**Authoritative Formal Testing Process, Threat Models, Gap Analysis, and Invariant Verification**  
+**Historical Formal Testing Process, Threat Models, Gap Analysis, and Verification Requirements**
 *Documenting user manual verification workflows as standardized simulated automated tests.*
+
+> **Migration test authority:** These scenarios remain requirement inputs, not evidence that they pass or that every form uses the same switches. [MODULE_IMPLEMENTATION_PLANS.md](MODULE_IMPLEMENTATION_PLANS.md) sections 1.6-1.8 disposition required versus existing behavior and map it to concrete tests; its recorded gates govern this hardening upgrade. Validate the active schema's consent/signature roles, CTV-disabled mode, image slots and channel-specific quotas instead of copying obsolete fixed-form assumptions.
 
 ---
 

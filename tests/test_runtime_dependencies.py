@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +25,7 @@ from config import (
 )
 from routers import system as system_router
 from routers import survey as survey_router
+from services import submission_pipeline
 from services.form_engine import FormQuestion, FormSchema, FormSettings, QuestionType
 
 
@@ -244,65 +246,74 @@ async def test_production_startup_failure_is_fatal_and_closes_partial_resources(
 
 
 def test_production_request_flags_are_rejected_by_endpoint(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(survey_router, "refresh_form_registry_from_disk", lambda: None)
+    monkeypatch.setitem(survey_router.FORM_REGISTRY, "runtime-normal", FormSchema(
+        form_id="runtime-normal", title="Normal", settings=FormSettings(is_test_mode=False), questions=[]))
     client = TestClient(main.app)
-    async def schema_ready(_pool):
-        return True
-    monkeypatch.setattr(survey_router.settings, "ENVIRONMENT", "production")
-    monkeypatch.setattr(survey_router, "_production_writer_ready", schema_ready)
     monkeypatch.setattr(survey_router, "get_db_pool", lambda: _FakePool(row=("ok",)))
 
     test_resp = client.post(
         "/api/v1/survey/submit-webrtc",
-        data={"form_id": "TB_GSM_2026_Nov_Test", "is_test_mode": "true"},
+        data={"form_id": "runtime-normal", "is_test_mode": "true"},
     )
     assert test_resp.status_code == 403
     assert "not authorized" in test_resp.text.lower() or "không được phép" in test_resp.text.lower()
 
     bypass_resp = client.post(
         "/api/v1/survey/submit-webrtc",
-        data={"form_id": "TB_GSM_2026_Nov_Test", "bypass_img_check": "true"},
+        data={"form_id": "runtime-normal", "bypass_img_check": "true"},
     )
     assert bypass_resp.status_code == 400
 
 
+
+
+@pytest.mark.asyncio
+async def test_local_idempotency_cache_is_scoped_by_form_mode_and_phone():
+    from services.submission_pipeline import SubmissionDependencies, SubmissionInput, _cached_response, _prepare
+
+    cache = {}
+    dependencies = SubmissionDependencies(
+        vision=None, media_root="", dev_storage_file="", append_dev_record=lambda _: None,
+        image_max_dimension=600, blur_threshold=40, legacy_cache=cache,
+    )
+    original = SubmissionInput(form_id="form-a", driver_phone="0988123456", idempotency_key="same")
+    prepared = _prepare(original)
+    cache_key = f"idemp:{prepared.attempt.scope}:{prepared.attempt.key}"
+    cache[cache_key] = json.dumps({
+        "fingerprint": prepared.attempt.fingerprint,
+        "response": {"status": "APPROVED", "submission_id": "CACHED"},
+    })
+
+    replay = await _cached_response(original, dependencies, prepared)
+    assert replay is not None and replay.replayed and replay.submission_id == "CACHED"
+    for other in (
+        replace(original, form_id="form-b"),
+        replace(original, is_test_mode=True),
+        replace(original, driver_phone="0912345678"),
+    ):
+        assert await _cached_response(other, dependencies, _prepare(other)) is None
 def test_cached_response_does_not_bypass_test_flag_authorization(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(survey_router, "refresh_form_registry_from_disk", lambda: None)
+    monkeypatch.setitem(survey_router.FORM_REGISTRY, "runtime-normal", FormSchema(
+        form_id="runtime-normal", title="Normal", settings=FormSettings(is_test_mode=False), questions=[]))
+    from unittest.mock import AsyncMock
+
     client = TestClient(main.app)
-    async def schema_ready(_pool):
-        return True
-    monkeypatch.setattr(survey_router.settings, "ENVIRONMENT", "production")
-    monkeypatch.setattr(survey_router, "_production_writer_ready", schema_ready)
     monkeypatch.setattr(survey_router, "get_db_pool", lambda: _FakePool(row=("ok",)))
     monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
-    key = "idemp:anon:cache-auth-bypass"
-    survey_router.LOCAL_IDEMP_CACHE[key] = json.dumps(
-        {"status": "APPROVED", "mode": "TEST_DEV_MODE", "submission_id": "DEV-CACHED"}
+    use_case = AsyncMock()
+    monkeypatch.setattr(survey_router, "process_submission", use_case)
+    response = client.post(
+        "/api/v1/survey/submit-webrtc",
+        data={"form_id": "runtime-normal", "is_test_mode": "true", "idempotency_key": "cache-auth-bypass"},
     )
-    try:
-        response = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={"form_id": "TB_GSM_2026_Nov_Test", "is_test_mode": "true", "idempotency_key": "cache-auth-bypass"},
-        )
-    finally:
-        survey_router.LOCAL_IDEMP_CACHE.clear()
     assert response.status_code == 403
+    use_case.assert_not_awaited()
 
 
-def test_cached_mode_mismatch_is_rejected(monkeypatch):
-    client = TestClient(main.app)
-    monkeypatch.setattr(survey_router.settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
-    key = "idemp:anon:cache-mode-mismatch"
-    survey_router.LOCAL_IDEMP_CACHE[key] = json.dumps(
-        {"status": "APPROVED", "mode": "TEST_DEV_MODE", "submission_id": "DEV-CACHED"}
-    )
-    try:
-        response = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={"form_id": "TB_GSM_2026_Nov_Test", "idempotency_key": "cache-mode-mismatch"},
-        )
-    finally:
-        survey_router.LOCAL_IDEMP_CACHE.clear()
-    assert response.status_code == 409
 
 
 class _CloseTrackingPool:
@@ -366,19 +377,3 @@ async def test_cancelled_startup_closes_unpublished_pool(monkeypatch, pool_cls):
     assert redis_client.closed is True
 
 
-def test_cached_payload_without_mode_is_not_accepted(monkeypatch):
-    client = TestClient(main.app)
-    monkeypatch.setattr(survey_router.settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
-    key = "idemp:anon:cache-no-mode"
-    survey_router.LOCAL_IDEMP_CACHE[key] = json.dumps(
-        {"status": "APPROVED", "submission_id": "LEGACY-CACHED"}
-    )
-    try:
-        response = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={"form_id": "TB_GSM_2026_Nov_Test", "idempotency_key": "cache-no-mode"},
-        )
-    finally:
-        survey_router.LOCAL_IDEMP_CACHE.clear()
-    assert response.status_code == 409

@@ -51,7 +51,7 @@ def test_profile_screen_object_type_accepts_mostly_empty_screen():
 
 def test_income_statement_guard_ignores_profile_menu_screens():
     """A profile menu that lists 'Thống kê thu nhập' must not be treated as an income statement."""
-    from routers.survey import _looks_like_income_statement
+    from services.submission_pipeline import _looks_like_income_statement
 
     menu_ocr = {
         "layout_matched": False,

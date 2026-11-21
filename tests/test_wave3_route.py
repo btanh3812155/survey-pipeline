@@ -12,6 +12,9 @@ import psycopg
 import pytest
 from PIL import Image, ImageDraw
 from psycopg_pool import AsyncConnectionPool
+import pytest_asyncio
+from core.embedding_executor import embedding_executor_lifespan
+from services import submission_pipeline
 
 from config import settings
 from routers import survey as survey_router
@@ -19,6 +22,23 @@ from tests.postgres_harness import apply_schema, resolve_test_database_url
 from main import app
 
 MIGRATION = Path(__file__).resolve().parents[1] / "scripts" / "migrations" / "001_submission_attempts.sql"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _bounded_inference_lifespan():
+    async with embedding_executor_lifespan():
+        yield
+
+
+def _rejected_evaluation(monkeypatch):
+    async def evaluate(_input, _dependencies, _prepared):
+        return submission_pipeline.SubmissionEvaluation(
+            normalized_media={}, ai_result={}, status="REJECTED", reason="test evaluation",
+            is_approved=False, blur_score=None, weekly_income={},
+            income_totals={"total_gross_revenue": 0, "total_net_income": 0, "total_trips": 0},
+            target_image=None,
+        )
+    monkeypatch.setattr(submission_pipeline, "_evaluate", evaluate)
 
 
 def _require_pg():
@@ -82,6 +102,7 @@ class _FlakyPool:
 @pytest.mark.asyncio
 async def test_route_replays_after_commit_ack_loss_on_fresh_connection(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
+    _rejected_evaluation(monkeypatch)
     dsn = _require_pg()
     checksum = hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     sync = psycopg.connect(dsn, autocommit=False)
@@ -139,6 +160,7 @@ async def test_route_replays_after_commit_ack_loss_on_fresh_connection(monkeypat
 @pytest.mark.asyncio
 async def test_no_key_requests_remain_compatible_without_cross_request_dedupe(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
+    _rejected_evaluation(monkeypatch)
     dsn = _require_pg()
     checksum = hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     sync = psycopg.connect(dsn, autocommit=False)
@@ -189,6 +211,7 @@ async def test_no_key_requests_remain_compatible_without_cross_request_dedupe(mo
 @pytest.mark.asyncio
 async def test_concurrent_same_key_requests_produce_one_committed_submission(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
+    _rejected_evaluation(monkeypatch)
     dsn = _require_pg()
     checksum = hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     sync = psycopg.connect(dsn, autocommit=False)
@@ -247,6 +270,7 @@ async def test_concurrent_same_key_requests_produce_one_committed_submission(mon
 @pytest.mark.asyncio
 async def test_route_replays_same_payload_and_rejects_changed_payload(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
+    _rejected_evaluation(monkeypatch)
     dsn = _require_pg()
     checksum = hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     sync = psycopg.connect(dsn, autocommit=False)
@@ -423,6 +447,10 @@ async def test_production_writer_rejects_absent_or_mismatched_ledger_before_medi
 @pytest.mark.asyncio
 async def test_actual_route_interruption_uses_first_snapshot_identity_then_replays(monkeypatch, tmp_path):
     monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setattr(
+        submission_pipeline, "_evaluate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("evaluation interrupted")),
+    )
     dsn = _require_pg()
     checksum = hashlib.sha256(MIGRATION.read_bytes()).hexdigest()
     sync = psycopg.connect(dsn, autocommit=False)
@@ -440,8 +468,7 @@ async def test_actual_route_interruption_uses_first_snapshot_identity_then_repla
     monkeypatch.setattr(settings, "ENVIRONMENT", "test")
     monkeypatch.setattr(survey_router, "SUBMISSION_PHOTOS_DIR", str(tmp_path / "photos"))
     monkeypatch.setattr(
-        survey_router,
-        "compute_dinov2_embedding",
+        submission_pipeline, "_evaluate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("evaluation interrupted")),
     )
     key = f"ROUTE-INTERRUPT-{os.urandom(4).hex()}"
@@ -456,20 +483,21 @@ async def test_actual_route_interruption_uses_first_snapshot_identity_then_repla
     try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            with pytest.raises(RuntimeError):
-                await client.post(
-                    "/api/v1/survey/submit-webrtc", data=data,
-                    files={"survey_photo": ("test.jpg", image_bytes, "image/jpeg")},
-                )
-        monkeypatch.setattr(survey_router, "compute_dinov2_embedding", __import__("services.duplicate_detector", fromlist=["compute_dinov2_embedding"]).compute_dinov2_embedding)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            recovered = await client.post(
+                "/api/v1/survey/submit-webrtc", data=data,
+                files={"survey_photo": ("test.jpg", image_bytes, "image/jpeg")},
+            )
+            assert recovered.status_code == 200, recovered.text
+            assert recovered.json()["status"] == "MANUAL_REVIEW"
+            assert recovered.json()["mode"] == "PROD_MODE"
+            assert recovered.json()["driver_phone"] == "0988123456"
+            assert {"driver_tag", "detected_plate", "gross_revenue", "net_income", "trip_count", "ocr_data"} <= set(recovered.json())
+            sid = recovered.json()["submission_id"]
             retry = await client.post(
                 "/api/v1/survey/submit-webrtc", data=data,
                 files={"survey_photo": ("test.jpg", image_bytes, "image/jpeg")},
             )
-            assert retry.status_code == 200, retry.text
-            assert retry.json()["status"] == "MANUAL_REVIEW"
-            sid = retry.json()["submission_id"]
+            assert retry.status_code == 200 and retry.json() == recovered.json()
         async with pool.connection() as conn:
             row = await conn.execute("SELECT count(*) FROM survey_submissions WHERE submission_id=%s;", (sid,))
             assert await row.fetchone() == (1,)

@@ -370,7 +370,7 @@ class _FakeCursor:
 
 
 class _FakeConn:
-    def cursor(self):
+    def cursor(self, **kwargs):
         return _FakeCursor()
 
     async def commit(self):

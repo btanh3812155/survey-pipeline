@@ -1,323 +1,249 @@
 #!/usr/bin/env bash
-# Deploy selected repo files to the production and dev roots on the prod host.
-# Backup -> copy (tar over ssh) -> sha256 verify -> py_compile -> restart -> health -> optional smoke.
-#
-# Usage: scripts/deploy_prod.sh [options] <relative paths...>
+# Publish bind-mounted code only. Infrastructure, configuration and data are not releases.
 set -euo pipefail
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$REPO_ROOT/scripts/smoke_prod.sh"
 cd "$REPO_ROOT"
-
-PROD_HOST="${PROD_HOST:-root@146.190.201.32}"
-PROD_ROOT="${PROD_ROOT:-/root/survey-pipeline}"
-DEV_ROOT="${DEV_ROOT:-/root/survey-pipeline-dev}"
-CONTAINERS="${CONTAINERS:-survey-pipeline-app-1,survey-dev-app-1,survey-pipeline-outbox-worker-1}"
-HEALTH_URL="${HEALTH_URL:-https://survey.trustbridgevn.com/health}"
-APP_CONTAINER="${APP_CONTAINER:-survey-pipeline-app-1}"
-DEV_APP_CONTAINER="${DEV_APP_CONTAINER:-survey-dev-app-1}"
-HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
-
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
-
-DRY_RUN=0 NO_RESTART=0 RUN_SMOKE=0 SKIP_COMPILE=0 ALL_CHANGED=0
-RESTART_SVCS=""
-declare -a FILES=()
 
 usage() {
   cat <<'EOF'
-usage: scripts/deploy_prod.sh [--dry-run] [--no-restart] [--restart svc1,svc2]
-                              [--smoke] [--skip-compile] [--all-changed] <relative paths...>
+usage: deploy_prod.sh --target production|staging --schema 002 [--dry-run]
+                      [--apply-migrations] (--all-code | path ...)
+       deploy_prod.sh --target production|staging --schema 002 [--dry-run]
+                      --rollback release-ID
 
-  --dry-run       print the plan (files, hashes, targets, restart list) and exit
-  --no-restart    copy/compile only, skip container restarts and health wait
-  --restart L     comma list of services/containers to restart (app, dev, outbox,
-                  postgres, or a literal container name). Default: $CONTAINERS
-  --smoke         run scripts/smoke_prod.sh after a successful deploy
-  --skip-compile  do not py_compile deployed .py files
-  --all-changed   deploy git-changed (tracked + untracked) files under bind-mounted paths
-
-env: PROD_HOST, PROD_ROOT, DEV_ROOT, CONTAINERS, HEALTH_URL, APP_CONTAINER, DEV_APP_CONTAINER
+Set RELEASE_HOST (pinned SSH host), RELEASE_ROOT, RELEASE_APP, RELEASE_WORKER,
+RELEASE_DB_CONTAINER, RELEASE_DB_NAME and RELEASE_BUILD_ID explicitly. The app
+and worker must both be provisioned with that APP_BUILD_ID. RELEASE_DB_USER
+defaults to postgres; RELEASE_TIMEOUT controls probe waits (90 seconds).
+Provision the target app and worker out of band with unless-stopped restart
+policies, the same PostgreSQL database, and a shared private data bind mount.
+The worker needs OUTBOX_WORKER_ID, OUTBOX_V2_WORKER_ENABLED=true, and
+DRIVE_SYNC_INTERVAL_SEC=0.
+Schema 002 means queue format 002 plus the required operations migration 003.
+Use --apply-migrations only after approval. Pending migrations require a target
+backup before the first migration; rollback restores selected code only and
+leaves the app and worker paused. No producer settings are changed.
 EOF
 }
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-
-json_str() {
-  local s=$1
-  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\t'/\\t}
-  printf '"%s"' "$s"
-}
-
-json_arr() { # values...
-  local first=1 v out="["
-  for v in "$@"; do
-    (( first )) || out+=","
-    out+="$(json_str "$v")"; first=0
-  done
-  printf '%s]' "$out"
-}
-
-emit_result() { # ok dryrun compile result health smoke error
-  local files_json restarted_json
-  files_json="$(json_arr "${FILES[@]}")"
-  if (( ${#RESTARTED[@]} )); then restarted_json="$(json_arr "${RESTARTED[@]}")"; else restarted_json='[]'; fi
-  printf 'DEPLOY_RESULT={"ok":%s,"dry_run":%s,"files":%s,"backup":%s,"roots":%s,"compile":%s,"restarted":%s,"health":%s,"smoke":%s%s}\n' \
-    "$1" "$([ "$2" = 1 ] && echo true || echo false)" "$files_json" \
-    "$(json_str "${BACKUP:-}")" "$(json_arr "$PROD_ROOT" "$DEV_ROOT")" \
-    "$(json_str "$3")" "$restarted_json" "$(json_str "$4")" "$(json_str "$5")" \
-    "${6:+,\"error\":$(json_str "$6")}"
-}
-
-# ---------------------------------------------------------------- arg parsing
-while [[ $# -gt 0 ]]; do
+TARGET= SCHEMA= ALL_CODE=0 DRY_RUN=0 APPLY=0 ROLLBACK=
+declare -a requested=()
+while (( $# )); do
   case "$1" in
+    --target) TARGET=${2:?missing target}; shift ;;
+    --schema) SCHEMA=${2:?missing schema}; shift ;;
+    --all-code) ALL_CODE=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    --no-restart) NO_RESTART=1 ;;
-    --smoke) RUN_SMOKE=1 ;;
-    --skip-compile) SKIP_COMPILE=1 ;;
-    --all-changed) ALL_CHANGED=1 ;;
-    --restart) [[ $# -ge 2 ]] || die "--restart needs a value"; RESTART_SVCS="$2"; shift ;;
-    --restart=*) RESTART_SVCS="${1#*=}" ;;
+    --apply-migrations) APPLY=1 ;;
+    --rollback) ROLLBACK=${2:?missing release ID}; shift ;;
     -h|--help) usage; exit 0 ;;
-    --) shift; FILES+=("$@"); break ;;
-    -*) die "unknown option: $1 (try --help)" ;;
-    *) FILES+=("$1") ;;
+    -*) die "unknown option: $1" ;;
+    *) requested+=("$1") ;;
   esac
   shift
 done
+release_args
 
-is_deployable() {
+# The workflow uses this exact allowlist, not a separate rsync filter. Only
+# tracked, flat code paths and versioned migrations qualify; never send a tree.
+allow_code() {
   case "$1" in
-    main.py|config.py|requirements.txt|Caddyfile|schema.sql|Dockerfile|docker-compose.yml) return 0 ;;
-    core/*|routers/*|services/*|scripts/*|static/*|workers/*|data/*|frontend/*) return 0 ;;
+    *credential*|*secret*|*service_account*|*private_key*|*devfile*|*backup*|*token*) return 1 ;;
   esac
-  return 1
+  [[ $1 =~ ^(main\.py|config\.py|(core|routers|services|workers)/[a-z_][a-z0-9_]*\.py|static/(ui/[a-z_][a-z0-9_]*\.html|qrcode\.min\.js)|scripts/migrations/(001_submission_attempts|002_outbox_delivery|003_outbox_operations)\.sql)$ ]]
 }
 
-if (( ALL_CHANGED )); then
-  # Tracked changes vs HEAD (staged + unstaged) plus untracked, filtered to bind-mounted paths.
-  while IFS= read -r f; do
-    [[ -n "$f" && -f "$f" ]] || continue
-    is_deployable "$f" && FILES+=("$f")
-  done < <(git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard)
-fi
-
-(( ${#FILES[@]} )) && : || { usage; echo "ERROR: no files given" >&2; exit 2; }
-
-# ---------------------------------------------------------------- validation
-declare -a CLEAN=()
-declare -A SEEN=()
-for f in "${FILES[@]}"; do
-  [[ "$f" != /* ]] || die "absolute paths are refused: $f"
-  [[ -f "$f" ]] || die "not a regular file: $f"
-  abs="$(realpath -- "$f")"
-  [[ "$abs" == "$REPO_ROOT"/* ]] || die "outside repo: $f"
-  rel="${abs#"$REPO_ROOT"/}"
-  [[ -z "${SEEN[$rel]:-}" ]] || continue
-  SEEN[$rel]=1
-  CLEAN+=("$rel")
-done
-FILES=("${CLEAN[@]}")
-
-declare -A LOCAL_SHA=()
-for f in "${FILES[@]}"; do LOCAL_SHA[$f]="$(sha256sum -- "$f" | cut -d' ' -f1)"; done
-
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP="$(dirname "$PROD_ROOT")/deploy-backup-$TS"
-declare -a RESTARTED=()
-
-container_for_root() {
-  if [[ "$1" == "$DEV_ROOT" ]]; then printf '%s' "$DEV_APP_CONTAINER"; else printf '%s' "$APP_CONTAINER"; fi
-}
-
-resolve_service() {
-  case "$1" in
-    app) printf '%s' "$APP_CONTAINER" ;;
-    dev|app-dev) printf '%s' "$DEV_APP_CONTAINER" ;;
-    outbox) printf '%s' "survey-pipeline-outbox-worker-1" ;;
-    postgres) printf '%s' "survey-pipeline-postgres-1" ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
-declare -a RESTART_LIST=()
-if (( NO_RESTART )); then
-  :
-elif [[ -n "$RESTART_SVCS" ]]; then
-  IFS=',' read -ra raw <<<"$RESTART_SVCS"
-  for s in "${raw[@]}"; do [[ -n "$s" ]] && RESTART_LIST+=("$(resolve_service "$s")"); done
+if [[ -n "$ROLLBACK" ]]; then
+  [[ "$ROLLBACK" =~ ^release-[a-zA-Z0-9]{8}$ ]] || die 'invalid rollback release ID'
+  (( ! ALL_CODE && ! APPLY && ${#requested[@]} == 0 )) || die 'rollback cannot publish code or apply migrations'
+elif (( ALL_CODE )); then
+  (( ${#requested[@]} == 0 )) || die 'choose either --all-code or explicit paths'
+  tracked=$(mktemp)
+  trap 'rm -f -- "$tracked"' EXIT
+  git ls-files -z >"$tracked"
+  while IFS= read -r -d '' path; do
+    if allow_code "$path"; then requested+=("$path"); fi
+  done <"$tracked"
+  rm -f -- "$tracked"
+  trap - EXIT
 else
-  IFS=',' read -ra raw <<<"$CONTAINERS"
-  for s in "${raw[@]}"; do [[ -n "$s" ]] && RESTART_LIST+=("$s"); done
+  (( ${#requested[@]} )) || die 'choose --all-code or explicit paths'
 fi
 
-# ---------------------------------------------------------------- dry run
+bundle=$(mktemp -d)
+trap 'rm -rf -- "$bundle"' EXIT
+bundle_base "$bundle"
+mkdir "$bundle/code"
+: >"$bundle/files"
+: >"$bundle/sha256"
+declare -A seen=()
+for path in "${requested[@]}"; do
+  allow_code "$path" || die "not an immutable release path: $path"
+  git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || die "not a tracked release file: $path"
+  [[ -f "$path" && $(realpath -e -- "$path") == "$REPO_ROOT/$path" ]] || die "not a regular, symlink-free release file: $path"
+  [[ ! ${seen[$path]+selected} ]] || continue
+  seen[$path]=1
+  printf '%s\n' "$path" >>"$bundle/files"
+  cp --parents -p -- "$path" "$bundle/code"
+  (cd "$bundle/code" && sha256sum -- "$path") >>"$bundle/sha256"
+done
+if [[ -z "$ROLLBACK" ]]; then [[ -s "$bundle/files" ]] || die 'no immutable release files found'; fi
 if (( DRY_RUN )); then
-  echo "PLAN (dry run - nothing copied, nothing restarted)"
-  echo "  host:        $PROD_HOST"
-  echo "  roots:       $PROD_ROOT"
-  echo "               $DEV_ROOT"
-  echo "  backup:      $BACKUP/{prod,dev}/<relpath>"
-  echo "  container:   $(container_for_root "$PROD_ROOT") / $(container_for_root "$DEV_ROOT")"
-  echo "  compile:     $([ "$SKIP_COMPILE" = 1 ] && echo skipped || echo 'python -m py_compile for .py files')"
-  echo "  restart:     $([ "$NO_RESTART" = 1 ] && echo skipped || printf '%s' "${RESTART_LIST[*]:-none}")"
-  echo "  health:      $HEALTH_URL (<= ${HEALTH_TIMEOUT}s)"
-  echo "  smoke:       $([ "$RUN_SMOKE" = 1 ] && echo yes || echo no)"
-  echo "  files (${#FILES[@]}):"
-  for f in "${FILES[@]}"; do
-    printf '    %-52s %8s  %s\n' "$f" "$(wc -c <"$f")" "${LOCAL_SHA[$f]:0:12}"
-  done
-  emit_result true 1 "$([ "$SKIP_COMPILE" = 1 ] && echo skipped || echo planned)" \
-    "$([ "$NO_RESTART" = 1 ] && echo skipped || echo planned)" \
-    "$([ "$RUN_SMOKE" = 1 ] && echo planned || echo skipped)"
+  printf 'PLAN (local only) target=%s host=%s root=%s schema=%s build=%s apply=%s rollback=%s\n' "$TARGET" "$RELEASE_HOST" "$RELEASE_ROOT" "$SCHEMA" "$RELEASE_BUILD_ID" "$APPLY" "${ROLLBACK:-none}"
+  cat "$bundle/sha256"
   exit 0
 fi
 
-# ---------------------------------------------------------------- remote setup
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-printf '%s\n' "${FILES[@]}" >"$TMP_DIR/files.txt"
+{
+  declare -f allow_code
+  cat <<'REMOTE'
+source "$1/smoke.sh"
+remote_args "$@"
+apply=${13} rollback=${14}
+exec 9<"$RELEASE_ROOT"
+flock -x 9
 
-cat >"$TMP_DIR/prepare.sh" <<'REMOTE'
-set -euo pipefail
-root=$1; backup=$2; label=$3; shift 3
-[ -d "$root" ] || { echo "missing root: $root" >&2; exit 3; }
-mkdir -p "$backup/$label"
-for rel in "$@"; do
-  src="$root/$rel"
-  if [ -e "$src" ]; then
-    mkdir -p "$backup/$label/$(dirname "$rel")"
-    cp -a "$src" "$backup/$label/$rel"
-  fi
-  mkdir -p "$root/$(dirname "$rel")"
-done
-REMOTE
-
-cat >"$TMP_DIR/verify.sh" <<'REMOTE'
-set -euo pipefail
-root=$1; shift
-for rel in "$@"; do
-  [ -f "$root/$rel" ] || { echo "MISSING $rel" >&2; exit 4; }
-  sha256sum "$root/$rel"
-done
-REMOTE
-
-cat >"$TMP_DIR/compile.sh" <<'REMOTE'
-set -euo pipefail
-root=$1; container=$2; shift 2
-pys=()
-for rel in "$@"; do [ "${rel##*.}" = py ] && pys+=("$rel"); done
-[ ${#pys[@]} -gt 0 ] || { echo "no-python"; exit 0; }
-fallback() {
-  if [ -x "$root/.venv/bin/python" ]; then "$root/.venv/bin/python" -m py_compile "$root/$1"
-  elif command -v python3 >/dev/null 2>&1; then python3 -m py_compile "$root/$1"
-  else echo "no python available to compile $1" >&2; exit 5
-  fi
-}
-running=0
-if command -v docker >/dev/null 2>&1 && [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; then
-  running=1
+backups="$RELEASE_ROOT/.release-backups"
+files="$BUNDLE/files"
+if [[ -n "$rollback" ]]; then
+  backup="$backups/$rollback"
+  [[ -d "$backup" && $(realpath -e -- "$backup") == "$backup" ]] || die 'unknown or unsafe rollback backup'
+  files="$backup/files"
 fi
-for rel in "${pys[@]}"; do
-  if [ "$running" = 1 ] && docker exec "$container" test -f "/app/$rel" 2>/dev/null; then
-    docker exec "$container" python -m py_compile "/app/$rel"
-  else
-    fallback "$rel"
-  fi
-done
-echo "compiled ${#pys[@]}"
-REMOTE
 
-cat >"$TMP_DIR/restart.sh" <<'REMOTE'
-set -euo pipefail
-docker restart "$@" >/dev/null
-REMOTE
-
-FAIL_LOG="$TMP_DIR/last.log"
-
-ssh_run() { # script-file args...
-  local sfile=$1; shift
-  local cmd="bash -s --" a
-  for a in "$@"; do cmd+=" $(printf '%q' "$a")"; done
-  ssh "${SSH_OPTS[@]}" "$PROD_HOST" "$cmd" <"$sfile"
+safe_paths() {
+  local rel dst parent
+  [[ -f "$files" && ! -L "$files" ]] || return 1
+  while IFS= read -r rel; do
+    allow_code "$rel" || return 1
+    dst="$RELEASE_ROOT/$rel"
+    [[ ! -L "$dst" && ( ! -e "$dst" || -f "$dst" ) ]] || return 1
+    parent=${dst%/*}
+    while [[ "$parent" != "$RELEASE_ROOT" ]]; do
+      [[ ! -L "$parent" && ( ! -e "$parent" || -d "$parent" ) ]] || return 1
+      parent=${parent%/*}
+    done
+  done <"$files"
 }
 
-fail() {
-  echo "DEPLOY FAILED: $*" >&2
-  [[ -s "$FAIL_LOG" ]] && sed -n '1,80p' "$FAIL_LOG" >&2
-  emit_result false 0 "${COMPILE_STATE:-failed}" "${HEALTH_STATE:-skipped}" "${SMOKE_STATE:-skipped}" "$*"
-  exit 1
+pause_services() {
+  docker stop "$APP_ID" "$WORKER_ID" >/dev/null
 }
 
-# ---------------------------------------------------------------- per-root work
-COMPILE_STATE="skipped"
-HEALTH_STATE="skipped"
-SMOKE_STATE="skipped"
+replace_code() {
+  local source=$1 destination=$2 temp
+  (umask 022; mkdir -p -- "${destination%/*}") || return 1
+  temp=$(mktemp -- "${destination%/*}/.release-file.XXXXXXXX") || return 1
+  if ! cp -p -- "$source" "$temp" || ! mv -fT -- "$temp" "$destination"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
 
-for root in "$PROD_ROOT" "$DEV_ROOT"; do
-  label=prod; [[ "$root" == "$DEV_ROOT" ]] && label=dev
-  if ! ssh_run "$TMP_DIR/prepare.sh" "$root" "$BACKUP" "$label" "${FILES[@]}" >"$FAIL_LOG" 2>&1; then
-    fail "backup/mkdir failed on $root"
-  fi
-  if ! tar -cf - -T "$TMP_DIR/files.txt" | ssh "${SSH_OPTS[@]}" "$PROD_HOST" "cd $(printf '%q' "$root") && tar -xf -" >"$FAIL_LOG" 2>&1; then
-    fail "copy failed on $root"
-  fi
-  if ! ssh_run "$TMP_DIR/verify.sh" "$root" "${FILES[@]}" >"$TMP_DIR/remote_sha.txt" 2>"$FAIL_LOG"; then
-    fail "sha256 verify failed on $root"
-  fi
-  declare -A REMOTE_SHA=()
-  while read -r hash path; do REMOTE_SHA["$path"]="$hash"; done <"$TMP_DIR/remote_sha.txt"
-  for f in "${FILES[@]}"; do
-    actual="${REMOTE_SHA["$root/$f"]:-}"
-    [[ "$actual" == "${LOCAL_SHA[$f]}" ]] || fail "sha256 mismatch for $f on $root (local ${LOCAL_SHA[$f]:0:12}, remote ${actual:0:12})"
-  done
-  unset REMOTE_SHA
-  if (( SKIP_COMPILE )); then
-    COMPILE_STATE="skipped"
-  elif ! ssh_run "$TMP_DIR/compile.sh" "$root" "$(container_for_root "$root")" "${FILES[@]}" >"$TMP_DIR/compile.out" 2>"$FAIL_LOG"; then
-    fail "py_compile failed on $root"
-  else
-    COMPILE_STATE="ok"
-  fi
-done
-
-# ---------------------------------------------------------------- restart + health
-if (( ! NO_RESTART )); then
-  if (( ${#RESTART_LIST[@]} )); then
-    if ! ssh_run "$TMP_DIR/restart.sh" "${RESTART_LIST[@]}" >"$FAIL_LOG" 2>&1; then
-      fail "docker restart failed: ${RESTART_LIST[*]}"
+restore_code() {
+  local rel src dst
+  safe_paths || return 1
+  while IFS= read -r rel; do
+    src="$backup/prior/$rel" dst="$RELEASE_ROOT/$rel"
+    if [[ $(realpath -m -- "$src") != "$src" ]]; then return 1; fi
+    if [[ -f "$src" ]]; then
+      replace_code "$src" "$dst" || return 1
+    elif [[ ! -e "$src" ]]; then
+      rm -f -- "$dst" || return 1
+    else
+      return 1
     fi
-    RESTARTED=("${RESTART_LIST[@]}")
+  done <"$files"
+}
+
+safe_paths || die 'unsafe code destination or manifest (symlink, directory, or protected path)'
+verify_target "$files"
+load_migrations
+check_ledger
+identity="$TARGET|$RELEASE_ROOT|$RELEASE_DB_NAME|$APP_ID|$WORKER_ID|$DB_ID"
+
+if [[ -n "$rollback" ]]; then
+  [[ -f "$backup/identity" && ! -L "$backup/identity" && $(<"$backup/identity") == "$identity" ]] || die 'snapshot belongs to a different target'
+  pause_services
+  restore_code || die "code restoration incomplete; services are paused, see $backup"
+  printf 'ROLLBACK: restored selected code from %s; app and worker remain paused; database and runtime state retained\n' "$backup"
+  exit 0
+fi
+
+pending=$((${#EXPECTED_LEDGER[@]} - ${#LEDGER[@]}))
+(( ! pending || apply )) || die 'missing required migrations; approve --apply-migrations first'
+(cd "$BUNDLE/code" && sha256sum --check --status "$BUNDLE/sha256") || die 'release checksum mismatch'
+python3 - "$BUNDLE/code" <<'PY'
+from pathlib import Path
+import sys
+
+for path in Path(sys.argv[1]).rglob("*.py"):
+    compile(path.read_bytes(), str(path), "exec")
+PY
+
+[[ ! -L "$backups" && ( ! -e "$backups" || -d "$backups" ) ]] || die 'unsafe backup directory'
+mkdir -p -- "$backups"
+backup=$(mktemp -d -- "$backups/release-XXXXXXXX")
+mkdir -- "$backup/prior"
+while IFS= read -r rel; do
+  if [[ -f "$RELEASE_ROOT/$rel" ]]; then
+    (cd "$RELEASE_ROOT" && cp --parents -p -- "$rel" "$backup/prior")
   fi
-  deadline=$((SECONDS + HEALTH_TIMEOUT))
-  while :; do
-    code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
-    [[ "$code" == 200 ]] && { HEALTH_STATE="ok"; break; }
-    if (( SECONDS >= deadline )); then
-      HEALTH_STATE="timeout"
-      fail "health not 200 after ${HEALTH_TIMEOUT}s ($HEALTH_URL, last HTTP ${code:-none})"
+done <"$files"
+cp -- "$files" "$backup/files"
+cp -- "$BUNDLE/sha256" "$backup/release.sha256"
+printf '%s\n' "$identity" >"$backup/identity"
+printf 'RELEASE_BACKUP=%s\n' "$backup"
+
+published=0
+recover() {
+  local rc=$?
+  trap - EXIT HUP INT TERM
+  if (( rc )); then
+    if pause_services && { (( ! published )) || restore_code; }; then
+      printf 'RELEASE FAILED: code restored or unchanged; app and worker paused; schema and runtime state retained (%s)\n' "$backup" >&2
+    else
+      printf 'RELEASE FAILED: automatic pause/restoration incomplete; verify services and inspect %s\n' "$backup" >&2
     fi
-    sleep 2
+  fi
+  exit "$rc"
+}
+trap recover EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+pause_services
+if (( pending )); then
+  target_pg read pg_dump -Fc </dev/null >"$backup/database.dump.partial"
+  [[ -s "$backup/database.dump.partial" ]] || die 'database backup is empty'
+  mv -- "$backup/database.dump.partial" "$backup/database.dump"
+  for i in "${!MIGRATIONS[@]}"; do
+    (( i >= ${#LEDGER[@]} )) || continue
+    printf 'Applying migration %s to the verified target\n' "${EXPECTED_LEDGER[i]%%|*}"
+    { guard_sql; cat -- "${MIGRATIONS[i]}"; } | target_sql write \
+      -v "migration_sha256=${EXPECTED_LEDGER[i]#*|}" \
+      -v "migration_001_sha256=${EXPECTED_LEDGER[0]#*|}" \
+      -v "migration_002_sha256=${EXPECTED_LEDGER[1]#*|}" >/dev/null
+    check_ledger
+    (( ${#LEDGER[@]} > i )) || die 'migration did not record the expected checksum'
   done
 fi
+require_schema
 
-# ---------------------------------------------------------------- smoke
-if (( RUN_SMOKE )); then
-  smoke_base="${HEALTH_URL%/health}"
-  if ! "$REPO_ROOT/scripts/smoke_prod.sh" --base-url "$smoke_base" >"$TMP_DIR/smoke.out" 2>&1; then
-    SMOKE_STATE="failed"
-    sed -n '1,80p' "$TMP_DIR/smoke.out" >&2
-    fail "smoke checks failed"
-  fi
-  SMOKE_STATE="ok"
-fi
+published=1
+while IFS= read -r rel; do
+  replace_code "$BUNDLE/code/$rel" "$RELEASE_ROOT/$rel"
+done <"$files"
+(cd "$RELEASE_ROOT" && sha256sum --check --status "$BUNDLE/sha256") || die 'installed code checksum mismatch'
 
-# ---------------------------------------------------------------- summary
-echo "DEPLOY OK"
-echo "  files:     ${#FILES[@]} -> $PROD_ROOT, $DEV_ROOT"
-echo "  backup:    $BACKUP"
-echo "  compile:   $COMPILE_STATE"
-echo "  restarted: $([ ${#RESTARTED[@]} -gt 0 ] && printf '%s' "${RESTARTED[*]}" || echo skipped)"
-echo "  health:    $HEALTH_STATE ($HEALTH_URL)"
-echo "  smoke:     $SMOKE_STATE"
-emit_result true 0 "$COMPILE_STATE" "$HEALTH_STATE" "$SMOKE_STATE"
+docker start "$WORKER_ID" >/dev/null
+wait_probe worker_probe
+docker start "$APP_ID" >/dev/null
+wait_probe app_probe
+remote_smoke
+printf 'DEPLOY_RESULT={"ok":true,"target":"%s","schema":"%s","build_id":"%s","backup":"%s"}\n' "$TARGET" "$SCHEMA" "$RELEASE_BUILD_ID" "${backup##*/}"
+REMOTE
+} >"$bundle/runner.sh"
+run_bundle "$bundle" "$APPLY" "$ROLLBACK"

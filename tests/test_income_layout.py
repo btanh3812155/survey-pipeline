@@ -200,7 +200,7 @@ def test_clipped_week_tab_is_marked_unreliable_and_never_corrected():
     The pill is clipped at the screen edge. The layout must keep the OCR period,
     flag the week as unreliable, and never rewrite it from the Chi tiết date.
     """
-    from routers.survey import _unreliable_week_reason
+    from services.submission_pipeline import _unreliable_week_reason
 
     data = {
         "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 -"],
@@ -223,7 +223,7 @@ def test_clipped_week_tab_is_marked_unreliable_and_never_corrected():
 
 
 def test_model_flagged_unreliable_week_is_propagated():
-    from routers.survey import _unreliable_week_reason
+    from services.submission_pipeline import _unreliable_week_reason
 
     data = {
         "period_tabs": ["26 - 02", "03 - 09", "10 - 16", "17 -"],

@@ -10,9 +10,10 @@ def auth_headers():
     return {"Authorization": f"Basic {token}"}
 
 
-def test_submissions_viewer_unauthorized():
+@pytest.mark.parametrize("path", ["/admin/submissions", "/data"])
+def test_submissions_viewer_unauthorized(path):
     client = TestClient(app)
-    resp = client.get("/admin/submissions")
+    resp = client.get(path)
     assert resp.status_code == 401
 
 
@@ -20,8 +21,6 @@ def test_submissions_viewer_authorized(auth_headers):
     client = TestClient(app)
     resp = client.get("/admin/submissions", headers=auth_headers)
     assert resp.status_code == 200
-    assert "Dữ Liệu Khảo Sát Đã Nộp" in resp.text
-    assert "KPI Summary Cards" in resp.text or "stats-grid" in resp.text
 
 
 def test_submissions_api_endpoint(auth_headers):

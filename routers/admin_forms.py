@@ -9,8 +9,9 @@ import os
 import time
 import logging
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from config import settings
 from core.state import (
@@ -89,7 +90,10 @@ async def edit_form_page(form_id: str, admin_user: str = Depends(verify_admin_au
 async def upload_form_schema(request: Request, admin_user: str = Depends(verify_admin_auth)):
     """Allows form owners to upload arbitrary survey schemas with custom rules and constraints."""
     raw_payload = await request.json()
-    schema = FormSchema.model_validate(raw_payload)
+    try:
+        schema = FormSchema.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(), body=raw_payload) from exc
     previous_form_id = str(raw_payload.get("previous_form_id") or "").strip()
 
     if (

@@ -1,18 +1,66 @@
-# -*- coding: utf-8 -*-
-"""
-Action Checklist & Downstream Retry Router.
-Handles operational queries and idempotent manual retries of asynchronous
-downstream actions (R2, Telegram, Lark, Drive, Billing).
-"""
+"""Authenticated submission action inspection and operator commands."""
 
-import logging
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from core.state import verify_admin_auth, get_db_pool
-from core.repositories import fetch_aggregated_submissions
-from services.action_checklist import fetch_action_status, dispatch_action_checklist
+from contextlib import asynccontextmanager
+from typing import Annotated, Literal
+from uuid import UUID
 
-logger = logging.getLogger("routers.actions")
+from fastapi import APIRouter, Depends, HTTPException
+from psycopg.errors import LockNotAvailable
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
+
+from core.state import get_db_pool, verify_admin_auth
+from services.action_checklist import (
+    ActionConflict, ActionNotFound, fetch_action_status, inspect_action, read_dev_submission,
+    reconcile_legacy, resolve_action, retry_actions,
+)
+
 router = APIRouter(tags=["Action Checklist"])
+HASH = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+LegacyEffect = Literal["R2_UPLOAD", "ADMIN_REVIEW", "PARTY_VERDICT", "LARK_SYNC", "GDRIVE_EXPORT", "BILLING"]
+
+
+class ActionResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    command: Literal["confirm_delivered", "confirm_not_delivered", "resend"]
+    version: HASH
+    evidence_sha256: HASH = Field(description="SHA-256 of the retained external evidence or operator decision record.")
+    accept_duplicate_risk: StrictBool = False
+
+
+class LegacyEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    finding: Literal["missing", "delivered", "unknown"]
+    evidence_sha256: HASH = Field(description="SHA-256 of retained evidence for this exact effect and destination.")
+
+
+class LegacyResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: HASH
+    legacy_drained: StrictBool = Field(
+        default=False, description="Attest the old worker, checklist, admin review and party notification paths are drained.",
+    )
+    evidence: dict[LegacyEffect, LegacyEvidence] = Field(default_factory=dict)
+
+
+@asynccontextmanager
+async def _operator_connection(submission_id):
+    pool = get_db_pool()
+    if pool is None:
+        if read_dev_submission(submission_id):
+            raise HTTPException(status_code=409, detail="READ_ONLY_LEGACY_JSON")
+        raise HTTPException(status_code=503, detail="ACTION_DATABASE_UNAVAILABLE")
+    try:
+        async with pool.connection() as conn:
+            yield conn
+    except ActionNotFound as exc:
+        if read_dev_submission(submission_id):
+            raise HTTPException(status_code=409, detail="READ_ONLY_LEGACY_JSON") from exc
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ khảo sát hoặc tác vụ") from exc
+    except ActionConflict as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=503 if detail == "SCHEMA_002_REQUIRED" else 409, detail=detail) from exc
+    except LockNotAvailable as exc:
+        raise HTTPException(status_code=409, detail="ACTION_BUSY") from exc
 
 
 @router.get("/api/v1/submissions/{submission_id}/actions")
@@ -29,34 +77,52 @@ async def get_submission_actions_endpoint(
 @router.post("/api/v1/submissions/{submission_id}/retry-actions")
 async def retry_submission_actions_endpoint(
     submission_id: str,
-    background_tasks: BackgroundTasks,
     admin_user: str = Depends(verify_admin_auth),
 ):
-    """Triggers asynchronous idempotent retry of any uncompleted downstream actions."""
-    subs = await fetch_aggregated_submissions(search=submission_id, limit=5)
-    rec = next((s for s in subs if s.get("submission_id") == submission_id), None)
-    if not rec:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ khảo sát")
-
-    is_appr = rec.get("status") == "APPROVED"
-    background_tasks.add_task(
-        dispatch_action_checklist,
-        submission_id=submission_id,
-        db_pool=get_db_pool(),
-        is_approved=is_appr,
-        raw_bytes=b"",
-        driver_phone=rec.get("driver_phone"),
-        driver_name=rec.get("driver_name"),
-        license_plate=rec.get("license_plate"),
-        collab_param=rec.get("ctv_code"),
-        answers=rec.get("form_data") or {},
-        ai_res=rec.get("ai_result") or {},
-        tot_gross=int(rec.get("total_gross_revenue") or 0),
-        tot_net=int(rec.get("total_net_income") or 0),
-        tot_trips=int(rec.get("total_trips") or 0),
-        reason_str=rec.get("rejection_reason"),
-        is_test_mode=rec.get("mode") == "TEST_DEV_MODE",
-        raw_bytes_list=[],
-        form_id=rec.get("form_id"),
-    )
+    """Commit eligible definitive failures before acknowledging the existing retry command."""
+    async with _operator_connection(submission_id) as conn:
+        await retry_actions(conn, submission_id, admin_user)
+        await conn.commit()
     return {"status": "retry_dispatched", "submission_id": submission_id}
+
+
+@router.get("/api/v1/submissions/{submission_id}/actions/{event_id}/evidence")
+async def get_action_evidence_endpoint(
+    submission_id: str,
+    event_id: UUID,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    async with _operator_connection(submission_id) as conn:
+        await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        return {"submission_id": submission_id, **await inspect_action(conn, submission_id, event_id)}
+
+
+@router.post("/api/v1/submissions/{submission_id}/actions/{event_id}/reconcile")
+async def reconcile_action_endpoint(
+    submission_id: str,
+    event_id: UUID,
+    resolution: ActionResolution,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    async with _operator_connection(submission_id) as conn:
+        resend_event_id = await resolve_action(conn, submission_id, event_id, admin_user, **resolution.model_dump())
+        await conn.commit()
+    result = {"status": "resend_queued" if resend_event_id else "reconciled",
+              "submission_id": submission_id, "event_id": str(event_id)}
+    if resend_event_id:
+        result["resend_event_id"] = resend_event_id
+    return result
+
+
+@router.post("/api/v1/submissions/{submission_id}/actions/reconcile-legacy")
+async def reconcile_legacy_actions_endpoint(
+    submission_id: str,
+    resolution: LegacyResolution,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Classify legacy parents, or transfer only externally verified missing effects."""
+    async with _operator_connection(submission_id) as conn:
+        child_ids = await reconcile_legacy(conn, submission_id, admin_user, **resolution.model_dump())
+        await conn.commit()
+    return {"status": "reconciled" if child_ids else "quarantined", "submission_id": submission_id,
+            "child_ids": child_ids}

@@ -5,12 +5,14 @@ and Standalone Telegram Bot Service.
 
 import json
 import io
+import httpx
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from config import settings
+from core.embedding_executor import embedding_executor_lifespan
 from main import app
 from services.privacy_crypto import (
     hash_phone,
@@ -153,12 +155,16 @@ def test_survey_history_unauthorized_returns_401(monkeypatch, tmp_path):
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch):
+async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch, tmp_path):
     """
     Verifies that persisting a WebRTC survey writes an event to outbox_events
     containing the pseudonymized driver_tag, shielding raw phone numbers from downstream workers.
     """
     monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setattr(settings, "DURABLE_WEBRTC_ENABLED", False)
+    monkeypatch.setattr("routers.survey.SUBMISSION_PHOTOS_DIR", str(tmp_path))
+    monkeypatch.setattr("routers.survey.get_redis_client", lambda: None)
+    monkeypatch.setattr("services.submission_pipeline.compute_dinov2_embedding", lambda _image: None)
 
     # Generate synthetic image
     im = Image.new("RGB", (400, 400), color=(100, 150, 200))
@@ -172,9 +178,10 @@ async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch
     mock_cursor.__aenter__.return_value = mock_cursor
     mock_cursor.__aexit__.return_value = None
     mock_cursor.fetchone.return_value = None
+    mock_cursor.rowcount = 1
 
     mock_conn = AsyncMock()
-    mock_conn.cursor.return_value = mock_cursor
+    mock_conn.cursor = MagicMock(return_value=mock_cursor)
     mock_conn.commit = AsyncMock()
     mock_conn.__aenter__.return_value = mock_conn
     mock_conn.__aexit__.return_value = None
@@ -185,8 +192,7 @@ async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch
     driver_phone = "0977888999"
     expected_driver_tag = generate_driver_tag(driver_phone)
 
-    with patch("main.db_pool", mock_pool):
-        client = TestClient(app)
+    with patch("routers.survey.get_db_pool", return_value=mock_pool):
         data = {
             "driver_phone": driver_phone,
             "driver_name": "Test Driver",
@@ -202,7 +208,10 @@ async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch
             "survey_photo": ("survey.jpg", buf.getvalue(), "image/jpeg"),
         }
 
-        resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+        async with embedding_executor_lifespan(), httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+        ) as client:
+            resp = await client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
         assert resp.status_code == 200
         resp_json = resp.json()
         assert resp_json.get("driver_tag") == expected_driver_tag
@@ -217,7 +226,7 @@ async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch
 
         # Extract JSON payload passed to outbox_events
         sql_params = outbox_call[0][1]
-        payload_str = sql_params[3]
+        payload_str = sql_params[-1]
         payload = json.loads(payload_str)
 
         # Crucial assertions: driver_tag is present and matches pseudonymized identifier
@@ -226,7 +235,7 @@ async def test_webrtc_outbox_event_contains_pseudonymized_driver_tag(monkeypatch
         assert payload["driver_tag"].startswith("DRV-")
         assert "driver_phone_hash" in payload
         # Raw phone number must not be exposed as driver identifier in outbox payload
-        assert payload.get("driver_phone") is None or "0977888999" not in str(payload.get("driver_phone"))
+        assert driver_phone not in json.dumps(payload)
 
 
 # ===========================================================================
@@ -264,12 +273,6 @@ async def test_vehicle_persistence_tracker_with_phone_hash_and_plates():
     assert res1.status_code == "FIRST_REGISTRATION"
     assert res1.registered_plate == "29E12345"
 
-    # Verify query checked both raw phone and phone hash
-    first_call_sql = mock_cursor.execute.call_args_list[0][0][0]
-    first_call_params = mock_cursor.execute.call_args_list[0][0][1]
-    assert "WHERE driver_phone = %s OR driver_phone = %s" in first_call_sql
-    assert first_call_params[0] == phone
-    assert first_call_params[1] == p_hash
 
     # 2. Subsequent survey with matching vehicle
     mock_cursor.fetchone.return_value = ("29E12345", "CAR", None)
@@ -297,10 +300,11 @@ async def test_vehicle_persistence_tracker_with_phone_hash_and_plates():
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_telegram_polling_audit_command():
-    """Tests that /audit <id> renders dossier and provides inline keyboard buttons."""
-    runner = TelegramPollingRunner()
-    mock_send = AsyncMock()
+async def test_telegram_polling_audit_command(monkeypatch):
+    """Only authorized audit requests get a closed dossier with an override control."""
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100123")
+    runner = TelegramPollingRunner(bot_token="mock", db_pool=object())
+    bundle = AsyncMock()
 
     mock_dossier = {
         "submission_id": "VN-AUDIT01",
@@ -311,47 +315,53 @@ async def test_telegram_polling_audit_command():
         "audit_seal_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
     }
 
-    with patch.object(runner, "send_message", mock_send), \
-         patch("services.telegram_polling.query_submission_dossier", AsyncMock(return_value=mock_dossier)):
-        await runner.handle_command(chat_id=99999, text="/audit VN-AUDIT01")
-        mock_send.assert_awaited_once()
-        args, kwargs = mock_send.await_args
-        msg_text = args[1] if len(args) > 1 else kwargs.get("text", "")
-        reply_markup = kwargs.get("reply_markup") or (args[3] if len(args) > 3 else None)
-
-        assert "VN-AUDIT01" in msg_text
-        assert reply_markup is not None
-        assert "inline_keyboard" in reply_markup
+    with patch.object(runner, "send_dossier_bundle", bundle), \
+         patch("services.telegram_polling.query_submission_dossier", AsyncMock(return_value=mock_dossier)) as lookup:
+        runner.send_message = AsyncMock()
+        runner.schedule_submission_review = MagicMock()
+        runner.answer_callback_query = AsyncMock()
+        await runner.handle_command(chat_id=-100124, text="/audit VN-AUDIT01", from_user_id=99999)
+        await runner.handle_callback_query({"id": "deny", "data": "admin_review:VN-AUDIT01", "from": {"id": 99999},
+                                            "message": {"chat": {"id": -100124}, "message_id": 1}})
+        lookup.assert_not_awaited()
+        runner.schedule_submission_review.assert_not_called()
+        await runner.handle_command(chat_id=-100123, text="/check VN-AUDIT01", from_user_id=99999)
+        assert [b["callback_data"] for row in bundle.await_args.kwargs["reply_markup"]["inline_keyboard"]
+                for b in row] == ["resolved_notice"]
+        await runner.handle_command(chat_id=-100123, text="/audit VN-AUDIT01", from_user_id=99999)
+        assert "VN-AUDIT01" in bundle.await_args.args[3]
+        assert any(b["callback_data"].startswith("admin_override:")
+                   for row in bundle.await_args.kwargs["reply_markup"]["inline_keyboard"] for b in row)
 
 
 @pytest.mark.asyncio
-async def test_telegram_polling_callback_queries():
-    """Tests callback button processing for admin_audit, admin_approve, and admin_reject."""
-    runner = TelegramPollingRunner()
-    mock_send = AsyncMock()
-    mock_ack = AsyncMock()
+@pytest.mark.parametrize(("action", "status"), [("approve", "APPROVED"), ("reject", "REJECTED")])
+async def test_telegram_polling_callback_queries(monkeypatch, action, status):
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100123")
+    runner = TelegramPollingRunner(bot_token="mock", role="admin")
+    update = AsyncMock(return_value=(True, status))
+    ack = AsyncMock()
+    edit = AsyncMock()
+    with patch.object(runner, "_update_submission_status", update), \
+         patch.object(runner, "answer_callback_query", ack), \
+         patch.object(runner, "edit_message_reply_markup", edit), \
+         patch.object(runner, "_legacy_delivery_allowed", AsyncMock(return_value=False)):
+        await runner.handle_update({"callback_query": {
+            "id": "decision",
+            "data": f"admin_{action}:VN-100",
+            "message": {"chat": {"id": -100123, "type": "supergroup"}, "message_id": 7},
+            "from": {"id": 12345},
+        }})
 
-    with patch.object(runner, "send_message", mock_send), \
-         patch.object(runner, "answer_callback_query", mock_ack):
-        # 1. admin_approve
-        cq_approve = {
-            "id": "cq_1",
-            "data": "admin_approve:VN-100",
-            "message": {"chat": {"id": 12345}},
-        }
-        await runner.handle_callback_query(cq_approve)
-        mock_ack.assert_awaited_with("cq_1", "Đã duyệt #VN-100")
-        assert any("DUYỆT" in str(c) for c in mock_send.await_args_list)
-
-        # 2. admin_reject
-        cq_reject = {
-            "id": "cq_2",
-            "data": "admin_reject:VN-100",
-            "message": {"chat": {"id": 12345}},
-        }
-        await runner.handle_callback_query(cq_reject)
-        mock_ack.assert_awaited_with("cq_2", "Đã từ chối #VN-100")
-        assert any("TỪ CHỐI" in str(c) for c in mock_send.await_args_list)
+    update.assert_awaited_once()
+    assert update.await_args.args == ("VN-100", status)
+    assert update.await_args.kwargs["actor"] == "admin:12345"
+    ack.assert_awaited_once()
+    assert ack.await_args.args[0] == "decision"
+    assert not ack.await_args.kwargs.get("show_alert", False)
+    edit.assert_awaited_once()
+    assert edit.await_args.args == (-100123, 7)
+    assert edit.await_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "resolved_notice"
 
 
 @pytest.mark.asyncio

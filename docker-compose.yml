@@ -37,6 +37,40 @@ services:
     networks:
       - default
 
+  outbox-v2:
+    profiles: ["outbox-v2"]
+    image: survey-pipeline-app-dev:latest
+    restart: unless-stopped
+    command: python -m workers.outbox_worker
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:secret_password@postgres:5432/surveydb_dev}
+      - OUTBOX_V2_WORKER_ENABLED=false
+      - DRIVE_SYNC_INTERVAL_SEC=0
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_PRIVATE_BUCKET_NAME=${R2_PRIVATE_BUCKET_NAME:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-mock_tg_token}
+      - TELEGRAM_ADMIN_BOT_TOKEN=${TELEGRAM_ADMIN_BOT_TOKEN:-}
+      - TELEGRAM_DRIVER_BOT_TOKEN=${TELEGRAM_DRIVER_BOT_TOKEN:-}
+      - LARK_APP_ID=${LARK_APP_ID:-cli_mock_id}
+      - LARK_APP_SECRET=${LARK_APP_SECRET:-mock_secret}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core:ro
+      - ./services:/app/services:ro
+      - ./workers:/app/workers:ro
+      - ./scripts:/app/scripts:ro
+      - ./config.py:/app/config.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "workers.outbox_worker", "--health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - default
+
 networks:
   default:
     name: survey-pipeline_default

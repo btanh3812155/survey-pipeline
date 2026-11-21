@@ -9,6 +9,8 @@ import pytest
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from unittest.mock import AsyncMock, MagicMock, patch
+from psycopg_pool import AsyncConnectionPool
+from uuid import uuid4
 
 from services.online_and_ai_detector import (
     OnlineStockAndAIDetector,
@@ -33,6 +35,7 @@ from services.evaluator import (
     evaluate_survey_compliance,
     EvaluationResult,
 )
+from tests.test_outbox_delivery import database
 
 
 # ==============================================================================
@@ -465,88 +468,43 @@ class TestVehicleChangeAbuseAndFlapping:
     """
 
     @pytest.mark.asyncio
-    async def test_vehicle_flapping_5_plates_in_1_hour(self):
-        """
-        Tests the vehicle persistence tracker and change approval workflow when a driver
-        rapidly changes plates: Plate 1 -> Plate 2 -> Plate 3 -> Plate 4 -> Plate 5.
-        Verifies:
-        1. Frequency counter increments accurately on each change.
-        2. Once changes reach >= 3 in 30 days, the supervisor warning is triggered.
-        3. All historical transitions are audited in `vehicle_change_history`.
-        """
-        mock_db_pool = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.commit = AsyncMock()
-        mock_cursor = AsyncMock()
-
-        mock_db_pool.connection.return_value.__aenter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__aenter__.return_value = mock_cursor
-
-        tracker = VehiclePersistenceTracker(db_pool=mock_db_pool)
-
-        driver_phone = "0901234567"
+    @pytest.mark.postgres
+    async def test_vehicle_flapping_5_plates_in_1_hour(self, database):
+        dsn, observer, *_ = database
+        phone = f"09{uuid4().int % 100_000_000:08d}"
+        initial = "29E00000"
         plates = ["29E11111", "29E22222", "29E33333", "29E44444", "29E55555"]
-        admin_id = 99999
+        try:
+            async with AsyncConnectionPool(dsn, min_size=1, max_size=1, open=False) as pool:
+                tracker = VehiclePersistenceTracker(db_pool=pool)
+                first = await tracker.verify_and_persist_vehicle(phone, initial, "BIKE", persist=False)
+                assert first.is_match and first.is_first_registration
+                assert observer.execute(
+                    "SELECT 1 FROM driver_registered_vehicles WHERE driver_phone=%s", (phone,),
+                ).fetchone() is None
+                observer.execute(
+                    "INSERT INTO driver_registered_vehicles(driver_phone, license_plate, vehicle_type) VALUES (%s, %s, 'BIKE')",
+                    (phone, initial),
+                )
+                for i, plate in enumerate(plates, start=1):
+                    changed, count, note = await tracker.approve_vehicle_change(phone, plate, "BIKE", admin_id=99999)
+                    assert changed and count == i
+                    assert ("Cảnh báo" in note) == (i >= 3)
 
-        # Simulated database state for driver
-        db_state = {
-            "current_plate": "29E00000",
-            "current_type": "BIKE",
-            "history_count": 0,
-            "audit_log": [],
-        }
-
-        async def mock_execute(query, params=None):
-            if "SELECT license_plate, vehicle_type FROM driver_registered_vehicles" in query:
-                mock_cursor.fetchone.return_value = (db_state["current_plate"], db_state["current_type"])
-            elif "SELECT COUNT(*) FROM vehicle_change_history" in query:
-                mock_cursor.fetchone.return_value = (db_state["history_count"],)
-            elif "INSERT INTO vehicle_change_history" in query:
-                db_state["history_count"] += 1
-                db_state["audit_log"].append(params)
-            elif "INSERT INTO driver_registered_vehicles" in query:
-                db_state["current_plate"] = params[1]
-                db_state["current_type"] = params[2]
-            return None
-
-        mock_cursor.execute.side_effect = mock_execute
-
-        results = []
-        for plate in plates:
-            success, count, note = await tracker.approve_vehicle_change(
-                driver_phone=driver_phone,
-                new_plate=plate,
-                new_vehicle_type="BIKE",
-                admin_id=admin_id,
-                reason="Driver flapping attack simulation",
-            )
-            results.append((success, count, note))
-
-        # Check iterations:
-        # Change 1: count=1, no warning
-        assert results[0][0] is True
-        assert results[0][1] == 1
-        assert "Cảnh báo" not in results[0][2]
-
-        # Change 2: count=2, no warning
-        assert results[1][0] is True
-        assert results[1][1] == 2
-        assert "Cảnh báo" not in results[1][2]
-
-        # Change 3: count=3 -> TRIGGER WARNING
-        assert results[2][0] is True
-        assert results[2][1] == 3
-        assert "Cảnh báo: Tài xế này đã đổi xe 3 lần trong 30 ngày qua!" in results[2][2]
-
-        # Change 4 & 5: count=4, 5 -> TRIGGER WARNING
-        assert results[3][1] == 4
-        assert "Cảnh báo: Tài xế này đã đổi xe 4 lần trong 30 ngày qua!" in results[3][2]
-        assert results[4][1] == 5
-        assert "Cảnh báo: Tài xế này đã đổi xe 5 lần trong 30 ngày qua!" in results[4][2]
-
-        # Verify audit ledger recorded all 5 transitions
-        assert len(db_state["audit_log"]) == 5
-        assert db_state["current_plate"] == "29E55555"
+            history = observer.execute(
+                "SELECT previous_plate, new_plate, changed_by_admin_id FROM vehicle_change_history "
+                "WHERE driver_phone=%s", (phone,),
+            ).fetchall()
+            assert len(history) == len(plates)
+            assert {(row["previous_plate"], row["new_plate"], row["changed_by_admin_id"]) for row in history} == {
+                (previous, new, 99999) for previous, new in zip([initial, *plates], plates)
+            }
+            binding = observer.execute(
+                "SELECT license_plate FROM driver_registered_vehicles WHERE driver_phone=%s", (phone,),
+            ).fetchone()
+            assert binding["license_plate"] == plates[-1]
+        finally:
+            observer.execute("DELETE FROM driver_registered_vehicles WHERE driver_phone=%s", (phone,))
 
     @pytest.mark.asyncio
     async def test_vehicle_verification_rejects_unapproved_flapping_plate(self):
@@ -690,23 +648,20 @@ class TestExtremeFinancialEdgeCases:
         assert eval_res.status_tier == "APPROVED"
         assert eval_res.reason_code == "APPROVED"
 
-    def test_income_sanitizer_negative_platform_discount_bypass(self):
-        """
-        VULNERABILITY: Platform Discount Arithmetic Reconciliation Bypass.
-        In `income_sanitizer.py`:
-        `expected_net = gross_income - platform_discount`
-        If gross_income = 10,000,000 VND and platform_discount = -5,000,000 VND (negative discount),
-        expected_net becomes 10M - (-5M) = 15,000,000 VND.
-        If net_income is declared as 15,000,000 VND, the arithmetic check passes
-        even though net income exceeds gross income!
-        """
-        res = analyze_driver_income(
-            vehicle_type="BIKE",
-            gross_income=10_000_000,
-            net_income=15_000_000,
-            platform_discount=-5_000_000,
-            period="monthly",
-        )
-        # Passed arithmetic check because 10M - (-5M) == 15M!
-        assert res.is_valid is True
-        assert res.status_code == "APPROVED"
+    def test_income_sanitizer_treats_signed_platform_discount_as_a_cost(self):
+        def analyze(net_income):
+            return analyze_driver_income(
+                vehicle_type="BIKE",
+                gross_income=10_000_000,
+                net_income=net_income,
+                platform_discount=-5_000_000,
+                period="monthly",
+            )
+
+        assert analyze(5_000_000).is_valid
+        # A smaller inflation also fails reconciliation, even inside the gross/net guard.
+        for inflated in (11_000_000, 15_000_000):
+            result = analyze(inflated)
+            assert not result.is_valid
+            assert result.status_code == "ARITHMETIC_MISMATCH"
+            assert result.suggested_action == "REJECT"

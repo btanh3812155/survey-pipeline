@@ -12,6 +12,8 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import FastAPI
+from core.embedding_executor import embedding_executor_lifespan
+from services import submission_pipeline
 from PIL import Image
 from psycopg_pool import AsyncConnectionPool
 
@@ -22,15 +24,18 @@ def _run_submit_worker(dsn, media_dir, work_dir, key, photo, parent_end, child_e
     parent_end.close()
     os.chdir(work_dir)
     from routers import survey
+    from core.embedding_executor import embedding_executor_lifespan
+    from services import submission_pipeline
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(survey.settings, "ENVIRONMENT", "test")
         patch.setattr(survey, "get_redis_client", lambda: None)
         patch.setattr(survey, "refresh_form_registry_from_disk", lambda: None)
         patch.setattr(survey, "SUBMISSION_PHOTOS_DIR", media_dir)
-        patch.setattr(survey.BackgroundTasks, "add_task", lambda *args, **kwargs: None)
+        patch.setattr(survey, "_schedule_legacy_submission", lambda *_args: None)
+        patch.setattr(submission_pipeline, "compute_dinov2_embedding", lambda *_args, **_kwargs: None)
         if crash:
-            original = survey.commit_response
+            original = submission_pipeline.commit_response
 
             async def pause_before_commit(conn, scope, attempt_key, fingerprint, submission_id, response):
                 await original(conn, scope, attempt_key, fingerprint, submission_id, response)
@@ -38,21 +43,22 @@ def _run_submit_worker(dsn, media_dir, work_dir, key, photo, parent_end, child_e
                 child_end.poll(60)
                 os._exit(1)
 
-            patch.setattr(survey, "commit_response", pause_before_commit)
+            patch.setattr(submission_pipeline, "commit_response", pause_before_commit)
 
         async def submit():
-            async with AsyncConnectionPool(conninfo=dsn, min_size=1, max_size=1, open=False) as pool:
-                patch.setattr(survey, "get_db_pool", lambda: pool)
-                app = FastAPI()
-                app.include_router(survey.router)
-                async with httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    return await client.post(
-                        "/api/v1/survey/submit-webrtc",
-                        data={"idempotency_key": key},
-                        files={"survey_photo": ("test.jpg", photo, "image/jpeg")},
-                    )
+            async with embedding_executor_lifespan():
+                async with AsyncConnectionPool(conninfo=dsn, min_size=1, max_size=1, open=False) as pool:
+                    patch.setattr(survey, "get_db_pool", lambda: pool)
+                    app = FastAPI()
+                    app.include_router(survey.router)
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app), base_url="http://test"
+                    ) as client:
+                        return await client.post(
+                            "/api/v1/survey/submit-webrtc",
+                            data={"idempotency_key": key},
+                            files={"survey_photo": ("test.jpg", photo, "image/jpeg")},
+                        )
 
         response = asyncio.run(submit())
         child_end.send(("response", response.status_code, response.text))

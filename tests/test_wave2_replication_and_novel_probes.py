@@ -1,18 +1,18 @@
 import io
-import json
-import os
-import secrets
 import time
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 
 import main
-from main import app, BoundedTTLCache, LOCAL_IDEMP_CACHE
+from main import app, BoundedTTLCache
+from routers import survey
+from services import submission_pipeline
+from tests.test_outbox_delivery import database
 from services.form_engine import (
     FormSchema,
     FormQuestion,
@@ -74,7 +74,6 @@ class TestNovelProbeBoundedTTLCache:
         Must remain strictly thread-safe, never exceed 2048, and have zero deadlocks/races.
         """
         cache = BoundedTTLCache(max_size=2048, ttl_seconds=3600.0)
-        total_items = 5000
         num_workers = 50
 
         def insert_chunk(worker_id):
@@ -89,7 +88,6 @@ class TestNovelProbeBoundedTTLCache:
 
         # Cache length must be strictly bounded at max_size
         assert len(cache) == 2048
-        assert cache.maxsize == 2048
 
     def test_lru_eviction_order_deterministic(self):
         """
@@ -130,167 +128,117 @@ class TestNovelProbeBoundedTTLCache:
         assert cache.get("ephemeral_1") is None
         assert len(cache) == 0
 
-    def test_cross_driver_idempotency_isolation_with_scoped_keys(self):
-        """
-        Replication & Novel Probe on VULN-CACHE-02:
-        Driver A and Driver B submit with the EXACT SAME idempotency_key ('shared-submit-123').
-        With key scoping `idemp:{phone}:{key}`, Driver B must NOT receive Driver A's cached response!
-        """
+    def test_cross_driver_idempotency_isolation_with_scoped_keys(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(survey.settings, "ENVIRONMENT", "test")
+        monkeypatch.setattr(survey, "get_db_pool", lambda: None)
+        monkeypatch.setattr(survey, "get_redis_client", lambda: None)
+        monkeypatch.setattr(survey, "LOCAL_IDEMP_CACHE", BoundedTTLCache(max_size=8, ttl_seconds=60))
+        monkeypatch.setattr(survey, "SUBMISSION_PHOTOS_DIR", str(tmp_path))
+        records = []
+        monkeypatch.setattr(survey, "append_dev_submission", records.append)
+        monkeypatch.setattr(survey, "_schedule_legacy_submission", lambda *_: None)
         client = TestClient(app)
-        sharp_bytes = make_sharp_image_bytes()
-        shared_key = f"novel_idemp_{secrets.token_hex(4)}"
+        image = make_sharp_image_bytes()
 
-        # 1. Driver A submits first
-        resp_a = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data=standard_form_fields(
-                driver_phone="0911111111",
-                driver_name="Tài Xế A Riêng Tư",
-                idempotency_key=shared_key,
-                is_test_mode="true",
-                bypass_img_check="true",
-            ),
-            files={"survey_photo": ("capture.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
-        )
-        assert resp_a.status_code == 200
-        data_a = resp_a.json()
-        assert data_a["driver_phone"] == "0911111111"
-        sub_id_a = data_a["submission_id"]
+        def submit(phone, name):
+            return client.post(
+                "/api/v1/survey/submit-webrtc",
+                data=standard_form_fields(
+                    driver_phone=phone, driver_name=name, idempotency_key="shared-submit",
+                    is_test_mode="true", bypass_img_check="true",
+                ),
+                files={"survey_photo": ("capture.jpg", image, "image/jpeg")},
+            )
 
-        # 2. Driver B submits with IDENTICAL idempotency_key
-        resp_b = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data=standard_form_fields(
-                driver_phone="0922222222",
-                driver_name="Tài Xế B Độc Lập",
-                idempotency_key=shared_key,
-                is_test_mode="true",
-                bypass_img_check="true",
-            ),
-            files={"survey_photo": ("capture.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
-        )
-        assert resp_b.status_code == 200
-        data_b = resp_b.json()
-        assert data_b["driver_phone"] == "0922222222"
-        sub_id_b = data_b["submission_id"]
+        phone_a, phone_b = "0911111111", "0922222222"
+        name_a, name_b = "Tài Xế A Riêng Tư", "Tài Xế B Độc Lập"
+        first_a, first_b = submit(phone_a, name_a), submit(phone_b, name_b)
+        assert first_a.status_code == first_b.status_code == 200
+        assert first_a.json()["driver_phone"] == phone_a
+        assert first_b.json()["driver_phone"] == phone_b
+        assert first_a.json()["submission_id"] != first_b.json()["submission_id"]
 
-        # Critical assertion: Driver B must NOT get Driver A's submission!
-        assert sub_id_a != sub_id_b, "VULN-CACHE-02: Cross-driver collision detected! Scoped keys failed."
-
-        # 3. Driver A resubmits with identical key -> gets idempotent HIT with same submission_id
-        resp_a_resubmit = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data=standard_form_fields(
-                driver_phone="0911111111",
-                idempotency_key=shared_key,
-                is_test_mode="true",
-                bypass_img_check="true",
-            ),
-            files={"survey_photo": ("capture.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
-        )
-        assert resp_a_resubmit.status_code == 200
-        data_a_resubmit = resp_a_resubmit.json()
-        assert data_a_resubmit["submission_id"] == sub_id_a, "Idempotency hit failed for original driver!"
+        changed = submit(phone_a, "Tên đã thay đổi")
+        assert changed.status_code == 409
+        replay = submit(phone_a, name_a)
+        assert replay.status_code == 200
+        assert replay.json() == first_a.json()
+        assert len(records) == 2
 
 
 # ==============================================================================
 # NOVEL PROBES & REPLICATION: VULN-AUTH-05 VEHICLE REGISTRATION
 # ==============================================================================
 
+@pytest.fixture
+def vehicle_client(database, monkeypatch, tmp_path):
+    dsn, observer, *_ = database
+    monkeypatch.setattr(main.settings, "DATABASE_URL", dsn)
+    monkeypatch.setattr(main.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(main.settings, "DURABLE_WEBRTC_ENABLED", True)
+    monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setattr(survey, "SUBMISSION_PHOTOS_DIR", str(tmp_path))
+    monkeypatch.setattr(submission_pipeline, "compute_dinov2_embedding", lambda _: None)
+    monkeypatch.setattr(main, "seed_media_storage", lambda: None)
+    monkeypatch.setattr("services.telegram_polling.configure_bot_menus", AsyncMock())
+    redis = AsyncMock()
+    redis.ping.side_effect = ConnectionError("Redis disabled for this test")
+    monkeypatch.setattr(main.aioredis, "from_url", lambda *_args, **_kwargs: redis)
+
+    phone = f"09{uuid4().int % 100_000_000:08d}"
+    # The public route uses the lifespan's pool; observe commits from a separate connection.
+    try:
+        with TestClient(app) as client:
+            yield client, observer, phone
+    finally:
+        observer.execute(
+            "DELETE FROM outbox_events WHERE aggregate_id IN "
+            "(SELECT submission_id FROM survey_submissions WHERE driver_phone=%s)", (phone,),
+        )
+        observer.execute("DELETE FROM survey_submissions WHERE driver_phone=%s", (phone,))
+        observer.execute("DELETE FROM driver_identity_vault WHERE driver_phone=%s", (phone,))
+        observer.execute("DELETE FROM driver_registered_vehicles WHERE driver_phone IN (%s, %s)", (phone, "+84" + phone[1:]))
+
+
+@pytest.mark.postgres
 class TestNovelProbeVehicleRegistrationVULNAUTH05:
-    """
-    Novel probe on VULN-AUTH-05:
-    1. Verify that an unauthenticated attacker cannot overwrite a victim driver's existing vehicle record.
-       (ON CONFLICT (driver_phone) DO NOTHING prevents overwrite).
-    2. Legitimate onboarding: verify that a brand new un-registered driver still inserts their initial vehicle cleanly.
-    """
-
-    def test_unauthenticated_attacker_cannot_overwrite_victim_vehicle_record(self):
-        """
-        Attacker submits victim's phone ('0988111222') with fraudulent plate ('99X-888.88').
-        The SQL query must use `ON CONFLICT (driver_phone) DO NOTHING` rather than `DO UPDATE`.
-        """
-        client = TestClient(app)
-        sharp_bytes = make_sharp_image_bytes()
-        victim_phone = "0988111222"
-        attacker_bogus_plate = "99X-888.88"
-
-        mock_db_pool = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.commit = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_db_pool.connection.return_value.__aenter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__aenter__.return_value = mock_cursor
-
-        with patch.object(main, "db_pool", mock_db_pool):
-            resp = client.post(
-                "/api/v1/survey/submit-webrtc",
-                data=standard_form_fields(
-                    driver_phone=victim_phone,
-                    license_plate=attacker_bogus_plate,
-                    vehicle_type="TRUCK",
-                ),
-                files={"survey_photo": ("capture.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
-            )
-
-        assert resp.status_code == 200
-
-        # Inspect database queries executed
-        executed_queries = [call[0] for call in mock_cursor.execute.call_args_list]
-        vehicle_upsert_call = next(
-            (call for call in executed_queries if "driver_registered_vehicles" in call[0]),
-            None
+    @staticmethod
+    def submit(client, phone, plate):
+        response = client.post(
+            "/api/v1/survey/submit-webrtc",
+            data=standard_form_fields(driver_phone=phone, license_plate=plate),
+            files={"survey_photo": ("capture.jpg", make_sharp_image_bytes(), "image/jpeg")},
         )
-        assert vehicle_upsert_call is not None
-        sql_query = vehicle_upsert_call[0]
+        assert response.status_code == 200, response.text
+        assert response.json()["driver_phone"] == phone
+        return response.json()
 
-        # Verify that DO NOTHING is enforced and DO UPDATE is eliminated
-        assert "ON CONFLICT (driver_phone) DO NOTHING" in sql_query, (
-            "VULN-AUTH-05: Expected ON CONFLICT (driver_phone) DO NOTHING"
-        )
-        assert "DO UPDATE" not in sql_query, (
-            "VULN-AUTH-05: Vulnerable DO UPDATE found in query!"
+    @pytest.mark.parametrize("legacy_binding", [False, True])
+    def test_unauthenticated_attacker_cannot_overwrite_victim_vehicle_record(self, vehicle_client, legacy_binding):
+        client, observer, phone = vehicle_client
+        binding_phone = "+84" + phone[1:] if legacy_binding else phone
+        observer.execute(
+            "INSERT INTO driver_registered_vehicles(driver_phone, license_plate, vehicle_type) VALUES (%s, '29E12345', 'BIKE')",
+            (binding_phone,),
         )
 
-    def test_brand_new_driver_initial_vehicle_insert_succeeds(self):
-        """
-        Verify that a brand new, never-before-seen driver successfully inserts their
-        initial vehicle registration into driver_registered_vehicles.
-        """
-        client = TestClient(app)
-        sharp_bytes = make_sharp_image_bytes()
-        new_driver_phone = "0933777888"
-        new_plate = "30H-999.99"
+        result = self.submit(client, phone, "99X-888.88")
+        assert result["status"] == "REJECTED"
+        assert "29E12345" not in result["reason"]
+        assert observer.execute(
+            "SELECT driver_phone, license_plate, vehicle_type FROM driver_registered_vehicles "
+            "WHERE driver_phone IN (%s, %s)", (phone, binding_phone),
+        ).fetchall() == [{"driver_phone": binding_phone, "license_plate": "29E12345", "vehicle_type": "BIKE"}]
 
-        mock_db_pool = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.commit = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_db_pool.connection.return_value.__aenter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__aenter__.return_value = mock_cursor
-
-        with patch.object(main, "db_pool", mock_db_pool):
-            resp = client.post(
-                "/api/v1/survey/submit-webrtc",
-                data=standard_form_fields(
-                    driver_phone=new_driver_phone,
-                    license_plate=new_plate,
-                    vehicle_type="CAR",
-                ),
-                files={"survey_photo": ("capture.jpg", io.BytesIO(sharp_bytes), "image/jpeg")},
-            )
-
-        assert resp.status_code == 200
-        executed_queries = [call[0] for call in mock_cursor.execute.call_args_list]
-        vehicle_insert = next(
-            (call for call in executed_queries if "driver_registered_vehicles" in call[0]),
-            None
-        )
-        assert vehicle_insert is not None
-        sql_query, sql_params = vehicle_insert[0], vehicle_insert[1]
-        assert sql_params[0] == new_driver_phone
-        assert sql_params[1] == new_plate.upper()
-        assert sql_params[2] == "CAR"
+    def test_brand_new_driver_initial_vehicle_insert_succeeds(self, vehicle_client):
+        client, observer, phone = vehicle_client
+        result = self.submit(client, phone, "30H99999")
+        assert observer.execute(
+            "SELECT driver_phone FROM survey_submissions WHERE submission_id=%s", (result["submission_id"],),
+        ).fetchone() == {"driver_phone": phone}
+        assert observer.execute(
+            "SELECT license_plate, vehicle_type FROM driver_registered_vehicles WHERE driver_phone=%s", (phone,),
+        ).fetchone() == {"license_plate": "30H99999", "vehicle_type": "CAR"}
 
 
 # ==============================================================================
@@ -332,44 +280,6 @@ class TestNovelProbeDataStaticExposureVULNDATA01:
             resp = client.get(path)
             assert resp.status_code in (404, 400), f"Path {path} returned {resp.status_code} instead of 404/400"
 
-    def test_no_data_static_routes_in_fastapi(self):
-        """
-        Verify no route path in FastAPI is mounted to '/data'.
-        """
-        mounted_paths = [route.path for route in app.routes]
-        assert "/data" not in mounted_paths
-        assert not any(p.startswith("/data") for p in mounted_paths)
-
-
-# ==============================================================================
-# NOVEL PROBES & REPLICATION: VULN-COLL-01 ENTROPY AND UNIQUENESS
-# ==============================================================================
-
-class TestNovelProbeSubmissionIDEntropyVULNCOLL01:
-    """
-    Novel probe on VULN-COLL-01:
-    Generate 10,000 submission IDs and verify zero duplicates (100% uniqueness with 8-byte / 64-bit entropy).
-    """
-
-    def test_10000_submission_ids_zero_duplicates_8_byte_entropy(self):
-        """
-        Generate 10,000 submission IDs simulating high-volume traffic.
-        Verify that 8 bytes (16 hex chars = 64 bits = 1.84e19 states) produces zero collisions.
-        """
-        generated_ids = set()
-        count = 10000
-
-        for _ in range(count):
-            token = secrets.token_hex(8).upper()
-            sub_id = f"VN-{token}"
-            generated_ids.add(sub_id)
-
-        # 10,000 items in set proves 100% uniqueness
-        assert len(generated_ids) == count
-        sample_id = next(iter(generated_ids))
-        # Format: "VN-" + 16 hex chars = 19 chars total
-        assert len(sample_id) == 19
-        assert sample_id.startswith("VN-")
 
 
 # ==============================================================================

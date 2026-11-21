@@ -8,6 +8,8 @@ The original full-suite baseline remains historical evidence in `WAVE0_BASELINE.
 
 **Ownership correction:** the initial H1 upsert wrongly allowed any trusted-source account to replace a different trusted owner. That permission is removed. A proved conflicting claim preserves the recorded owner but pauses the disputed number as `ownership_conflict`; neither account receives delivery/history through that binding until explicit operator resolution. Initial verification results below are historical and did not cover this defect; the latest correction evidence is recorded at the end.
 
+**Current Telegram history contract:** partner `/surveys` now requires a Telegram self-contact binding and uses the original saved notification-target phone, not `driver_phone`. This narrows the historical bot access described below. The verification-time cutoff and web history rules are unchanged. See the [current bot commands](PIPELINE_OPERATIONS_AND_API_REFERENCE.md#42-telegram-commands).
+
 ## Web history
 
 - `GET /api/v1/surveys/history` uses the existing `verify_admin_auth` dependency before phone validation, storage access or rate-limit effects.

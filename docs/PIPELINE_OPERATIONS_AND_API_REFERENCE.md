@@ -1,10 +1,12 @@
 # Survey Verification Pipeline: Operations Runbook & API Reference Manual
 
-**Document Classification:** Authoritative Operations Runbook & Complete API Specification  
+**Document Classification:** Historical operations/API reference; examples require current-environment and upgrade-gate verification
 **System Baseline:** Survey Verification Pipeline v3.0.0  
 **Target Infrastructure:** DigitalOcean SGP1 (Singapore, 2 vCPU, 4GB RAM, NVMe)  
 **Production Host:** `146.190.201.32` (`146.190.201.32.sslip.io`, `survey.trustbridgevn.com`)  
 **Target Operating Throughput:** 20,000+ submissions/day with < 2,500ms synchronous response SLA  
+
+> **Do not execute this historical runbook as an upgrade plan.** [MODULE_IMPLEMENTATION_PLANS.md](MODULE_IMPLEMENTATION_PLANS.md) defines versioned SQL application, private-media authorization, history/UI approval and schema/worker/producer activation. The checked-in Compose file is not the full stack illustrated below; copying schema.sql does not apply it. Historical restart/Compose-down and default-credential examples are not operator approval. Both CI and script deployment must first protect mutable data, apply/check the required schema, verify a compatible worker and check readiness. No production loss or successful rollout is claimed by this warning.
 
 
 > **Authoritative Administrative Account Notice**:
@@ -17,6 +19,10 @@ The customer-facing and driver-facing entry point is a progressive, dynamic WebR
 
 ### 1.1 Form Schema Engine (`services/form_engine.py`)
 Survey forms are driven entirely by dynamic JSON schemas, allowing business teams to update questions, validation logic, image requirements, and regulatory consent checks without redeploying backend code.
+
+The submission adapter validates the explicitly selected form; legacy requests without a form retain their existing contract rather than inheriting the current default schema. Required answers cannot be whitespace-only, and numeric questions must contain finite numbers even when no numeric bounds are configured. Rejected malformed numeric input is serialized safely instead of being converted into an interruption verdict.
+
+An explicit consent refusal, including a configured consent-gate refusal, returns a redacted rejection before photo staging, AI, persistence or notifications; test bypass does not override refusal. Invalid uploaded form schemas return 422 before registry/file/rename/database changes. Enabled vehicle checks read the real non-DEV registry without committing a registration during evaluation; the submission transaction owns first registration and preserves existing canonical/legacy phone bindings.
 
 #### 1.1.1 JSON Schema Structure & Validation Rules
 ```json
@@ -423,25 +429,22 @@ The pipeline bundles a dedicated operational daemon (`services/telegram_polling.
 - **Exponential Backoff:** If the Telegram Bot API returns HTTP 429 (Rate Limit) or network drops, backoff delay increases exponentially (`1.0s -> 2.0s -> 4.0s ... max 60.0s`).
 - **Mock Token Resilience:** If `TELEGRAM_BOT_TOKEN` is unset or set to `"mock_tg_token"`, the daemon enters safe simulation mode, logging dispatched messages to stdout without crashing.
 
-### 4.2 Operator Commands
-1. **`/start`:**
-   - Welcome greetings and instant links to active survey forms.
-2. **`/forms`:**
-   - Queries `FORM_REGISTRY` and renders list of active forms with direct links.
-3. **`/stats`:**
-   - Executes real-time SQL aggregation from `survey_submissions`:
-     ```
-     📊 Thống Kê Khảo Sát Hệ Thống (Stats):
-     • Tổng số phiếu đã tiếp nhận: 1,420
-     • Đã duyệt hợp lệ (Approved): 1,280
-     • Bị từ chối (Rejected): 112
-     • Chờ kiểm tra thủ công (Review): 28
-     ```
-4. **`/check <submission_id>` & `/audit <submission_id>`:**
-   - Compiles a complete audit dossier containing driver phone, vehicle plate, OCR revenue extraction, blur variance, and Cloudflare R2 photo link.
-   - Attaches inline moderator action buttons:
-     * `[Duyệt ép (Force Approve)]` -> sends callback `admin_approve:<id>`
-     * `[Từ chối (Reject)]` -> sends callback `admin_reject:<id>`
+### 4.2 Telegram commands
+
+| Command | Admin bot | Partner bot |
+|---|---|---|
+| `/forms` | Five most recently saved public forms still below their response limit, with direct links | Same list |
+| `/check <submission_id>` (`/query`) | Opens the dossier and photos. Pending decisions require confirmation; approved/rejected records remain locked. Replying with `/check` to a submission notification also works. | Not available |
+| `/audit <submission_id>` | Same dossier; approved/rejected records also offer the opposite verdict. The requesting operator must confirm before the decision changes. A stale confirmation is rejected; a successful override is audited and follows the record's existing delivery owner. | Not available |
+| `/surveys` (`/history`, `/my_surveys`, `/tracuu`) | Pass a CTV code/ID or phone number to list five recent matches. Phone search checks the CTV directory, driver number, and original message-target answer. | In a private chat, share your own Telegram contact first. Lists up to five recent submissions whose saved delivery-question answer matches that verified number and that were submitted during its current verification period. A typed `/linkphone` number, the survey's driver number alone, or an unknown historical routing policy is not enough. |
+| `/quota` | Looks up the supplied CTV code. | Shows the linked CTV's quota. |
+| `/stats` | Shows total, approved, rejected, and pending counts from the writer database. Database errors report unavailable; zero rows do not fall back to DEV data. DEV storage is used only without a pool outside production. Same admin authorization as history. | Not available |
+
+Admin dossier reads, overrides, and history require the configured admin group or an active admin account in its own private chat. Missing required arguments get a Telegram reply prompt. Reply to that exact bot message in the same chat and from the same account within ten minutes; unrelated messages and replies do not run the command. Shared Redis allows prompts and confirmations to work across webhook workers. With no shared Redis they are process-local.
+
+Dossiers send one readable photo with `sendPhoto`, multiple photos as an album, then the dossier document with review buttons. With no readable photos, only the document is sent. Partner history shows a photo-repair button only while the submission is rejected and the requester passes the existing driver-phone/verification-time authorization; being a notification recipient alone does not grant repair access. Callback and upload authorization remain enforced independently.
+
+Local regression verification: **19 tests passed**, including zero/one/two-photo Telegram protocol fixtures and real disposable PostgreSQL history/repair authorization. Provider calls were intercepted; no live Telegram delivery or deployment was exercised.
 
 ---
 

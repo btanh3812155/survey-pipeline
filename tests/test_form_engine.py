@@ -660,7 +660,7 @@ def test_ctv_tracking_requirement_and_phone_inference():
     from fastapi.testclient import TestClient
     from config import settings
     from main import app
-    from routers.survey import _infer_driver_phone
+    from services.submission_pipeline import _infer_driver_phone
     from services.form_engine import FormQuestion, QuestionType
 
     client = TestClient(app)

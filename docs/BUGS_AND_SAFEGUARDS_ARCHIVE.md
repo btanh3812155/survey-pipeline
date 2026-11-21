@@ -1,7 +1,9 @@
 # Comprehensive Bug Archive & Architectural Safeguards
 
-**Authoritative Documentation of All System Bugs, Failure Modes, and Defensive Safeguards**  
+**Historical Safeguards and Original Eight-Finding Static Review Register**
 *Compiled from Git History, OMP Session Archives, Red-Team Adversarial Findings, and Production Incident Logs.*
+
+> **Current upgrade authority:** The summary below preserves its original baseline; it is not a readiness certificate. The source has since gained local runtime/H1, attempt/private-media, durable producer/operator, bounded use-case and guarded-release implementations. Use [README](../README.md) for observed acceptance results, [MODULE_DESIGNER_HANDOFF.md](MODULE_DESIGNER_HANDOFF.md) for baseline versus local status, and [MODULE_IMPLEMENTATION_PLANS.md](MODULE_IMPLEMENTATION_PLANS.md) for required contracts. The full local suite is not green; no deployed-state closure is claimed.
 
 ---
 
@@ -111,3 +113,20 @@ Drivers frequently filled and submitted the survey without granting GPS permissi
 #### Architectural Safeguard: `static/ui/dynamic_form.html`
 1. `initGpsBannerBehavior()` unconditionally triggers `fetchGpsSilently()` on initial page load.
 2. This invokes `navigator.geolocation.getCurrentPosition()`, which immediately launches the browser's native OS location permission prompt on Page 1.
+
+## 3. Findings From Original Static Review (2026-11-19)
+
+These findings came from read-only inspection of `master` at `494c7e9`; tests and production behavior were not run during that review. Historical line references below are not current code locations. Subsequent local implementations are recorded separately in [README](../README.md), including the failing full-suite gate; production disposition remains open. Detailed original scenarios and acceptance criteria remain in [`MODULE_DESIGNER_HANDOFF.md`](MODULE_DESIGNER_HANDOFF.md).
+
+| ID | Severity | Finding | Primary evidence | Status |
+|---|---|---|---|---|
+| REVIEW-2026-11-19-01 | P0 | Production may return success without persisting when PostgreSQL is unavailable. | Runtime guard/readiness and real-PG route acceptance; [local evidence](../README.md#observed-local-acceptance-2026-11-20) | Locally verified guard; not deployed |
+| REVIEW-2026-11-19-02 | P1 | Baseline unauthenticated phone-history disclosure. | Existing admin auth/public disablement; [verification record](WAVE2_H1_PHONE_BOUNDARY.md) | Locally verified H1 fix; not deployed |
+| REVIEW-2026-11-19-03 | P1 | Placeholder outbox and background delivery are not restart-durable. | Durable per-action handlers/producers, receipt/uncertainty and PG restart/operator acceptance | Locally verified for durable cohorts; flags OFF, legacy observation/activation open |
+| REVIEW-2026-11-19-04 | P1 | Extended-insert fallback runs in an aborted transaction. | Real-PG route savepoint/minimal insert acceptance | Locally verified; not deployed |
+| REVIEW-2026-11-19-05 | P1 | Cache-only/mismatched idempotency allows duplicates. | Atomic PG attempt and SIGKILL/replay cases, canonical cache scope, actual Chromium retry | Locally verified; not deployed |
+| REVIEW-2026-11-19-06 | P1 | Production accepts default credentials/secrets. | Runtime production settings/authorization tests | Locally verified; secrets provisioning external |
+| REVIEW-2026-11-19-07 | P2 | Action lease check/write is not atomic. | Token-fenced PG claims, canonical projection, audited deferred/exhausted retry and uncertainty recovery | Locally verified; legacy compatibility retained until zero-write observation |
+| REVIEW-2026-11-19-08 | P2 | DINOv2 inference blocks the async handler. | Direct use-case and actual concurrent HTTP/event-loop bound/saturation/shutdown tests | Locally verified bound; no throughput SLA or live rollout claimed |
+
+Do not mark an item fixed based only on a refactor or a passing test that does not exercise the failure scenario. Update this table and the handoff when status changes.

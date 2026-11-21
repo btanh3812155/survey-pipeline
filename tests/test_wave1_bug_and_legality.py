@@ -18,7 +18,6 @@ from services.form_engine import (
     FormSchema,
     FormQuestion,
     QuestionType,
-    DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
 )
 from services.normalizer import sanitize_and_normalize_image
@@ -32,8 +31,18 @@ from services.audit_and_privacy import (
     enqueue_telegram_message_for_36h_deletion,
     process_36h_message_deletions,
 )
+@pytest.fixture
+def consent_schema(monkeypatch):
+    schema = FormSchema(form_id="wave1_consent", title="Consent contract", questions=[
+        FormQuestion(id="consent_choice", title="Consent", type=QuestionType.SINGLE_CHOICE,
+                     is_consent_gate=True, consent_accept_values=["Tôi đồng ý"]),
+    ])
+    monkeypatch.setitem(main.FORM_REGISTRY, schema.form_id, schema)
+    return schema
 
-# Standard valid form fields helper to satisfy DEFAULT_TRUST_BRIDGE_SCHEMA
+
+
+# Legacy transport fields; schema tests explicitly register and identify their contract.
 def standard_form_fields(driver_phone="0988123456", **overrides):
     fields = {
         "driver_phone": driver_phone,
@@ -105,10 +114,21 @@ class TestTeam1KnownAndMitigatedVulnerabilities:
         mock_conn = MagicMock()
         mock_conn.commit = AsyncMock()
         mock_cursor = AsyncMock()
+        mock_conn.rollback = AsyncMock()
+        mock_cursor.rowcount = 1
+        mock_cursor.fetchone.side_effect = [("driver-id",), (victim_phone,), ("event-id",)]
         mock_db_pool.connection.return_value.__aenter__.return_value = mock_conn
         mock_conn.cursor.return_value.__aenter__.return_value = mock_cursor
+        from services import submission_pipeline as pipeline
+        evaluation = pipeline.SubmissionEvaluation({}, {}, "MANUAL_REVIEW", "Review", False, None, {}, {}, None)
 
-        with patch.object(main, "db_pool", mock_db_pool):
+        with patch.object(main, "db_pool", mock_db_pool), patch.object(
+            pipeline, "writer_schema_ready", AsyncMock(return_value=True)
+        ), patch.object(pipeline, "require_delivery_schema", AsyncMock()), patch.object(
+            pipeline, "_evaluate", AsyncMock(return_value=evaluation)
+        ), patch.object(pipeline, "enqueue_submission_work", AsyncMock(return_value=())), patch(
+            "routers.survey._schedule_legacy_submission"
+        ):
             resp = client.post(
                 "/api/v1/survey/submit-webrtc",
                 data=standard_form_fields(
@@ -121,14 +141,10 @@ class TestTeam1KnownAndMitigatedVulnerabilities:
             )
 
         assert resp.status_code == 200
-        executed_queries = [call[0] for call in mock_cursor.execute.call_args_list]
-        upsert_calls = [c for c in executed_queries if "driver_registered_vehicles" in c[0]]
-
-        # Verify fix: unauthenticated submission cannot overwrite registered vehicles
-        assert len(upsert_calls) > 0, "VULN-AUTH-05: Expected vehicle upsert query to be executed"
-        sql_text, sql_params = upsert_calls[0][0], upsert_calls[0][1]
-        assert "ON CONFLICT (driver_phone) DO NOTHING" in sql_text
-        assert sql_params[0] == victim_phone
+        queries = [call.args[0] for call in mock_cursor.execute.call_args_list]
+        assert any("FROM driver_registered_vehicles" in sql for sql in queries)
+        assert not any(sql.lstrip().startswith(("INSERT INTO driver_registered_vehicles", "UPDATE driver_registered_vehicles")) for sql in queries)
+        mock_conn.commit.assert_awaited_once()
 
     def test_vuln_data_01_static_data_exposure_confirmed(self):
         """
@@ -416,7 +432,7 @@ class TestTeam4LegalityAndDecree13Compliance:
     - Retention expiry (36-hour Telegram ephemeral message deletion queue).
     """
 
-    def test_decree13_mandatory_consent_rejection_when_omitted(self):
+    def test_decree13_mandatory_consent_rejection_when_omitted(self, consent_schema):
         """
         Decree 13 / DPIA: Processing personal data requires explicit affirmative consent.
         Submissions missing 'consent_choice' must be REJECTED immediately by schema validation.
@@ -425,7 +441,7 @@ class TestTeam4LegalityAndDecree13Compliance:
         sharp_bytes = make_sharp_image_bytes()
 
         # Missing consent entirely
-        fields = standard_form_fields()
+        fields = standard_form_fields(form_id=consent_schema.form_id)
         del fields["consent_choice"]
 
         resp_missing = client.post(
@@ -438,7 +454,7 @@ class TestTeam4LegalityAndDecree13Compliance:
         assert data_missing["status"] == "REJECTED"
         assert "bắt buộc" in data_missing["reason"]
 
-    def test_decree13_explicit_dissent_conditional_flow_flaw(self):
+    def test_decree13_explicit_dissent_conditional_flow_flaw(self, consent_schema):
         """
         [DECREE 13 COMPLIANCE FLAW CONFIRMED]
         When a user selects 'Tôi không đồng ý' (dissent):
@@ -454,6 +470,7 @@ class TestTeam4LegalityAndDecree13Compliance:
         resp_dissent = client.post(
             "/api/v1/survey/submit-webrtc",
             data={
+                "form_id": consent_schema.form_id,
                 "driver_phone": "0988123456",
                 "consent_choice": "Tôi không đồng ý",
                 "signature_png": "data:image/png;base64,mock",
@@ -587,12 +604,8 @@ class TestTeam4LegalityAndDecree13Compliance:
         update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE telegram_sent_messages" in c[0][0]]
         assert len(update_calls) == 2
 
-    def test_telegram_webhook_unauthorized_chat_rejected_with_403(self):
-        """
-        [VULN-AUTH-06 FIX VERIFICATION]
-        Verify that /webhook/telegram rejects slash commands and callback queries
-        from unauthorized chat IDs with HTTP 403 Forbidden.
-        """
+    def test_telegram_webhook_acknowledges_updates_for_runner_authorization(self):
+        """Transport acknowledges valid updates; the polling runner owns chat authorization."""
         client = TestClient(app)
 
         # 1. Slash command from unauthorized chat ID (e.g. 999888777)
@@ -603,8 +616,8 @@ class TestTeam4LegalityAndDecree13Compliance:
             }
         }
         resp = client.post("/webhook/telegram", json=payload_slash_unauth)
-        assert resp.status_code == 403
-        assert "unauthorized chat" in resp.json()["detail"]
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
 
         # 2. Callback query from unauthorized chat ID
         payload_cq_unauth = {
@@ -614,8 +627,8 @@ class TestTeam4LegalityAndDecree13Compliance:
             }
         }
         resp_cq = client.post("/webhook/telegram", json=payload_cq_unauth)
-        assert resp_cq.status_code == 403
-        assert "unauthorized chat" in resp_cq.json()["detail"]
+        assert resp_cq.status_code == 200
+        assert resp_cq.json() == {"status": "ok"}
 
         # 3. Request from authorized admin group (TELEGRAM_ADMIN_GROUP_ID)
         admin_group_id = int(main.settings.TELEGRAM_ADMIN_GROUP_ID)
@@ -627,4 +640,4 @@ class TestTeam4LegalityAndDecree13Compliance:
         }
         resp_auth = client.post("/webhook/telegram", json=payload_auth)
         assert resp_auth.status_code == 200
-        assert resp_auth.json()["status"] == "query_command_handled"
+        assert resp_auth.json() == {"status": "ok"}

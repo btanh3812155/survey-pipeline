@@ -42,7 +42,7 @@ class FakeConn:
     async def __aexit__(self, *exc):
         return False
 
-    def cursor(self):
+    def cursor(self, *, row_factory=None):
         return self.cur
 
     async def commit(self):
@@ -72,7 +72,7 @@ async def test_unknown_submission_is_rejected_without_forward_or_update():
     with patch.object(runner, "send_message", send), \
          patch.object(runner, "_get_submission_status", AsyncMock(return_value=None)), \
          patch.object(runner, "_update_submission_status", update):
-        await runner.handle_driver_appeal(1, 9241303232, "vn-no-such-id")
+        await runner.handle_driver_appeal(9241303232, 9241303232, "vn-no-such-id")
 
     send.assert_awaited_once()
     assert "Không tìm thấy" in send.await_args[0][1]
@@ -91,12 +91,13 @@ async def test_lowercase_appeal_after_ai_rejection_clears_stale_check():
          patch.object(runner, "_get_submission_status", AsyncMock(return_value="REJECTED")), \
          patch.object(runner, "_update_submission_status", update), \
          patch.object(runner, "get_driver_phone", AsyncMock(return_value="0932090967")):
-        await runner.handle_driver_appeal(1, 9241303232, LOWER)
+        await runner.handle_driver_appeal(9241303232, 9241303232, LOWER)
 
     assert "đã được gửi thành công" in send.await_args[0][1]
     update.assert_awaited_once()
-    assert update.await_args[0][0] == UPPER
-    assert update.await_args[0][1] == "APPEAL_PENDING"
+    assert update.await_args.args == (UPPER, "APPEAL_PENDING")
+    assert update.await_args.kwargs["actor"] == "driver:9241303232"
+    assert update.await_args.kwargs["requester_telegram_id"] == 9241303232
     assert runner.active_appeals[9241303232] == UPPER
 
 
@@ -110,7 +111,7 @@ async def test_duplicate_open_appeal_is_still_blocked():
     with patch.object(runner, "send_message", send), \
          patch.object(runner, "_get_submission_status", AsyncMock(return_value="APPEAL_PENDING")), \
          patch.object(runner, "_update_submission_status", update):
-        await runner.handle_driver_appeal(1, 9241303232, LOWER)
+        await runner.handle_driver_appeal(9241303232, 9241303232, LOWER)
 
     send.assert_awaited_once()
     assert "đang hoạt động" in send.await_args[0][1]
@@ -126,7 +127,7 @@ async def test_approved_submission_is_not_reopened():
     with patch.object(runner, "send_message", send), \
          patch.object(runner, "_get_submission_status", AsyncMock(return_value="APPROVED")), \
          patch.object(runner, "_update_submission_status", update):
-        await runner.handle_driver_appeal(1, 9241303232, LOWER)
+        await runner.handle_driver_appeal(9241303232, 9241303232, LOWER)
 
     assert "đã được DUYỆT" in send.await_args[0][1]
     update.assert_not_awaited()
@@ -148,14 +149,15 @@ async def test_prune_stale_active_appeals_keeps_only_open_status():
 
 
 @pytest.mark.asyncio
-async def test_admin_approve_callback_normalizes_lowercase_id():
+async def test_admin_approve_callback_normalizes_lowercase_id(monkeypatch):
+    monkeypatch.setattr("services.telegram_polling.settings.TELEGRAM_ADMIN_GROUP_ID", "-100123")
     runner = TelegramPollingRunner(bot_token="mock", role="admin")
     update = AsyncMock(return_value=(True, "APPROVED"))
     notify = AsyncMock()
     cq = {
         "id": "cb1",
         "data": f"admin_approve:{LOWER}",
-        "message": {"chat": {"id": -100123}, "message_id": 7},
+        "message": {"chat": {"id": -100123, "type": "supergroup"}, "message_id": 7},
         "from": {"id": 1},
     }
 
@@ -166,8 +168,10 @@ async def test_admin_approve_callback_normalizes_lowercase_id():
          patch.object(runner, "edit_message_reply_markup", AsyncMock()):
         await runner.handle_callback_query(cq)
 
-    update.assert_awaited_once_with(UPPER, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
-    notify.assert_awaited_once_with(UPPER, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
+    update.assert_awaited_once()
+    assert update.await_args.args == (UPPER, "APPROVED")
+    assert update.await_args.kwargs["actor"] == "admin:1"
+    notify.assert_awaited_once_with(UPPER, "APPROVED", reason=update.await_args.kwargs["reason"])
 
 
 @pytest.mark.asyncio
@@ -178,7 +182,7 @@ async def test_driver_appeal_button_normalizes_lowercase_id():
         "callback_query": {
             "id": "cb2",
             "data": f"driver_appeal:{LOWER}",
-            "message": {"chat": {"id": 9241303232}},
+            "message": {"chat": {"id": 9241303232, "type": "private"}},
             "from": {"id": 9241303232},
         }
     }
@@ -210,7 +214,6 @@ async def test_api_appeal_lowercase_updates_canonical_and_unknown_is_404():
     assert '"APPEAL_SUBMITTED"' in resp.body.decode()
     updates = [(sql, params) for sql, params in pool.conn.cur.calls if sql.startswith("UPDATE")]
     assert updates
-    assert "UPPER(submission_id)" in updates[0][0]
     assert updates[0][1][1] == UPPER
 
     empty_pool = FakePool(row=None)
@@ -228,12 +231,12 @@ async def test_api_appeal_lowercase_updates_canonical_and_unknown_is_404():
 @pytest.mark.asyncio
 async def test_update_submission_status_is_case_insensitive_and_canonicalizes():
     runner = TelegramPollingRunner(bot_token="mock", role="admin", db_pool=FakePool(row=("REJECTED",)))
-    success, status = await runner._update_submission_status(LOWER, "APPEAL_PENDING", reason="appeal")
+    success, status = await runner._update_submission_status(LOWER, "APPEAL_PENDING", reason="appeal", actor="admin:1")
     assert success is True and status == "APPEAL_PENDING"
     updates = [(sql, params) for sql, params in runner.db_pool.conn.cur.calls if sql.startswith("UPDATE")]
     assert updates
-    assert "UPPER(submission_id)" in updates[0][0]
     assert updates[0][1][-1] == UPPER
+    assert runner.db_pool.conn.commits == 1
 
 
 def test_ai_verdict_clears_active_appeal_lock_on_driver_runner():

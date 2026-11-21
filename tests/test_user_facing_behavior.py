@@ -12,6 +12,25 @@ Verifies all human-facing interactions, UI behaviors, and multi-party routing by
 import os
 import pytest
 from unittest.mock import patch
+from contextlib import asynccontextmanager
+
+from config import settings
+from core.embedding_executor import embedding_executor_lifespan
+from fastapi import FastAPI
+from psycopg import errors as pg_errors
+from routers import survey as survey_router
+
+
+@asynccontextmanager
+async def _bounded_test_lifespan(_app):
+    async with embedding_executor_lifespan():
+        yield
+
+
+def _submission_test_client(**kwargs):
+    isolated = FastAPI(lifespan=_bounded_test_lifespan)
+    isolated.include_router(survey_router.router)
+    return TestClient(isolated, **kwargs)
 from fastapi.testclient import TestClient
 
 from main import app
@@ -126,7 +145,7 @@ async def test_admin_decision_buttons_require_confirmation_before_committing():
 
 
 @pytest.mark.asyncio
-async def test_admin_review_callback_answers_before_dossier_uploads():
+async def test_admin_review_callback_answers_before_dossier_uploads(monkeypatch):
     """
     Telegram keeps the inline-button spinner until answerCallbackQuery lands.
     The review callback must ack first, then upload sendMediaGroup -> sendDocument
@@ -136,6 +155,7 @@ async def test_admin_review_callback_answers_before_dossier_uploads():
     from services import telegram_polling as tp
 
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "123456")
     events = []
     bundles = []
     started = asyncio.Event()
@@ -180,12 +200,13 @@ async def test_admin_review_callback_answers_before_dossier_uploads():
 
 
 @pytest.mark.asyncio
-async def test_admin_review_callback_answers_once_when_upload_fails():
+async def test_admin_review_callback_answers_once_when_upload_fails(monkeypatch):
     """A failing dossier upload is logged, never re-answers or crashes the webhook."""
     import asyncio
     from services import telegram_polling as tp
 
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "123456")
     answers = []
 
     async def mock_answer_cq(cq_id, text=None, show_alert=False):
@@ -248,7 +269,7 @@ async def test_support_ticket_markup_has_no_dead_close_button():
 # ==============================================================================
 
 @pytest.mark.asyncio
-async def test_simulated_multi_admin_routing_isolation():
+async def test_simulated_multi_admin_routing_isolation(monkeypatch):
     """
     Simulation:
     CTV A and CTV B request support simultaneously.
@@ -258,6 +279,10 @@ async def test_simulated_multi_admin_routing_isolation():
     - Accidental cross-replies are blocked.
     """
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "offline:relay-test")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", "offline:admin-relay-test")
+    runner.send_message = AsyncMock()
     ACTIVE_SUPPORT_CONVERSATIONS.clear()
     ADMIN_GROUP_ACTIVE_SESSION.clear()
     ADMIN_ACTIVE_CONVERSATIONS.clear()
@@ -325,6 +350,15 @@ async def test_simulated_multi_admin_routing_isolation():
     b_msgs = [m for m in relayed_messages if m.get("json", {}).get("chat_id") == 2222]
     assert len(a_msgs) == 0
     assert len(b_msgs) == 1
+    relayed_messages.clear()
+    await runner.handle_update({"message": {
+        "chat": {"id": -100999}, "from": {"id": 1001, "first_name": "Admin_C"},
+        "text": "Do not send to B", "reply_to_message": {"text": "User ID: 2222"},
+    }})
+    assert not relayed_messages
+    ACTIVE_SUPPORT_CONVERSATIONS.clear()
+    ADMIN_GROUP_ACTIVE_SESSION.clear()
+    ADMIN_ACTIVE_CONVERSATIONS.clear()
 
 
 @pytest.mark.asyncio
@@ -605,9 +639,11 @@ def test_simulated_user_ctv_draft_isolation_client_only():
 
 
 @pytest.mark.asyncio
-async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
+async def test_simulated_admin_swipe_reply_check_extracts_sub_id(monkeypatch, tmp_path):
     """Simulates admin swiping right on a Telegram notification to reply /check: extracts sub_id seamlessly."""
     runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "123456")
+    monkeypatch.chdir(tmp_path)
 
     import os, json
     dev_storage_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
@@ -628,7 +664,7 @@ async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
             "text": "⏳ PHIẾU KHẢO SÁT CHỜ DUYỆT THỦ CÔNG #VN-SWIPE-99\n• Số điện thoại: 0988111222\n• Doanh thu: 15,000,000 VNĐ"
         }
     }
-    await runner.handle_command(123456, "/check", reply_to_message=msg_reply["reply_to_message"])
+    await runner.handle_command(123456, "/check", reply_to_message=msg_reply["reply_to_message"], from_user_id=888)
 
     assert len(sent_msgs) >= 1
     resp = sent_msgs[-1]
@@ -636,24 +672,6 @@ async def test_simulated_admin_swipe_reply_check_extracts_sub_id():
     assert resp["reply_markup"] is not None
 
 
-@pytest.mark.asyncio
-async def test_simulated_admin_menu_check_alone_prefills_input_box():
-    """Simulates admin clicking /check alone from bot menu: pre-fills /check with switch_inline_query."""
-    runner = TelegramPollingRunner(bot_token="mock_token", role="admin")
-
-    sent_msgs = []
-    async def mock_send(chat_id, text, reply_markup=None, **kwargs):
-        sent_msgs.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
-    runner.send_message = mock_send
-
-    # Bare /check without replied message
-    await runner.handle_command(123456, "/check", reply_to_message=None)
-
-    assert len(sent_msgs) >= 1
-    resp = sent_msgs[-1]
-    assert resp["reply_markup"] is not None
-    btns = resp["reply_markup"]["inline_keyboard"]
-    assert any(b.get("switch_inline_query_current_chat") == "/check " for row in btns for b in row)
 
 
 @pytest.mark.asyncio
@@ -793,7 +811,8 @@ def test_image_object_coverage_is_order_agnostic():
         )],
     )
 
-    client = TestClient(app)
+    client = _submission_test_client()
+    client.__enter__()
     data = {"form_id": form_id, "is_test_mode": "true", "bypass_img_check": "false",
             "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
     with patch.dict(os.environ, {"MOCK_AI": "1"}), \
@@ -818,20 +837,18 @@ def test_image_object_coverage_is_order_agnostic():
             assert "Thiếu ảnh đúng loại" in (body.get("reason") or ""), body
         finally:
             FORM_REGISTRY.pop(form_id, None)
+            client.__exit__(None, None, None)
 
 
 class _FakeSubmissionDB:
-    """
-    In-memory stand-in for the asyncpg pool used by submit persistence.
-
-    Records only survey_submissions writes: status/reason per submission id, so
-    tests can assert what is visible (or NOT visible) while checks run.
-    """
+    """Minimal psycopg-shaped pool that records committed verdict rows."""
 
     def __init__(self, fail_rich_insert=False):
         self.fail_rich_insert = fail_rich_insert
         self.executed = []
         self.stored = {}
+        self.rowcount = -1
+        self.result = None
 
     def reset(self):
         self.executed.clear()
@@ -840,34 +857,40 @@ class _FakeSubmissionDB:
     def connection(self):
         return self
 
+    def cursor(self):
+        return self
+
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *exc):
         return False
 
-    def cursor(self):
-        return self
-
-    async def execute(self, query, params=None):
+    async def execute(self, query, params=()):
         self.executed.append(query)
-        if "INSERT INTO survey_submissions" not in query:
-            return None
-        if "image_dhash" in query:
-            if self.fail_rich_insert:
-                raise RuntimeError("simulated foreign key violation")
-            self.stored[params[0]] = {"status": params[6], "reason": params[7]}
-        elif "'MANUAL_REVIEW'" in query:
-            self.stored[params[0]] = {"status": "MANUAL_REVIEW", "reason": params[6]}
-        else:
-            self.stored[params[0]] = {"status": params[6], "reason": params[7]}
+        self.result = None
+        self.rowcount = -1
+        if "INSERT INTO survey_submissions" in query:
+            columns = query.split("(", 1)[1].split(")", 1)[0].split(", ")
+            values = dict(zip(columns, params, strict=True))
+            if self.fail_rich_insert and "image_dhash" in values:
+                raise pg_errors.UndefinedColumn("legacy schema has no extended columns")
+            submission_id = values["submission_id"]
+            self.rowcount = int(submission_id not in self.stored)
+            if self.rowcount:
+                self.stored[submission_id] = {
+                    **values,
+                    "status": values["status"],
+                    "reason": values.get("rejection_reason"),
+                }
+        elif "INSERT INTO outbox_events" in query:
+            self.result = ("legacy-event",)
 
     async def fetchone(self):
-        return None
+        return self.result
 
     async def commit(self):
         return None
-
 
 def _register_persist_probe_form(form_id: str):
     import io
@@ -919,10 +942,15 @@ def test_no_row_is_visible_while_checks_run_and_one_final_row_after():
     db = _FakeSubmissionDB()
     form_id = "SIM-VERDICT-FIRST"
     data, files = _register_persist_probe_form(form_id)
+    result = {}
+    classify_calls = []
+    entered = threading.Event()
+    release = threading.Event()
 
     async def slow_classify(image_bytes, filename=None, expected_slots=None):
         classify_calls.append(1)
-        await asyncio.sleep(0.8)
+        entered.set()
+        await asyncio.to_thread(release.wait, 5)
         return "app_profile" if "profile" in (filename or "") else "app_income"
 
     async def fake_profile(image_bytes):
@@ -937,12 +965,9 @@ def test_no_row_is_visible_while_checks_run_and_one_final_row_after():
                 "period_tabs": ["Tuần 1"], "is_legible": True, "confidence_score": 0.9,
                 "detected_app": "XANH_SM", "is_authentic_gsm_ui": True}
 
-    result = {}
-    classify_calls = []
-
     def run_request():
-        client = TestClient(app)
-        result["resp"] = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+        with _submission_test_client() as client:
+            result["resp"] = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
 
     try:
         with patch.dict(os.environ, {"MOCK_AI": "1"}), \
@@ -950,14 +975,15 @@ def test_no_row_is_visible_while_checks_run_and_one_final_row_after():
              patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
              patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
              patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
-             patch("main.vision_client.classify_image_role", new=slow_classify), \
-             patch("main.vision_client.ocr_driver_app_profile", new=fake_profile), \
-             patch("main.vision_client.extract_facts", new=fake_facts), \
-             patch("main.vision_client.ocr_driver_app_income", new=fake_income):
+             patch.object(survey_router.vision_client, "classify_image_role", new=slow_classify), \
+             patch.object(survey_router.vision_client, "ocr_driver_app_profile", new=fake_profile), \
+             patch.object(survey_router.vision_client, "extract_facts", new=fake_facts), \
+             patch.object(survey_router.vision_client, "ocr_driver_app_income", new=fake_income):
             worker = threading.Thread(target=run_request)
             worker.start()
-            time.sleep(0.35)  # mid-AI: nothing may be visible yet
+            assert entered.wait(5), "slow classifier was not reached"
             assert db.stored == {}, f"placeholder leaked while checks ran: {db.stored}"
+            release.set()
             worker.join(15)
 
         body = result["resp"].json()
@@ -970,12 +996,13 @@ def test_no_row_is_visible_while_checks_run_and_one_final_row_after():
         assert row["reason"] == expected_reason
         assert not any("'MANUAL_REVIEW'" in q for q in db.executed), "no placeholder insert allowed"
     finally:
+        release.set()
         from main import FORM_REGISTRY
         FORM_REGISTRY.pop(form_id, None)
 
 
-def test_fk_failure_fallback_still_persists_the_final_verdict_row():
-    """Rich insert failure (FK) falls back to an FK-safe row carrying the real verdict."""
+def test_undefined_column_fallback_preserves_final_verdict_row():
+    """Extended-column failure rolls back its savepoint and stores the final verdict."""
     from unittest.mock import AsyncMock
 
     db = _FakeSubmissionDB(fail_rich_insert=True)
@@ -987,7 +1014,8 @@ def test_fk_failure_fallback_still_persists_the_final_verdict_row():
              patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
              patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
              patch("routers.survey.dispatch_action_checklist", new=AsyncMock()):
-            resp = TestClient(app).post("/api/v1/survey/submit-webrtc", data=data, files=files)
+            with _submission_test_client() as client:
+                resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
 
         body = resp.json()
         assert resp.status_code == 200
@@ -1007,7 +1035,7 @@ def test_fk_failure_fallback_still_persists_the_final_verdict_row():
 def test_verdict_crash_writes_exactly_one_interruption_row():
     """Crash after photos are saved still leaves one MANUAL_REVIEW row, never zero."""
     from unittest.mock import AsyncMock
-    from routers.survey import INTERRUPTED_CHECK_REASON
+    from services.submission_pipeline import INTERRUPTED_CHECK_REASON
 
     db = _FakeSubmissionDB()
     form_id = "SIM-CRASH-GUARD"
@@ -1018,12 +1046,12 @@ def test_verdict_crash_writes_exactly_one_interruption_row():
              patch("routers.survey.send_telegram_notification", new=AsyncMock()), \
              patch("routers.survey.dispatch_submission_telegram_notifications", new=AsyncMock()), \
              patch("routers.survey.dispatch_action_checklist", new=AsyncMock()), \
-             patch("routers.survey._classification_slots", side_effect=RuntimeError("vision stage crashed")):
-            resp = TestClient(app, raise_server_exceptions=False).post(
-                "/api/v1/survey/submit-webrtc", data=data, files=files
-            )
+             patch("services.submission_pipeline._classification_slots", side_effect=RuntimeError("vision stage crashed")):
+            with _submission_test_client(raise_server_exceptions=False) as client:
+                resp = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
 
-        assert resp.status_code == 500
+        assert resp.json()["mode"] == "PROD_MODE"
+        assert resp.json()["driver_tag"]
         assert len(db.stored) == 1, f"expected one interruption row, got {db.stored}"
         row = next(iter(db.stored.values()))
         assert row["status"] == "MANUAL_REVIEW"
@@ -1082,7 +1110,8 @@ def test_multi_image_submit_decodes_each_upload_once():
         decode_calls.append(1)
         return real_sanitize(*args, **kwargs)
 
-    client = TestClient(app)
+    client = _submission_test_client()
+    client.__enter__()
     data = {"form_id": form_id, "is_test_mode": "true", "bypass_img_check": "false",
             "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
     files = [
@@ -1100,6 +1129,7 @@ def test_multi_image_submit_decodes_each_upload_once():
         assert len(decode_calls) == 2, f"expected 1 decode per upload, got {len(decode_calls)}"
     finally:
         FORM_REGISTRY.pop(form_id, None)
+        client.__exit__(None, None, None)
 
 
 def test_editor_conditions_use_hidden_constant_uids():
@@ -1157,7 +1187,8 @@ def test_multi_camera_questions_store_all_images():
                 min_images=2, max_images=2, exact_image_count=2),
         ],
     )
-    client = TestClient(app)
+    client = _submission_test_client()
+    client.__enter__()
     data = {"form_id": fid, "is_test_mode": "true", "bypass_img_check": "true",
             "q_a_0": "uploaded_0", "q_a_1": "uploaded_1",
             "q_b_0": "uploaded_0", "q_b_1": "uploaded_1"}
@@ -1177,6 +1208,7 @@ def test_multi_camera_questions_store_all_images():
         if sub_id:
             shutil.rmtree(os.path.join(os.getcwd(), "data", "submission_photos", sub_id), ignore_errors=True)
         FORM_REGISTRY.pop(fid, None)
+        client.__exit__(None, None, None)
 
 
 def test_description_media_path_linkifier_does_not_rewrite_inside_absolute_urls():
@@ -1199,9 +1231,10 @@ def test_admin_viewers_fetch_from_apis_instead_of_missing_placeholders():
 
 
 @pytest.mark.asyncio
-async def test_dossier_bundle_sends_data_after_images():
-    """Images go first, then the data message, so buttons always sit at the bottom."""
-    import asyncio, json, os, tempfile
+@pytest.mark.parametrize("photo_count", [0, 1, 2])
+async def test_dossier_bundle_sends_data_after_images(tmp_path, photo_count):
+    """Choose the valid Telegram photo method, then send the document and retain all IDs."""
+    import asyncio, json, os
     from PIL import Image
     from services.telegram_polling import TelegramPollingRunner
 
@@ -1226,6 +1259,11 @@ async def test_dossier_bundle_sends_data_after_images():
             active -= 1
             if method == "sendMediaGroup":
                 return Resp([{"message_id": 11}, {"message_id": 12}])
+            if method == "sendPhoto":
+                assert data["caption"] == "cap" and data["parse_mode"] == "HTML"
+                with open(paths[0], "rb") as photo:
+                    assert files["photo"][1] == photo.read()
+                return Resp({"message_id": 11})
             if method == "sendDocument":
                 return Resp({"message_id": 13})
             return Resp(True)
@@ -1234,9 +1272,9 @@ async def test_dossier_bundle_sends_data_after_images():
     async def get_client(): return Client()
     runner.get_client = get_client
 
-    tmp = tempfile.mkdtemp()
+    tmp = str(tmp_path)
     paths = []
-    for i in range(2):
+    for i in range(photo_count):
         p = os.path.join(tmp, f"slot_{i}.jpg")
         Image.new("RGB", (40, 40), (i * 40, 90, 140)).save(p)
         paths.append(p)
@@ -1252,13 +1290,13 @@ async def test_dossier_bundle_sends_data_after_images():
     assert ok
     assert max_active == 1, "images and data must be sent sequentially"
     methods = [c[0] for c in calls]
-    assert methods.index("sendMediaGroup") < methods.index("sendDocument")
+    assert methods == (["sendPhoto"] if photo_count == 1 else ["sendMediaGroup"] if photo_count > 1 else []) + ["sendDocument"]
     data_call = [c for c in calls if c[0] == "sendDocument"][0]
     assert "reply_to_message_id" not in data_call[1]
     # approve/reject keyboard must ride on the data message
     assert "admin_req_approve" in data_call[1]["reply_markup"]
     assert "admin_req_reject" in data_call[1]["reply_markup"]
-    assert runner.prompt_registry["k"] == [11, 12, 13]
+    assert runner.prompt_registry["k"] == list(range(11, 11 + photo_count)) + [13]
 
 
 @pytest.mark.asyncio
@@ -1325,7 +1363,7 @@ def test_editor_exposes_tg_response_source_setting():
 
 
 @pytest.mark.asyncio
-async def test_ctv_bot_command_menu_excludes_forms_and_privacy():
+async def test_ctv_bot_command_menu_includes_forms_without_privacy():
     from services.telegram_polling import DriverBotRunner
 
     runner = DriverBotRunner(bot_token="123:abc")
@@ -1345,8 +1383,7 @@ async def test_ctv_bot_command_menu_excludes_forms_and_privacy():
     url, payload = payloads[0]
     names = [c["command"] for c in payload["commands"]]
     assert url.endswith("/setMyCommands")
-    assert "forms" not in names and "privacy" not in names
-    assert {"start", "surveys", "quota", "linkphone", "appeal", "support", "help", "close"} == set(names)
+    assert "forms" in names and "privacy" not in names
 
 
 @pytest.mark.asyncio

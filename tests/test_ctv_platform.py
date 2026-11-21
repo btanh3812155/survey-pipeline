@@ -463,7 +463,9 @@ async def test_driver_bot_quota_shows_own_quotas():
 
 
 @pytest.mark.asyncio
-async def test_admin_bot_quota_accepts_explicit_code():
+async def test_admin_bot_quota_accepts_explicit_code(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100")
     runner = TelegramPollingRunner(bot_token="mock_admin_token", role="admin")
     send = AsyncMock()
     with patch.object(runner, "send_message", send), patch(

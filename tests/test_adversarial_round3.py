@@ -29,7 +29,6 @@ from services.form_engine import (
     ValidationRule,
     ConditionalRule,
     FormSettings,
-    DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
 )
 from services.vehicle_tracker import (
@@ -46,6 +45,59 @@ from services.vehicle_tracker import (
 def test_client():
     """FastAPI TestClient fixture."""
     return TestClient(app)
+
+@pytest.fixture
+def validation_schema(monkeypatch):
+    schema = FormSchema(
+        form_id="adversarial_validation", title="Validation contract",
+        questions=[
+            FormQuestion(id="driver_signature", title="Chữ ký", type=QuestionType.SIGNATURE),
+            FormQuestion(id="consent_choice", title="Consent", type=QuestionType.SINGLE_CHOICE,
+                         is_consent_gate=True, consent_accept_values=["Tôi đồng ý"]),
+            FormQuestion(id="driver_phone", title="Số điện thoại", type=QuestionType.TEXT,
+                         validation=ValidationRule(regex_pattern=r"^0[0-9]{9,10}$",
+                                                   regex_error_message="Số điện thoại không hợp lệ")),
+            FormQuestion(id="gross_revenue", title="Revenue", type=QuestionType.NUMBER,
+                         validation=ValidationRule(min_value=0, max_value=50_000_000)),
+        ],
+    )
+    monkeypatch.setitem(FORM_REGISTRY, schema.form_id, schema)
+    return schema
+def test_legacy_no_form_does_not_require_dynamic_schema(test_client, monkeypatch, tmp_path):
+    monkeypatch.setitem(FORM_REGISTRY, "income_survey", FormSchema(
+        form_id="income_survey", title="Modern schema", questions=[
+            FormQuestion(id="modern_required", title="Modern required field", type=QuestionType.TEXT),
+        ],
+    ))
+    monkeypatch.setattr("routers.survey.SUBMISSION_PHOTOS_DIR", str(tmp_path))
+    monkeypatch.setattr("routers.survey.append_dev_submission", MagicMock())
+    monkeypatch.setattr("routers.survey._schedule_legacy_submission", MagicMock())
+    response = test_client.post("/api/v1/survey/submit-webrtc", data={
+        "driver_phone": "0988123456", "is_test_mode": "true", "bypass_img_check": "true",
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "APPROVED"
+
+
+@pytest.mark.parametrize("value", ["NaN", "Inf", "-Inf", "not-a-number"])
+def test_invalid_numeric_answer_is_rejected_not_recovered(test_client, validation_schema, monkeypatch, tmp_path, value):
+    records = []
+    monkeypatch.setattr("routers.survey.SUBMISSION_PHOTOS_DIR", str(tmp_path))
+    monkeypatch.setattr("routers.survey.append_dev_submission", records.append)
+    monkeypatch.setattr("routers.survey._schedule_legacy_submission", MagicMock())
+    response = test_client.post("/api/v1/survey/submit-webrtc", data={
+        "form_id": validation_schema.form_id, "driver_phone": "0988123456",
+        "signature_png": "data:image/png;base64,mock", "consent_choice": "Tôi đồng ý",
+        "gross_revenue": value, "is_test_mode": "true", "bypass_img_check": "true",
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert len(records) == 1
+    assert records[0]["status"] == "REJECTED"
+    assert records[0]["total_gross_revenue"] == 0
+
+
+
 
 
 @pytest.fixture
@@ -282,10 +334,21 @@ class TestWebRTCVehicleProfileHijacking:
         mock_conn = MagicMock()
         mock_conn.commit = AsyncMock()
         mock_cursor = AsyncMock()
+        mock_conn.rollback = AsyncMock()
+        mock_cursor.rowcount = 1
+        mock_cursor.fetchone.side_effect = [("driver-id",), (victim_phone,), ("event-id",)]
         mock_db_pool.connection.return_value.__aenter__.return_value = mock_conn
         mock_conn.cursor.return_value.__aenter__.return_value = mock_cursor
+        from services import submission_pipeline as pipeline
+        evaluation = pipeline.SubmissionEvaluation({}, {}, "MANUAL_REVIEW", "Review", False, None, {}, {}, None)
 
-        with patch.object(main, "db_pool", mock_db_pool):
+        with patch.object(main, "db_pool", mock_db_pool), patch.object(
+            pipeline, "writer_schema_ready", AsyncMock(return_value=True)
+        ), patch.object(pipeline, "require_delivery_schema", AsyncMock()), patch.object(
+            pipeline, "_evaluate", AsyncMock(return_value=evaluation)
+        ), patch.object(pipeline, "enqueue_submission_work", AsyncMock(return_value=())), patch(
+            "routers.survey._schedule_legacy_submission"
+        ):
             # Unauthenticated submission directly targeting victim's phone
             resp = test_client.post(
                 "/api/v1/survey/submit-webrtc",
@@ -308,17 +371,11 @@ class TestWebRTCVehicleProfileHijacking:
 
         assert resp.status_code == 200
 
-        # Inspect database queries executed
-        executed_queries = [call[0] for call in mock_cursor.execute.call_args_list]
-        upsert_call = next(
-            (call for call in executed_queries if "driver_registered_vehicles" in call[0]),
-            None
-        )
-        assert upsert_call is not None, "Expected vehicle upsert query to be executed"
-
-        sql_query, sql_params = upsert_call[0], upsert_call[1]
-        assert "ON CONFLICT (driver_phone) DO NOTHING" in sql_query
-        assert sql_params[0] == victim_phone, "Victim phone targeted in DB upsert"
+        # A pre-existing victim binding is read under the writer transaction, never replaced.
+        queries = [call.args[0] for call in mock_cursor.execute.call_args_list]
+        assert any("FROM driver_registered_vehicles" in sql for sql in queries)
+        assert not any(sql.lstrip().startswith(("INSERT INTO driver_registered_vehicles", "UPDATE driver_registered_vehicles")) for sql in queries)
+        mock_conn.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_vehicle_hijack_causes_victim_compliance_rejection(self):
@@ -354,8 +411,9 @@ class TestWebRTCVehicleProfileHijacking:
         # Audit rejected due to hijacked registration
         assert result.is_match is False
         assert result.status_code == "VEHICLE_UNREGISTERED"
-        assert "99X-888.88" in result.flag_reason
-        assert "29E-123.45" in result.flag_reason
+        assert result.registered_plate == "99X-888.88"
+        assert result.detected_plate == victim_real_plate
+        assert result.registered_plate not in result.flag_reason
 
 # ==============================================================================
 # 4. WEBRTC CLIENT-SIDE VALIDATION BYPASS (VULN-API-01)
@@ -372,7 +430,7 @@ class TestWebRTCClientSideValidationBypass:
     validate_submission_against_schema(), allowing adversaries to bypass all constraints.
     """
 
-    def test_webrtc_rejects_numeric_range_violations(self, test_client, sharp_image_bytes):
+    def test_webrtc_rejects_numeric_range_violations(self, test_client, sharp_image_bytes, validation_schema):
         """
         SECURITY ASSERTION: Negative revenue and out-of-range figures are rejected
         by server-side validate_submission_against_schema().
@@ -381,6 +439,7 @@ class TestWebRTCClientSideValidationBypass:
         resp_neg = test_client.post(
             "/api/v1/survey/submit-webrtc",
             data={
+                "form_id": validation_schema.form_id,
                 "driver_phone": "0988123456",
                 "gross_revenue": "-99999999",
                 "trip_count": "10",
@@ -404,6 +463,7 @@ class TestWebRTCClientSideValidationBypass:
         resp_astron = test_client.post(
             "/api/v1/survey/submit-webrtc",
             data={
+                "form_id": validation_schema.form_id,
                 "driver_phone": "0988123456",
                 "gross_revenue": "999999999999999",
                 "trip_count": "10",
@@ -421,7 +481,7 @@ class TestWebRTCClientSideValidationBypass:
         assert resp_astron.json()["status"] == "REJECTED"
         assert "không được lớn hơn 50000000" in resp_astron.json()["reason"]
 
-    def test_webrtc_rejects_driver_phone_regex_violations(self, test_client, sharp_image_bytes):
+    def test_webrtc_rejects_driver_phone_regex_violations(self, test_client, sharp_image_bytes, validation_schema):
         """
         SECURITY ASSERTION: Non-numeric phone strings violating regex ^0[0-9]{9,10}$
         are rejected by server-side schema validation.
@@ -436,6 +496,7 @@ class TestWebRTCClientSideValidationBypass:
             resp = test_client.post(
                 "/api/v1/survey/submit-webrtc",
                 data={
+                    "form_id": validation_schema.form_id,
                     "driver_phone": bad_phone,
                     "is_test_mode": "true",
                     "consent_choice": "Tôi đồng ý",
@@ -453,25 +514,30 @@ class TestWebRTCClientSideValidationBypass:
             assert res_json["status"] == "REJECTED"
             assert "Số điện thoại" in res_json["reason"]
 
-    def test_webrtc_rejects_missing_mandatory_signature_and_consent(self, test_client, sharp_image_bytes):
+    @pytest.mark.parametrize("missing", ["consent_choice", "signature_png"])
+    @pytest.mark.parametrize("blank", [None, "   "])
+    def test_webrtc_rejects_missing_mandatory_signature_and_consent(self, test_client, sharp_image_bytes, validation_schema, missing, blank):
         """
         SECURITY ASSERTION: Submissions omitting mandatory signature or consent
         are rejected with status REJECTED.
         """
+        fields = {"form_id": validation_schema.form_id, "driver_phone": "0988123456",
+                  "is_test_mode": "true", "gross_revenue": "500000",
+                  "signature_png": "data:image/png;base64,mock", "consent_choice": "Tôi đồng ý"}
+        if blank is None:
+            del fields[missing]
+        else:
+            fields[missing] = blank
         resp = test_client.post(
             "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0988123456",
-                "is_test_mode": "true",
-                # signature_png omitted, consent choice omitted
-            },
+            data=fields,
             files={"survey_photo": ("test.jpg", io.BytesIO(sharp_image_bytes), "image/jpeg")},
         )
         assert resp.status_code == 200
         res_json = resp.json()
         assert res_json["status"] == "REJECTED"
         assert "Vui lòng trả lời câu hỏi bắt buộc" in res_json["reason"]
-    def test_schema_engine_contrast_proves_missing_server_validation(self):
+    def test_schema_engine_contrast_proves_missing_server_validation(self, validation_schema):
         """
         Demonstrates that services.form_engine.validate_submission_against_schema()
         DOES catch these exact adversarial payloads, proving that the vulnerability
@@ -493,7 +559,7 @@ class TestWebRTCClientSideValidationBypass:
         # 1. Missing signature is caught
         no_sig = dict(base_valid_answers, driver_signature=None)
         valid_sig, err_sig = validate_submission_against_schema(
-            DEFAULT_TRUST_BRIDGE_SCHEMA,
+            validation_schema,
             no_sig,
         )
         assert valid_sig is False
@@ -502,7 +568,7 @@ class TestWebRTCClientSideValidationBypass:
         # 2. Invalid phone format is caught
         bad_phone = dict(base_valid_answers, driver_phone="INVALID_ALPHA_PHONE")
         valid_phone, err_phone = validate_submission_against_schema(
-            DEFAULT_TRUST_BRIDGE_SCHEMA,
+            validation_schema,
             bad_phone,
         )
         assert valid_phone is False
@@ -511,7 +577,7 @@ class TestWebRTCClientSideValidationBypass:
         # 3. Negative revenue is caught
         neg_income = dict(base_valid_answers, gross_revenue=-99999999)
         valid_income, err_income = validate_submission_against_schema(
-            DEFAULT_TRUST_BRIDGE_SCHEMA,
+            validation_schema,
             neg_income,
         )
         assert valid_income is False
@@ -520,7 +586,7 @@ class TestWebRTCClientSideValidationBypass:
         # 4. Out of bounds revenue is caught
         astron_rev = dict(base_valid_answers, gross_revenue=999999999999999)
         valid_rev, err_rev = validate_submission_against_schema(
-            DEFAULT_TRUST_BRIDGE_SCHEMA,
+            validation_schema,
             astron_rev,
         )
         assert valid_rev is False

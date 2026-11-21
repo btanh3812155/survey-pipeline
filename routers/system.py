@@ -51,6 +51,11 @@ async def readiness_check():
     try:
         async with db_pool.connection() as conn:
             state = await writer_schema_state(conn)
+            if any((settings.DURABLE_WEBRTC_ENABLED, settings.DURABLE_LARK_ENABLED,
+                    settings.DURABLE_MODERATION_ENABLED, settings.DURABLE_DRIVE_ENABLED,
+                    settings.DURABLE_APPEALS_ENABLED)):
+                from core.durable_work import require_delivery_schema
+                await require_delivery_schema(conn)
         missing = state["missing"]
         missing_columns = state["missing_columns"]
         migration_checksum = state["migration_checksum"]
@@ -79,7 +84,7 @@ async def readiness_check():
                 },
             )
     except Exception as exc:
-        logger.warning("[READY] PostgreSQL readiness check failed: %s", exc)
+        logger.warning("[READY] PostgreSQL readiness check failed: %s", type(exc).__name__)
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "not_ready", "reason": "postgresql_unavailable"},

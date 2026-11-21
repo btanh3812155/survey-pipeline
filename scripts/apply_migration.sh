@@ -23,6 +23,8 @@ PY
 
 PGOPTIONS="${UPGRADE_TEST_PGOPTIONS:-} -c lock_timeout=5s -c statement_timeout=60s"
 SHA="$(sha256sum "$FILE" | cut -d ' ' -f 1)"
+SHA_001="$(sha256sum "$ROOT/scripts/migrations/001_submission_attempts.sql" | cut -d ' ' -f 1)"
+SHA_002="$(sha256sum "$ROOT/scripts/migrations/002_outbox_delivery.sql" | cut -d ' ' -f 1)"
 if [ -n "${UPGRADE_TEST_POSTGRES_CONTAINER:-}" ]; then
   CONTAINER="$UPGRADE_TEST_POSTGRES_CONTAINER"
   ENDPOINT="${UPGRADE_TEST_DOCKER_ENDPOINT:?UPGRADE_TEST_DOCKER_ENDPOINT is required with the container runner}"
@@ -68,7 +70,7 @@ case "$(printf '%s' "$ACTUAL_DB" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 if [ -n "${UPGRADE_TEST_POSTGRES_CONTAINER:-}" ]; then
-  "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" < "$FILE"
+  "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" < "$FILE"
 else
-  PGOPTIONS="$PGOPTIONS" "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" < "$FILE"
+  PGOPTIONS="$PGOPTIONS" "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" < "$FILE"
 fi

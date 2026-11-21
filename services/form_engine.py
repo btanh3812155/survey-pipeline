@@ -276,11 +276,19 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
             val = [answers[k] for k in sorted(matching_keys)]
 
         # Required check
-        if q.required and (val is None or val == "" or val == []):
+        if q.required and _is_blank(val):
             return False, f"Vui lòng trả lời câu hỏi bắt buộc: '{q.title}'"
 
-        if val is None or val == "":
+        if _is_blank(val):
             continue
+        if q.type == QuestionType.NUMBER:
+            try:
+                num_val = float(val)
+            except (TypeError, ValueError, OverflowError):
+                return False, f"Câu hỏi '{q.title}' phải là số hợp lệ!"
+            if not math.isfinite(num_val):
+                return False, f"Giá trị câu hỏi '{q.title}' không được là NaN/Inf!"
+
 
         # Multi-image validation for CAMERA_WEBRTC
         if q.type == QuestionType.CAMERA_WEBRTC:
@@ -323,16 +331,10 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
             if q.validation.max_length and len(val_str) > q.validation.max_length:
                 return False, f"Câu hỏi '{q.title}' không được vượt quá {q.validation.max_length} ký tự!"
             if q.type == QuestionType.NUMBER:
-                try:
-                    num_val = float(val)
-                    if math.isnan(num_val) or math.isinf(num_val):
-                        return False, f"Giá trị câu hỏi '{q.title}' không được là NaN/Inf!"
-                    if q.validation.min_value is not None and num_val < q.validation.min_value:
-                        return False, f"Giá trị câu hỏi '{q.title}' không được nhỏ hơn {q.validation.min_value}!"
-                    if q.validation.max_value is not None and num_val > q.validation.max_value:
-                        return False, f"Giá trị câu hỏi '{q.title}' không được lớn hơn {q.validation.max_value}!"
-                except ValueError:
-                    return False, f"Câu hỏi '{q.title}' phải là số hợp lệ!"
+                if q.validation.min_value is not None and num_val < q.validation.min_value:
+                    return False, f"Giá trị câu hỏi '{q.title}' không được nhỏ hơn {q.validation.min_value}!"
+                if q.validation.max_value is not None and num_val > q.validation.max_value:
+                    return False, f"Giá trị câu hỏi '{q.title}' không được lớn hơn {q.validation.max_value}!"
         # Mutual exclusivity check for MULTIPLE_CHOICE questions
         if q.type == QuestionType.MULTIPLE_CHOICE and q.options:
             selected_items = val if isinstance(val, list) else [val]

@@ -1,3 +1,4 @@
+import socket
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
@@ -26,6 +27,17 @@ class Settings(BaseSettings):
     # database & redis
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/surveydb"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Claims and each producer cohort require explicit activation; defaults stay inactive.
+    OUTBOX_V2_WORKER_ENABLED: bool = False
+    OUTBOX_WORKER_ID: str = socket.gethostname()
+    APP_BUILD_ID: str = "local"
+    DURABLE_WEBRTC_ENABLED: bool = False
+    DURABLE_LARK_ENABLED: bool = False
+    DURABLE_MODERATION_ENABLED: bool = False
+    DURABLE_DRIVE_ENABLED: bool = False
+    DURABLE_APPEALS_ENABLED: bool = False
+    BILLING_PAYOUT_VND: Optional[int] = None
+    BILLING_POLICY_VERSION: str = "configured-v1"
 
     # bytedance lark / feishu
     LARK_APP_ID: str = "cli_mock_id"
@@ -55,6 +67,7 @@ class Settings(BaseSettings):
     R2_ACCESS_KEY_ID: Optional[str] = None
     R2_SECRET_ACCESS_KEY: Optional[str] = None
     R2_BUCKET_NAME: str = "surveys"
+    R2_PRIVATE_BUCKET_NAME: Optional[str] = None
     R2_PUBLIC_URL_PREFIX: str = "https://cdn.example.com"
 
     # google drive / workspace delivery

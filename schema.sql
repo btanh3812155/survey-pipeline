@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS survey_submissions (
     action_status JSONB NOT NULL DEFAULT '{}'::jsonb,
     media_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
     media_version BIGINT NOT NULL DEFAULT 1,
+    work_owner TEXT NOT NULL DEFAULT 'legacy' CONSTRAINT survey_submissions_work_owner_wave4_check CHECK (work_owner IN ('legacy', 'outbox_v2')),
+    decision_version BIGINT NOT NULL DEFAULT 0 CONSTRAINT survey_submissions_decision_version_wave4_check CHECK (decision_version >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 -- Wave 3 fresh-install mirror (migration 001 also applies these idempotently).
@@ -163,7 +165,7 @@ WITH (m = 16, ef_construction = 64);
 CREATE TABLE IF NOT EXISTS outbox_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR(64) NOT NULL,
-    flow_target VARCHAR(32) NOT NULL DEFAULT 'ALL' CHECK (flow_target IN ('ALL', 'BILLING', 'R2_UPLOAD', 'GDRIVE_EXPORT', 'LARK_SYNC', 'ZALO_ZNS')),
+    flow_target VARCHAR(32) NOT NULL DEFAULT 'ALL' CONSTRAINT outbox_events_flow_target_wave4_check CHECK (flow_target IN ('ALL', 'BILLING', 'R2_UPLOAD', 'GDRIVE_EXPORT', 'LARK_SYNC', 'ZALO_ZNS', 'TELEGRAM_NOTIFY')),
     aggregate_id VARCHAR(64) NOT NULL,
     payload JSONB NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
@@ -171,7 +173,40 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     last_error TEXT,
     locked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    processed_at TIMESTAMPTZ
+    processed_at TIMESTAMPTZ,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    claimed_by TEXT,
+    max_attempts INT NOT NULL DEFAULT 5 CONSTRAINT outbox_events_max_attempts_wave4_check CHECK (max_attempts BETWEEN 1 AND 5),
+    terminal_reason TEXT,
+    lease_until TIMESTAMPTZ,
+    attempts INT NOT NULL DEFAULT 0 CONSTRAINT outbox_events_attempts_wave4_check CHECK (attempts BETWEEN 0 AND 5),
+    action_key TEXT,
+    aggregate_kind TEXT NOT NULL DEFAULT 'submission' CONSTRAINT outbox_events_aggregate_kind_wave4_check CHECK (aggregate_kind IN ('submission', 'lark_event', 'drive_sync')),
+    result JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_outbox_events_action
+ON outbox_events (aggregate_kind, aggregate_id, event_type, flow_target, action_key)
+WHERE action_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS outbox_delivery_attempts (
+    event_id UUID NOT NULL REFERENCES outbox_events(id),
+    claim_token TEXT NOT NULL,
+    attempt_number INT NOT NULL CHECK (attempt_number BETWEEN 1 AND 5),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    request_started BOOLEAN NOT NULL DEFAULT FALSE,
+    finished_at TIMESTAMPTZ,
+    outcome TEXT,
+    reason TEXT,
+    receipt JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (event_id, claim_token)
+);
+
+CREATE TABLE IF NOT EXISTS outbox_worker_heartbeats (
+    worker_id TEXT PRIMARY KEY,
+    last_poll_at TIMESTAMPTZ NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    build_id TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_flow_pending 

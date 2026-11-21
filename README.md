@@ -7,23 +7,59 @@ FastAPI-based survey intake and verification application with dynamic forms, ima
 The repository is a modular monolith: one FastAPI application with `routers/`, `core/`, and `services/` packages, plus PostgreSQL outbox worker code. Keep planned changes within these boundaries unless measured operational needs justify a service split.
 
 - `main.py`: application construction, shared client/pool setup, router registration, shutdown.
-- `routers/`: HTTP endpoints; `routers/survey.py` owns the dynamic form and submission route today.
-- `core/`: runtime state, repositories, schema synchronization, domain helpers.
-- `services/`: form/image/AI processing and external integrations.
+- `routers/`: HTTP endpoints; `routers/survey.py` parses multipart/authentication and maps typed submission results to HTTP.
+- `core/`: runtime state, bounded embedding executor, repositories, schema synchronization, durable intent/claim helpers.
+- `services/`: `submission_pipeline.py` owns request-independent validation/evaluation/media/commit; provider handlers and action projections expose structured evidence.
 - `workers/outbox_worker.py`: PostgreSQL outbox and periodic Drive worker routines.
 - `schema.sql`, `data/forms/`, `static/ui/`: database schema, form definitions, browser interfaces.
 
-The code review found unresolved persistence, privacy, idempotency, delivery, moderation and deployment risks. The [module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md) separates observed defects from required behavior and proposed-regression prevention. The [corrected implementation plan](docs/MODULE_IMPLEMENTATION_PLANS.md) supplies the migration contracts; a documentation correction is not evidence that runtime fixes or deployment checks passed.
+The [module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md) records the original risks and required behavior; the [implementation plan](docs/MODULE_IMPLEMENTATION_PLANS.md) records migration/acceptance contracts. Local implementation is not deployed-state evidence. Preserve their historical baselines and use the local status/evidence below rather than treating old implementation warnings as current source descriptions.
 
 No throughput, cost, or response-time target is claimed here. Establish those from repeatable measurements before using them as design constraints.
 
 ## Upgrade handoff status
 
-Implement one independently executable wave using the plan's access, use-case/test, quota and activation/rollback matrices. H1 is approved and locally implemented: admin-only web phone history, public maintenance, and verified standalone phone mappings for question-source Telegram delivery/private bot history. See [the H1 boundary and evidence](docs/WAVE2_H1_PHONE_BOUNDARY.md). A verified phone link is not web authentication.
+H1 is approved and locally implemented: admin-only web phone history, public maintenance, and verified standalone phone mappings for question-source Telegram delivery/private bot history. See [the H1 boundary and evidence](docs/WAVE2_H1_PHONE_BOUNDARY.md). A verified phone link is not web authentication. Production test-mode authority, CI execution, credentials, staging parity and operator rollout gates remain separate.
 
-The checked-in workflow restricts deployment to manual dispatch, but manual synchronization still needs mutable-data protection and operator approval. H1 alone changed no deployment path and authorized no production access; pausing production test-mode authority and operator gates remain separate. Historical specifications do not override the corrected handoff.
+The workflow releases only on manual dispatch using the same guarded immutable-code script as operators. Target/database/build/mount identity, migration checksums, backup, worker post-start heartbeat, app readiness and mutable-state retention are release gates; failure/rollback leaves services paused. See [deployment tooling](docs/DEPLOY_TOOLING.md). GitHub environment approval rules and target provisioning still require external configuration.
 
-Wave 3 is locally implemented, not deployed: migration `001_submission_attempts.sql` must be applied and verified before the writer is activated. `/ready` fails closed unless the migration ledger checksum, `submission_idempotency`, and the private-media columns are present. Start with an approved database backup, apply the additive migration with `scripts/apply_migration.sh`, then deploy a writer that requires it. Rollback means stop new writes and retain the additive schema; do not drop committed attempts or private media. Do not treat this repository state as production evidence.
+Wave 3 is locally implemented, not deployed: migration `001_submission_attempts.sql` must be applied and verified before the writer is activated. `/ready` fails closed unless the migration ledger checksum, `submission_idempotency`, and private-media columns are present. `scripts/apply_migration.sh` is restricted to owned disposable test databases; an approved target rollout uses the guarded backup/migration/release procedure in [deployment tooling](docs/DEPLOY_TOOLING.md). Rollback stops new writes and retains additive schema, committed attempts and private media. This checkout is not production evidence.
+
+Waves 4A/4B/5 are locally implemented with per-recipient/effect intents, token-fenced claims, truthful receipts/skips/uncertainty, audited retry/reconcile/resend and historical ownership quarantine. Migration `002_outbox_delivery.sql` retains legacy rows and adds owner/decision revisions; `003_outbox_operations.sql` adds build/poll evidence. `OUTBOX_V2_WORKER_ENABLED` and all five `DURABLE_*_ENABLED` producer flags default false. Existing `outbox_v2` ownership survives flag rollback; it never falls back to legacy dispatch. Legacy records require drain/evidence/reconciliation before transfer, not blind `ALL` replay.
+
+Wave 6 extracts the WebRTC use case without FastAPI dependencies and bounds all embedding paths to one executing job plus one waiter. Saturation returns 503/Retry-After with retained media, not an invented verdict. Wave 7 supplies local release/rollback rehearsals and read-only operational probes. These source capabilities do not certify staging/production activation or authorize removing legacy compatibility before its observation window.
+
+### Observed local acceptance (2026-11-20)
+
+| Check | Observed result | Boundary |
+|---|---|---|
+| Full `pytest tests -q --tb=short`, run once | **787 passed, 75 failed, 2 skipped** | Not a green repository gate. Includes old expectations and compatibility-fixture failures; the exact historical/new split is not established. |
+| Scoped post-fix HTTP/PG/worker/operator/provider/executor/release acceptance | **211 passed** | Runtime authorization, Wave 3 replay/savepoint/SIGKILL, 002 migration helper, durable WebRTC/Lark/appeal/moderation/Drive, reviewed retry/media/failure regressions, direct use case, event-loop bounds and release/rollback fixtures. Disposable PostgreSQL/pgvector; providers intercepted. |
+| Registered-form/image/H1 compatibility fixtures | **58 passed, 1 deselected** | Actual service boundary and bounded lifespan; parallel AI classification/OCR contract retained. PostgreSQL-only H1 case excluded from this offline run. |
+| Historical bot/notification compatibility run | **59 passed, 5 failed**, followed by scoped corrections | Superseded for `/audit`, `/forms`, and `/stats` by the later command and known-contract checks below. |
+| Required-income OCR timeout and DEV moderation fallback corrections | **2 passed** | Failed OCR cannot count as audited income; non-production DEV fallback uses the actual cursor protocol. |
+| `node tests/test_wave3_browser.cjs` | **9 passed** | Actual Chromium multipart retry/reload/changed-media/single-flight/encoder cancellation; provider traffic intercepted. |
+| `bash -n` release/smoke/migration/PostgreSQL scripts | Passed | Shell syntax only; no target contacted. |
+
+### Known-contract closure (2026-11-21)
+
+Controlled schema-upload 422 responses, required/finite numeric validation, safe rejected-record serialization, consent refusal before storage/AI, read-only real vehicle checks and alias-safe writer-owned registration are implemented locally. Authentication-first Lark handling, idempotency conflicts, private data access and existing no-form API behavior were preserved. Stale mocks now target the actual service/lifespan boundaries; obsolete wording/SQL/route-shape assertions and the duplicate live-network geolocation test were removed rather than weakening security assertions. Telegram commands use the shared live form registry, and authorized `/stats` reports database unavailability rather than fabricated DEV counts.
+
+| Acceptance stage | Observed result |
+|---|---|
+| Independent statistics/geolocation/layout/viewer/support | **19 passed** |
+| Authentication/persistence slice | **71 passed, 1 failed**; invalid route-shape assertion corrected, then **4 passed** for HTTP access boundaries |
+| Submission/form/Wave 3 regressions | **34 passed, 1 failed**; stale DEV-bypass refusal fixture corrected |
+| Integrated `pytest tests -q --tb=short` | **891 passed, 6 failed, 1 skipped**; log `/tmp/survey-known-contract-closure.log` |
+| Corrections for those six integration failures, plus registry/phone/command coverage | **41 passed, 1 failed**, then final transaction-fixture correction **1 passed** |
+
+All six failures from that integrated run were addressed: private plate text expectations, explicit quota authority, faithful vehicle-read cursor results, authorized reply-to-dossier fixtures, the superseded inline-prompt test, and the stale Telegram registry import. Those overlapping scoped counts are historical and not additive. No unresolved policy decision remains in this closure scope. The original 75-failure run remains at `/tmp/survey-remaining-waves-final-pytest.log`.
+
+### Fresh pre-push acceptance (2026-11-21)
+
+Full `.venv/bin/python -m pytest tests -q --tb=short -ra`: **896 passed, 1 skipped, 1 warning** in 117.83 seconds, using an owned disposable PostgreSQL/pgvector database and offline provider settings. The skipped module is `tests/test_status_bar_browser.py` because Python Playwright is not installed locally; the warning is the existing oversized-image fixture's Pillow decompression-bomb warning. Exact output: `/tmp/survey-prepush-full-pytest.log`. The disposable database was stopped after the run. CI selects all PostgreSQL-marked tests rather than a hand-maintained subset, and both jobs explicitly use offline AI mode.
+
+This closes the observed local full-suite failure gate, not the optional Python browser coverage or deployed readiness. CI execution, staging parity/rollback and approved production activation remain separate gates; no deployment or live provider verification occurred.
 
 ## Local development
 
@@ -31,7 +67,7 @@ Run the test target with `make test` (uses `.venv/bin/python -m pytest tests -q`
 
 Wave 3 local acceptance: `make test-postgres` uses an owned disposable PostgreSQL/pgvector container and includes the submit-worker SIGKILL/retry regression. `node tests/test_wave3_browser.cjs` exercises real Chromium attempt/retry and encoder-race behavior with provider requests stubbed or blocked; it requires Node.js with `fs.globSync`, the Playwright package, and an installed Chromium build. These checks do not authorize staging/production access or activation.
 
-The checked-in `docker-compose.yml` is not a self-contained stack: it declares `app-dev`, uses a prebuilt image, and attaches to the external `survey-pipeline_default` network. It does not create PostgreSQL, Redis, or an outbox worker. Configure dependencies explicitly before running the app; do not treat development fallback behavior as production persistence.
+The checked-in `docker-compose.yml` is not a self-contained stack: `app-dev` and the opt-in `outbox-v2` profile use a prebuilt image and external `survey-pipeline_default` network. It does not create PostgreSQL or Redis. The outbox profile shares the private data volume, disables claims and periodic Drive sync by default, and supplies a separate schema healthcheck. Configure dependencies explicitly; do not treat development fallback behavior as production persistence.
 
 Copy `.env.example` only as a local-development starting point. Production must supply explicit credentials and secrets; see the [module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md).
 
@@ -46,13 +82,14 @@ Copy `.env.example` only as a local-development starting point. Production must 
 
 Do not run production data synchronization from a local workstation. Verify the target deployment, credentials, and worker supervision before triggering a production sync.
 
-Google Drive integrations exist in `services/google_drive_delivery.py`; the periodic loop is in `workers/outbox_worker.py`. The FastAPI lifespan does not start that worker, and the checked-in Compose file does not declare it. The outbox worker also contains placeholder logging for several downstream flows. See the handoff document before relying on those paths.
+Google Drive integrations remain in `services/google_drive_delivery.py`; durable manual/periodic sync requests use independent `drive_sync` jobs and the existing advisory exclusion. The FastAPI lifespan does not start workers. Compatible workers require structured receipts or explicit skips; ambiguous non-idempotent effects are quarantined instead of blindly resent. Legacy compatibility remains fenced away from durable-owned records while untransferred cohorts/rollback still exist.
 
 ## Current documentation
 
 - [Module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md): current architecture review, active bugs, and acceptance criteria.
 - [Wave 3 idempotency/media boundary](docs/WAVE3_IDEMPOTENCY_MEDIA_BOUNDARY.md): local implementation, migration activation and observed evidence.
 - [Bug and safeguards archive](docs/BUGS_AND_SAFEGUARDS_ARCHIVE.md): active-review summary and historical safeguards.
-- [Module implementation plans](docs/MODULE_IMPLEMENTATION_PLANS.md): corrected contracts, use-case/test and access matrices, versioned migration commands, recipient reconciliation, approval gates and per-wave activation/rollback; implementation evidence is still required.
+- [Module implementation plans](docs/MODULE_IMPLEMENTATION_PLANS.md): migration contracts, use-case/test and access matrices, recipient reconciliation, approval gates and per-wave activation/rollback.
+- [Deployment tooling](docs/DEPLOY_TOOLING.md): guarded script/workflow contract, ownership flags, retained rollback state and external activation gates.
 - [Complete architecture manual](docs/PIPELINE_COMPLETE_ARCHITECTURE_MANUAL.md): historical design reference; verify implementation claims against code.
 - [Operations and API reference](docs/PIPELINE_OPERATIONS_AND_API_REFERENCE.md): operational reference; verify deployment commands against the current environment.

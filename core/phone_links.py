@@ -131,7 +131,7 @@ async def get_verified_phone_for_telegram_user(
 
 
 async def get_verified_phone_binding_for_telegram_user(
-    telegram_user_id, db_pool=None
+    telegram_user_id, db_pool=None, *, sources=VERIFIED_PHONE_LINK_SOURCES
 ) -> Optional[Tuple[str, datetime]]:
     """Return (phone, verified_since), using the stable trusted-binding updated_at."""
     # ponytail: legacy submissions have no immutable Telegram owner. History is
@@ -152,9 +152,9 @@ async def get_verified_phone_binding_for_telegram_user(
                 await cur.execute(
                     "SELECT phone_normalized, updated_at FROM phone_telegram_links "
                     "WHERE telegram_user_id = %s AND telegram_user_id > 0 "
-                    "AND source IN (%s, %s) "
+                    "AND source = ANY(%s) "
                     "ORDER BY updated_at DESC, phone_normalized ASC LIMIT 1;",
-                    (telegram_user_id, *VERIFIED_PHONE_LINK_SOURCES),
+                    (telegram_user_id, list(sources)),
                 )
                 row = await cur.fetchone()
                 if row and len(row) >= 2:

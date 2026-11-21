@@ -13,10 +13,9 @@ Exhaustively tests all visual verification checks:
 import os
 import sys
 import pytest
-from unittest.mock import patch
-from fastapi.testclient import TestClient
 
-from main import app, vision_client
+from core.embedding_executor import embedding_executor_lifespan, run_inference
+from tests.test_architect_fixes import submit_camera, weekly_ocr
 from tests.real_test_samples import get_real_distinct_test_photos
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score
 from services.duplicate_detector import check_intra_submission_duplicates
@@ -92,72 +91,32 @@ def test_arithmetic_reconciliation_nan_and_negative_incomes():
 
 
 @pytest.mark.asyncio
-async def test_endpoint_catches_arithmetic_mismatch_in_ocr(monkeypatch):
-    """Ingress endpoint verifies every extracted weekly OCR and rejects if income - costs != profit."""
-    monkeypatch.setenv("MOCK_AI", "1")
-    monkeypatch.setenv("ENVIRONMENT", "test")
-    client = TestClient(app)
-
-    async def mock_role(img_bytes, filename=None, *args, **kwargs):
-        fn = (filename or "").lower()
-        if "slot_0" in fn or "profile" in fn:
-            return "app_profile"
-        if "slot_1" in fn or "vehicle" in fn:
-            return "vehicle_exterior"
-        return "app_income"
-
-    async def mock_ocr_arithmetic_flaw(b, week_idx=None, *args, **kwargs):
-        # Gross: 10M, discount: 2M, but net claimed is 3M (unbalanced by 5M)
-        return {
-            "gross_revenue": 10_000_000,
-            "net_income": 3_000_000,
-            "discount_and_tax": 2_000_000,
-            "total_trips": 120,
-            "period": f"Tuần {week_idx or 1}",
-            "period_type": "WEEKLY",
-            "is_weekly_report": True,
-            "confidence_score": 0.99,
-            "is_legible": True,
-            "is_authentic_gsm_ui": True,
-        }
-
-    real_photos = get_real_distinct_test_photos(7)
-    with patch.object(vision_client, "classify_image_role", side_effect=mock_role), \
-         patch.object(vision_client, "ocr_driver_app_income", side_effect=mock_ocr_arithmetic_flaw):
-        resp = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0912345678",
-                "consent_choice": "Tôi đồng ý",
-                "signature_png": "data:image/png;base64,mock",
-                "vehicle_type": "Ô tô",
-                "car_model": "VF 5 Plus",
-                "gsm_duration": "Từ 6 – 12 tháng",
-                "gsm_contract_type": "Xe Taxi xanh GSM",
-                "daily_trips": "18",
-                "monthly_income_range": "12 – 20 triệu VNĐ",
-                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                "is_test_mode": "true",
-                "bypass_img_check": "false",
-            },
-            files={
-                f"survey_photo_{i}": (f"slot_{i}.jpg", real_photos[i][1], "image/jpeg")
-                for i in range(min(7, len(real_photos)))
-            },
+async def test_submission_catches_arithmetic_mismatch_in_ocr(submit_camera):
+    """The submission pipeline rejects a weekly statement with inconsistent OCR totals."""
+    async def extract(_image_bytes, *, week_idx, prompt):
+        if week_idx != 1:
+            return weekly_ocr(week_idx)
+        # Gross: 10M, discount: 2M, but net claimed is 3M (unbalanced by 5M).
+        return weekly_ocr(
+            week_idx, gross_revenue=10_000_000, net_income=3_000_000,
+            discount_and_tax=2_000_000, total_trips=120,
         )
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("status") == "REJECTED"
-    assert "Số học không khớp" in data.get("reason")
+    photos = [photo for _, photo in get_real_distinct_test_photos(7)]
+    response = await submit_camera(extract, photos=photos)
+    assert response["status"] == "REJECTED", response
+    assert "Số học không khớp" in response["reason"]
+    assert response["ocr_data"]["net_income"] == 3_000_000
 
 
 # ==============================================================================
 # 2. DINOv2 & Visual Similarity vs OCR Override Checks
 # ==============================================================================
 
-def test_dinov2_ocr_override_on_visually_similar_same_phone_screenshots():
+@pytest.mark.asyncio
+async def test_dinov2_ocr_override_on_visually_similar_same_phone_screenshots(monkeypatch):
     """Two photos of the same physical phone setup are not rejected as duplicates when OCR numbers differ."""
+    monkeypatch.setenv("MOCK_AI", "1")
     with open("tests/fixtures/user_phone_test/slot2_week1.png", "rb") as f:
         b1 = f.read()
     with open("tests/fixtures/user_phone_test/slot3_week2.png", "rb") as f:
@@ -171,7 +130,10 @@ def test_dinov2_ocr_override_on_visually_similar_same_phone_screenshots():
     raw_bytes = [b"dummy0", b"dummy1", b1, b2, b"dummy4", b"dummy5", b"dummy6"]
     target_q = next(q for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions if q.id == "camera_receipt")
 
-    is_dup, reason = check_intra_submission_duplicates(raw_bytes, target_q, weekly_incomes)
+    async with embedding_executor_lifespan():
+        is_dup, reason = await run_inference(
+            check_intra_submission_duplicates, raw_bytes, target_q, weekly_incomes,
+        )
     assert is_dup is False, f"Expected duplicate check to pass via OCR override, but got: {reason}"
 
 
@@ -180,60 +142,24 @@ def test_dinov2_ocr_override_on_visually_similar_same_phone_screenshots():
 # ==============================================================================
 
 @pytest.mark.asyncio
-async def test_monthly_income_upload_rejected_in_weekly_slot(monkeypatch):
+async def test_monthly_income_upload_rejected_in_weekly_slot(submit_camera):
     """Submitting a monthly summary screen instead of a weekly report is caught and rejected."""
-    monkeypatch.setenv("MOCK_AI", "1")
-    monkeypatch.setenv("ENVIRONMENT", "test")
-    client = TestClient(app)
-
-    async def mock_role(img_bytes, filename=None, *args, **kwargs):
-        fn = (filename or "").lower()
-        if "0" in fn or "profile" in fn:
-            return "app_profile"
-        return "app_income"
-
-    async def mock_ocr_monthly(b, week_idx=None, *args, **kwargs):
-        return {
-            "gross_revenue": 18000000,
-            "net_income": 14000000,
-            "total_trips": 120,
-            "period": "Tháng 10/2026",
-            "period_type": "MONTHLY",
-            "is_weekly_report": False,
-            "confidence_score": 0.99,
-            "is_legible": True,
-            "is_authentic_gsm_ui": True,
-        }
-
-    real_photos = get_real_distinct_test_photos(7)
-    with patch.object(vision_client, "classify_image_role", side_effect=mock_role), \
-         patch.object(vision_client, "ocr_driver_app_income", side_effect=mock_ocr_monthly):
-        resp = client.post(
-            "/api/v1/survey/submit-webrtc",
-            data={
-                "driver_phone": "0912345678",
-                "consent_choice": "Tôi đồng ý",
-                "signature_png": "data:image/png;base64,mock",
-                "vehicle_type": "Ô tô",
-                "car_model": "VF 5 Plus",
-                "gsm_duration": "Từ 6 – 12 tháng",
-                "gsm_contract_type": "Xe Taxi xanh GSM",
-                "daily_trips": "18",
-                "monthly_income_range": "12 – 20 triệu VNĐ",
-                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                "is_test_mode": "true",
-                "bypass_img_check": "false",
-            },
-            files={
-                f"survey_photo_{i}": (real_photos[i][0], real_photos[i][1], "image/jpeg")
-                for i in range(min(7, len(real_photos)))
-            },
+    async def extract(_image_bytes, *, week_idx, prompt):
+        if week_idx != 1:
+            return weekly_ocr(week_idx)
+        return weekly_ocr(
+            week_idx, period="Tháng 10/2026", period_raw_text="Tháng 10/2026", period_type="MONTHLY",
+            gross_revenue=18_000_000, net_income=14_000_000, discount_and_tax=4_000_000,
+            total_trips=120,
         )
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("status") == "REJECTED"
-    assert "theo THÁNG" in data.get("reason") and "theo TUẦN" in data.get("reason")
+    photos = [photo for _, photo in get_real_distinct_test_photos(7)]
+    response = await submit_camera(extract, photos=photos)
+    assert response["status"] == "REJECTED", response
+    assert "theo THÁNG" in response["reason"]
+    assert response["ocr_data"]["period_type"] == "MONTHLY"
+
+
 def test_temporal_validation_rejects_daily_statement_in_weekly_slot():
     """Submitting a 1-day daily statement into a weekly slot is strictly rejected."""
     from services.image_types import PeriodHeaderMetadata, TimeGranularity, validate_extracted_weekly_period
@@ -271,7 +197,7 @@ def test_temporal_validation_accepts_weekly_statement_in_any_slot():
 
 def test_duplicate_week_periods_are_rejected():
     """Two screens reporting the same week ARE rejected once the money also matches."""
-    from routers.survey import _find_duplicate_income_period
+    from services.submission_pipeline import _find_duplicate_income_period
 
     same = [
         (2, {"period": "03/10 - 09/10/2026", "gross_revenue": 5184500, "net_income": 1243078, "total_trips": 61}),
@@ -295,7 +221,7 @@ def test_same_ocr_period_with_different_money_is_not_a_duplicate():
     claimed the same period. The real financials (and the images) are distinct, so the
     submission must not be rejected as a duplicate week.
     """
-    from routers.survey import _find_duplicate_income_period
+    from services.submission_pipeline import _find_duplicate_income_period
 
     slot_5_week3 = {
         "period": "10/10 - 16/10/2026",
@@ -318,7 +244,7 @@ def test_same_ocr_period_with_different_money_is_not_a_duplicate():
 
 def test_unreadable_week_tab_is_never_reported_as_duplicate():
     """A screen whose week tab could not be read is a re-shoot, not a duplicate claim."""
-    from routers.survey import _find_duplicate_income_period
+    from services.submission_pipeline import _find_duplicate_income_period
 
     unreadable = {
         "period": "10/10 - 16/10/2026",
@@ -368,7 +294,7 @@ def test_intra_duplicate_check_uses_global_income_indices_and_money():
 
 def test_unique_check_index_skips_preceding_profile_photos():
     """Inter-submission uniqueness must hash an income screen, not the profile photo at index 0."""
-    from routers.survey import _select_unique_check_index
+    from services.submission_pipeline import _select_unique_check_index
 
     target_q = next(q for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions if q.id == "camera_receipt")
     assert _select_unique_check_index(target_q, [2, 3, 4, 5, 6], 7) == 2
@@ -489,7 +415,7 @@ def test_uploading_more_than_allowed_slots_clamps_gracefully():
 def test_unique_check_image_skips_profile_and_vehicle_photos():
     """Inter-submission dupe checking must use the income screen, never reusable profile/vehicle shots."""
     from types import SimpleNamespace
-    from routers.survey import _select_unique_check_index
+    from services.submission_pipeline import _select_unique_check_index
 
     profile_question = SimpleNamespace(image_slots=[
         {"role": "app_profile", "require_unique": False},
@@ -508,7 +434,7 @@ def test_unique_check_image_skips_profile_and_vehicle_photos():
 
 def test_generic_camera_slot_roles_are_inferred_from_titles():
     """custom_object slots must still enforce profile/income/vehicle checks via their titles."""
-    from routers.survey import _infer_slot_role, _normalize_vehicle_type
+    from services.submission_pipeline import _infer_slot_role, _normalize_vehicle_type
 
     assert _infer_slot_role({"role": "custom_object", "title": "Ảnh 1: Màn hình chính / profile của app tài xế GSM"}) == "app_profile"
     assert _infer_slot_role({"role": "custom_object", "title": "Ảnh 1: Tuần thu nhập Tháng 10 / 2026"}) == "app_income"
@@ -523,7 +449,7 @@ def test_generic_camera_slot_roles_are_inferred_from_titles():
 def test_classification_roles_include_income_from_all_camera_questions():
     """Income screens must be classifiable even when the target camera question is the profile one."""
     from types import SimpleNamespace
-    from routers.survey import _classification_slots
+    from services.submission_pipeline import _classification_slots
 
     profile_q = SimpleNamespace(id="prof", type="camera_webrtc", image_slots=[
         {"role": "custom_object", "title": "Màn hình chính profile của app"},

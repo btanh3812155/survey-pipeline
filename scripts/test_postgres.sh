@@ -99,5 +99,5 @@ export UPGRADE_TEST_POSTGRES_DB="$DB"
 export UPGRADE_TEST_DOCKER_ENDPOINT="$ENDPOINT"
 export UPGRADE_TEST_DOCKER_CONTEXT="$CONTEXT"
 cd "$ROOT"
-"$PYTHON" -m pytest -q -m postgres tests/test_postgres_harness.py tests/test_phone_links.py tests/test_h1_corrections.py tests/test_wave3_attempts.py tests/test_wave3_route.py tests/test_wave3_process_crash.py
+"$PYTHON" -m pytest -q -m postgres tests/
 "$PYTHON" -m pytest -q tests/test_h1_corrections.py -m 'not postgres'

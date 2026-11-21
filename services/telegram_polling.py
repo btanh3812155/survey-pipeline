@@ -4,6 +4,7 @@ import io
 import time
 import json
 import random
+import secrets
 import asyncio
 import logging
 import html
@@ -13,13 +14,19 @@ import httpx
 from PIL import Image
 
 from config import settings
+from psycopg.rows import tuple_row
+from core.cache import BoundedTTLCache
+from core.state import FORM_REGISTRY, FORMS_STORAGE_DIR, get_redis_client, refresh_form_registry_from_disk
+
+from core.durable_work import audit, enqueue_action, transition_submission
+from core.phone_links import VERIFIED_PHONE_LINK_SOURCES, normalize_vn_phone, phone_normalization_sql
 from core.submission_ids import normalize_submission_id
-from services.form_engine import FORM_REGISTRY
 from services.admin_moderator import (
     query_submission_dossier,
     render_dossier_message,
 )
 from services.normalizer import compute_laplacian_blur_score, normalize_image_to_webp
+from services.vehicle_tracker import VehiclePersistenceTracker, stored_vehicle_candidate
 
 logger = logging.getLogger("telegram_polling")
 DEV_STORAGE_FILE = os.path.join(os.getcwd(), "data", "dev_submissions.json")
@@ -32,6 +39,26 @@ ADMIN_ACTIVE_CONVERSATIONS: Dict[int, int] = {}     # admin_user_id -> user_id (
 # and webhook runners are short-lived instances, so a module-level set keeps the
 # media/document send alive after the callback response is returned.
 BACKGROUND_REVIEW_TASKS: set = set()
+
+BOT_INTERACTION_TTL = 600
+BOT_INTERACTIONS = BoundedTTLCache(max_size=2048, ttl_seconds=BOT_INTERACTION_TTL)
+ARGUMENT_PROMPT = "↩️ Trả lời tin nhắn này"
+HISTORY_COMMANDS = ("/surveys", "/my_surveys", "/tracuu", "/history")
+# Use the original delivery question, not the driver identity or current form settings.
+TARGET_ANSWER_SQL = "s.form_data -> (s.form_data -> '_delivery_policy' ->> 'question_id')"
+TARGET_PHONE_JOIN = f"""
+    CROSS JOIN LATERAL (SELECT CASE
+        WHEN s.form_data -> '_delivery_policy' ->> 'source' = 'question'
+         AND s.form_data -> '_delivery_policy' ->> 'inferred' IS DISTINCT FROM 'true'
+         AND (s.form_data -> '_delivery_policy' ->> 'recorded_at_submission' = 'true' OR NOT EXISTS (
+             SELECT 1 FROM outbox_events e WHERE e.aggregate_id = s.submission_id AND e.flow_target = 'ALL'
+             AND e.terminal_reason = 'LEGACY_RECONCILED'
+         ))
+        THEN CASE WHEN jsonb_typeof({TARGET_ANSWER_SQL}) = 'array'
+             THEN ({TARGET_ANSWER_SQL}) ->> 0 ELSE ({TARGET_ANSWER_SQL}) #>> '{{}}' END
+    END AS phone) AS target
+"""
+HISTORY_ORDER = "ORDER BY s.created_at DESC NULLS LAST, s.submission_id DESC LIMIT 5"
 
 class TelegramPollingRunner:
     """
@@ -64,6 +91,7 @@ class TelegramPollingRunner:
         # Chat-scoped registry of the last prompt message per logical content key,
         # so a new instance can strip the old one's inline buttons.
         self.prompt_registry: Dict[str, List[int]] = {}
+        self.vehicle_confirmations: Dict[str, tuple] = {}
 
     async def get_client(self) -> httpx.AsyncClient:
         if self.http_client is None or self.http_client.is_closed:
@@ -111,6 +139,74 @@ class TelegramPollingRunner:
             logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
             return False
 
+    async def _save_interaction(self, key: str, payload: dict) -> bool:
+        key = f"tg-interaction:{self.role}:{key}"
+        redis = get_redis_client()
+        if redis is None:
+            # Single-process polling/local fallback. Webhook workers share Redis.
+            BOT_INTERACTIONS[key] = payload
+            return True
+        try:
+            return bool(await redis.set(key, json.dumps(payload), ex=BOT_INTERACTION_TTL))
+        except Exception as exc:
+            logger.warning("Could not save Telegram interaction (%s)", type(exc).__name__)
+            return False
+
+    async def _take_interaction(self, key: str) -> Optional[dict]:
+        key = f"tg-interaction:{self.role}:{key}"
+        redis = get_redis_client()
+        if redis is None:
+            payload = BOT_INTERACTIONS.get(key)
+            if payload:
+                BOT_INTERACTIONS[key] = None
+            return payload
+        try:
+            raw = await redis.getdel(key)
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            logger.warning("Could not load Telegram interaction (%s)", type(exc).__name__)
+            return None
+
+    async def _prompt_for_argument(self, chat_id, user_id, command, argument):
+        if type(user_id) is not int or user_id <= 0:
+            return
+        sent = await self.send_message(
+            chat_id, f"{ARGUMENT_PROMPT} bằng {argument}.", return_message=True,
+            reply_markup={"force_reply": True},
+        )
+        message_id = sent.get("message_id") if isinstance(sent, dict) else None
+        if message_id and not await self._save_interaction(f"reply:{chat_id}:{user_id}:{message_id}", {"cmd": command}):
+            await self.send_message(chat_id, f"Chưa thể nhận phản hồi. Vui lòng gõ <code>{command}</code> cùng tham số.")
+
+    async def _argument_reply(self, chat_id, user_id, reply, text):
+        if not reply or not reply.get("message_id") or not text.strip() or text.lstrip().startswith("/"):
+            return False, None
+        pending = await self._take_interaction(f"reply:{chat_id}:{user_id}:{reply['message_id']}")
+        if pending:
+            return True, f"{pending['cmd']} {text.strip()}"
+        # Replies to expired prompts (or another operator's prompt) are not support messages.
+        return bool((reply.get("from") or {}).get("is_bot") and (reply.get("text") or "").startswith(ARGUMENT_PROMPT)), None
+
+    async def handle_forms(self, chat_id):
+        from core.ctv import build_ctv_form_url
+
+        refresh_form_registry_from_disk()
+
+        def recency(form):
+            try:
+                return os.stat(os.path.join(FORMS_STORAGE_DIR, f"{form.form_id}.json")).st_mtime_ns
+            except OSError:
+                return 0
+
+        open_forms = [form for form in FORM_REGISTRY.values() if form.settings.access_control == "public"
+                      and (not form.settings.response_limit or form.settings.current_responses < form.settings.response_limit)]
+        recent = sorted(open_forms, key=lambda form: (recency(form), form.form_id), reverse=True)[:5]
+        if not recent:
+            await self.send_message(chat_id, "Chưa có biểu mẫu nào đang mở.")
+            return
+        links = [f'• <a href="{build_ctv_form_url("", form.form_id)}">{html.escape(form.title[:200])}</a>' for form in recent]
+        await self.send_message(chat_id, "📋 <b>Biểu mẫu đang mở gần đây:</b>\n" + "\n".join(links))
+
     async def delete_message(self, chat_id: Union[int, str], message_id: int) -> bool:
         """Deletes a single Telegram message (used to replace repeated /check responses)."""
         if not message_id or not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
@@ -154,11 +250,7 @@ class TelegramPollingRunner:
         txt_bytes: bytes,
         reply_markup: Optional[dict] = None,
     ) -> bool:
-        """
-        Sends ONE response: all submission photos + the raw dossier .txt in a media
-        group, with the short caption (sub id + CTV) on the first item and the review
-        buttons attached to that item. Falls back to a document-only message.
-        """
+        """Send photos first, then the dossier document carrying the review buttons."""
         await self.clear_previous_prompt(key, chat_id)
         if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
             logger.info(f"[MOCK TG DISPATCH] dossier bundle for {dossier.get('submission_id')}: {caption}")
@@ -212,11 +304,16 @@ class TelegramPollingRunner:
                 ids = [result.get("message_id")]
             else:
                 # Telegram forbids mixing documents with photos in one media group.
-                # Both payloads are fully prepared above, so dispatch the image media
-                # group and the raw-data document together, in parallel.
                 photo_files = {k: v for k, v in files.items() if k != "dossier_txt"}
 
                 async def send_images():
+                    if len(media) == 1:
+                        return await client.post(
+                            f"https://api.telegram.org/bot{self.bot_token}/sendPhoto",
+                            data={"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"},
+                            files={"photo": next(iter(photo_files.values()))},
+                            timeout=30.0,
+                        )
                     return await client.post(
                         f"https://api.telegram.org/bot{self.bot_token}/sendMediaGroup",
                         data={"chat_id": str(chat_id), "media": json.dumps(media)},
@@ -243,7 +340,10 @@ class TelegramPollingRunner:
                     if getattr(images_res, "status_code", None) != 200:
                         logger.error(f"Dossier media group send failed: {images_res}")
                     else:
-                        ids = [m.get("message_id") for m in (images_res.json().get("result") or [])]
+                        messages = images_res.json().get("result") or []
+                        if isinstance(messages, dict):
+                            messages = [messages]
+                        ids = [m.get("message_id") for m in messages]
                 except Exception as images_err:
                     logger.error(f"Dossier media group send failed: {images_err}")
                 try:
@@ -387,12 +487,15 @@ class TelegramPollingRunner:
         BACKGROUND_REVIEW_TASKS.add(task)
         task.add_done_callback(BACKGROUND_REVIEW_TASKS.discard)
 
-    async def execute_submission_review(self, chat_id: Union[int, str], sub_id: str) -> None:
+    async def execute_submission_review(self, chat_id: Union[int, str], sub_id: str, *, audit_actor: Optional[int] = None) -> None:
         """
         Unified review handler invoked identically by /check command and [📋 Mở Phiếu] button.
         Loads media group and review text in parallel, waiting for both to be ready before dispatching.
         """
         clean_sub_id = normalize_submission_id(sub_id)
+        if not self.db_pool and (settings.ENVIRONMENT == "production" or audit_actor is not None):
+            await self.send_message(chat_id, "Chưa thể mở hồ sơ: cơ sở dữ liệu không khả dụng.")
+            return
         dossier = await query_submission_dossier(clean_sub_id, db_pool=self.db_pool)
         if "error" in dossier:
             await self.send_message(chat_id, f"❌ {dossier['error']}")
@@ -415,6 +518,14 @@ class TelegramPollingRunner:
                     [{"text": f"🔒 {status_text} - Đã hoàn tất", "callback_data": "resolved_notice"}],
                 ]
             }
+            if audit_actor is not None:
+                token = secrets.token_urlsafe(12)
+                snapshot = {"submission_id": clean_sub_id, "status": cur_status, "moderated_at": dossier.get("moderated_at")}
+                if await self._save_interaction(f"override:{chat_id}:{audit_actor}:{token}", snapshot):
+                    label = "Đổi sang TỪ CHỐI" if cur_status == "APPROVED" else "Đổi sang DUYỆT"
+                    buttons["inline_keyboard"].append([{"text": label, "callback_data": f"admin_override:{token}"}])
+                else:
+                    await self.send_message(chat_id, "Chưa thể tạo yêu cầu đổi quyết định. Vui lòng thử lại.")
         else:
             buttons = {
                 "inline_keyboard": [
@@ -433,6 +544,45 @@ class TelegramPollingRunner:
             txt_bytes,
             reply_markup=buttons,
         )
+
+    async def _handle_audit_override(self, cq_id, chat_id, msg_id, admin_id, action, token):
+        pending = action == "admin_override"
+        key = f"override:{chat_id}:{admin_id}" if pending else f"confirm:{chat_id}:{admin_id}:{msg_id}"
+        snapshot = await self._take_interaction(f"{key}:{token}") if msg_id else None
+        if not snapshot:
+            await self.answer_callback_query(cq_id, "Yêu cầu đã hết hạn hoặc không thuộc về bạn. Mở lại /audit.", show_alert=True)
+            return
+        sid, previous = snapshot["submission_id"], snapshot["status"]
+        target = "REJECTED" if previous == "APPROVED" else "APPROVED"
+        if pending:
+            confirm = secrets.token_urlsafe(12)
+            if not await self._save_interaction(f"confirm:{chat_id}:{admin_id}:{msg_id}:{confirm}", snapshot):
+                await self.answer_callback_query(cq_id, "Chưa thể tạo xác nhận. Mở lại /audit.", show_alert=True)
+                return
+            await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": [[
+                {"text": f"Xác nhận đổi từ {previous} sang {target}", "callback_data": f"admin_override_ok:{confirm}"},
+                {"text": "Hủy", "callback_data": f"admin_override_cancel:{confirm}"},
+            ]]})
+            await self.answer_callback_query(cq_id, "Vui lòng xác nhận đổi quyết định.")
+            return
+        if action == "admin_override_cancel":
+            await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": []})
+            await self.answer_callback_query(cq_id, "Đã hủy thao tác.")
+            return
+        reason = "Quản trị viên đổi quyết định qua /audit"
+        success, status = await self._update_submission_status(
+            sid, target, reason=reason, actor=f"admin:{admin_id}", expected_statuses=(previous,), override=snapshot,
+        )
+        if not success:
+            await self._answer_failed_decision(cq_id, chat_id, msg_id, sid, status)
+            return
+        await self.answer_callback_query(cq_id, f"Đã đổi quyết định #{sid}: {target}")
+        await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": [[
+            {"text": f"🔒 {target}", "callback_data": "resolved_notice"},
+        ]]})
+        if await self._legacy_delivery_allowed(sid):
+            await self._notify_parties_of_decision(sid, target, reason=reason)
+
     async def log_chat_history(
         self,
         telegram_user_id: int,
@@ -465,6 +615,8 @@ class TelegramPollingRunner:
         total = 0
         approved = 0
         rejected = 0
+        if self.db_pool is None and settings.ENVIRONMENT == "production":
+            return "Chưa thể đọc thống kê: cơ sở dữ liệu không khả dụng."
 
         if self.db_pool:
             try:
@@ -485,9 +637,10 @@ class TelegramPollingRunner:
                             approved = row[1] or 0
                             rejected = row[2] or 0
             except Exception as e:
-                logger.warning(f"Could not read survey stats from database: {e}")
+                logger.warning("Could not read survey stats from database (%s)", type(e).__name__)
+                return "Chưa thể đọc thống kê. Vui lòng thử lại sau."
 
-        if total == 0 and os.path.exists(DEV_STORAGE_FILE):
+        if self.db_pool is None and os.path.exists(DEV_STORAGE_FILE):
             try:
                 with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                     dev_data = json.load(f)
@@ -518,14 +671,18 @@ class TelegramPollingRunner:
         from_user_id: Optional[int] = None,
     ) -> None:
         """Routes and executes admin slash commands."""
-        clean_text = text.strip()
-        cmd = clean_text.split()[0].lower() if clean_text else ""
+        parts = text.strip().split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ""
+        argument = parts[1].strip() if len(parts) > 1 else ""
+        if cmd in ("/check", "/query", "/audit", "/stats", "/quota", "/quotas", "/hanmuc", *HISTORY_COMMANDS):
+            if not await self._can_moderate(chat_id, from_user_id, allow_local=False):
+                await self.send_message(chat_id, "Không có quyền tra cứu tại đây.")
+                return
 
-        if cmd in ("/check", "/query"):
-            parts = clean_text.split(" ", 1)
+        if cmd in ("/check", "/query", "/audit"):
             sub_id = None
-            if len(parts) >= 2 and parts[1].strip():
-                sub_id = parts[1].strip().lstrip("#")
+            if argument:
+                sub_id = argument.lstrip("#")
             elif reply_to_message:
                 reply_text = reply_to_message.get("text") or reply_to_message.get("caption") or ""
                 m = re.search(r"#?((?:VN|DEV)-[A-Za-z0-9_-]+)", reply_text)
@@ -533,20 +690,7 @@ class TelegramPollingRunner:
                     sub_id = m.group(1).lstrip("#")
 
             if not sub_id:
-                reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "✍️ Điền /check <mã_phiếu>", "switch_inline_query_current_chat": "/check "}
-                        ]
-                    ]
-                }
-                await self.send_message(
-                    chat_id,
-                    "⚠️ <b>Vui lòng cung cấp mã phiếu cần kiểm tra (/check).</b>\n\n"
-                    "• Bấm nút bên dưới để tự động điền: <code>/check &lt;mã_phiếu&gt;</code>\n"
-                    "• Hoặc <b>reply (trả lời)</b> trực tiếp vào tin nhắn thông báo phiếu bằng lệnh <code>/check</code>!",
-                    reply_markup=reply_markup,
-                )
+                await self._prompt_for_argument(chat_id, from_user_id, cmd, "mã phiếu khảo sát")
                 return
 
             if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", sub_id):
@@ -557,15 +701,33 @@ class TelegramPollingRunner:
                 )
                 return
 
-            await self.execute_submission_review(chat_id, sub_id)
+            if cmd == "/audit":
+                await self.execute_submission_review(chat_id, sub_id, audit_actor=from_user_id)
+            else:
+                await self.execute_submission_review(chat_id, sub_id)
+        elif cmd == "/stats":
+            await self.send_message(chat_id, await self.get_stats_message())
+        elif cmd == "/forms":
+            await self.handle_forms(chat_id)
+        elif cmd in HISTORY_COMMANDS:
+            if argument:
+                await self.handle_admin_surveys_lookup(chat_id, argument)
+            else:
+                await self._prompt_for_argument(chat_id, from_user_id, cmd, "mã CTV hoặc số điện thoại")
         elif cmd in ("/quota", "/quotas", "/hanmuc"):
-            await self.handle_quota_command(chat_id, clean_text, from_user_id)
+            if argument:
+                await self.handle_quota_command(chat_id, f"{cmd} {argument}", from_user_id)
+            else:
+                await self._prompt_for_argument(chat_id, from_user_id, cmd, "mã CTV")
         elif cmd in ("/start", "/help"):
             help_msg = (
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
                 "Chào mừng bạn đến với hệ thống kiểm định khảo sát Trust Bridge!\n\n"
                 "Lệnh điều hành:\n"
                 "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu khảo sát để xét duyệt\n"
+                "• <code>/audit &lt;mã_phiếu&gt;</code> - Xem hồ sơ và đổi quyết định đã chốt\n"
+                "• <code>/forms</code> - Xem biểu mẫu đang mở\n"
+                "• <code>/surveys &lt;mã_ctv hoặc số_điện_thoại&gt;</code> - Tra cứu phiếu gần đây\n"
                 "• <code>/quota &lt;mã_ctv&gt;</code> - Xem hạn mức của một CTV\n"
                 "• <code>/stats</code> - Xem thống kê tiến độ duyệt phiếu\n"
                 "• <code>/close</code> - Kết thúc phiên chat hỗ trợ trực tiếp\n\n"
@@ -581,6 +743,50 @@ class TelegramPollingRunner:
                 "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng lệnh <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)
+
+    async def handle_admin_surveys_lookup(self, chat_id, ref):
+        if not self.db_pool:
+            await self.send_message(chat_id, "Chưa thể tra cứu phiếu: cơ sở dữ liệu không khả dụng.")
+            return
+        from core.quotas import resolve_ctv_code_from_ref
+
+        phone = normalize_vn_phone(ref) if re.fullmatch(r"[+0-9 .()-]+", ref) else None
+        if not phone and not re.fullmatch(r"[\w@-]{1,64}", ref):
+            await self.send_message(chat_id, "Mã CTV hoặc số điện thoại không hợp lệ.")
+            return
+        code = None if phone else await resolve_ctv_code_from_ref(self.db_pool, ref) or ref.lstrip("@")
+        try:
+            async with self.db_pool.connection() as conn:
+                async with conn.cursor(row_factory=tuple_row) as cur:
+                    if phone:
+                        await cur.execute(
+                            f"SELECT s.submission_id, s.status, s.created_at FROM survey_submissions s {TARGET_PHONE_JOIN} "
+                            f"WHERE {phone_normalization_sql('s.driver_phone')}=%s OR {phone_normalization_sql('target.phone')}=%s "
+                            f"OR EXISTS (SELECT 1 FROM ctv_directory c WHERE {phone_normalization_sql('c.phone')}=%s "
+                            "AND (c.telegram_user_id=s.collaborator_id OR UPPER(c.code)=UPPER(s.ctv_code))) "
+                            f"{HISTORY_ORDER}", (phone, phone, phone),
+                        )
+                    else:
+                        await cur.execute(
+                            "SELECT s.submission_id, s.status, s.created_at FROM survey_submissions s "
+                            "WHERE UPPER(s.ctv_code)=UPPER(%s) OR s.collaborator_id::text=%s OR EXISTS ("
+                            "SELECT 1 FROM ctv_directory c WHERE UPPER(c.code)=UPPER(%s) "
+                            "AND c.telegram_user_id=s.collaborator_id) "
+                            f"{HISTORY_ORDER}", (code, ref, code),
+                        )
+                    rows = await cur.fetchall()
+        except Exception as exc:
+            logger.warning("Could not read admin survey history (%s)", type(exc).__name__)
+            await self.send_message(chat_id, "Chưa thể tra cứu phiếu. Vui lòng thử lại sau.")
+            return
+        if not rows:
+            await self.send_message(chat_id, "Không tìm thấy phiếu khảo sát phù hợp.")
+            return
+        lines = ["📋 <b>Phiếu khảo sát gần đây:</b>"]
+        for sid, status, created in rows:
+            date = created.strftime("%d/%m/%Y %H:%M") if isinstance(created, datetime) else "—"
+            lines.append(f"• <code>{html.escape(sid)}</code> · {html.escape(status)} ({date})")
+        await self.send_message(chat_id, "\n".join(lines))
 
     async def handle_quota_command(
         self,
@@ -630,12 +836,27 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id)
             return
 
+        # Telegram authenticates the update, not the room's authority to moderate.
+        admin_id = from_user.get("id")
+        if data.startswith(("admin_review:", "admin_query:", "admin_override:", "admin_override_ok:", "admin_override_cancel:")):
+            if not await self._can_moderate(cq_chat_id, admin_id, allow_local=False):
+                await self.answer_callback_query(cq_id, "Không có quyền tra cứu tại đây.", show_alert=True)
+                return
+        if data.startswith(("admin_req_", "admin_cancel_decision:", "admin_approve:",
+                            "admin_reject:", "admin_warn:", "admin_change_veh:", "admin_cv:", "admin_cv_cancel:")):
+            if not await self._can_moderate(cq_chat_id, admin_id):
+                await self.answer_callback_query(cq_id, "Không có quyền xử lý phiếu tại đây.", show_alert=True)
+                return
+
         if data.startswith("admin_review:") or data.startswith("admin_query:"):
             sub_id = normalize_submission_id(data.split(":", 1)[1])
             # Answer immediately (Telegram caps callback acks at ~10s and keeps the
             # button spinner until then); the 20-30s media+document send follows.
             await self.answer_callback_query(cq_id, "Đang mở phiếu...")
             self.schedule_submission_review(cq_chat_id, sub_id)
+        elif data.startswith(("admin_override:", "admin_override_ok:", "admin_override_cancel:")):
+            action, token = data.split(":", 1)
+            await self._handle_audit_override(cq_id, cq_chat_id, msg_id, admin_id, action, token)
         elif data.startswith("admin_req_approve:"):
             sub_id = normalize_submission_id(data.split(":", 1)[1])
             confirm_buttons = {
@@ -686,63 +907,49 @@ class TelegramPollingRunner:
 
         elif data.startswith("admin_approve:"):
             sub_id = normalize_submission_id(data.split(":", 1)[1])
-            success, final_status = await self._update_submission_status(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
-            msg_id = cq_msg.get("message_id")
+            reason = "Quản trị viên phê duyệt thủ công"
+            success, final_status = await self._update_submission_status(sub_id, "APPROVED", reason=reason, actor=f"admin:{admin_id}")
             if not success:
-                await self.answer_callback_query(cq_id, f"⚠️ Phiếu #{sub_id} đã được xử lý ({final_status}) trước đó! Không thể thay đổi trạng thái.", show_alert=True)
-                if msg_id:
-                    await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": f"🔒 Đã xử lý ({final_status})", "callback_data": "resolved_notice"}]]})
+                await self._answer_failed_decision(cq_id, cq_chat_id, msg_id, sub_id, final_status)
                 return
 
-            await self.send_message(
-                cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}. (Đã đánh dấu hoàn tất)</b>"
-            )
             await self.answer_callback_query(cq_id, f"Đã duyệt #{sub_id}")
             if msg_id:
                 await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã DUYỆT (APPROVED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
-            await self._notify_parties_of_decision(sub_id, "APPROVED", reason="Quản trị viên phê duyệt thủ công")
+            if await self._legacy_delivery_allowed(sub_id):
+                await self.send_message(cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}.</b>")
+                await self._notify_parties_of_decision(sub_id, "APPROVED", reason=reason)
 
         elif data.startswith("admin_reject:"):
             sub_id = normalize_submission_id(data.split(":", 1)[1])
-            success, final_status = await self._update_submission_status(sub_id, "REJECTED", reason="Quản trị viên từ chối thủ công")
-            msg_id = cq_msg.get("message_id")
+            reason = "Quản trị viên từ chối thủ công"
+            success, final_status = await self._update_submission_status(sub_id, "REJECTED", reason=reason, actor=f"admin:{admin_id}")
             if not success:
-                await self.answer_callback_query(cq_id, f"⚠️ Phiếu #{sub_id} đã được xử lý ({final_status}) trước đó! Không thể thay đổi trạng thái.", show_alert=True)
-                if msg_id:
-                    await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": f"🔒 Đã xử lý ({final_status})", "callback_data": "resolved_notice"}]]})
+                await self._answer_failed_decision(cq_id, cq_chat_id, msg_id, sub_id, final_status)
                 return
 
-            await self.send_message(
-                cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}. (Đã đánh dấu hoàn tất)</b>"
-            )
             await self.answer_callback_query(cq_id, f"Đã từ chối #{sub_id}")
             if msg_id:
                 await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã TỪ CHỐI (REJECTED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
-            await self._notify_parties_of_decision(sub_id, "REJECTED", reason="Quản trị viên từ chối thủ công")
+            if await self._legacy_delivery_allowed(sub_id):
+                await self.send_message(cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}.</b>")
+                await self._notify_parties_of_decision(sub_id, "REJECTED", reason=reason)
 
         elif data == "resolved_notice":
             await self.answer_callback_query(cq_id, "Phiếu này đã được xử lý hoàn tất và bị khóa, không nhận phản hồi thêm.", show_alert=True)
         elif data.startswith("admin_warn:"):
-            parts = data.split(":")
-            sub_id = normalize_submission_id(parts[1]) if len(parts) > 1 else "N/A"
-            phone = parts[2] if len(parts) > 2 else "N/A"
-            await self.send_message(
-                cq_chat_id,
-                f"⚠️ <b>Đã gửi cảnh cáo tới tài xế {phone} cho phiếu #{sub_id}.</b>",
-            )
-            await self.answer_callback_query(cq_id, "Đã gửi cảnh cáo")
+            sub_id = normalize_submission_id(data.split(":", 2)[1])
+            note = await self._queue_driver_warning(sub_id, admin_id)
+            await self.answer_callback_query(cq_id, note, show_alert=True)
 
         elif data.startswith("admin_change_veh:"):
-            parts = data.split(":")
-            sub_id = normalize_submission_id(parts[1]) if len(parts) > 1 else "N/A"
-            phone = parts[2] if len(parts) > 2 else "N/A"
-            await self.send_message(
-                cq_chat_id,
-                f"🔄 <b>Đã chấp thuận yêu cầu đổi xe cho tài xế {phone} (phiếu #{sub_id}).</b>",
-            )
-            await self.answer_callback_query(cq_id, "Đã cho phép đổi xe")
+            sub_id = normalize_submission_id(data.split(":", 2)[1])
+            await self._request_vehicle_change(cq_id, cq_chat_id, sub_id, admin_id)
 
-        # /audit button removed as requested
+        elif data.startswith(("admin_cv:", "admin_cv_cancel:")):
+            action, token = data.split(":", 1)
+            await self._confirm_vehicle_change(cq_id, cq_chat_id, msg_id, admin_id, token, action == "admin_cv")
+
         elif data.startswith("admin_reply_chat:"):
             target_user_id = int(data.split(":", 1)[1])
             admin_id = from_user.get("id")
@@ -837,6 +1044,162 @@ class TelegramPollingRunner:
             await self.answer_callback_query(cq_id, "Đã đóng ticket")
         else:
             await self.answer_callback_query(cq_id)
+
+    async def _can_moderate(self, chat_id, admin_id, *, allow_local=True) -> bool:
+        if self.role != "admin" or type(admin_id) is not int or admin_id <= 0:
+            return False
+        if str(chat_id) == str(settings.TELEGRAM_ADMIN_GROUP_ID):
+            return True
+        if not self.db_pool:
+            return allow_local and settings.ENVIRONMENT != "production" and not settings.DURABLE_MODERATION_ENABLED
+        if chat_id != admin_id:
+            return False
+        try:
+            async with self.db_pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT 1 FROM authorized_users WHERE telegram_user_id=%s AND role='ADMIN' AND is_active",
+                    (admin_id,),
+                )
+                return bool(await cur.fetchone())
+        except Exception as exc:
+            logger.warning("Could not verify admin account (%s)", type(exc).__name__)
+            return False
+
+    async def _queue_driver_warning(self, sub_id: str, admin_id: int) -> str:
+        if not self.db_pool:
+            return "Chưa ghi nhận cảnh cáo: không kết nối được cơ sở dữ liệu."
+        try:
+            async with self.db_pool.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+                await cur.execute(
+                    "SELECT s.submission_id, s.driver_phone, s.created_at, "
+                    "to_jsonb(s)->>'work_owner', to_jsonb(s)->>'decision_version' "
+                    "FROM survey_submissions s WHERE UPPER(s.submission_id)=UPPER(%s) FOR UPDATE",
+                    (sub_id,),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    return "Không tìm thấy phiếu; chưa ghi nhận cảnh cáo."
+                sid, phone, submitted_at, owner, decision_version = row
+                if owner != "outbox_v2":
+                    return "Cần đối soát phiếu theo luồng cũ trước khi ghi nhận cảnh cáo."
+                await cur.execute(
+                    "SELECT telegram_user_id, updated_at FROM phone_telegram_links WHERE phone_normalized=%s "
+                    "AND source IN (%s,%s) AND telegram_user_id>0 AND updated_at<=%s FOR SHARE",
+                    (normalize_vn_phone(phone), *VERIFIED_PHONE_LINK_SOURCES, submitted_at),
+                )
+                binding = await cur.fetchone()
+                chat_id = binding[0] if binding else None
+                key = f"telegram-driver-warning:{decision_version}"
+                await cur.execute(
+                    "SELECT payload->'policy'->>'skip_reason' FROM outbox_events WHERE aggregate_kind='submission' AND aggregate_id=%s "
+                    "AND event_type='survey.warning' AND flow_target='TELEGRAM_NOTIFY' AND action_key=%s",
+                    (sid, key),
+                )
+                existing = await cur.fetchone()
+                if existing:
+                    if existing[0] == "UNLINKED_RECIPIENT":
+                        return "Cảnh cáo đã được ghi nhận trước đó nhưng không gửi: chưa có liên kết Telegram phù hợp."
+                    return "Cảnh cáo đã được ghi nhận trước đó; không gửi thêm."
+                payload = {
+                    "message_class": "DRIVER_WARNING", "decision_independent": True,
+                    "decision_version": int(decision_version), "recipient_kind": "driver",
+                    "bot_role": "driver" if settings.TELEGRAM_DRIVER_BOT_TOKEN else "primary",
+                    "chat_id": chat_id, "text": f"Cảnh cáo từ Ban Quản Trị về phiếu khảo sát #{sid}.",
+                    "policy": {"enabled": bool(binding), "version": "warning-v1",
+                               "skip_reason": None if binding else "UNLINKED_RECIPIENT"},
+                }
+                if binding:
+                    payload["recipient_binding"] = {
+                        "phone": normalize_vn_phone(phone), "telegram_user_id": chat_id,
+                        "verified_at": binding[1].isoformat(), "submitted_at": submitted_at.isoformat(),
+                    }
+                event_id = await enqueue_action(conn, sid, "TELEGRAM_NOTIFY", "survey.warning", payload, action_key=key)
+                await audit(conn, "DRIVER_WARNING", sid, f"admin:{admin_id}", {
+                    "intent_id": event_id, "recipient_kind": "driver", "recipient_linked": bool(binding),
+                })
+                await conn.commit()
+            if not binding:
+                return "Đã ghi nhận cảnh cáo nhưng không gửi: tài xế chưa có liên kết Telegram đã xác thực phù hợp."
+            return "Đã ghi nhận và xếp hàng gửi cảnh cáo; chưa xác nhận đã gửi."
+        except Exception as exc:
+            logger.error("Could not record driver warning (%s)", type(exc).__name__)
+            return "Chưa ghi nhận được cảnh cáo. Vui lòng thử lại."
+
+    @staticmethod
+    async def _vehicle_change_candidate(conn, sub_id, *, lock=False):
+        async with conn.cursor(row_factory=tuple_row) as cur:
+            await cur.execute(
+                "SELECT s.submission_id, s.driver_phone, s.raw_extracted_facts, s.vehicle_type, s.status, "
+                "to_jsonb(s)->>'work_owner', to_jsonb(s)->>'decision_version' "
+                "FROM survey_submissions s WHERE UPPER(s.submission_id)=UPPER(%s)" + (" FOR UPDATE" if lock else ""),
+                (sub_id,),
+            )
+            row = await cur.fetchone()
+        if not row:
+            return None, "Không tìm thấy phiếu."
+        sid, phone, facts, vehicle_type, status, owner, version = row
+        if owner != "outbox_v2" and settings.DURABLE_MODERATION_ENABLED:
+            return None, "Cần đối soát phiếu theo luồng cũ trước khi đổi xe."
+        if status == "APPROVED":
+            return None, "Phiếu đã duyệt; vui lòng cung cấp yêu cầu đổi xe mới."
+        candidate = stored_vehicle_candidate(phone, facts, vehicle_type)
+        if not candidate:
+            return None, "Cần bổ sung hoặc xác minh lại biển số và loại xe trong hồ sơ trước khi đổi xe."
+        return (sid, version, *candidate), ""
+
+    async def _request_vehicle_change(self, cq_id, chat_id, sub_id, admin_id):
+        if not self.db_pool:
+            await self.answer_callback_query(cq_id, "Chưa thể kiểm tra hồ sơ đổi xe.", show_alert=True)
+            return
+        try:
+            async with self.db_pool.connection() as conn:
+                candidate, note = await self._vehicle_change_candidate(conn, sub_id)
+        except Exception as exc:
+            logger.error("Could not inspect vehicle candidate (%s)", type(exc).__name__)
+            candidate, note = None, "Chưa thể kiểm tra hồ sơ đổi xe."
+        if not candidate:
+            await self.answer_callback_query(cq_id, note, show_alert=True)
+            return
+        sid, _, _, plate, kind = candidate
+        now = time.monotonic()
+        self.vehicle_confirmations = {k: v for k, v in self.vehicle_confirmations.items() if v[0] > now}
+        token = secrets.token_urlsafe(12)
+        self.vehicle_confirmations[token] = (now + 600, chat_id, admin_id, candidate)
+        await self.answer_callback_query(cq_id, "Vui lòng xác nhận trước khi đổi xe.")
+        await self.send_message(chat_id, f"Xác nhận đổi xe theo phiếu #{html.escape(sid)} sang {plate} ({kind})?",
+                                reply_markup={"inline_keyboard": [[
+                                    {"text": "Xác nhận đổi xe", "callback_data": f"admin_cv:{token}"},
+                                    {"text": "Hủy bỏ", "callback_data": f"admin_cv_cancel:{token}"},
+                                ]]})
+
+    async def _confirm_vehicle_change(self, cq_id, chat_id, msg_id, admin_id, token, confirmed):
+        prompt = self.vehicle_confirmations.get(token)
+        if not prompt or prompt[0] <= time.monotonic() or prompt[1:3] != (chat_id, admin_id):
+            await self.answer_callback_query(cq_id, "Xác nhận không hợp lệ hoặc đã hết hạn.", show_alert=True)
+            return
+        self.vehicle_confirmations.pop(token)
+        note = "Đã hủy thao tác đổi xe."
+        if confirmed:
+            sid, _, phone, plate, kind = prompt[3]
+            try:
+                async with self.db_pool.connection() as conn:
+                    candidate, note = await self._vehicle_change_candidate(conn, sid, lock=True)
+                    if candidate == prompt[3]:
+                        changed, count, note = await VehiclePersistenceTracker().approve_vehicle_change(
+                            phone, plate, kind, admin_id, reason=f"Telegram moderation: {sid}", conn=conn,
+                        )
+                        if changed:
+                            await audit(conn, "VEHICLE_CHANGE", sid, f"admin:{admin_id}", {"changes_30d": count})
+                            await conn.commit()
+                    elif candidate:
+                        note = "Hồ sơ đổi xe đã thay đổi. Vui lòng kiểm tra và xác nhận lại."
+            except Exception as exc:
+                logger.error("Could not commit vehicle change (%s)", type(exc).__name__)
+                note = "Chưa ghi nhận được việc đổi xe. Vui lòng thử lại."
+        await self.answer_callback_query(cq_id, note, show_alert=True)
+        if msg_id:
+            await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": []})
+
     def _clear_active_appeal(self, sub_id: str) -> None:
         """Drop any in-memory appeal lock for this submission (base-safe)."""
         active = getattr(self, "active_appeals", None)
@@ -847,38 +1210,58 @@ class TelegramPollingRunner:
             if normalize_submission_id(sid) == canonical:
                 active.pop(uid, None)
 
-    async def _update_submission_status(self, sub_id: str, new_status: str, reason: str = "") -> Tuple[bool, str]:
-        """
-        Updates submission status in DB and dev storage.
-        Submission ids are canonicalized and compared case-insensitively.
-        If the submission was already resolved (APPROVED or REJECTED), refuses further
-        responses unless the caller explicitly reopens it for review (appeal).
-        Returns (success: bool, current_status: str).
-        """
+    async def _update_submission_status(
+        self, sub_id: str, new_status: str, reason: str = "", *, actor: str = "system",
+        requester_telegram_id: Optional[int] = None, expected_statuses: Optional[Tuple[str, ...]] = None,
+        override: Optional[dict] = None,
+    ) -> Tuple[bool, str]:
+        """Lock, authorize and commit before acknowledging any transition."""
         sub_id = normalize_submission_id(sub_id)
         if not sub_id:
             return False, "NOT_FOUND"
-        reopened_for_review = new_status in ("APPEAL_PENDING", "MANUAL_REVIEW")
+        if expected_statuses is None:
+            expected_statuses = ("REJECTED",) if new_status == "APPEAL_PENDING" else ("MANUAL_REVIEW", "APPEAL_PENDING")
+        durable_required = (settings.DURABLE_APPEALS_ENABLED if requester_telegram_id is not None
+                            else settings.DURABLE_MODERATION_ENABLED)
         if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            "SELECT status FROM survey_submissions "
-                            "WHERE UPPER(submission_id) = UPPER(%s) FOR UPDATE;",
-                            (sub_id,),
-                        )
+                    async with conn.cursor(row_factory=tuple_row) as cur:
+                        if requester_telegram_id is None:
+                            await cur.execute(
+                                "SELECT status, COALESCE(to_jsonb(s)->>'work_owner', 'legacy'), moderated_at, submission_id "
+                                "FROM survey_submissions s WHERE UPPER(submission_id)=UPPER(%s) FOR UPDATE",
+                                (sub_id,),
+                            )
+                        else:
+                            await self._select_driver_submission(cur, sub_id, requester_telegram_id, lock=True)
                         row = await cur.fetchone()
                         if row:
                             current_status = str(row[0] or "").upper()
-                            if current_status in ("APPROVED", "REJECTED") and not reopened_for_review:
+                            work_owner = row[1] if len(row) > 1 else "legacy"
+                            if override is not None:
+                                moderated_at = row[2].isoformat() if row[2] else None
+                                if current_status not in expected_statuses or moderated_at != override["moderated_at"]:
+                                    return False, "DECISION_CHANGED"
+                            if work_owner == "outbox_v2":
+                                changed, status = await transition_submission(
+                                    conn, sub_id, new_status, reason, actor=actor,
+                                    expected_statuses=expected_statuses,
+                                )
+                                if not changed:
+                                    return False, status
+                            elif durable_required:
+                                return False, "LEGACY_RECONCILIATION_REQUIRED"
+                            elif current_status not in expected_statuses:
                                 return False, current_status
-
-                            await cur.execute(
-                                "UPDATE survey_submissions SET status = %s, rejection_reason = %s, moderated_at = NOW() "
-                                "WHERE UPPER(submission_id) = UPPER(%s);",
-                                (new_status, reason or None, sub_id),
-                            )
+                            else:
+                                await cur.execute(
+                                    "UPDATE survey_submissions SET status=%s, rejection_reason=%s, moderated_at=NOW() "
+                                    "WHERE UPPER(submission_id)=UPPER(%s);",
+                                    (new_status, reason or None, sub_id),
+                                )
+                            if override is not None:
+                                await audit(conn, "VERDICT_OVERRIDE", row[3], actor, {"from": current_status, "to": new_status})
                             await conn.commit()
                             if new_status != "APPEAL_PENDING":
                                 self._clear_active_appeal(sub_id)
@@ -886,7 +1269,12 @@ class TelegramPollingRunner:
                         # No DB row: TEST/DEV submissions live in dev storage only.
                         # Fall through instead of reporting a phantom success.
             except Exception as e:
-                logger.error(f"Failed to update submission status in DB: {e}")
+                logger.error("Submission transition failed (%s)", type(e).__name__)
+                return False, "UNAVAILABLE"
+        if override is not None:
+            return False, "NOT_FOUND" if self.db_pool else "UNAVAILABLE"
+        if requester_telegram_id is not None or durable_required or settings.ENVIRONMENT == "production":
+            return False, "NOT_FOUND" if self.db_pool else "UNAVAILABLE"
 
         found_in_dev = False
         for fpath in (
@@ -907,7 +1295,7 @@ class TelegramPollingRunner:
                             continue
                         found_in_dev = True
                         current_status = str(r.get("status") or "").upper()
-                        if current_status in ("APPROVED", "REJECTED") and not reopened_for_review:
+                        if current_status not in expected_statuses:
                             return False, current_status
                         r["status"] = new_status
                         r["reason"] = reason
@@ -924,6 +1312,51 @@ class TelegramPollingRunner:
                 self._clear_active_appeal(sub_id)
             return True, new_status
         return False, "NOT_FOUND"
+    async def _answer_failed_decision(self, cq_id, chat_id, msg_id, sub_id, status):
+        if status == "LEGACY_RECONCILIATION_REQUIRED":
+            text = f"Phiếu #{sub_id} cần đối soát luồng xử lý cũ trước khi duyệt hoặc từ chối."
+        elif status == "DECISION_CHANGED":
+            text = f"Quyết định của phiếu #{sub_id} đã thay đổi. Mở lại /audit để xem trạng thái mới nhất."
+        elif status in ("APPROVED", "REJECTED"):
+            text = f"⚠️ Phiếu #{sub_id} đã được xử lý ({status})."
+            if msg_id:
+                await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": [[
+                    {"text": f"🔒 Đã xử lý ({status})", "callback_data": "resolved_notice"}
+                ]]})
+        else:
+            text = f"Chưa thay đổi được trạng thái của phiếu #{sub_id}."
+        await self.answer_callback_query(cq_id, text, show_alert=True)
+
+    @staticmethod
+    async def _select_driver_submission(cur, sub_id, requester_telegram_id, *, lock=False):
+        await cur.execute(
+            f"SELECT s.status, COALESCE(to_jsonb(s)->>'work_owner', 'legacy') "
+            f"FROM survey_submissions s JOIN phone_telegram_links link "
+            f"ON link.phone_normalized={phone_normalization_sql('s.driver_phone')} "
+            "WHERE UPPER(s.submission_id)=UPPER(%s) AND link.telegram_user_id=%s "
+            "AND link.telegram_user_id>0 AND link.source IN (%s,%s) AND link.updated_at<=s.created_at "
+            + ("FOR UPDATE OF s FOR SHARE OF link" if lock else ""),
+            (sub_id, requester_telegram_id, *VERIFIED_PHONE_LINK_SOURCES),
+        )
+
+    async def _legacy_delivery_allowed(self, sub_id: str) -> bool:
+        if not self.db_pool:
+            return settings.ENVIRONMENT != "production" and not (
+                settings.DURABLE_MODERATION_ENABLED or settings.DURABLE_APPEALS_ENABLED
+            )
+        try:
+            async with self.db_pool.connection() as conn:
+                async with conn.cursor(row_factory=tuple_row) as cur:
+                    await cur.execute(
+                        "SELECT to_jsonb(s)->>'work_owner' FROM survey_submissions s "
+                        "WHERE UPPER(submission_id)=UPPER(%s)", (sub_id,),
+                    )
+                    row = await cur.fetchone()
+                    return bool(row and row[0] in (None, "legacy"))
+        except Exception as exc:
+            logger.warning("Could not verify legacy notification ownership (%s)", type(exc).__name__)
+            return False
+
     async def _notify_parties_of_decision(
         self, sub_id: str, new_status: str, reason: str = ""
     ) -> None:
@@ -941,24 +1374,18 @@ class TelegramPollingRunner:
         effective_reason = reason or dossier.get("rejection_reason") or ""
         form_id = dossier.get("form_id")
 
-        # Resolve who receives the Telegram verdict for this form.
-        try:
-            from core.state import FORM_REGISTRY as _STATE_FORMS
-        except Exception:
-            _STATE_FORMS = {}
-        schema = (_STATE_FORMS.get(form_id) or FORM_REGISTRY.get(form_id)) if form_id else None
-        form_settings = getattr(schema, "settings", None) if schema else None
-        source = (getattr(form_settings, "tg_response_source", None) or "ctv").strip().lower()
+        raw = dossier.get("raw_data") or {}
+        answers = (raw.get("form_data") or {}) if isinstance(raw, dict) else {}
+        policy = answers.get("_delivery_policy") or {}
+        form_settings = getattr(FORM_REGISTRY.get(form_id), "settings", None)
+        source = policy.get("source") or (getattr(form_settings, "tg_response_source", None) or "ctv").strip().lower()
         recipient_kind = "ctv"
         recipient = collab_id
         if source == "none":
             logger.info(f"TG response disabled for form '{form_id}'; skipping verdict for #{clean_sub_id}.")
             return
         if source == "question":
-            qid = getattr(form_settings, "tg_response_question_id", None)
-            raw = dossier.get("raw_data") or {}
-            answers = raw.get("form_data") if isinstance(raw, dict) else None
-            answers = answers or {}
+            qid = policy.get("question_id") if policy else getattr(form_settings, "tg_response_question_id", None)
             recipient = answers.get(qid) if qid else None
             if isinstance(recipient, list):
                 recipient = recipient[0] if recipient else None
@@ -1055,6 +1482,12 @@ class TelegramPollingRunner:
 
             if chat_id and text:
                 from_user_id = from_user.get("id")
+                if len(text) <= 4096:
+                    handled, resumed = await self._argument_reply(chat_id, from_user_id, msg.get("reply_to_message"), text)
+                    if handled:
+                        if resumed:
+                            await self.handle_command(chat_id, resumed, from_user_id=from_user_id)
+                        return
 
                 # Check for /close command in admin group - closes ONLY the active session of this specific admin!
                 if text.strip().lower() in ("/close", "/end", "/ketthuc"):
@@ -1235,11 +1668,12 @@ class TelegramPollingRunner:
             return 0
 
     async def configure_bot_commands(self) -> None:
-        """Registers the CTV bot command menu (no /forms, no /privacy)."""
+        """Registers commands appropriate for this bot's role."""
         if not self.bot_token or self.bot_token.lower() in ("mock_tg_token", "mock", "none", ""):
             return
         commands = [
             {"command": "start", "description": "Bắt đầu / liên kết CTV"},
+            {"command": "forms", "description": "Biểu mẫu đang mở"},
             {"command": "surveys", "description": "Khảo sát của tôi"},
             {"command": "quota", "description": "Hạn mức nộp phiếu của tôi"},
             {"command": "linkphone", "description": "Liên kết số điện thoại với Telegram"},
@@ -1248,6 +1682,16 @@ class TelegramPollingRunner:
             {"command": "help", "description": "Hướng dẫn sử dụng"},
             {"command": "close", "description": "Kết thúc phiên hỗ trợ"},
         ]
+        if self.role == "admin":
+            commands = [
+                {"command": "check", "description": "Mở hồ sơ phiếu"},
+                {"command": "audit", "description": "Đổi quyết định đã chốt"},
+                {"command": "forms", "description": "Biểu mẫu đang mở"},
+                {"command": "surveys", "description": "Tra cứu phiếu theo CTV hoặc số điện thoại"},
+                *[item for item in commands if item["command"] in ("help", "close")],
+                {"command": "quota", "description": "Hạn mức theo mã CTV"},
+                {"command": "stats", "description": "Thống kê tiến độ duyệt phiếu"},
+            ]
         try:
             client = await self.get_client()
             await client.post(
@@ -1261,8 +1705,7 @@ class TelegramPollingRunner:
     async def start_polling(self) -> None:
         """Main long-polling loop."""
         self.is_running = True
-        if self.role == "driver":
-            await self.configure_bot_commands()
+        await self.configure_bot_commands()
         masked = f"{self.bot_token[:8]}...{self.bot_token[-4:]}" if self.bot_token and len(self.bot_token) > 12 else "(none)"
         logger.info(f"[{self.role.upper()} BOT] Long-polling runner started (token={masked})")
         try:
@@ -1467,6 +1910,8 @@ class DriverBotRunner(TelegramPollingRunner):
 
     async def handle_photo_upload(self, chat_id: int, user_id: int, photos: list) -> None:
         """Handles in-chat replacement of blurry survey photos."""
+        if not chat_id or chat_id != user_id:
+            return
         highest_res = photos[-1]
         file_id = highest_res["file_id"]
 
@@ -1510,10 +1955,13 @@ class DriverBotRunner(TelegramPollingRunner):
                         reply_markup=self.get_driver_reply_keyboard(),
                     )
                     return
-                except (ValueError, FileNotFoundError):
+                except (ValueError, FileNotFoundError) as exc:
+                    note = ("Phiếu cần đối soát luồng cũ trước khi bổ sung ảnh."
+                            if str(exc) == "LEGACY_RECONCILIATION_REQUIRED"
+                            else "Phiếu này không còn nhận bổ sung ảnh hoặc mục ảnh không hợp lệ.")
                     await self.send_message(
                         chat_id,
-                        "⚠️ Phiếu này không còn nhận bổ sung ảnh hoặc mục ảnh không hợp lệ.",
+                        f"⚠️ {note}",
                         reply_markup=self.get_driver_reply_keyboard(),
                     )
                     return
@@ -1531,15 +1979,14 @@ class DriverBotRunner(TelegramPollingRunner):
                     f"🎉 <b>Bổ sung ảnh thành công và đạt chuẩn!</b>\n\n"
                     f"• <b>Mã phiếu:</b> <code>#{sub_id}</code>\n"
                     f"• <b>Độ nét đo được:</b> <code>{blur_score:.1f}</code> (Đạt chuẩn > 35.0)\n"
-                    f"• <b>Trạng thái mới:</b> <b>ĐÃ DUYỆT THÀNH CÔNG ✅</b>\n\n"
-                    f"Hệ thống đã ghi nhận cập nhật và chuyển phiếu sang hàng đợi chi trả tiền thưởng!"
+                    f"• <b>Trạng thái mới:</b> <b>ĐÃ DUYỆT THÀNH CÔNG ✅</b>"
                 )
                 await self.send_message(chat_id, confirm_text, reply_markup=self.get_driver_reply_keyboard())
 
                 # Alert Admin Group via Admin Bot
                 admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
                 admin_group = getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-1001234567890")
-                if admin_token and admin_token != "mock_tg_token":
+                if admin_token and admin_token != "mock_tg_token" and await self._legacy_delivery_allowed(sub_id):
                     client = await self.get_client()
                     alert_url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
                     alert_text = (
@@ -1572,8 +2019,8 @@ class DriverBotRunner(TelegramPollingRunner):
         if chat_id != user_id:
             await self.send_message(chat_id, "Vui lòng mở cuộc trò chuyện riêng với bot để xem lịch sử khảo sát.")
             return
-        from core.phone_links import get_verified_phone_binding_for_telegram_user, VERIFIED_PHONE_LINK_SOURCES, phone_normalization_sql, normalize_vn_phone
-        binding = await get_verified_phone_binding_for_telegram_user(user_id, db_pool=self.db_pool)
+        from core.phone_links import get_verified_phone_binding_for_telegram_user
+        binding = await get_verified_phone_binding_for_telegram_user(user_id, db_pool=self.db_pool, sources=("verified_contact",))
         if not binding:
             await self.send_message(
                 chat_id,
@@ -1594,15 +2041,15 @@ class DriverBotRunner(TelegramPollingRunner):
                             f"""
                             SELECT s.submission_id, s.status, s.rejection_reason, s.created_at
                             FROM survey_submissions AS s
+                            {TARGET_PHONE_JOIN}
                             JOIN phone_telegram_links AS link
-                              ON link.phone_normalized = {phone_normalization_sql("s.driver_phone")}
+                              ON link.phone_normalized = {phone_normalization_sql("target.phone")}
                             WHERE link.phone_normalized = %s AND link.telegram_user_id = %s
-                              AND link.source IN (%s, %s) AND link.updated_at = %s
+                              AND link.source = 'verified_contact' AND link.updated_at = %s
                               AND s.created_at >= link.updated_at
-                            ORDER BY s.created_at DESC
-                            LIMIT 5;
+                            {HISTORY_ORDER}
                             """,
-                            (phone, user_id, *VERIFIED_PHONE_LINK_SOURCES, verified_since),
+                            (phone, user_id, verified_since),
                         )
                         rows = await cur.fetchall()
                         for row in rows:
@@ -1618,12 +2065,19 @@ class DriverBotRunner(TelegramPollingRunner):
                 return
 
         # Check dev test storage as fallback
-        if not submissions and os.path.exists(DEV_STORAGE_FILE):
+        if not self.db_pool and settings.ENVIRONMENT != "production":
             try:
                 with open(DEV_STORAGE_FILE, "r", encoding="utf-8") as f:
                     records = json.load(f)
-                    for r in records[-5:]:
-                        if normalize_vn_phone(r.get("driver_phone")) != phone:
+                    for r in records:
+                        data = r.get("form_data") or {}
+                        policy = data.get("_delivery_policy") or {}
+                        if policy.get("source") != "question" or policy.get("inferred"):
+                            continue
+                        target_phone = data.get(policy.get("question_id"))
+                        if isinstance(target_phone, list):
+                            target_phone = target_phone[0] if target_phone else None
+                        if normalize_vn_phone(target_phone) != phone:
                             continue
                         try:
                             submitted_at = datetime.fromisoformat(str(r.get("submitted_at") or "").replace("Z", "+00:00"))
@@ -1635,10 +2089,11 @@ class DriverBotRunner(TelegramPollingRunner):
                             "submission_id": r.get("submission_id", "DEV"),
                             "status": r.get("status", "SUBMITTED"),
                             "reason": r.get("reason", ""),
-                            "created_at": str(r["submitted_at"])[:16],
+                            "created_at": submitted_at.isoformat(),
                         })
             except Exception:
                 pass
+            submissions = sorted(submissions, key=lambda sub: datetime.fromisoformat(sub["created_at"]), reverse=True)[:5]
 
         if not submissions:
             msg = (
@@ -1663,12 +2118,12 @@ class DriverBotRunner(TelegramPollingRunner):
             else:
                 badge = "ĐANG XỬ LÝ ⏳"
 
-            item_text = f"{idx}. <b>#{sub_id}</b> ({sub['created_at']})\n   • Trạng thái: <b>{badge}</b>"
+            item_text = f"{idx}. <b>#{html.escape(sub_id)}</b> ({html.escape(sub['created_at'][:16])})\n   • Trạng thái: <b>{badge}</b>"
             if sub["reason"]:
-                item_text += f"\n   • Lý do: <i>{sub['reason']}</i>"
+                item_text += f"\n   • Lý do: <i>{html.escape(str(sub['reason'])[:300])}</i>"
             lines.append(item_text)
 
-            if st == "REJECTED":
+            if st == "REJECTED" and await self._get_submission_status(sub_id, requester_telegram_id=user_id) == "REJECTED":
                 buttons.append([
                     {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:flat_0"},
                 ])
@@ -1676,7 +2131,7 @@ class DriverBotRunner(TelegramPollingRunner):
         inline_markup = {"inline_keyboard": buttons} if buttons else None
         await self.send_tracked(f"surveys:{user_id}", chat_id, "\n\n".join(lines), reply_markup=inline_markup)
 
-    async def _get_submission_status(self, sub_id: str) -> Optional[str]:
+    async def _get_submission_status(self, sub_id: str, *, requester_telegram_id: Optional[int] = None) -> Optional[str]:
         """Case-insensitive submission lookup across DB and dev stores."""
         canonical = normalize_submission_id(sub_id)
         if not canonical:
@@ -1684,17 +2139,21 @@ class DriverBotRunner(TelegramPollingRunner):
         if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            "SELECT status FROM survey_submissions "
-                            "WHERE UPPER(submission_id) = UPPER(%s) LIMIT 1;",
-                            (canonical,),
-                        )
+                    async with conn.cursor(row_factory=tuple_row) as cur:
+                        if requester_telegram_id is None:
+                            await cur.execute(
+                                "SELECT status FROM survey_submissions WHERE UPPER(submission_id)=UPPER(%s) LIMIT 1",
+                                (canonical,),
+                            )
+                        else:
+                            await self._select_driver_submission(cur, canonical, requester_telegram_id)
                         row = await cur.fetchone()
                         if row:
                             return str(row[0] or "MANUAL_REVIEW").upper()
             except Exception as e:
                 logger.debug(f"Submission status lookup failed for #{canonical}: {e}")
+        if requester_telegram_id is not None:
+            return None
 
         for fpath in (
             os.path.join(os.getcwd(), "data", "dev_test_submissions.json"),
@@ -1726,6 +2185,9 @@ class DriverBotRunner(TelegramPollingRunner):
 
     async def handle_driver_appeal(self, chat_id: int, user_id: int, sub_id: str) -> None:
         """Handles driver appeal request with 2-hour rate limit (max 5) and active guard."""
+        if not chat_id or chat_id != user_id:
+            await self.send_message(chat_id, "Vui lòng gửi phúc khảo trong cuộc trò chuyện riêng với bot.")
+            return
         canonical = normalize_submission_id(sub_id)
         if not canonical:
             await self.send_message(
@@ -1737,7 +2199,7 @@ class DriverBotRunner(TelegramPollingRunner):
 
         # Reconcile in-memory checks against the DB/dev source of truth first.
         await self._prune_stale_active_appeals()
-        status = await self._get_submission_status(canonical)
+        status = await self._get_submission_status(canonical, requester_telegram_id=user_id)
         if status is None:
             await self.send_message(
                 chat_id,
@@ -1801,20 +2263,23 @@ class DriverBotRunner(TelegramPollingRunner):
 
         history.append(now)
         self.appeal_history[phone] = history
-        self.active_appeals[user_id] = sub_id
 
-        # Update status in DB / storage
         success, final_status = await self._update_submission_status(
-            sub_id, "APPEAL_PENDING", reason="Thành viên gửi yêu cầu phúc khảo qua Telegram DM"
+            sub_id, "APPEAL_PENDING", reason="Thành viên gửi yêu cầu phúc khảo qua Telegram DM",
+            actor=f"driver:{user_id}", requester_telegram_id=user_id,
         )
         if not success:
-            self.active_appeals.pop(user_id, None)
+            self.appeal_history[phone].remove(now)
+            note = ("Phiếu cần đối soát luồng cũ trước khi phúc khảo."
+                    if final_status == "LEGACY_RECONCILIATION_REQUIRED"
+                    else f"Không thể gửi phúc khảo cho phiếu #{sub_id} (trạng thái: {final_status}).")
             await self.send_message(
                 chat_id,
-                f"⚠️ <b>Không thể gửi phúc khảo cho phiếu #{sub_id} (trạng thái: {final_status}).</b>",
+                f"⚠️ <b>{note}</b>",
                 reply_markup=self.get_driver_reply_keyboard(),
             )
             return
+        self.active_appeals[user_id] = sub_id
 
         # Notify Member
         await self.send_message(
@@ -1828,7 +2293,7 @@ class DriverBotRunner(TelegramPollingRunner):
         # Notify Admin Group via Admin Bot
         admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
         admin_group = getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-1001234567890")
-        if admin_token and admin_token != "mock_tg_token":
+        if admin_token and admin_token != "mock_tg_token" and await self._legacy_delivery_allowed(sub_id):
             client = await self.get_client()
             url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
             payload = {
@@ -1844,8 +2309,8 @@ class DriverBotRunner(TelegramPollingRunner):
                 "reply_markup": {
                     "inline_keyboard": [
                         [
-                            {"text": f"✅ Duyệt #{sub_id}", "callback_data": f"admin_approve:{sub_id}"},
-                            {"text": f"❌ Bác bỏ #{sub_id}", "callback_data": f"admin_reject:{sub_id}"},
+                            {"text": f"✅ Duyệt #{sub_id}", "callback_data": f"admin_req_approve:{sub_id}"},
+                            {"text": f"❌ Bác bỏ #{sub_id}", "callback_data": f"admin_req_reject:{sub_id}"},
                         ],
                         [
                             {"text": f"🔍 Xem hồ sơ #{sub_id}", "callback_data": f"admin_query:{sub_id}"},
@@ -1953,6 +2418,9 @@ class DriverBotRunner(TelegramPollingRunner):
         await self.send_message(chat_id, confirm_text, reply_markup=self.get_driver_reply_keyboard())
     async def handle_cancel_request(self, chat_id: int, user_id: int, target_arg: str = "") -> None:
         """Allows cancelling active review/appeal requests, support tickets, or photo fix sessions."""
+        if not chat_id or chat_id != user_id:
+            await self.send_message(chat_id, "Vui lòng hủy yêu cầu trong cuộc trò chuyện riêng với bot.")
+            return
         cancelled_items = []
         admin_group = getattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-5445563473")
         admin_token = getattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
@@ -1960,22 +2428,30 @@ class DriverBotRunner(TelegramPollingRunner):
         # 1. Cancel active appeal
         sub_id = normalize_submission_id(target_arg) if target_arg else normalize_submission_id(self.active_appeals.get(user_id))
         if sub_id:
-            await self._update_submission_status(sub_id, "REJECTED", reason="Người dùng đã hủy yêu cầu phúc khảo")
-            if user_id in self.active_appeals:
-                del self.active_appeals[user_id]
-            cancelled_items.append(f"yêu cầu phúc khảo phiếu <code>#{sub_id}</code>")
-
-            if admin_token and admin_token != "mock_tg_token":
-                client = await self.get_client()
-                url = f"https://api.telegram.org/bot{admin_token}/sendMessage"
-                try:
-                    await client.post(url, json={
-                        "chat_id": admin_group,
-                        "text": f"ℹ️ <b>Người dùng (ID: <code>{user_id}</code>) đã HỦY yêu cầu phúc khảo cho phiếu #{sub_id}.</b>",
-                        "parse_mode": "HTML",
-                    })
-                except Exception:
-                    pass
+            changed, status = await self._update_submission_status(
+                sub_id, "REJECTED", reason="Người dùng đã hủy yêu cầu phúc khảo",
+                actor=f"driver:{user_id}", requester_telegram_id=user_id,
+                expected_statuses=("APPEAL_PENDING",),
+            )
+            if not changed:
+                note = ("Phiếu cần đối soát luồng cũ trước khi hủy phúc khảo."
+                        if status == "LEGACY_RECONCILIATION_REQUIRED"
+                        else "Không có phúc khảo đang chờ để hủy hoặc bạn không có quyền hủy.")
+                await self.send_message(chat_id, note, reply_markup=self.get_driver_reply_keyboard())
+                if target_arg:
+                    return
+            else:
+                cancelled_items.append(f"yêu cầu phúc khảo phiếu <code>#{sub_id}</code>")
+                if admin_token and admin_token != "mock_tg_token" and await self._legacy_delivery_allowed(sub_id):
+                    client = await self.get_client()
+                    try:
+                        await client.post(f"https://api.telegram.org/bot{admin_token}/sendMessage", json={
+                            "chat_id": admin_group,
+                            "text": f"ℹ️ <b>Người dùng đã HỦY yêu cầu phúc khảo cho phiếu #{sub_id}.</b>",
+                            "parse_mode": "HTML",
+                        })
+                    except Exception:
+                        pass
 
         # 2. Cancel active support ticket or live chat
         if user_id in ACTIVE_SUPPORT_CONVERSATIONS or user_id in self.pending_help_tickets:
@@ -2094,11 +2570,14 @@ class DriverBotRunner(TelegramPollingRunner):
                 fix_data = payload[4:].split("_", 1)
                 sub_id = normalize_submission_id(fix_data[0])
                 slot_name = fix_data[1] if len(fix_data) > 1 else "flat_0"
+                if chat_id != user_id or not await self._get_submission_status(sub_id, requester_telegram_id=user_id):
+                    await self.send_message(chat_id, "Bạn chỉ có thể bổ sung ảnh của mình trong cuộc trò chuyện riêng đã xác thực.")
+                    return
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
                 await self.send_message(
                     chat_id,
                     f"📸 <b>Bổ Sung Ảnh Cho Phiếu #{sub_id}:</b>\n\n"
-                    f"Ảnh mục <b>{slot_name}</b> trước đó chưa đạt tiêu chuẩn độ nét.\n"
+                    f"Ảnh mục <b>{html.escape(slot_name)}</b> trước đó chưa đạt tiêu chuẩn độ nét.\n"
                     f"👉 <i>Vui lòng chụp lại rõ nét và gửi thẳng ảnh vào khung chat này ngay bây giờ!</i>",
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
@@ -2114,7 +2593,12 @@ class DriverBotRunner(TelegramPollingRunner):
             )
             await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
-        elif cmd in ("/surveys", "/my_surveys", "/tracuu") or clean == "📋 Khảo Sát Của Tôi":
+        elif cmd == "/forms":
+            await self.handle_forms(chat_id)
+
+        elif cmd in HISTORY_COMMANDS or clean == "📋 Khảo Sát Của Tôi":
+            if from_user.get("id") != user_id or type(user_id) is not int or user_id <= 0:
+                return
             await self.handle_driver_surveys_lookup(chat_id, user_id)
 
         elif cmd in ("/quota", "/quotas", "/hanmuc"):
@@ -2123,11 +2607,7 @@ class DriverBotRunner(TelegramPollingRunner):
         elif cmd in ("/linkphone", "/lienket_sdt", "/linksdt"):
             parts = clean.split(maxsplit=1)
             if len(parts) < 2:
-                await self.send_message(
-                    chat_id,
-                    "⚠️ Cú pháp: <code>/linkphone 09xxxxxxxx</code> (hoặc chia sẻ danh bạ bằng nút bên dưới).",
-                    reply_markup=self.get_driver_reply_keyboard(),
-                )
+                await self._prompt_for_argument(chat_id, user_id, cmd, "số điện thoại (hoặc chia sẻ danh bạ để xác thực)")
                 return
             from core.phone_links import normalize_vn_phone, upsert_phone_telegram_link
             normalized = normalize_vn_phone(parts[1])
@@ -2172,6 +2652,7 @@ class DriverBotRunner(TelegramPollingRunner):
                 "❓ <b>Hướng Dẫn Sử Dụng (Dành Cho Cộng Tác Viên):</b>\n\n"
                 "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
                 "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
+                "• <code>/forms</code> - Xem biểu mẫu đang mở gần đây.\n"
                 "3. <b>Xem hạn mức:</b> Gõ <code>/quota</code> để xem hạn mức nộp phiếu của bạn.\n"
                 "3b. <b>Liên kết số điện thoại:</b> Gõ <code>/linkphone 09xxxxxxxx</code> hoặc chia sẻ danh bạ.\n"
                 "4. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
@@ -2182,13 +2663,9 @@ class DriverBotRunner(TelegramPollingRunner):
             await self.send_message(chat_id, help_text, reply_markup=self.get_driver_reply_keyboard())
 
         elif cmd == "/appeal":
-            parts = clean.split(" ", 1)
+            parts = clean.split(maxsplit=1)
             if len(parts) < 2:
-                await self.send_message(
-                    chat_id,
-                    "⚠️ Vui lòng cung cấp mã phiếu cần phúc khảo. Ví dụ: <code>/appeal VN-123456</code>",
-                    reply_markup=self.get_driver_reply_keyboard(),
-                )
+                await self._prompt_for_argument(chat_id, user_id, cmd, "mã phiếu cần phúc khảo")
                 return
             await self.handle_driver_appeal(chat_id, user_id, normalize_submission_id(parts[1]))
         elif cmd in ("/close", "/end", "/ketthuc"):
@@ -2220,6 +2697,8 @@ class DriverBotRunner(TelegramPollingRunner):
             chat_id = chat.get("id")
             from_user = msg.get("from") or {}
             user_id = from_user.get("id", chat_id)
+            if chat.get("type") != "private" or type(user_id) is not int or user_id <= 0 or chat_id != user_id or from_user.get("id") != user_id:
+                return
 
             # 1. Contact Card Shared
             if "contact" in msg and msg["contact"]:
@@ -2234,6 +2713,12 @@ class DriverBotRunner(TelegramPollingRunner):
             # 3. Text Command or Button
             text = msg.get("text") or ""
             if chat_id and text:
+                if len(text) <= 4096:
+                    handled, resumed = await self._argument_reply(chat_id, user_id, msg.get("reply_to_message"), text)
+                    if handled:
+                        if resumed:
+                            await self.handle_driver_command(chat_id, user_id, resumed, from_user)
+                        return
                 # 1. Check if user wants to close active support conversation
                 if text.strip().lower() in ("/close", "/end", "/ketthuc") and user_id in ACTIVE_SUPPORT_CONVERSATIONS:
                     await self.close_user_support(chat_id, user_id, closed_by="user")
@@ -2265,22 +2750,28 @@ class DriverBotRunner(TelegramPollingRunner):
             data = cq.get("data", "")
             cq_msg = cq.get("message") or {}
             chat_id = cq_msg.get("chat", {}).get("id")
-            user_id = cq.get("from", {}).get("id", chat_id)
+            user_id = (cq.get("from") or {}).get("id")
+            if data.startswith(("driver_appeal:", "driver_fix:")) and (not user_id or chat_id != user_id):
+                await self.answer_callback_query(cq_id, "Vui lòng dùng cuộc trò chuyện riêng đã xác thực.", show_alert=True)
+                return
 
             if data.startswith("driver_appeal:"):
                 sub_id = normalize_submission_id(data.split(":", 1)[1])
-                await self.answer_callback_query(cq_id, f"Đang gửi phúc khảo #{sub_id}")
                 await self.handle_driver_appeal(chat_id, user_id, sub_id)
+                await self.answer_callback_query(cq_id)
 
             elif data.startswith("driver_fix:"):
                 parts = data.split(":")
                 sub_id = normalize_submission_id(parts[1])
                 slot_name = parts[2] if len(parts) > 2 else "flat_0"
+                if not await self._get_submission_status(sub_id, requester_telegram_id=user_id):
+                    await self.answer_callback_query(cq_id, "Bạn không có quyền bổ sung ảnh cho phiếu này.", show_alert=True)
+                    return
                 self.pending_fixes[chat_id] = {"sub_id": sub_id, "slot": slot_name, "timestamp": time.time()}
                 await self.answer_callback_query(cq_id, "Đang chờ gửi ảnh mới")
                 await self.send_message(
                     chat_id,
-                    f"📸 <b>Đang chờ nhận ảnh cho phiếu #{sub_id} ({slot_name}):</b>\n\n"
+                    f"📸 <b>Đang chờ nhận ảnh cho phiếu #{sub_id} ({html.escape(slot_name)}):</b>\n\n"
                     f"👉 Vui lòng mở camera, chụp rõ nét và gửi thẳng ảnh vào khung chat này ngay nhé!",
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
@@ -2295,16 +2786,16 @@ class DriverBotRunner(TelegramPollingRunner):
                 await self.answer_callback_query(cq_id)
 
 
-async def configure_driver_bot_menu() -> None:
-    """Registers the CTV bot command menu at app startup (webhook deployment path)."""
-    token = getattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", None) or settings.TELEGRAM_BOT_TOKEN
-    if not token or token.lower() in ("mock_tg_token", "mock", "none", ""):
-        return
-    runner = DriverBotRunner(bot_token=token)
-    try:
-        await runner.configure_bot_commands()
-    finally:
-        await runner.aclose()
+async def configure_bot_menus() -> None:
+    """Registers both command menus for webhook deployments."""
+    admin = TelegramPollingRunner(role="admin")
+    driver = DriverBotRunner()
+    runners = (admin,) if admin.bot_token == driver.bot_token else (admin, driver)
+    for runner in runners:
+        try:
+            await runner.configure_bot_commands()
+        finally:
+            await runner.aclose()
 
 
 async def run_polling_loop() -> None:

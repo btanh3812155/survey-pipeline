@@ -4,6 +4,7 @@
 import json
 import os
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -247,29 +248,31 @@ async def test_postgres_original_time_and_phone_forms_control_history(monkeypatc
             await conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
             await conn.commit()
         assert await phone_links.ensure_phone_link_schema(pool)
+        def routing(target):
+            return json.dumps({"_delivery_policy": {"source": "question", "question_id": "notify"}, "notify": target})
         before = datetime.now(timezone.utc) - timedelta(minutes=5)
         after = datetime.now(timezone.utc) + timedelta(minutes=5)
         async with pool.connection() as conn:
             await conn.execute(
                 "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
-                "VALUES (%s, %s, 'REJECTED', %s, '{}'::jsonb);",
-                (old_id, "+84 932 090 967", before),
+                "VALUES (%s, %s, 'REJECTED', %s, %s::jsonb);",
+                (old_id, "+84 932 090 967", before, routing(SELF_PHONE)),
             )
             await conn.execute(
                 "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
-                "VALUES (%s, %s, 'REJECTED', %s, '{}'::jsonb);",
-                (new_id, "0932090967", after),
+                "VALUES (%s, %s, 'REJECTED', %s, %s::jsonb);",
+                (new_id, "0900000000", after, routing([SELF_PHONE, "0900000000"])),
             )
             for equiv_id, raw_phone in zip(equiv_ids, ("84932090967", "0084932090967", "932090967")):
                 await conn.execute(
                     "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
-                    "VALUES (%s, %s, 'REJECTED', %s, '{}'::jsonb);",
-                    (equiv_id, raw_phone, after),
+                    "VALUES (%s, %s, 'REJECTED', %s, %s::jsonb);",
+                    (equiv_id, raw_phone, after, routing(raw_phone)),
                 )
             await conn.execute(
                 "INSERT INTO survey_submissions (submission_id, driver_phone, status, created_at, form_data) "
                 "VALUES (%s, %s, 'REJECTED', %s, '{}'::jsonb);",
-                (other_id, "0900000000", after),
+                (other_id, SELF_PHONE, after),
             )
             await conn.commit()
         assert await phone_links.upsert_phone_telegram_link(SELF_PHONE, user_id, source="verified_contact", db_pool=pool)
@@ -286,6 +289,18 @@ async def test_postgres_original_time_and_phone_forms_control_history(monkeypatc
         for equiv_id in equiv_ids:
             assert equiv_id in text
         assert other_id not in text
+        buttons = send.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert {button["callback_data"] for row in buttons for button in row} == {
+            f"driver_fix:{sid}:flat_0" for sid in equiv_ids
+        }
+        denied = AsyncMock()
+        with patch.object(runner, "answer_callback_query", denied):
+            await runner.handle_update({"callback_query": {
+                "id": "forged-repair", "data": f"driver_fix:{new_id}:flat_0", "from": {"id": user_id},
+                "message": {"chat": {"id": user_id, "type": "private"}, "message_id": 1},
+            }})
+        assert user_id not in runner.pending_fixes
+        assert denied.await_args.kwargs["show_alert"] is True
 
         # Later moderation delivery uses the original submission time, not the
         # time of the moderation decision.
@@ -339,6 +354,8 @@ async def test_dev_history_normalizes_equivalent_phone_forms(monkeypatch, tmp_pa
         {"submission_id": "DEV-NORM-4", "driver_phone": "932090967", "status": "APPROVED", "submitted_at": datetime.now(timezone.utc).isoformat()},
         {"submission_id": "DEV-NORM-5", "driver_phone": "0932090967", "status": "APPROVED", "submitted_at": datetime.now(timezone.utc).isoformat()},
     ]
+    for row in records:
+        row["form_data"] = {"_delivery_policy": {"source": "question", "question_id": "notify"}, "notify": row.pop("driver_phone")}
     path = tmp_path / "dev_submissions.json"
     path.write_text(json.dumps(records), encoding="utf-8")
     monkeypatch.setattr(telegram_polling, "DEV_STORAGE_FILE", str(path))
@@ -406,40 +423,83 @@ def test_actual_dev_writer_uses_server_timestamp_and_form_id(monkeypatch, tmp_pa
     monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", "mock_tg_token")
     monkeypatch.setattr(survey_router, "SUBMISSION_PHOTOS_DIR", str(tmp_path / "photos"))
 
-    statements = []
+    committed = {}
 
     class Cursor:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
+        def __init__(self, conn):
+            self.conn = conn
+            self.rowcount = -1
+            self.row = None
 
         async def execute(self, sql, params=None):
-            statements.append((sql, params))
+            self.row = None
+            self.rowcount = -1
+            if sql.startswith("INSERT INTO driver_identity_vault"):
+                self.row = (params[0],)
+                self.rowcount = 1
+            elif sql == "SAVEPOINT survey_extended_insert":
+                assert not self.conn.insert_savepoint
+                self.conn.insert_savepoint = True
+            elif sql.startswith("INSERT INTO survey_submissions"):
+                assert self.conn.insert_savepoint
+                column_text = sql.split("(", 1)[1].split(")", 1)[0]
+                columns = [item.strip() for item in column_text.split(",")]
+                row = dict(zip(columns, params, strict=True))
+                sub_id = row["submission_id"]
+                self.rowcount = int(sub_id not in self.conn.pending and sub_id not in committed)
+                if self.rowcount:
+                    self.conn.pending[sub_id] = row
+            elif sql == "RELEASE SAVEPOINT survey_extended_insert":
+                assert self.conn.insert_savepoint
+                self.conn.insert_savepoint = False
+            elif sql.startswith("INSERT INTO outbox_events"):
+                _, sub_id, payload = params
+                assert json.loads(payload)["submission_id"] == sub_id
+                assert sub_id in self.conn.pending
+                self.row = (1,)
+                self.rowcount = 1
+            else:
+                pytest.fail(f"Unexpected writer SQL: {sql}")
             return self
 
         async def fetchone(self):
-            return None
+            row, self.row = self.row, None
+            return row
 
     class Conn:
-        def cursor(self):
-            return Cursor()
+        def __init__(self):
+            self.pending = {}
+            self.insert_savepoint = False
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
+        @asynccontextmanager
+        async def cursor(self):
+            yield Cursor(self)
 
         async def commit(self):
-            return None
+            assert not self.insert_savepoint
+            committed.update(self.pending)
+            self.pending.clear()
+
+        async def rollback(self):
+            self.pending.clear()
+            self.insert_savepoint = False
 
     class Pool:
-        def connection(self):
-            return Conn()
+        @asynccontextmanager
+        async def connection(self):
+            conn = Conn()
+            try:
+                yield conn
+            except BaseException:
+                await conn.rollback()
+                raise
+            else:
+                await conn.commit()
 
-    monkeypatch.setattr(survey_router, "get_db_pool", lambda: Pool())
+    pool = Pool()
+    monkeypatch.setattr(survey_router, "get_db_pool", lambda: pool)
+    monkeypatch.setattr(settings, "DURABLE_WEBRTC_ENABLED", False)
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "")
     monkeypatch.setattr(survey_router, "get_redis_client", lambda: None)
     monkeypatch.setattr(survey_router, "dispatch_action_checklist", AsyncMock())
 
@@ -460,15 +520,10 @@ def test_actual_dev_writer_uses_server_timestamp_and_form_id(monkeypatch, tmp_pa
         data={"form_id": form_id, "phone": SELF_PHONE, "driver_phone": SELF_PHONE},
     )
     assert response.status_code == 200, response.text
-    inserts = [(sql, params) for sql, params in statements if "INSERT INTO survey_submissions" in sql]
-    assert inserts, statements
-    sql, params = inserts[0]
-    assert "created_at" in sql
-    column_text = sql.split("(", 1)[1].split(")", 1)[0]
-    columns = [item.strip() for item in column_text.split(",")]
-    created = params[columns.index("created_at")]
+    row = committed[response.json()["submission_id"]]
+    created = row["created_at"]
     assert isinstance(created, datetime)
     assert created.utcoffset() is not None
     assert created == ingress_time
     assert created != persistence_time
-    assert form_id in params
+    assert row["form_id"] == form_id

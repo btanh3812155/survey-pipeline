@@ -335,6 +335,7 @@ async def query_submission_dossier(
                 "image_url": sub[13],
                 "created_at": sub[14].strftime("%d/%m/%Y %H:%M:%S") if sub[14] else "N/A",
                 "submitted_at": sub[14].isoformat() if sub[14] else None,
+                "moderated_at": sub[16].isoformat() if sub[16] else None,
                 "vehicle_type": v_type,
                 "car_model": c_model,
                 "gross_income": tot_gross,

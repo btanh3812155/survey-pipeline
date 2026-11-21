@@ -29,6 +29,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from main import app, settings, get_sample_image, BoundedTTLCache
 from services.form_engine import FormSchema, FormQuestion, ConditionalRule
+from core.submission_ids import normalize_submission_id
 from services.normalizer import (
     sanitize_and_normalize_image,
     compute_laplacian_blur_score,
@@ -63,18 +64,17 @@ class TestTeam3AdvancedSecurity:
         ]
         for url in probes:
             resp = client.get(url)
-            # Must return 404 Not Found (or redirect within app boundary without leaking)
-            assert resp.status_code in (404, 307), f"Expected 404 or safe redirect for {url}, got {resp.status_code}"
+            assert resp.status_code in (400, 404, 307), f"Traversal was not rejected safely: {url} ({resp.status_code})"
 
     def test_samples_null_byte_handling(self):
         """
         [PATCH-W3-01 VERIFIED]
-        Embedded null bytes (%00 or \\x00) are sanitized and return 404,
+        Embedded null bytes (%00 or \\x00) are rejected with HTTP 400,
         never bubbling an unhandled ValueError (HTTP 500).
         """
         with pytest.raises(HTTPException) as excinfo:
             asyncio.run(get_sample_image("sample\x00.jpg"))
-        assert excinfo.value.status_code == 404
+        assert excinfo.value.status_code == 400
     # --- 2. Telegram Ingress & Missing Chat Objects ---
 
     def test_telegram_webhook_missing_or_null_chat_object_resilience(self):
@@ -90,12 +90,13 @@ class TestTeam3AdvancedSecurity:
         assert resp1.status_code == 200
         assert resp1.json() == {"status": "ok"}
 
-        # 2. Callback query with null message - safely rejected as unauthorized chat (403), no 500 crash
+        # Invalid callback origin is ignored by the runner and acknowledged by transport.
         resp2 = client.post(
             "/webhook/telegram",
             json={"callback_query": {"id": "1", "message": None, "data": "admin_query:1"}},
         )
-        assert resp2.status_code == 403
+        assert resp2.status_code == 200
+        assert resp2.json() == {"status": "ok"}
 
     @pytest.mark.asyncio
     async def test_telegram_polling_runner_null_chat_resilience(self):
@@ -119,10 +120,10 @@ class TestTeam3AdvancedSecurity:
 
         # Raw unescaped HTML tag must NOT be present
         assert xss_payload not in rendered
-        # Escaped HTML tag MUST be present
-        assert html.escape(xss_payload) in rendered
-    def test_telegram_oversized_message_bounds_probe(self):
-        """Messages exceeding Telegram standard 4096 character limit must not cause OOM."""
+        assert dossier["submission_id"] == normalize_submission_id(xss_payload)
+        assert html.escape(dossier["submission_id"]) in rendered
+    def test_telegram_oversized_message_transport_acknowledgement(self):
+        """Transport acknowledges updates; runner validation owns message bounds."""
         client = TestClient(app, raise_server_exceptions=False)
         huge_text = "/check " + ("A" * 100_000)
         resp = client.post(
@@ -134,14 +135,22 @@ class TestTeam3AdvancedSecurity:
                 }
             },
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
 
     # --- 4. Schema Upload Resilience Probes ---
 
-    def test_schema_upload_form_id_regex_strict_enforcement(self):
+    def test_schema_upload_form_id_regex_strict_enforcement(self, monkeypatch, tmp_path):
         """Form ID regex ^[a-zA-Z0-9_-]{1,64}$ must strictly reject illegal characters."""
         client = TestClient(app, raise_server_exceptions=False)
         auth = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)
+        from routers import admin_forms
+        previous = FormSchema(form_id="existing_form", title="Existing", questions=[])
+        monkeypatch.setitem(admin_forms.FORM_REGISTRY, previous.form_id, previous)
+        monkeypatch.setattr(admin_forms, "FORMS_STORAGE_DIR", str(tmp_path))
+        db_lookup = MagicMock(side_effect=AssertionError("invalid schema reached DB"))
+        monkeypatch.setattr(admin_forms, "get_db_pool", db_lookup)
+        registry_before = dict(admin_forms.FORM_REGISTRY)
 
         bad_ids = [
             "../../../etc/passwd",
@@ -153,11 +162,15 @@ class TestTeam3AdvancedSecurity:
         for bad_id in bad_ids:
             payload = {
                 "form_id": bad_id,
+                "previous_form_id": previous.form_id,
                 "title": "Invalid ID Test",
                 "questions": [{"id": "q1", "title": "Q1", "type": "text"}],
             }
             resp = client.post("/api/v1/forms/upload-schema", json=payload, auth=auth)
             assert resp.status_code == 422, f"Expected 422 for invalid form_id {bad_id}, got {resp.status_code}"
+            assert admin_forms.FORM_REGISTRY == registry_before
+            assert list(tmp_path.iterdir()) == []
+        db_lookup.assert_not_called()
 
     def test_schema_upload_circular_and_self_referencing_conditionals_probe(self):
         """

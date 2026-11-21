@@ -1,13 +1,14 @@
-import io
-import time
 import asyncio
-import pytest
-from unittest.mock import patch
-from PIL import Image, ImageDraw
-from fastapi.testclient import TestClient
+import io
+import json
+from types import SimpleNamespace
 
-from main import app
-from config import settings
+import pytest
+import pytest_asyncio
+from PIL import Image, ImageDraw
+
+from core.embedding_executor import embedding_executor_lifespan
+from services import submission_pipeline as pipeline
 from services.evaluator import evaluate_survey_compliance
 from services.vision_ai import ExtractedReceiptFacts, ReceiptLineItem
 from services.form_engine import (
@@ -33,6 +34,77 @@ def make_test_image(pattern: str = "lines") -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
+
+
+async def classify_camera_role(_image_bytes, filename, expected_slots):
+    assert expected_slots
+    if filename == "slot_0.jpg":
+        return "app_profile"
+    if filename == "slot_1.jpg":
+        return "vehicle_exterior"
+    return "app_income"
+
+
+def weekly_ocr(week_idx, **overrides):
+    period = (
+        "28/09/2026 - 04/10/2026", "05/10/2026 - 11/10/2026",
+        "12/10/2026 - 18/10/2026", "19/10/2026 - 25/10/2026",
+        "26/10/2026 - 01/11/2026",
+    )[week_idx - 1]
+    return {
+        "period": period, "period_raw_text": period, "period_type": "WEEKLY",
+        "gross_revenue": 3_000_000 * week_idx, "net_income": 2_500_000 * week_idx,
+        "discount_and_tax": 500_000 * week_idx, "total_trips": 20 * week_idx,
+        "detected_app": "XANH_SM", "is_authentic_gsm_ui": True,
+        "is_legible": True, "confidence_score": 0.99,
+        "is_manipulated_or_photoshopped": False, **overrides,
+    }
+
+
+@pytest_asyncio.fixture
+async def submit_camera(monkeypatch, tmp_path):
+    # Use the deterministic model backend, not a replacement for the bounded executor.
+    monkeypatch.setenv("MOCK_AI", "1")
+    schema = DEFAULT_TRUST_BRIDGE_SCHEMA
+    camera = next(q for q in schema.questions if q.id == "camera_receipt")
+    dev_file = tmp_path / "dev_test_submissions.json"
+    dev_file.write_text("[]", encoding="utf-8")
+
+    def append_dev_record(record):
+        records = json.loads(dev_file.read_text(encoding="utf-8"))
+        dev_file.write_text(json.dumps([*records, record]), encoding="utf-8")
+
+    async def profile(_image_bytes, *, prompt):
+        return {"app": "XANH_SM", "is_authentic": True}
+
+    async def submit(extract, *, photos=None, classify=classify_camera_role, phone="0988123456"):
+        if photos is None:
+            photos = [make_test_image(f"camera-slot-{i}") for i in range(7)]
+        uploads = tuple(
+            pipeline.SubmissionUpload(camera.id, i, f"slot_{i}.jpg", photo)
+            for i, photo in enumerate(photos)
+        )
+        request = pipeline.SubmissionInput(
+            form_id=schema.form_id, schema=schema, is_test_mode=True, uploads=uploads,
+            driver_phone=phone, signature_png="data:image/png;base64,mock",
+            fields={
+                "consent_choice": "Tôi đồng ý", "vehicle_type": "Ô tô", "car_model": "VF 5 Plus",
+                "gsm_duration": "Từ 6 – 12 tháng", "gsm_contract_type": "Xe Taxi xanh GSM",
+                "daily_trips": "18", "monthly_income_range": "12 – 20 triệu VNĐ",
+                "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
+            },
+        )
+        deps = pipeline.SubmissionDependencies(
+            vision=SimpleNamespace(classify_image_role=classify, ocr_driver_app_profile=profile,
+                                   ocr_driver_app_income=extract),
+            media_root=str(tmp_path / "photos"), dev_storage_file=str(dev_file),
+            append_dev_record=append_dev_record, image_max_dimension=720, blur_threshold=15,
+        )
+        result = await pipeline.process_submission(request, deps)
+        return result.response
+
+    async with embedding_executor_lifespan():
+        yield submit
 
 
 class TestArchitectFixes:
@@ -65,97 +137,31 @@ class TestArchitectFixes:
         assert cfg.enable_screen_photo_check is False
 
     @pytest.mark.asyncio
-    async def test_parallel_image_checking_concurrency(self, monkeypatch):
-        """Verify role_0, role_1, and facts extraction are gathered concurrently in main.py."""
-        monkeypatch.setenv("MOCK_AI", "1")
-        client = TestClient(app)
-        img0 = make_test_image("lines")
-        img1 = make_test_image("lines")
+    async def test_parallel_image_checking_concurrency(self, submit_camera):
+        """Vision classification and extraction must each overlap, even with one DINO worker."""
+        active = {"classify": 0, "ocr": 0}
+        peak = active.copy()
 
-        concurrent_calls = 0
-        max_concurrent_observed = 0
+        async def observe(stage):
+            active[stage] += 1
+            peak[stage] = max(peak[stage], active[stage])
+            try:
+                await asyncio.sleep(0)
+            finally:
+                active[stage] -= 1
 
-        async def mock_classify_role(image_bytes, filename=None, *args, **kwargs):
-            nonlocal concurrent_calls, max_concurrent_observed
-            concurrent_calls += 1
-            if concurrent_calls > max_concurrent_observed:
-                max_concurrent_observed = concurrent_calls
-            await asyncio.sleep(0.08)
-            fn = (filename or "").lower()
-            if "0" in fn or "odo" in fn or "profile" in fn:
-                return "app_profile"
-            return "app_income"
-        async def mock_extract(norm_bytes):
-            nonlocal concurrent_calls, max_concurrent_observed
-            concurrent_calls += 1
-            if concurrent_calls > max_concurrent_observed:
-                max_concurrent_observed = concurrent_calls
-            await asyncio.sleep(0.08)
-            concurrent_calls -= 1
-            return ExtractedReceiptFacts(
-                vendor_name="GSM Ride",
-                tax_id="0108938491",
-                receipt_serial="GSM-1122",
-                line_items=[ReceiptLineItem(item_name="Cuoc xe", amount=150000)],
-                raw_subtotal=150000,
-                vat_amount=15000,
-                raw_total=165000,
-                has_signature=True,
-                unchecked_boxes_count=0,
-                is_screen_photo=True,
-                notes="revenue_screen",
-            )
-        async def mock_ocr(b, week_idx=None):
-            nonlocal concurrent_calls, max_concurrent_observed
-            concurrent_calls += 1
-            if concurrent_calls > max_concurrent_observed:
-                max_concurrent_observed = concurrent_calls
-            await asyncio.sleep(0.08)
-            concurrent_calls -= 1
-            w = week_idx or 1
-            return {
-                "gross_revenue": 1000000 * w,
-                "net_income": 800000 * w,
-                "discount_and_tax": -200000 * w,
-                "total_trips": 10 * w,
-                "online_hours": f"{8 * w}h",
-                "period": f"Tuần {w}",
-                "confidence_score": 0.99,
-                "is_legible": True,
-                "is_authentic_gsm_ui": True,
-            }
+        async def classify(image_bytes, filename, expected_slots):
+            await observe("classify")
+            return await classify_camera_role(image_bytes, filename, expected_slots)
 
-        with patch("main.vision_client.classify_image_role", side_effect=mock_classify_role), \
-             patch("main.vision_client.extract_facts", side_effect=mock_extract), \
-             patch("main.vision_client.ocr_driver_app_income", side_effect=mock_ocr):
-            resp = client.post(
-                "/api/v1/survey/submit-webrtc",
-                data={
-                    "driver_phone": "0988123456",
-                    "license_plate": "29E-123.45",
-                    "driver_name": "Nguyen Van A",
-                    "consent_choice": "Tôi đồng ý",
-                    "signature_png": "data:image/png;base64,mock",
-                    "vehicle_type": "Ô tô",
-                    "car_model": "VF 5 Plus",
-                    "gsm_duration": "Từ 6 – 12 tháng",
-                    "gsm_contract_type": "Xe Taxi xanh GSM",
-                    "daily_trips": "18",
-                    "monthly_income_range": "12 – 20 triệu VNĐ",
-                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                    "gross_revenue": "165000",
-                    "is_test_mode": "true",
-                    "bypass_img_check": "false",
-                },
-                files={
-                    f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"lines_{time.time()}_{i}"), "image/jpeg")
-                    for i in range(7)
-                },
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data.get("status") == "APPROVED"
-        assert max_concurrent_observed >= 2, f"Expected concurrency >= 2, got {max_concurrent_observed}"
+        async def extract(_image_bytes, *, week_idx, prompt):
+            await observe("ocr")
+            return weekly_ocr(week_idx)
+
+        response = await submit_camera(extract, classify=classify)
+        assert response["status"] == "APPROVED", response
+        for stage, concurrent_calls in peak.items():
+            assert concurrent_calls >= 2, f"Expected {stage} concurrency >= 2, got {concurrent_calls}"
 
     def test_execute_reset_form_clears_all_slots_and_camera_state(self):
         """Verify dynamic_form_html JavaScript executeResetForm wipes answers, slots, and resets UI."""
@@ -295,119 +301,25 @@ class TestArchitectFixes:
         assert ".q-desc img" in html
 
     @pytest.mark.asyncio
-    async def test_inter_submission_detects_identical_financial_data(self, monkeypatch):
-        """Verify that submitting identical weekly financial numbers to a past approved survey is rejected."""
-        monkeypatch.setenv("MOCK_AI", "1")
-        client = TestClient(app)
-        import time, json, os
-
-        # Ensure clean dev test storage
-        dev_file = os.path.join(os.getcwd(), "data", "dev_test_submissions.json")
-        os.makedirs(os.path.dirname(dev_file), exist_ok=True)
-        
-        ts = time.time()
-        prev_id = f"DEV-PAST-{int(ts)}"
-        seed_record = {
+    async def test_inter_submission_detects_identical_financial_data(self, submit_camera, tmp_path):
+        """A prior approved record blocks copied financials even when photos differ."""
+        prev_id = "DEV-PAST-FINANCIAL"
+        records = [{
             "submission_id": prev_id,
             "status": "APPROVED",
-            "total_gross_revenue": 15000000,
-            "total_trips": 100,
-            "income_week_1_gross": 3000000,
-            "income_week_2_gross": 3000000,
-            "weekly_incomes": {
-                "week_1": {"gross_revenue": 3000000, "net_income": 2500000, "total_trips": 20, "period": "Tuần 1"},
-                "week_2": {"gross_revenue": 3000000, "net_income": 2500000, "total_trips": 20, "period": "Tuần 2"},
-            },
-            "image_dhash_int": 999999999999,  # distinct hash
-        }
-        records = [seed_record]
-        with open(dev_file, "w", encoding="utf-8") as f:
-            json.dump(records, f)
+            "total_gross_revenue": 45_000_000,
+            "total_trips": 300,
+            "weekly_incomes": {f"week_{i}": weekly_ocr(i) for i in range(1, 6)},
+        }]
+        (tmp_path / "dev_test_submissions.json").write_text(json.dumps(records), encoding="utf-8")
 
-        async def mock_role(img_bytes, filename=None, *args, **kwargs):
-            fn = (filename or "").lower()
-            if "0" in fn or "profile" in fn:
-                return "app_profile"
-            return "app_income"
+        async def extract(_image_bytes, *, week_idx, prompt):
+            return weekly_ocr(week_idx)
 
-        async def mock_ocr_copied_numbers(img_bytes, week_idx=None, *args, **kwargs):
-            return {
-                "is_authentic_gsm_ui": True,
-                "detected_app": "XANH_SM",
-                "gross_revenue": 3000000,
-                "net_income": 2500000,
-                "total_trips": 20,
-                "period": f"Tuần {week_idx or 1}",
-                "confidence_score": 0.99,
-                "is_legible": True,
-            }
+        response = await submit_camera(extract)
+        assert response["status"] == "REJECTED", response
+        assert "trùng" in response["reason"].lower()
+        assert prev_id in response["reason"]
+        assert response["duplicate_detected"] is True
+        assert response["duplicate_type"] == "INTER_SUBMISSION_DATA"
 
-        with patch("main.vision_client.classify_image_role", side_effect=mock_role), \
-             patch("main.vision_client.ocr_driver_app_income", side_effect=mock_ocr_copied_numbers):
-            resp = client.post(
-                "/api/v1/survey/submit-webrtc",
-                data={
-                    "driver_phone": "0988777888",
-                    "driver_name": "Tài xế Copy Số Liệu",
-                    "consent_choice": "Tôi đồng ý",
-                    "signature_png": "data:image/png;base64,mock",
-                    "vehicle_type": "Ô tô",
-                    "car_model": "VF 5 Plus",
-                    "gsm_duration": "Từ 6 – 12 tháng",
-                    "gsm_contract_type": "Xe Taxi xanh GSM",
-                    "daily_trips": "18",
-                    "monthly_income_range": "12 – 20 triệu VNĐ",
-                    "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
-                    "is_test_mode": "true",
-                    "bypass_img_check": "false",
-                },
-                files={
-                    f"survey_photo_{i}": (f"photo_{i}.jpg", make_test_image(f"pattern_unique_{ts}_{i}"), "image/jpeg")
-                    for i in range(7)
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data.get("status") == "REJECTED"
-            assert "trùng" in data.get("reason", "").lower()
-            assert data.get("duplicate_detected") is True
-
-    @pytest.mark.asyncio
-    async def test_action_checklist_lease_and_fault_isolation(self):
-        """Verify action checklist initial states, lease acquisition, and idempotent completion."""
-        from services.action_checklist import (
-            init_action_checklist,
-            acquire_action_lease,
-            update_action_record,
-            fetch_action_status,
-        )
-        # 1. Approved without collaborator skips billing ledger
-        chk = init_action_checklist(is_approved=True, has_collaborator=False)
-        assert chk["r2_upload"]["status"] == "PENDING"
-        assert chk["telegram_notify"]["status"] == "PENDING"
-        assert chk["lark_sync"]["status"] == "PENDING"
-        assert chk["gdrive_sync"]["status"] == "PENDING"
-        assert chk["billing_ledger"]["status"] == "SKIPPED"
-
-        # 2. Rejected submission skips external deliverables
-        rej_chk = init_action_checklist(is_approved=False, has_collaborator=True)
-        assert rej_chk["gdrive_sync"]["status"] == "SKIPPED"
-        assert rej_chk["lark_sync"]["status"] == "SKIPPED"
-        assert rej_chk["billing_ledger"]["status"] == "SKIPPED"
-
-        # 3. Lease acquisition guard (test mode)
-        sub_id = "DEV-CHK-TEST-001"
-        # Acquire lease on r2_upload
-        lease1 = await acquire_action_lease(db_pool=None, submission_id=sub_id, action="r2_upload", lease_seconds=30, is_test_mode=True)
-        assert lease1 is True
-
-        # Mark as completed
-        await update_action_record(db_pool=None, submission_id=sub_id, action="r2_upload", status="COMPLETED", meta={"url": "https://r2/test.webp"}, is_test_mode=True)
-
-        # Re-acquiring lease on COMPLETED action must return False (idempotency guard)
-        lease2 = await acquire_action_lease(db_pool=None, submission_id=sub_id, action="r2_upload", lease_seconds=30, is_test_mode=True)
-        assert lease2 is False
-
-        status_map = await fetch_action_status(db_pool=None, submission_id=sub_id, is_test_mode=True)
-        assert status_map["r2_upload"]["status"] == "COMPLETED"
-        assert status_map["r2_upload"]["url"] == "https://r2/test.webp"

@@ -8,10 +8,15 @@ new rows; historical empty manifests retain the legacy flat-file fallback.
 
 import hashlib
 import json
+import mimetypes
 import os
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from psycopg.rows import tuple_row
+
+from config import settings
+from core.durable_work import audit, enqueue_submission_work, transition_submission
 from core.phone_links import VERIFIED_PHONE_LINK_SOURCES, phone_normalization_sql
 
 PRIVATE_MEDIA_ROOT = os.path.join(os.getcwd(), "data", "submission_photos")
@@ -111,6 +116,24 @@ def build_manifest(
     return entries
 
 
+def legacy_manifest(submission_id: str, media_version: int = 1) -> List[Dict[str, Any]]:
+    """Pin the latest committed-or-earlier flat-file revision of each historical slot."""
+    selected = {}
+    for path in _legacy_paths(submission_id):
+        name = os.path.basename(path)
+        match = re.fullmatch(r"slot_(\d+)(?:_v(\d+))?\.[A-Za-z0-9]+", name)
+        if not match:
+            continue
+        slot, revision = int(match.group(1)), int(match.group(2) or 1)
+        if revision <= media_version and (slot not in selected or revision > selected[slot][0]):
+            selected[slot] = (revision, name)
+    return build_manifest(submission_id, [
+        {"name": name, "slot_index": slot, "flat_index": slot,
+         "mime": mimetypes.guess_type(name)[0] or "application/octet-stream"}
+        for slot, (_, name) in sorted(selected.items())
+    ], media_version)
+
+
 async def load_manifest(db_pool, submission_id: str) -> List[Dict[str, Any]]:
     if not db_pool:
         return []
@@ -150,34 +173,39 @@ async def write_replacement(
     """
     if not db_pool:
         return None
-    base = private_submission_dir(submission_id)
-    os.makedirs(base, exist_ok=True)
-    async with db_pool.connection() as conn:
+    async with db_pool.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
         if requester_telegram_id is None:
             raise PermissionError("replacement requires a bound Telegram requester")
-        cur = await conn.execute(
+        await cur.execute(
             f"""
             SELECT s.media_version, s.media_manifest, s.status, s.driver_phone,
-                   s.collaborator_id, s.ctv_code
+                   s.collaborator_id, s.ctv_code, s.submission_id,
+                   COALESCE(to_jsonb(s)->>'work_owner', 'legacy')
             FROM survey_submissions AS s
             JOIN phone_telegram_links AS link
               ON link.phone_normalized = {phone_normalization_sql('s.driver_phone')}
             WHERE UPPER(s.submission_id)=UPPER(%s)
               AND link.telegram_user_id = %s
+              AND link.telegram_user_id > 0
               AND link.source IN (%s, %s)
               AND s.created_at >= link.updated_at
-            FOR UPDATE OF s;
+            FOR UPDATE OF s
+            FOR SHARE OF link;
             """,
             (submission_id, int(requester_telegram_id), *VERIFIED_PHONE_LINK_SOURCES),
         )
         row = await cur.fetchone()
         if not row:
             raise PermissionError("requester is not authorized for this submission")
+        canonical_id, work_owner = row[6:8]
+        if work_owner != "outbox_v2" and settings.DURABLE_MODERATION_ENABLED:
+            raise ValueError("LEGACY_RECONCILIATION_REQUIRED")
         version = int(row[0] or 1) + 1
         manifest = row[1] or []
         current_status = str(row[2] or "").upper()
         if current_status == "APPROVED":
             raise ValueError("submission is already approved")
+        base = private_submission_dir(canonical_id)
         if isinstance(manifest, str):
             try:
                 manifest = json.loads(manifest)
@@ -186,45 +214,7 @@ async def write_replacement(
         if not isinstance(manifest, list):
             manifest = []
         if not manifest:
-            # Empty historical manifests are a flat-file fallback, not a claim
-            # that only one slot exists. Seed the latest *committed-or-earlier*
-            # revision per slot. Files left by a failed transaction can have a
-            # higher `_vN` suffix than the rolled-back media_version; retain
-            # them, but do not let them create duplicate identities.
-            current_version = int(row[0] or 1)
-            selected = {}
-            for legacy_path in _legacy_paths(submission_id):
-                legacy_name = os.path.basename(legacy_path)
-                slot_match = re.fullmatch(r"slot_(\d+)(?:_v(\d+))?\.[A-Za-z0-9]+", legacy_name)
-                if not slot_match:
-                    continue
-                slot_number = int(slot_match.group(1))
-                revision = int(slot_match.group(2) or 1)
-                if revision > current_version:
-                    continue
-                previous = selected.get(slot_number)
-                if previous is None or revision > previous[0]:
-                    selected[slot_number] = (revision, legacy_path, legacy_name)
-            manifest = []
-            for slot_number in sorted(selected):
-                _, legacy_path, legacy_name = selected[slot_number]
-                with open(legacy_path, "rb") as handle:
-                    legacy_hash = hashlib.sha256(handle.read()).hexdigest()
-                manifest.append({
-                    "question_id": None,
-                    "slot_index": slot_number,
-                    "flat_index": slot_number,
-                    "relative_path": legacy_name,
-                    "sha256": legacy_hash,
-                    "mime": (
-                        "image/webp" if legacy_name.endswith(".webp")
-                        else "image/jpeg" if legacy_name.lower().endswith((".jpg", ".jpeg"))
-                        else "image/png" if legacy_name.lower().endswith(".png")
-                        else "image/heic" if legacy_name.lower().endswith(".heic")
-                        else "application/octet-stream"
-                    ),
-                    "media_version": current_version,
-                })
+            manifest = legacy_manifest(canonical_id, int(row[0] or 1))
         matches = []
         for item in manifest:
             if not isinstance(item, dict):
@@ -245,6 +235,7 @@ async def write_replacement(
         target_slot = int(target.get("slot_index", target_flat))
         target_question = target.get("question_id")
         name = f"slot_{target_flat}_v{version}.webp"
+        os.makedirs(base, exist_ok=True)
         path = os.path.join(base, name)
         with open(path, "wb") as handle:
             handle.write(webp_bytes)
@@ -279,20 +270,32 @@ async def write_replacement(
             entries.append(replacement_entry)
         await conn.execute(
             "UPDATE survey_submissions SET media_manifest=%s::jsonb, media_version=%s "
-            "WHERE UPPER(submission_id)=UPPER(%s);",
-            (json.dumps(entries), version, submission_id),
+            "WHERE submission_id=%s;",
+            (json.dumps(entries), version, canonical_id),
         )
-        if approve_reason:
+        if work_owner == "outbox_v2":
+            actor = f"driver:{requester_telegram_id}"
+            await audit(conn, "MEDIA_REPLACEMENT", canonical_id, actor, {"media_version": version})
+            if approve_reason:
+                changed, status = await transition_submission(
+                    conn, canonical_id, "APPROVED", None, actor=actor,
+                    expected_statuses=("REJECTED", "MANUAL_REVIEW", "APPEAL_PENDING"),
+                )
+                if not changed:
+                    raise ValueError(f"replacement cannot approve a {status} submission")
+            else:
+                await enqueue_submission_work(conn, canonical_id, "MEDIA_REPLACEMENT")
+        elif approve_reason:
             await conn.execute(
                 "UPDATE survey_submissions SET status='APPROVED', rejection_reason=NULL, "
-                "moderated_at=NOW() WHERE UPPER(submission_id)=UPPER(%s);",
-                (submission_id,),
+                "moderated_at=NOW() WHERE submission_id=%s;",
+                (canonical_id,),
             )
             await conn.execute(
                 "INSERT INTO outbox_events (event_type, flow_target, aggregate_id, payload, status) "
                 "VALUES ('survey.validated', 'ALL', %s, %s::jsonb, 'PENDING');",
-                (submission_id, json.dumps({
-                    "submission_id": submission_id,
+                (canonical_id, json.dumps({
+                    "submission_id": canonical_id,
                     "status": "APPROVED",
                     "reason": approve_reason,
                     "collaborator_id": row[4],
