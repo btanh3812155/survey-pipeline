@@ -228,7 +228,8 @@ async def change_admin_password(
     if not updated:
         return _redirect(err="db_unavailable")
     await _audit(pool, "ADMIN_PASSWORD_CHANGED", admin_user, {"target": admin_user})
-    return _redirect(msg="password_changed")
+    accounts = await list_admin_accounts(pool)
+    return HTMLResponse(_render(admin_user, accounts, msg="password_changed"))
 
 
 @router.post("/admin/accounts")
