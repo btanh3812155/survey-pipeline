@@ -372,3 +372,74 @@ async def fetch_aggregated_audit_logs(
         logs = [l for l in logs if (l.get("entity_type") or "").upper() == entity_filter.upper()]
 
     return logs[:limit]
+
+
+async def delete_submission_record(
+    sub_id: str,
+    actor: str,
+    *,
+    ip_address: Optional[str] = None,
+    db_pool=None,
+) -> Dict[str, Any]:
+    """Delete one submission and its outbox/idempotency artifacts.
+
+    Financial ledger rows are preserved and block the delete. The audit entry
+    is written in the same transaction as the deletion.
+    """
+    pool = db_pool or get_db_pool()
+    if not pool:
+        raise ValueError("DB_UNAVAILABLE")
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM survey_submissions WHERE submission_id=%s FOR UPDATE",
+                (sub_id,),
+            )
+            if not await cur.fetchone():
+                raise ValueError("NOT_FOUND")
+
+            await cur.execute(
+                "SELECT 1 FROM collaborator_billing_ledger WHERE submission_id=%s",
+                (sub_id,),
+            )
+            if await cur.fetchone():
+                raise ValueError("BILLING_RECORD")
+
+            await cur.execute("SELECT id FROM outbox_events WHERE aggregate_id=%s", (sub_id,))
+            event_ids = [row[0] for row in await cur.fetchall()]
+            attempts = 0
+            if event_ids:
+                await cur.execute(
+                    "SELECT count(*) FROM outbox_delivery_attempts WHERE event_id=ANY(%s)",
+                    (event_ids,),
+                )
+                attempts = int((await cur.fetchone())[0])
+
+            await cur.execute(
+                "SELECT count(*) FROM submission_idempotency WHERE submission_id=%s",
+                (sub_id,),
+            )
+            idempotency_rows = int((await cur.fetchone())[0])
+
+            details = {
+                "submission_id": sub_id,
+                "outbox_events": len(event_ids),
+                "delivery_attempts": attempts,
+                "idempotency_rows": idempotency_rows,
+            }
+            await cur.execute(
+                "INSERT INTO system_audit_log(component_name,action,entity_type,entity_id,"
+                "actor_type,actor_id,ip_address,details) "
+                "VALUES ('admin_data','SUBMISSION_DELETED','SURVEY',%s,'ADMIN',%s,%s,%s::jsonb)",
+                (sub_id, str(actor)[:64], ip_address, json.dumps(details)),
+            )
+
+            if event_ids:
+                await cur.execute(
+                    "DELETE FROM outbox_delivery_attempts WHERE event_id=ANY(%s)", (event_ids,)
+                )
+                await cur.execute("DELETE FROM outbox_events WHERE id=ANY(%s)", (event_ids,))
+            await cur.execute("DELETE FROM submission_idempotency WHERE submission_id=%s", (sub_id,))
+            await cur.execute("DELETE FROM survey_submissions WHERE submission_id=%s", (sub_id,))
+        await conn.commit()
+    return details
