@@ -11,6 +11,11 @@ services:
     environment:
       - ENVIRONMENT=development
       - APP_BUILD_ID=${APP_BUILD_ID:?set APP_BUILD_ID to the release build id}
+      - DURABLE_WEBRTC_ENABLED=${DURABLE_WEBRTC_ENABLED:-false}
+      - DURABLE_LARK_ENABLED=${DURABLE_LARK_ENABLED:-false}
+      - DURABLE_MODERATION_ENABLED=${DURABLE_MODERATION_ENABLED:-false}
+      - DURABLE_APPEALS_ENABLED=${DURABLE_APPEALS_ENABLED:-false}
+      - DURABLE_DRIVE_ENABLED=${DURABLE_DRIVE_ENABLED:-false}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - REDIS_URL=redis://redis:6379/1
