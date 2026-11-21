@@ -168,7 +168,7 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
     <header>
         <div>
             <h1>Quản Lý Cộng Tác Viên (CTV)</h1>
-            <p class="sub">Danh bạ CTV trung tâm: mã, liên hệ, Telegram và hạn mức. Bấm "Sửa" để cập nhật.</p>
+            <p class="sub">Danh bạ CTV trung tâm: mã, liên hệ, Telegram và mục tiêu. Bấm "Sửa" để cập nhật.</p>
         </div>
         <div class="nav-actions">
             <a href="/admin/forms" class="nav-btn">Quản Lý Form</a>
@@ -187,7 +187,7 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
                     <th>Số điện thoại</th>
                     <th>Telegram ID</th>
                     <th>Trạng thái</th>
-                    <th>Hạn mức (tag/quota)</th>
+                    <th>Mục tiêu (tag/quota)</th>
                     <th>Ghi chú</th>
                     <th>Sửa</th>
                 </tr>
