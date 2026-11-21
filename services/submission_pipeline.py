@@ -1168,11 +1168,16 @@ async def _evaluate(
 
                         should_check_fraud = bool(getattr(checks, "enable_anti_fraud", True) and getattr(checks, "require_unique", True))
                         if is_approved and should_check_fraud:
+                            exempt_embeddings, exempt_dhashes = await _load_active_image_exceptions(
+                                deps.db_pool, input.form_id
+                            )
                             intra_dup, intra_reason = await embedding_executor.run_inference(
                                 check_intra_submission_duplicates,
                                 raw_bytes_list, deepcopy(target_q), deepcopy(compat_income),
                                 income_indices=tuple(matched_income_indices),
                                 pil_cache={idx: image.copy() for idx, image in pil_cache.items()},
+                                exempt_embeddings=exempt_embeddings,
+                                exempt_dhashes=exempt_dhashes,
                             )
                             if intra_dup:
                                 is_approved = False
@@ -1206,6 +1211,8 @@ async def _evaluate(
                                             status_str = "REJECTED"
                                             if dup_type == "DATA_DUPLICATE":
                                                 reason_str = f"Số liệu doanh thu các kỳ bị trùng lặp hoàn toàn với phiếu khảo sát đã duyệt trước đây (#{matched_sub_id})! Hệ thống chống gian lận phát hiện số liệu bị sao chép."
+                                            elif dup_type == "IMAGE_DHASH":
+                                                reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{matched_sub_id})! Hệ thống phát hiện ảnh trùng (pHash)."
                                             else:
                                                 reason_str = f"Ảnh chụp đã được sử dụng trong phiếu khảo sát trước (#{matched_sub_id})! Hệ thống Meta DINOv2 phát hiện ảnh bị nộp lại."
                                             ai_res["status"] = "REJECTED"
@@ -1665,6 +1672,42 @@ async def _recover_interruption(
     except Exception as exc:
         logger.error("[SUBMIT] Interruption write failed for #%s: %s", submission_id, type(exc).__name__)
     return None
+
+
+async def _load_active_image_exceptions(db_pool, form_id):
+    """Active form-scoped image exceptions for the intra-submission tier."""
+    if not db_pool or not form_id:
+        return [], []
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT embedding::text AS embedding_text, image_dhash::text AS dhash_text "
+                    "FROM image_dinov2_exceptions WHERE form_id = %s AND expires_at > NOW()",
+                    (form_id,),
+                )
+                rows = await cur.fetchall()
+    except Exception as exc:
+        logger.debug("[IMAGE EXCEPTION] lookup failed: %s", type(exc).__name__)
+        return [], []
+    embeddings = []
+    dhashes = []
+    for row in rows:
+        if isinstance(row, dict):
+            embedding_text, dhash_text = row.get("embedding_text"), row.get("dhash_text")
+        else:
+            embedding_text, dhash_text = row[0], row[1]
+        if embedding_text:
+            try:
+                embeddings.append(json.loads(embedding_text))
+            except (TypeError, ValueError):
+                pass
+        if dhash_text:
+            try:
+                dhashes.append(int(str(dhash_text), 2))
+            except (TypeError, ValueError):
+                pass
+    return embeddings, dhashes
 
 
 def _legacy_work(

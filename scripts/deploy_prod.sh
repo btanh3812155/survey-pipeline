@@ -226,7 +226,8 @@ if (( pending )); then
       -v "migration_sha256=${EXPECTED_LEDGER[i]#*|}" \
       -v "migration_001_sha256=${EXPECTED_LEDGER[0]#*|}" \
       -v "migration_002_sha256=${EXPECTED_LEDGER[1]#*|}" \
-      -v "migration_003_sha256=${EXPECTED_LEDGER[2]#*|}" >/dev/null
+      -v "migration_003_sha256=${EXPECTED_LEDGER[2]#*|}" \
+      -v "migration_004_sha256=${EXPECTED_LEDGER[3]#*|}" >/dev/null
     check_ledger
     (( ${#LEDGER[@]} > i )) || die 'migration did not record the expected checksum'
   done

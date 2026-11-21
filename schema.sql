@@ -260,6 +260,7 @@ CREATE TABLE IF NOT EXISTS image_dinov2_exceptions (
     form_id VARCHAR(64) NOT NULL,
     image_sha256 CHAR(64) NOT NULL,
     embedding vector(384),
+    image_dhash BIT(64),
     note TEXT,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

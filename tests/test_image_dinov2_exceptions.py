@@ -54,3 +54,26 @@ async def test_active_form_exception_skips_inter_submission_tiers(database):
     assert duplicate is True
     assert matched == sid
     assert kind == "IMAGE_DHASH"
+
+
+async def test_active_dhash_exception_skips_inter_submission_tiers(database):
+    dsn, conn, submission, _event, _read, _users = database
+    sid = submission(status="APPROVED")
+    image = Image.new("RGB", (32, 32), "white")
+    dhash = format(compute_dhash_int(image), "064b")
+    conn.execute(
+        "UPDATE survey_submissions SET image_dhash=%s::bit(64) WHERE submission_id=%s",
+        (dhash, sid),
+    )
+    conn.execute(
+        "INSERT INTO image_dinov2_exceptions(form_id,image_sha256,image_dhash,expires_at) "
+        "VALUES (%s,%s,%s::bit(64),NOW()+INTERVAL '1 day')",
+        ("TB_TEST_DHASH", "b" * 64, dhash),
+    )
+    try:
+        async with AsyncConnectionPool(dsn, open=False, min_size=1, max_size=2) as pool:
+            assert await check_inter_submission_duplicates(
+                pool, image, None, form_id="TB_TEST_DHASH",
+            ) == (False, None, None)
+    finally:
+        conn.execute("DELETE FROM image_dinov2_exceptions WHERE form_id='TB_TEST_DHASH'")

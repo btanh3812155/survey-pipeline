@@ -106,6 +106,8 @@ def check_intra_submission_duplicates(
     weekly_incomes: Optional[Dict[str, Any]] = None,
     income_indices: Optional[List[int]] = None,
     pil_cache: Optional[Dict[int, Image.Image]] = None,
+    exempt_embeddings: Optional[List[List[float]]] = None,
+    exempt_dhashes: Optional[List[int]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Verifies that no two weekly income statement images within the same submission
@@ -160,12 +162,36 @@ def check_intra_submission_duplicates(
 
     # 1. Compare visual pairs
     n = len(unique_slot_indices)
+    exempt = []
+    for idx in range(n):
+        matched = False
+        dh = dhashes[idx]
+        if dh is not None:
+            for stored_dhash in exempt_dhashes or []:
+                if hamming_distance(dh, stored_dhash) <= 6:
+                    matched = True
+                    break
+        if not matched and embeddings[idx] is not None:
+            for stored_embedding in exempt_embeddings or []:
+                if compute_cosine_similarity(embeddings[idx], stored_embedding) >= 0.99:
+                    matched = True
+                    break
+        exempt.append(matched)
+    if any(exempt):
+        logger.info(
+            "✅ [IMAGE EXCEPTION] %d of %d unique images exempt for this submission",
+            sum(exempt), n,
+        )
+
     for i in range(n):
         for j in range(i + 1, n):
             idx_i = unique_slot_indices[i]
             idx_j = unique_slot_indices[j]
             week_i_num = i + 1
             week_j_num = j + 1
+
+            if exempt[i] or exempt[j]:
+                continue
 
             # Visual similarity alone is not proof: every weekly screen of the same
             # driver/app shares the same layout (measured dHash distance is 0-4
@@ -208,6 +234,8 @@ def check_intra_submission_duplicates(
         weeks_data = [weekly_incomes.get(f"week_{w+1}", {}) for w in range(n)]
         for i in range(len(weeks_data)):
             for j in range(i + 1, len(weeks_data)):
+                if exempt[i] or exempt[j]:
+                    continue
                 wi = weeks_data[i]
                 wj = weeks_data[j]
                 if not wi or not wj:
@@ -254,18 +282,27 @@ async def check_inter_submission_duplicates(
     try:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
-                if form_id and primary_embedding is not None and len(primary_embedding) == 384:
-                    vec_str = "[" + ",".join(str(x) for x in primary_embedding) + "]"
+                if form_id:
+                    vec_str = (
+                        "[" + ",".join(str(x) for x in primary_embedding) + "]"
+                        if primary_embedding is not None and len(primary_embedding) == 384
+                        else None
+                    )
                     await cur.execute("SAVEPOINT dinov2_exception")
                     try:
                         await cur.execute(
                             """
                             SELECT 1 FROM image_dinov2_exceptions
-                            WHERE form_id = %s AND expires_at > NOW() AND embedding IS NOT NULL
-                              AND (1 - (embedding <=> %s::vector)) >= 0.99
+                            WHERE form_id = %s AND expires_at > NOW()
+                              AND (
+                                (image_dhash IS NOT NULL
+                                 AND bit_count(image_dhash # %s::bit(64)) <= 6)
+                                OR (%s::vector IS NOT NULL AND embedding IS NOT NULL
+                                    AND (1 - (embedding <=> %s::vector)) >= 0.99)
+                              )
                             LIMIT 1;
                             """,
-                            (form_id, vec_str),
+                            (form_id, dhash_bin, vec_str, vec_str),
                         )
                         exempt = await cur.fetchone()
                         await cur.execute("RELEASE SAVEPOINT dinov2_exception")
@@ -273,7 +310,7 @@ async def check_inter_submission_duplicates(
                         await cur.execute("ROLLBACK TO SAVEPOINT dinov2_exception")
                         exempt = None
                     if exempt:
-                        logger.info("✅ [DINOV2 EXCEPTION] Active form-scoped exception matched; inter-submission tiers skipped.")
+                        logger.info("✅ [IMAGE EXCEPTION] Active form-scoped exception matched; inter-submission tiers skipped.")
                         return False, None, None
 
                 # 1. Tier 0: Check identical weekly revenue numbers to past approved submissions
