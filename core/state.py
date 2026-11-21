@@ -9,6 +9,8 @@ import os
 import json
 import logging
 import secrets
+import hashlib
+import time
 from typing import Optional, Dict, Any
 from psycopg_pool import AsyncConnectionPool
 import redis.asyncio as aioredis
@@ -17,6 +19,7 @@ from services.vision_ai import DualModelVisionClient
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config import settings
+from core.passwords import verify_password
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA
 
 logger = logging.getLogger("core.state")
@@ -105,10 +108,36 @@ def refresh_form_registry_from_disk(force: bool = False) -> bool:
 admin_security = HTTPBasic()
 
 
+_ADMIN_HASH_CACHE: Dict[str, float] = {}
+_ADMIN_HASH_CACHE_TTL = 300.0
+_ADMIN_HASH_CACHE_MAX = 32
+
+
+def _verify_admin_password(password: str, encoded: str) -> bool:
+    """PBKDF2 is expensive; cache successful Basic credentials for a short TTL.
+
+    Only a SHA-256 of (password + hash) is stored, never the plaintext.
+    """
+    key = hashlib.sha256(f"{password}\0{encoded}".encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    expiry = _ADMIN_HASH_CACHE.get(key)
+    if expiry is not None and expiry > now:
+        return True
+    if not verify_password(password, encoded):
+        return False
+    if len(_ADMIN_HASH_CACHE) >= _ADMIN_HASH_CACHE_MAX:
+        _ADMIN_HASH_CACHE.clear()
+    _ADMIN_HASH_CACHE[key] = now + _ADMIN_HASH_CACHE_TTL
+    return True
+
+
 def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)) -> str:
     """Protects administrative endpoints with HTTP Basic Authentication."""
     is_user_ok = secrets.compare_digest(credentials.username, settings.ADMIN_USERNAME)
-    is_pass_ok = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
+    if settings.ADMIN_PASSWORD_HASH:
+        is_pass_ok = _verify_admin_password(credentials.password, settings.ADMIN_PASSWORD_HASH)
+    else:
+        is_pass_ok = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
     if not (is_user_ok and is_pass_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -17,6 +17,7 @@ services:
       - DURABLE_APPEALS_ENABLED=${DURABLE_APPEALS_ENABLED:-false}
       - DURABLE_DRIVE_ENABLED=${DURABLE_DRIVE_ENABLED:-false}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - REDIS_URL=redis://redis:6379/1
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -63,6 +64,7 @@ services:
     environment:
       - ENVIRONMENT=development
       - APP_BUILD_ID=${APP_BUILD_ID:?set APP_BUILD_ID to the release build id}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - OUTBOX_WORKER_ID=${OUTBOX_WORKER_ID:?set a stable OUTBOX_WORKER_ID}
       - OUTBOX_V2_WORKER_ENABLED=true

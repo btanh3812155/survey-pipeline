@@ -3,6 +3,8 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
+from core.passwords import is_supported_password_hash, MIN_PRODUCTION_ITERATIONS
+
 VALID_ENVIRONMENTS = {"production", "development", "test"}
 BUILTIN_ADMIN_PASSWORD = "12345678"
 BUILTIN_APP_SECRET = "survey_secret_salt_pepper_survey_pipeline_2026"
@@ -21,6 +23,7 @@ class Settings(BaseSettings):
     # admin credentials
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "12345678"
+    ADMIN_PASSWORD_HASH: Optional[str] = None
     # security pepper / secret
     APP_SECRET: str = "survey_secret_salt_pepper_survey_pipeline_2026"
 
@@ -94,9 +97,17 @@ class Settings(BaseSettings):
             )
         self.ENVIRONMENT = environment
 
+        if self.ADMIN_PASSWORD_HASH:
+            minimum = MIN_PRODUCTION_ITERATIONS if environment == "production" else 1
+            if not is_supported_password_hash(self.ADMIN_PASSWORD_HASH, min_iterations=minimum):
+                raise ValueError("ADMIN_PASSWORD_HASH is malformed or unsupported")
         if environment == "production":
-            if not self.ADMIN_PASSWORD or self.ADMIN_PASSWORD == BUILTIN_ADMIN_PASSWORD:
-                raise ValueError("production ADMIN_PASSWORD must not be empty or the built-in default")
+            if not self.ADMIN_PASSWORD_HASH and (
+                not self.ADMIN_PASSWORD or self.ADMIN_PASSWORD == BUILTIN_ADMIN_PASSWORD
+            ):
+                raise ValueError(
+                    "production requires ADMIN_PASSWORD_HASH or a non-default ADMIN_PASSWORD"
+                )
             if (
                 not self.APP_SECRET
                 or self.APP_SECRET == BUILTIN_APP_SECRET
