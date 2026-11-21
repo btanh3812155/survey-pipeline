@@ -753,6 +753,7 @@
         // Loaded from /api/v1/submissions at startup
         let RAW_SUBMISSIONS = [];
         let FORMS_REGISTRY = {};
+        let R2_ENABLED = true;
         let currentFormId = 'all';
 
         // Application State
@@ -779,6 +780,7 @@
                 const data = await resp.json();
                 RAW_SUBMISSIONS = data.submissions || [];
                 FORMS_REGISTRY = data.forms || {};
+                R2_ENABLED = data.r2_enabled !== false;
             } catch (e) {
                 console.error('loadSubmissions failed', e);
             }
@@ -1103,7 +1105,7 @@
                                 { id: 'lark_sync', label: 'Lark' },
                                 { id: 'gdrive_sync', label: 'Drive' },
                                 { id: 'billing_ledger', label: 'Ví' }
-                            ];
+                            ].filter(d => R2_ENABLED || d.id !== 'r2_upload');
                             defs.forEach(d => {
                                 const st = (acts[d.id] && acts[d.id].status) || 'PENDING';
                                 let cls = 'badge-pill';
@@ -1115,8 +1117,9 @@
                                 chips += `<span class="badge ${cls}" style="padding:1px 5px; font-size:0.68rem; margin-right:3px;" title="${d.label}: ${st}">${d.label} ${icon}</span>`;
                             });
                             rowHtml += `<td>${chips}</td>`;
-                            rowHtml += `<td style="text-align:right;">
+                            rowHtml += `<td style="text-align:right; white-space:nowrap;">
                                 <button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem;" onclick="openInspectorModal('${r.submission_id}')">Xem</button>
+                                ${r.mode === 'TEST_DEV_MODE' ? '' : `<button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem; color:#f87171; border-color:#7f1d1d;" onclick="deleteSubmission('${r.submission_id}')">Xóa</button>`}
                             </td>`;
                         } else {
                             const val = getFieldValue(r, k);
@@ -1278,7 +1281,7 @@
                                     { id: 'lark_sync', name: 'Đồng bộ bảng Lark Base' },
                                     { id: 'gdrive_sync', name: 'Đồng bộ Google Drive Deliverables' },
                                     { id: 'billing_ledger', name: 'Sổ cái thù lao đối soát' }
-                                ];
+                                ].filter(d => R2_ENABLED || d.id !== 'r2_upload');
                                 return defs.map(d => {
                                     const a = acts[d.id] || {};
                                     const st = a.status || 'PENDING';
@@ -1385,6 +1388,26 @@
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
         }
+        async function deleteSubmission(subId) {
+            if (!confirm(`Xóa vĩnh viễn phiếu #${subId}?\n\nHành động này không thể hoàn tác.`)) return;
+            try {
+                const resp = await fetch(`/api/v1/submissions/${encodeURIComponent(subId)}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                });
+                const body = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    alert(body.detail || 'Không thể xóa phiếu.');
+                    return;
+                }
+                await loadSubmissions();
+                applyFilters();
+                alert(`Đã xóa phiếu #${subId}.`);
+            } catch (e) {
+                alert('Lỗi kết nối khi xóa phiếu.');
+            }
+        }
+
         async function retrySubmissionActions(subId) {
             try {
                 const resp = await fetch(`/api/v1/submissions/${encodeURIComponent(subId)}/retry-actions`, { method: 'POST' });

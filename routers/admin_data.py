@@ -8,12 +8,13 @@ and temporary dev test persistence.
 import os
 import re
 import logging
+import shutil
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, status
 from fastapi.responses import HTMLResponse, FileResponse
 from config import settings
 from core.state import verify_admin_auth, FORM_REGISTRY, DEV_STORAGE_FILE, STATIC_DIR, get_db_pool
-from core.repositories import fetch_aggregated_submissions
+from core.repositories import fetch_aggregated_submissions, delete_submission_record
 from services.submissions_viewer_html import render_submissions_viewer_html
 from services.google_drive_delivery import has_google_credentials, sync_all_approved_to_drive
 from services.submission_media import load_manifest, manifest_paths, safe_media_path
@@ -64,6 +65,11 @@ async def get_all_submissions_api(
     return {
         "count": len(subs),
         "submissions": subs,
+        "r2_enabled": bool(
+            settings.R2_ACCOUNT_ID
+            and settings.R2_ACCESS_KEY_ID
+            and settings.R2_SECRET_ACCESS_KEY
+        ),
         "forms": {fid: {"title": schema.title} for fid, schema in FORM_REGISTRY.items()},
         "summary": {
             "total": len(subs),
@@ -72,6 +78,46 @@ async def get_all_submissions_api(
             "manual_review": sum(1 for s in subs if s.get("status") in ("MANUAL_REVIEW", "APPEAL_PENDING")),
         },
     }
+
+
+@router.delete("/api/v1/submissions/{sub_id}")
+async def delete_submission(
+    sub_id: str,
+    request: Request,
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Delete one submission and its outbox artifacts; financial rows block it."""
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", sub_id or "")
+    if not safe_id or safe_id != sub_id:
+        raise HTTPException(status_code=400, detail="Mã phiếu không hợp lệ")
+    try:
+        details = await delete_submission_record(
+            safe_id,
+            admin_user,
+            ip_address=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail="Không tìm thấy phiếu.") from None
+        if code == "BILLING_RECORD":
+            raise HTTPException(
+                status_code=409,
+                detail="Phiếu đã có sổ cái thù lao; không thể xóa.",
+            ) from None
+        raise HTTPException(status_code=503, detail="Cơ sở dữ liệu không khả dụng.") from None
+
+    media_root = os.path.realpath(os.path.join(os.getcwd(), "data", "submission_photos"))
+    target = os.path.realpath(os.path.join(media_root, safe_id))
+    if target.startswith(media_root + os.sep):
+        shutil.rmtree(target, ignore_errors=True)
+    upload = os.path.join(os.getcwd(), "data", "uploads", "surveys", f"{safe_id}.webp")
+    try:
+        if os.path.isfile(upload):
+            os.remove(upload)
+    except OSError as exc:
+        logger.warning("Could not remove fallback media for %s: %s", safe_id, exc)
+    return {"status": "deleted", "submission_id": safe_id, "details": details}
 
 
 @router.get("/api/v1/submissions/{sub_id}/photos")

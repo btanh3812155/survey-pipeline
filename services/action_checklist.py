@@ -511,7 +511,10 @@ async def dispatch_action_checklist(
         try:
             from services.storage_r2 import R2StorageClient
             r2 = R2StorageClient()
-            if raw_bytes:
+            if not r2.is_configured:
+                await finish("r2_upload", token, "SKIPPED", {"reason": "R2_NOT_CONFIGURED"})
+                logger.debug("[CHECKLIST] R2 skipped for #%s: not configured", submission_id)
+            elif raw_bytes:
                 r2_key = f"surveys/{submission_id}.webp"
                 r2_url = await r2.upload_image(file_name=r2_key, webp_bytes=raw_bytes)
                 await finish("r2_upload", token, "COMPLETED", {"r2_url": r2_url, "key": r2_key})
