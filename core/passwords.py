@@ -2,7 +2,9 @@
 
 PBKDF2-HMAC-SHA256 is stdlib-only, so the production image needs no new
 dependency. Encoded form:
-``pbkdf2_sha256$<iterations>$<salt_b64url>$<digest_b64url>``.
+``pbkdf2_sha256:<iterations>:<salt_b64url>:<digest_b64url>``.
+Colons are used because a ``$`` in a compose ``.env`` value is interpreted
+as variable interpolation; the legacy ``$`` form is still accepted on read.
 """
 
 import base64
@@ -29,7 +31,14 @@ def _b64_decode(value: str) -> bytes:
 
 def _parse(encoded: object):
     try:
-        algorithm, iterations_text, salt_text, digest_text = str(encoded).split("$", 3)
+        text = str(encoded)
+        if text.count(":") == 3:
+            parts = text.split(":")
+        elif text.count("$") == 3:
+            parts = text.split("$")
+        else:
+            return None
+        algorithm, iterations_text, salt_text, digest_text = parts
         if algorithm != ALGORITHM:
             return None
         iterations = int(iterations_text)
@@ -61,7 +70,7 @@ def hash_password(
         raise ValueError("salt must be at least 8 bytes")
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return (
-        f"{ALGORITHM}${iterations}${_b64_encode(salt)}${_b64_encode(digest)}"
+        f"{ALGORITHM}:{iterations}:{_b64_encode(salt)}:{_b64_encode(digest)}"
     )
 
 

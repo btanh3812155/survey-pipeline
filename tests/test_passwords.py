@@ -15,8 +15,10 @@ from core.state import verify_admin_auth
 
 def test_password_hash_roundtrip():
     encoded = hash_password("correct horse battery staple", iterations=1_000)
-    assert encoded.startswith("pbkdf2_sha256$1000$")
+    assert encoded.startswith("pbkdf2_sha256:1000:")
     assert verify_password("correct horse battery staple", encoded)
+    legacy = "$".join(encoded.split(":"))
+    assert verify_password("correct horse battery staple", legacy)
     assert not verify_password("wrong password", encoded)
     assert not verify_password("correct horse battery staple", "not-a-hash")
 
