@@ -151,27 +151,29 @@ async def claim(conn_str, slots=EXECUTION_SLOTS, flow_target=None):
                   AND (e.aggregate_kind <> 'submission' OR EXISTS (
                       SELECT 1 FROM survey_submissions s WHERE s.submission_id=e.aggregate_id AND s.work_owner='outbox_v2'))
             )
-            SELECT e.* FROM outbox_events e JOIN eligible candidate ON candidate.id=e.id
+            SELECT e.id FROM outbox_events e JOIN eligible candidate ON candidate.id=e.id
             ORDER BY candidate.turn, candidate.last_claim NULLS FIRST, e.available_at, e.created_at, e.id
             LIMIT %s FOR UPDATE OF e SKIP LOCKED
             """,
             (flow_target, flow_target, min(slots, EXECUTION_SLOTS)),
         )
-        events = await cur.fetchall()
-        for event in events:
-            token = uuid4().hex
-            event["claimed_by"] = token
-            event["attempts"] += 1
-            await conn.execute(
+        events = []
+        for candidate in await cur.fetchall():
+            claimed = await conn.execute(
                 "UPDATE outbox_events SET status='PROCESSING', claimed_by=%s, attempts=attempts+1, "
                 "locked_at=NOW(), lease_until=NOW()+make_interval(secs => %s), terminal_reason=NULL "
-                "WHERE id=%s AND status='PENDING'",
-                (token, LEASE_SECONDS, event["id"]),
+                "WHERE id=%s AND status='PENDING' AND available_at<=NOW() AND attempts<max_attempts RETURNING *",
+                (uuid4().hex, LEASE_SECONDS, candidate["id"]),
             )
+            # A candidate from the ranking snapshot may no longer be eligible.
+            event = await claimed.fetchone()
+            if event is None:
+                continue
             await conn.execute(
                 "INSERT INTO outbox_delivery_attempts(event_id,claim_token,attempt_number) VALUES (%s,%s,%s)",
-                (event["id"], token, event["attempts"]),
+                (event["id"], event["claimed_by"], event["attempts"]),
             )
+            events.append(event)
             logger.info("outbox_claim event_id=%s target=%s attempt=%s queue_age_seconds=%.3f",
                         event["id"], event["flow_target"], event["attempts"],
                         (datetime.now(timezone.utc) - event["created_at"]).total_seconds())

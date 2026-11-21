@@ -80,7 +80,11 @@ async def test_unique_claim_fencing_retry_exhaustion_and_uncertain_expiry(databa
     claimed = [e for batch in batches for e in batch if e["id"] == eid]
     assert len(claimed) == 1
     first = claimed[0]
-    assert read(eid)["attempts"] == 1
+    row = read(eid)
+    assert row["attempts"] == 1 and row["claimed_by"] == first["claimed_by"]
+    assert conn.execute(
+        "SELECT claim_token, attempt_number FROM outbox_delivery_attempts WHERE event_id=%s", (eid,)
+    ).fetchall() == [{"claim_token": first["claimed_by"], "attempt_number": 1}]
     assert await queue.finish(dsn, first, Outcome("RETRYABLE", "RATE_LIMITED", retry_after=30))
     row = read(eid)
     assert row["status"] == "PENDING" and row["available_at"] > row["locked_at"]

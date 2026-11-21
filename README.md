@@ -65,6 +65,8 @@ The clean-checkout CI tests authenticate Telegram webhook requests with a test-o
 
 Clean-checkout replay (no `.env`, private driver dataset, or checkout-local virtualenv): **830 passed, 67 skipped** in the unit job, including a clean placeholder gate; disposable PostgreSQL **76 passed, 1 skipped**, followed by **10** H1 and **126** runner/outbox passes. PostgreSQL and optional browser checks skipped by the unit job are separate from its unit-test pass count.
 
+Concurrent outbox workers return a claim and record its attempt only when the conditional update acquires the lease. The disposable PostgreSQL regression verifies that two competing claimers produce one lease token and one attempt record.
+
 ## Local development
 
 Run the test target with `make test` (uses `.venv/bin/python -m pytest tests -q`).
