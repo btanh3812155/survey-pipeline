@@ -453,13 +453,13 @@ async def test_driver_bot_quota_shows_own_quotas():
         "core.quotas.resolve_ctv_code_for_telegram", AsyncMock(return_value="TUAN_LM_HCM_001")
     ), patch(
         "core.quotas.build_ctv_quota_report",
-        AsyncMock(return_value="📊 <b>Hạn mức CTV</b> TUAN_LM_HCM_001"),
+        AsyncMock(return_value="📊 <b>Mục tiêu CTV</b> TUAN_LM_HCM_001"),
     ) as report:
         await runner.handle_driver_command(
             chat_id=42, user_id=111, text="/quota", from_user={"first_name": "CTV"}
         )
     report.assert_awaited_once_with(runner.db_pool, "TUAN_LM_HCM_001")
-    assert "Hạn mức CTV" in send.await_args[0][1]
+    assert "Mục tiêu CTV" in send.await_args[0][1]
 
 
 @pytest.mark.asyncio
@@ -472,7 +472,7 @@ async def test_admin_bot_quota_accepts_explicit_code(monkeypatch):
         "core.quotas.resolve_ctv_code_from_ref", AsyncMock(return_value="ALPHA_001")
     ), patch(
         "core.quotas.build_ctv_quota_report",
-        AsyncMock(return_value="📊 <b>Hạn mức CTV</b> ALPHA_001"),
+        AsyncMock(return_value="📊 <b>Mục tiêu CTV</b> ALPHA_001"),
     ) as report:
         await runner.handle_command(
             chat_id=-100, text="/quota @alpha_001", from_user_id=999

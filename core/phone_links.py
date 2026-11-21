@@ -122,6 +122,46 @@ async def get_telegram_id_for_phone(phone, db_pool=None, *, submitted_at: Option
     return None
 
 
+async def get_notification_telegram_target(
+    phone, db_pool=None, *, submitted_at: Optional[datetime] = None
+) -> Optional[Tuple[int, bool]]:
+    """Notification target for a phone answer: prefer a trusted binding, else the
+    latest non-conflicted binding that existed at submission time.
+
+    Verification is not required to receive a verdict; it is required for actions.
+    Returns ``(telegram_user_id, verified)`` or ``None``.
+    """
+    normalized = normalize_vn_phone(phone)
+    if not normalized or (submitted_at is not None and (
+        not isinstance(submitted_at, datetime) or submitted_at.utcoffset() is None
+    )):
+        return None
+    pool = db_pool or get_db_pool()
+    if not pool:
+        return None
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT telegram_user_id, source FROM phone_telegram_links "
+                    "WHERE phone_normalized = %s AND telegram_user_id > 0 "
+                    "AND COALESCE(source, '') <> %s "
+                    "AND (%s::timestamptz IS NULL OR updated_at <= %s) "
+                    "ORDER BY (source IN (%s, %s)) DESC, updated_at DESC LIMIT 1;",
+                    (
+                        normalized, CONFLICTED_PHONE_LINK_SOURCE,
+                        submitted_at, submitted_at, *VERIFIED_PHONE_LINK_SOURCES,
+                    ),
+                )
+                row = await cur.fetchone()
+                if row and row[0] and int(row[0]) > 0:
+                    verified = str(row[1] or "") in VERIFIED_PHONE_LINK_SOURCES
+                    return int(row[0]), verified
+    except Exception as e:
+        logger.debug("phone notification target lookup failed (%s)", type(e).__name__)
+    return None
+
+
 async def get_verified_phone_for_telegram_user(
     telegram_user_id, db_pool=None
 ) -> Optional[str]:

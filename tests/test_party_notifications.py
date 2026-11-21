@@ -215,11 +215,11 @@ async def test_question_source_resolves_phone_mapping_to_chat_id(monkeypatch):
     monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
     monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
-    mapping = AsyncMock(return_value=9241303232)
+    mapping = AsyncMock(return_value=(9241303232, True))
     phone_lookup = AsyncMock(return_value=111222333)
     collab_lookup = AsyncMock(return_value=987654321)
 
-    with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+    with patch("routers.survey.get_notification_telegram_target", mapping), \
          patch("main.lookup_telegram_user_by_phone", phone_lookup), \
          patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
          patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
@@ -243,6 +243,56 @@ async def test_question_source_resolves_phone_mapping_to_chat_id(monkeypatch):
     _, payload = client.calls[0]
     assert payload["chat_id"] == 9241303232
     assert "DEV-PHONE-MAP" in payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_unverified_phone_mapping_sends_verification_notice(monkeypatch):
+    """An unverified binding still receives the verdict, with the wrong-number notice."""
+    from config import settings
+    from routers import survey as survey_router
+
+    class Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 9913}}
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            return Resp()
+
+    client = Client()
+    monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
+    monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
+    mapping = AsyncMock(return_value=(9241303232, False))
+
+    with patch("routers.survey.get_notification_telegram_target", mapping), \
+         patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
+        await dispatch_submission_telegram_notifications(
+            submission_id="DEV-UNVERIFIED-PHONE",
+            status_str="MANUAL_REVIEW",
+            driver_phone="0932090967",
+            driver_name="[TEST] unverified phone",
+            collaborator_id="0932090967",
+            reason_str="Unverified phone path",
+            form_id="TB_GSM_2026_Nov_Test",
+            recipient_kind="driver",
+            submitted_at=SUBMITTED_AT,
+        )
+
+    mapping.assert_awaited_once_with("0932090967", submitted_at=SUBMITTED_AT)
+    assert len(client.calls) == 1
+    _, payload = client.calls[0]
+    assert payload["chat_id"] == 9241303232
+    assert "không phải của bạn" in payload["text"]
+    assert "xác thực" in payload["text"]
+    assert payload["reply_markup"]["keyboard"][0][0]["request_contact"] is True
 
 
 @pytest.mark.asyncio
@@ -272,7 +322,7 @@ async def test_question_source_without_mapping_skips_send(monkeypatch, caplog):
     collab_lookup = AsyncMock(return_value=987654321)
 
     with caplog.at_level(logging.WARNING, logger="routers.survey"):
-        with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+        with patch("routers.survey.get_notification_telegram_target", mapping), \
              patch("main.lookup_telegram_user_by_phone", phone_lookup), \
              patch("main.lookup_telegram_user_for_collaborator", collab_lookup), \
              patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
@@ -291,7 +341,7 @@ async def test_question_source_without_mapping_skips_send(monkeypatch, caplog):
     phone_lookup.assert_not_awaited()
     collab_lookup.assert_not_awaited()
     assert client.calls == []
-    assert "no verified phone_telegram_links mapping" in caplog.text
+    assert "no phone_telegram_links mapping" in caplog.text
     assert "0932090967" not in caplog.text
 
 
@@ -320,9 +370,9 @@ async def test_question_source_rejects_raw_chat_id_and_username(monkeypatch):
     monkeypatch.setattr(survey_router, "get_http_client", lambda: client)
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:test-driver", raising=False)
     monkeypatch.setattr(settings, "TELEGRAM_ADMIN_BOT_TOKEN", None, raising=False)
-    mapping = AsyncMock(return_value=999999999)
+    mapping = AsyncMock(return_value=(999999999, True))
 
-    with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+    with patch("routers.survey.get_notification_telegram_target", mapping), \
          patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
         for value in ("9241303232", "@JerryTest"):
             await dispatch_submission_telegram_notifications(
@@ -363,7 +413,7 @@ async def test_question_source_non_phone_answer_skips_send(monkeypatch, caplog):
     mapping = AsyncMock(return_value=None)
 
     with caplog.at_level(logging.WARNING, logger="routers.survey"):
-        with patch("routers.survey.get_telegram_id_for_phone", mapping), \
+        with patch("routers.survey.get_notification_telegram_target", mapping), \
              patch("main.send_telegram_direct_message", survey_router.send_telegram_direct_message):
             await dispatch_submission_telegram_notifications(
                 submission_id="DEV-GARBAGE",
@@ -410,7 +460,7 @@ def test_unmapped_question_phone_still_notifies_admin(monkeypatch, tmp_path):
     ctv_lookup = AsyncMock(side_effect=AssertionError("CTV records must not authorize phone delivery"))
     with patch.object(survey_router, "send_telegram_notification", admin), \
          patch.object(survey_router, "dispatch_action_checklist", AsyncMock()), \
-         patch.object(survey_router, "get_telegram_id_for_phone", mapping), \
+         patch.object(survey_router, "get_notification_telegram_target", mapping), \
          patch("main.send_telegram_direct_message", direct), \
          patch("main.lookup_telegram_user_by_phone", driver_lookup), \
          patch("main.lookup_telegram_user_for_collaborator", ctv_lookup):
@@ -442,9 +492,9 @@ async def test_question_verdict_requires_original_aware_submission_time(monkeypa
     from routers import survey
 
     monkeypatch.setattr(settings, "TELEGRAM_DRIVER_BOT_TOKEN", "123:offline-time-check")
-    mapping = AsyncMock(return_value=333)
+    mapping = AsyncMock(return_value=(333, True))
     sender = AsyncMock(return_value=True)
-    with patch.object(survey, "get_telegram_id_for_phone", mapping), \
+    with patch.object(survey, "get_notification_telegram_target", mapping), \
          patch("main.send_telegram_direct_message", sender):
         await survey.dispatch_submission_telegram_notifications(
             submission_id="DEV-TIME-UNKNOWN", status_str="APPROVED",

@@ -1675,7 +1675,7 @@ class TelegramPollingRunner:
             {"command": "start", "description": "Bắt đầu / liên kết CTV"},
             {"command": "forms", "description": "Biểu mẫu đang mở"},
             {"command": "surveys", "description": "Khảo sát của tôi"},
-            {"command": "quota", "description": "Hạn mức nộp phiếu của tôi"},
+            {"command": "quota", "description": "Mục tiêu nộp phiếu của tôi"},
             {"command": "linkphone", "description": "Liên kết số điện thoại với Telegram"},
             {"command": "appeal", "description": "Phúc khảo một phiếu"},
             {"command": "support", "description": "Yêu cầu hỗ trợ"},
@@ -1689,7 +1689,7 @@ class TelegramPollingRunner:
                 {"command": "forms", "description": "Biểu mẫu đang mở"},
                 {"command": "surveys", "description": "Tra cứu phiếu theo CTV hoặc số điện thoại"},
                 *[item for item in commands if item["command"] in ("help", "close")],
-                {"command": "quota", "description": "Hạn mức theo mã CTV"},
+                {"command": "quota", "description": "Mục tiêu theo mã CTV"},
                 {"command": "stats", "description": "Thống kê tiến độ duyệt phiếu"},
             ]
         try:
@@ -2653,7 +2653,7 @@ class DriverBotRunner(TelegramPollingRunner):
                 "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
                 "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
                 "• <code>/forms</code> - Xem biểu mẫu đang mở gần đây.\n"
-                "3. <b>Xem hạn mức:</b> Gõ <code>/quota</code> để xem hạn mức nộp phiếu của bạn.\n"
+                "3. <b>Xem mục tiêu:</b> Gõ <code>/quota</code> để xem mục tiêu nộp phiếu của bạn.\n"
                 "3b. <b>Liên kết số điện thoại:</b> Gõ <code>/linkphone 09xxxxxxxx</code> hoặc chia sẻ danh bạ.\n"
                 "4. <b>Bổ sung ảnh chưa đạt:</b> Bấm [📸 Gửi lại ảnh] rồi gửi ảnh mới trực tiếp vào chat.\n"
                 "5. <b>Phúc khảo:</b> Gõ <code>/appeal &lt;mã_phiếu&gt;</code> nếu kết quả chưa chính xác.\n"

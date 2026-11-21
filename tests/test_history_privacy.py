@@ -98,9 +98,6 @@ def test_history_rejects_anonymous_and_wrong_auth_before_processing(history_env,
         "os",
         type("FakeOS", (), {"path": type("FakePath", (), {"exists": fail_if_called("storage")})})(),
     )
-    monkeypatch.setattr(
-        survey_mod, "get_telegram_id_for_phone", lambda phone: verified_phone_mapping.get(phone)
-    )
 
     anonymous = client.get(f"/api/v1/surveys/history?phone={PHONE}")
     invalid_phone = client.get("/api/v1/surveys/history?phone=not-a-phone")
@@ -119,9 +116,6 @@ def test_history_rejects_anonymous_and_wrong_auth_before_processing(history_env,
 def test_admin_history_is_not_limited_to_a_linked_phone(history_env, monkeypatch):
     client, pool, redis, _limiter = history_env
     verified_phone_mapping = {PHONE: 9241303232}
-    monkeypatch.setattr(
-        survey_mod, "get_telegram_id_for_phone", lambda phone: verified_phone_mapping.get(phone)
-    )
     auth = (ADMIN_USER, ADMIN_PASSWORD)
 
     response = client.get(

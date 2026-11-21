@@ -25,7 +25,11 @@ from config import settings
 from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk, verify_admin_auth
 from core.cache import BoundedTTLCache
 from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug
-from core.phone_links import normalize_vn_phone, get_telegram_id_for_phone, phone_normalization_sql
+from core.phone_links import (
+    get_notification_telegram_target,
+    normalize_vn_phone,
+    phone_normalization_sql,
+)
 from core.submission_ids import normalize_submission_id
 from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone
@@ -1168,6 +1172,18 @@ def render_driver_submission_verdict_message(
         return text, None
 
 
+def _verification_reply_markup() -> dict:
+    """Reply keyboard used when an unverified phone receives a verdict."""
+    return {
+        "keyboard": [
+            [{"text": "📱 Xác Thực Số Điện Thoại", "request_contact": True}],
+            [{"text": "📋 Khảo Sát Của Tôi"}],
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+    }
+
+
 async def dispatch_submission_telegram_notifications(
     submission_id: str,
     status_str: str,
@@ -1217,20 +1233,26 @@ async def dispatch_submission_telegram_notifications(
         if original_time is None or original_time.utcoffset() is None:
             logger.warning("TG question source for #%s: original submission time unknown; phone verdict skipped.", submission_id)
             return
-        collab_tg_id = await get_telegram_id_for_phone(normalized_phone, submitted_at=original_time)
+        collab_tg_id, recipient_verified = (
+            await get_notification_telegram_target(normalized_phone, submitted_at=original_time) or (None, False)
+        )
         if not collab_tg_id:
             logger.warning(
-                "TG question source for #%s: no verified phone_telegram_links mapping; "
+                "TG question source for #%s: no phone_telegram_links mapping; "
                 "valid for the original submission time; party verdict skipped (no driver/CTV fallback). Admin notification is independent.",
                 submission_id,
             )
             return
-        logger.info("TG question source for #%s resolved through a verified phone link.", submission_id)
+        if recipient_verified:
+            logger.info("TG question source for #%s resolved through a verified phone link.", submission_id)
+        else:
+            logger.info("TG question source for #%s resolved through an unverified phone link; sending notice with verification prompt.", submission_id)
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
         if not collab_tg_id:
             logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
             return
+        recipient_verified = True
 
     status_emoji = "✅" if status_str == "APPROVED" else ("⚠️" if status_str == "MANUAL_REVIEW" else "❌")
     clean_phone = driver_phone or "N/A"
@@ -1246,10 +1268,22 @@ async def dispatch_submission_telegram_notifications(
         collab_msg += f"\n\n🔁 <b>Nộp lại / mở biểu mẫu:</b> {link}"
     footer = "Tài xế" if recipient_kind == "driver" else "Cộng tác viên phụ trách"
     collab_msg += f"\n\n<i>Thông báo tự động dành cho {footer}.</i>"
+    reply_markup = None
+    if not recipient_verified:
+        collab_msg += (
+            "\n\nℹ️ <b>Đây là hệ thống xác minh khảo sát thu nhập của Trust Bridge.</b>\n"
+            f"Thông báo này được gửi vì số <code>{html.escape(str(masked_phone))}</code> đã được nhập vào phiếu "
+            f"<code>{html.escape(str(submission_id))}</code>.\n"
+            "Nếu số này <b>không phải của bạn</b>, bạn không cần làm gì; hệ thống sẽ không yêu cầu bạn xác thực "
+            "hay thực hiện thêm bước nào.\n"
+            "Nếu đây là số của bạn và bạn muốn xem hoặc quản lý phiếu, hãy xác thực bằng nút bên dưới."
+        )
+        reply_markup = _verification_reply_markup()
     sent = await _send_direct(
         bot_token=driver_bot_token,
         chat_id=collab_tg_id,
         text=collab_msg,
+        reply_markup=reply_markup,
     )
     if not sent:
         # The CTV/ driver may only have started the admin bot; try it as a fallback.
@@ -1260,6 +1294,7 @@ async def dispatch_submission_telegram_notifications(
                 bot_token=admin_token,
                 chat_id=collab_tg_id,
                 text=collab_msg,
+                reply_markup=reply_markup,
             )
     if sent:
         logger.info(

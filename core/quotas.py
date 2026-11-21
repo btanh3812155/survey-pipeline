@@ -4,9 +4,8 @@ CTV quota storage & reporting.
 
 Quotas are stored in `ctv_quotas` (scope_type: form | tag | global) and usage is
 computed from `survey_submissions` over a rolling window of `period_days`. Tag
-scopes match forms linked to the tag in `form_tags`. Nothing here blocks a
-submission yet; this is storage + querying only, so enforcement can be added
-later without another schema change.
+scopes match forms linked to the tag in `form_tags`. Quotas are goals for
+progress tracking; nothing here blocks a submission.
 """
 
 import html
@@ -153,15 +152,13 @@ def format_quota_evaluation(evaluation: Dict[str, Any]) -> str:
     used = evaluation.get("used", 0)
     maximum = evaluation.get("max_submissions")
     if maximum is None:
-        cap = "không giới hạn"
-    else:
-        remaining = evaluation.get("remaining")
-        remaining_text = remaining if remaining is not None else 0
-        cap = f"{used}/{maximum} (còn {remaining_text})"
-    if maximum is None:
         usage = f"{used} lượt"
     else:
-        usage = cap
+        remaining = max(0, int(maximum) - int(used))
+        if int(used) >= int(maximum):
+            usage = f"đã đạt mục tiêu {used}/{maximum}"
+        else:
+            usage = f"đã đạt {used}/{maximum} (còn {remaining} để đạt mục tiêu)"
     reset_at = evaluation.get("reset_at")
     if reset_at:
         reset_text = reset_at.strftime("%d/%m/%Y")
@@ -170,7 +167,7 @@ def format_quota_evaluation(evaluation: Dict[str, Any]) -> str:
     else:
         reset_text = "không đặt"
     return (
-        f"• <b>{scope_label}</b>{scope_display}: {usage} "
+        f"• <b>Mục tiêu {scope_label}</b>{scope_display}: {usage} "
         f"- reset: <i>{reset_text}</i>"
     )
 
@@ -182,16 +179,16 @@ def format_quota_report(
 ) -> str:
     code = str(ctv_code or "").strip() or normalize_ctv_code(ctv_code)
     label = html.escape(display_name or code)
-    header = f"📊 <b>Hạn mức CTV <code>{html.escape(code)}</code></b>"
+    header = f"🎯 <b>Mục tiêu CTV <code>{html.escape(code)}</code></b>"
     if display_name and display_name != code:
         header += f" - {label}"
     if not evaluations:
-        return header + "\n\n<i>Chưa cấu hình hạn mức cho CTV này.</i>"
+        return header + "\n\n<i>Chưa cấu hình mục tiêu cho CTV này.</i>"
     lines = [header, ""]
     for evaluation in evaluations:
         lines.append(format_quota_evaluation(evaluation))
     lines.append("")
-    lines.append("<i>Hạn mức hiện chỉ để tra cứu, chưa chặn nộp phiếu.</i>")
+    lines.append("<i>Mục tiêu chỉ để theo dõi tiến độ, không chặn nộp phiếu.</i>")
     return "\n".join(lines)
 
 

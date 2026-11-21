@@ -72,6 +72,24 @@ class FakePool:
         return self.conn
 
 
+@pytest.mark.asyncio
+async def test_notification_target_accepts_unverified_binding():
+    from core.phone_links import get_notification_telegram_target
+
+    aware = datetime(2026, 11, 21, 8, 42, tzinfo=timezone.utc)
+    pool = FakePool(row=(8094247707, "contact_share"))
+    assert await get_notification_telegram_target(
+        "0961281310", db_pool=pool, submitted_at=aware
+    ) == (8094247707, False)
+    pool = FakePool(row=(8094247707, "verified_contact"))
+    assert await get_notification_telegram_target(
+        "0961281310", db_pool=pool, submitted_at=aware
+    ) == (8094247707, True)
+    assert await get_notification_telegram_target(
+        "0961281310", db_pool=FakePool(row=None), submitted_at=aware
+    ) is None
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

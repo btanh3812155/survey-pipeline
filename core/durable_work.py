@@ -10,7 +10,11 @@ from uuid import uuid4
 from psycopg.rows import dict_row
 
 from config import settings
-from core.phone_links import normalize_vn_phone
+from core.phone_links import (
+    CONFLICTED_PHONE_LINK_SOURCE,
+    VERIFIED_PHONE_LINK_SOURCES,
+    normalize_vn_phone,
+)
 
 
 def _dict(value):
@@ -90,9 +94,11 @@ async def _recipient(conn, row, policy):
         if not phone or not row.get("created_at"):
             return None, "UNLINKED_RECIPIENT"
         cur = await conn.execute(
-            "SELECT telegram_user_id, updated_at FROM phone_telegram_links WHERE phone_normalized=%s "
-            "AND source IN ('verified_contact','admin_verified') AND telegram_user_id>0 AND updated_at<=%s",
-            (phone, row["created_at"]),
+            "SELECT telegram_user_id, updated_at, source FROM phone_telegram_links "
+            "WHERE phone_normalized=%s AND telegram_user_id>0 "
+            "AND COALESCE(source, '') <> %s AND updated_at<=%s "
+            "ORDER BY (source IN ('verified_contact','admin_verified')) DESC, updated_at DESC LIMIT 1",
+            (phone, CONFLICTED_PHONE_LINK_SOURCE, row["created_at"]),
         )
     else:
         ref = row.get("collaborator_id") or row.get("ctv_code")
@@ -109,10 +115,25 @@ async def _recipient(conn, row, policy):
             candidates = [str(ref), normalize_ctv_code(str(ref)), extract_ctv_short_code(str(ref))]
             cur = await conn.execute("SELECT telegram_user_id FROM ctv_directory WHERE UPPER(code)=ANY(%s) AND is_active", ([value.upper() for value in candidates if value],))
     value = await cur.fetchone()
-    ident = (next(iter(value.values())) if isinstance(value, dict) else value[0]) if value else None
+    if value:
+        if isinstance(value, dict):
+            ident = value.get("telegram_user_id")
+            epoch = value.get("updated_at")
+            source = value.get("source")
+        else:
+            ident = value[0]
+            epoch = value[1] if len(value) > 1 else None
+            source = value[2] if len(value) > 2 else None
+    else:
+        ident = epoch = source = None
     if ident and policy["source"] == "question":
-        epoch = value["updated_at"] if isinstance(value, dict) else value[1]
-        row["_recipient_binding"] = {"phone": phone, "telegram_user_id": int(ident), "verified_at": epoch.isoformat(), "submitted_at": row["created_at"].isoformat()}
+        row["_recipient_binding"] = {
+            "phone": phone,
+            "telegram_user_id": int(ident),
+            "verified_at": epoch.isoformat(),
+            "submitted_at": row["created_at"].isoformat(),
+            "verified": str(source or "") in VERIFIED_PHONE_LINK_SOURCES,
+        }
     return (int(ident), None) if ident and int(ident) > 0 else (None, "UNLINKED_RECIPIENT")
 
 
@@ -195,8 +216,25 @@ async def enqueue_submission_work(conn, submission_id, transition="SUBMITTED", *
         party["policy"] = {"enabled": False, "version": policy["version"], "skip_reason": skip}
     elif settings.TELEGRAM_ADMIN_BOT_TOKEN and driver_role != "admin":
         party["alternate_bot_role"] = "admin"
-    if row.get("_recipient_binding"):
-        party["recipient_binding"] = row["_recipient_binding"]
+    binding = row.get("_recipient_binding")
+    if binding and not binding.get("verified"):
+        party["text"] += (
+            "\n\nℹ️ <b>Đây là hệ thống xác minh khảo sát thu nhập của Trust Bridge.</b>\n"
+            f"Thông báo này được gửi vì số <code>{html.escape(str(binding.get('phone') or ''))}</code> "
+            f"đã được nhập vào phiếu <code>{safe_sid}</code>.\n"
+            "Nếu số này <b>không phải của bạn</b>, bạn không cần làm gì.\n"
+            "Nếu đây là số của bạn và bạn muốn xem hoặc quản lý phiếu, hãy xác thực số điện thoại bằng nút bên dưới."
+        )
+        party["reply_markup"] = {
+            "keyboard": [
+                [{"text": "📱 Xác Thực Số Điện Thoại", "request_contact": True}],
+                [{"text": "📋 Khảo Sát Của Tôi"}],
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": False,
+        }
+    if binding:
+        party["recipient_binding"] = binding
     await add("TELEGRAM_NOTIFY", party)
     row["collaborator_id"] = await _billing_collaborator(conn, row)
     for target in ("R2_UPLOAD", "LARK_SYNC", "GDRIVE_EXPORT", "BILLING"):
