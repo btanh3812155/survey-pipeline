@@ -1,11 +1,16 @@
+# Staging topology. Production is provisioned separately under /root/survey-pipeline.
+# APP_BUILD_ID, OUTBOX_WORKER_ID and the provider credentials live in the
+# target's .env; the release path publishes code only and never edits this file.
 services:
   app-dev:
     container_name: survey-dev-app-1
     image: survey-pipeline-app-dev:latest
-    restart: always
+    working_dir: /app
+    restart: unless-stopped
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
     environment:
       - ENVIRONMENT=development
+      - APP_BUILD_ID=${APP_BUILD_ID:?set APP_BUILD_ID to the release build id}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - REDIS_URL=redis://redis:6379/1
@@ -24,6 +29,12 @@ services:
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
       - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
       - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+      - R2_PRIVATE_BUCKET_NAME=${R2_PRIVATE_BUCKET_NAME:-}
+      - GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}
+      - GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID}
+      - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET}
+      - GOOGLE_DRIVE_REFRESH_TOKEN=${GOOGLE_DRIVE_REFRESH_TOKEN}
+      - GOOGLE_DRIVE_ACCESS_TOKEN=${GOOGLE_DRIVE_ACCESS_TOKEN}
     volumes:
       - ./data:/app/data
       - ./core:/app/core
@@ -34,28 +45,40 @@ services:
       - ./config.py:/app/config.py
       - ./static:/app/static
       - ./models:/app/models:ro
+      - ./token.json:/app/token.json:ro
     networks:
       - default
 
   outbox-v2:
-    profiles: ["outbox-v2"]
+    container_name: survey-dev-outbox-v2-1
     image: survey-pipeline-app-dev:latest
+    working_dir: /app
     restart: unless-stopped
-    command: python -m workers.outbox_worker
+    command: ["python", "-m", "workers.outbox_worker"]
     environment:
       - ENVIRONMENT=development
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:secret_password@postgres:5432/surveydb_dev}
-      - OUTBOX_V2_WORKER_ENABLED=false
+      - APP_BUILD_ID=${APP_BUILD_ID:?set APP_BUILD_ID to the release build id}
+      - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
+      - OUTBOX_WORKER_ID=${OUTBOX_WORKER_ID:?set a stable OUTBOX_WORKER_ID}
+      - OUTBOX_V2_WORKER_ENABLED=true
       - DRIVE_SYNC_INTERVAL_SEC=0
-      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_BOT_TOKEN=${TELEGRAM_ADMIN_BOT_TOKEN}
+      - TELEGRAM_DRIVER_BOT_TOKEN=${TELEGRAM_DRIVER_BOT_TOKEN}
+      - TELEGRAM_ADMIN_GROUP_ID=${TELEGRAM_ADMIN_GROUP_ID}
+      - LARK_APP_ID=${LARK_APP_ID}
+      - LARK_APP_SECRET=${LARK_APP_SECRET}
+      - LARK_BASE_APP_TOKEN=${LARK_BASE_APP_TOKEN}
+      - LARK_BASE_TABLE_ID=${LARK_BASE_TABLE_ID}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
       - R2_PRIVATE_BUCKET_NAME=${R2_PRIVATE_BUCKET_NAME:-}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-mock_tg_token}
-      - TELEGRAM_ADMIN_BOT_TOKEN=${TELEGRAM_ADMIN_BOT_TOKEN:-}
-      - TELEGRAM_DRIVER_BOT_TOKEN=${TELEGRAM_DRIVER_BOT_TOKEN:-}
-      - LARK_APP_ID=${LARK_APP_ID:-cli_mock_id}
-      - LARK_APP_SECRET=${LARK_APP_SECRET:-mock_secret}
+      - GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}
+      - GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID}
+      - GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET}
+      - GOOGLE_DRIVE_REFRESH_TOKEN=${GOOGLE_DRIVE_REFRESH_TOKEN}
+      - GOOGLE_DRIVE_ACCESS_TOKEN=${GOOGLE_DRIVE_ACCESS_TOKEN}
     volumes:
       - ./data:/app/data
       - ./core:/app/core:ro
