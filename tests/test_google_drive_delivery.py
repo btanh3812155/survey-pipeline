@@ -110,11 +110,15 @@ def test_migrate_legacy_local_layout(monkeypatch, tmp_path):
     per_form = images / "form_alpha" / "VN-NESTED-1"
     per_form.mkdir(parents=True)
     (per_form / "slot_0.jpg").write_bytes(b"b")
+    migrated = images / "form_alpha" / "submissions" / "VN-MIGRATED-1"
+    migrated.mkdir(parents=True)
+    (migrated / "slot_0.jpg").write_bytes(b"c")
 
     gd.migrate_local_deliverables_layout({"VN-FLAT-1": "form_alpha"})
 
     assert (images / "form_alpha" / "submissions" / "VN-FLAT-1" / "slot_0.jpg").read_bytes() == b"a"
     assert (images / "form_alpha" / "submissions" / "VN-NESTED-1" / "slot_0.jpg").read_bytes() == b"b"
+    assert (migrated / "slot_0.jpg").read_bytes() == b"c"
     assert not flat.exists() and not per_form.exists()
 
 

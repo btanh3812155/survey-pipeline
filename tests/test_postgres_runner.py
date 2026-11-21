@@ -6,6 +6,7 @@ These use a fake Docker CLI and never touch a real daemon.
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,7 @@ def _run_dry(tmp_path: Path, **extra):
     env = {
         **os.environ,
         "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}",
+        "PYTHON": sys.executable,
         "FAKE_DOCKER_LOG": str(log),
         "UPGRADE_TEST_POSTGRES_DRY_RUN": "1",
         **extra,

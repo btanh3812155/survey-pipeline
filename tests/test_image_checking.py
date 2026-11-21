@@ -10,13 +10,11 @@ Exhaustively tests all visual verification checks:
 6. Laplacian blur threshold and image format decoding.
 """
 
-import os
-import sys
 import pytest
+from PIL import Image
 
 from core.embedding_executor import embedding_executor_lifespan, run_inference
-from tests.test_architect_fixes import submit_camera, weekly_ocr
-from tests.real_test_samples import get_real_distinct_test_photos
+from tests.test_architect_fixes import make_test_image, submit_camera, weekly_ocr
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score
 from services.duplicate_detector import check_intra_submission_duplicates
 from services.income_sanitizer import analyze_driver_income
@@ -102,8 +100,7 @@ async def test_submission_catches_arithmetic_mismatch_in_ocr(submit_camera):
             discount_and_tax=2_000_000, total_trips=120,
         )
 
-    photos = [photo for _, photo in get_real_distinct_test_photos(7)]
-    response = await submit_camera(extract, photos=photos)
+    response = await submit_camera(extract)
     assert response["status"] == "REJECTED", response
     assert "Số học không khớp" in response["reason"]
     assert response["ocr_data"]["net_income"] == 3_000_000
@@ -153,8 +150,7 @@ async def test_monthly_income_upload_rejected_in_weekly_slot(submit_camera):
             total_trips=120,
         )
 
-    photos = [photo for _, photo in get_real_distinct_test_photos(7)]
-    response = await submit_camera(extract, photos=photos)
+    response = await submit_camera(extract)
     assert response["status"] == "REJECTED", response
     assert "theo THÁNG" in response["reason"]
     assert response["ocr_data"]["period_type"] == "MONTHLY"
@@ -333,15 +329,16 @@ def test_temporal_validation_accepts_valid_october_week_ranges():
 # ==============================================================================
 
 def test_blur_variance_detection():
-    """Sharp authentic photos pass blur check while synthetic blank frames fail."""
-    photos = get_real_distinct_test_photos(1)
-    assert len(photos) > 0
-    _, img_bytes = photos[0]
-
-    _, pil_im = sanitize_and_normalize_image(img_bytes)
+    """Sharp edges pass blur detection; a blank frame fails."""
+    _, pil_im = sanitize_and_normalize_image(make_test_image())
     is_sharp, b_var = compute_laplacian_blur_score(pil_im, threshold=15.0)
     assert is_sharp is True
     assert b_var >= 15.0
+    blank_is_sharp, blank_var = compute_laplacian_blur_score(Image.new("RGB", pil_im.size), threshold=15.0)
+    assert not blank_is_sharp
+    assert blank_var < 15.0
+
+
 # ==============================================================================
 # 5. Image Upload, Camera Toggle Persistence & Multi-Upload Ordering
 # ==============================================================================

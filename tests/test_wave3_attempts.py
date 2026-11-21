@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import secrets
+import sys
 from pathlib import Path
 
 import psycopg
@@ -470,6 +471,7 @@ def test_actual_checked_in_migration_command_first_apply_rerun_reject_and_rollba
     command = ["bash", str(repo / "scripts" / "apply_migration.sh"), str(MIGRATION)]
     base_env = os.environ.copy()
     base_env["UPGRADE_TEST_DATABASE_URL"] = dsn
+    base_env["UPGRADE_TEST_PYTHON"] = sys.executable
 
     def run_for(schema: str):
         env = dict(base_env)
@@ -752,6 +754,7 @@ def test_actual_migration_command_rejects_production_looking_target():
     import subprocess
     repo = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
+    env["UPGRADE_TEST_PYTHON"] = sys.executable
     env["UPGRADE_TEST_DATABASE_URL"] = "postgresql://postgres:test@127.0.0.1:55432/surveydb_production_test"
     completed = subprocess.run(
         ["bash", str(repo / "scripts" / "apply_migration.sh"), str(MIGRATION)],
@@ -1016,7 +1019,7 @@ def test_actual_migration_rejections_invoke_no_psql_or_docker_exec(tmp_path):
     base_env.update({
         "PATH": f"{bindir}:{base_env.get('PATH', '')}",
         "MIGRATION_COMMAND_LOG": str(log),
-        "UPGRADE_TEST_PYTHON": str(repo / ".venv" / "bin" / "python"),
+        "UPGRADE_TEST_PYTHON": sys.executable,
         "UPGRADE_TEST_DATABASE_URL": "postgresql://postgres:test@127.0.0.1:55432/survey_pipeline_test",
     })
     cases = [
@@ -1202,7 +1205,7 @@ def test_actual_migration_all_docker_operations_pin_host_and_clear_context(tmp_p
     env.update({
         "PATH": f"{bindir}:{env.get('PATH', '')}",
         "MIGRATION_COMMAND_LOG": str(log),
-        "UPGRADE_TEST_PYTHON": str(repo / ".venv" / "bin" / "python"),
+        "UPGRADE_TEST_PYTHON": sys.executable,
         "UPGRADE_TEST_DATABASE_URL": "postgresql://postgres:test@127.0.0.1:55432/survey_pipeline_test",
         "UPGRADE_TEST_POSTGRES_CONTAINER": "owned-container",
         "UPGRADE_TEST_POSTGRES_DB": "survey_pipeline_test",

@@ -61,6 +61,10 @@ Full `.venv/bin/python -m pytest tests -q --tb=short -ra`: **896 passed, 1 skipp
 
 This closes the observed local full-suite failure gate, not the optional Python browser coverage or deployed readiness. CI execution, staging parity/rollback and approved production activation remain separate gates; no deployment or live provider verification occurred.
 
+The clean-checkout CI tests authenticate Telegram webhook requests with a test-only secret, use synthetic camera uploads for OCR/blur regressions, and run migration and harness subprocesses with the same interpreter as pytest. The Drive mirror migration handles flat and per-form legacy folders even when their destination `submissions/` directory already exists.
+
+Clean-checkout replay (no `.env`, private driver dataset, or checkout-local virtualenv): **830 passed, 67 skipped** in the unit job, including a clean placeholder gate; disposable PostgreSQL **76 passed, 1 skipped**, followed by **10** H1 and **126** runner/outbox passes. PostgreSQL and optional browser checks skipped by the unit job are separate from its unit-test pass count.
+
 ## Local development
 
 Run the test target with `make test` (uses `.venv/bin/python -m pytest tests -q`).

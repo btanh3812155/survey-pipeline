@@ -1648,10 +1648,10 @@ def migrate_local_deliverables_layout(submission_forms: Optional[Dict[str, str]]
             except Exception as e:
                 logger.warning(f"Failed to migrate flat folder {entry}: {e}")
             continue
-        if "submissions" in child_dirs:
-            continue  # already migrated
         dest_parent = os.path.join(entry_path, "submissions")
         for child in child_dirs:
+            if child == "submissions":
+                continue
             src = os.path.join(entry_path, child)
             dest = os.path.join(dest_parent, child)
             if os.path.exists(dest):

@@ -77,13 +77,13 @@ class TestTeam3AdvancedSecurity:
         assert excinfo.value.status_code == 400
     # --- 2. Telegram Ingress & Missing Chat Objects ---
 
-    def test_telegram_webhook_missing_or_null_chat_object_resilience(self):
+    def test_telegram_webhook_missing_or_null_chat_object_resilience(self, telegram_webhook_client):
         """
         [PATCH-W3-02 VERIFIED]
         Incoming webhook updates with null chat or null message are safely unpacked
         without crashing with AttributeError (returns 200 OK).
         """
-        client = TestClient(app, raise_server_exceptions=False)
+        client = telegram_webhook_client
 
         # 1. Message with null chat
         resp1 = client.post("/webhook/telegram", json={"message": {"chat": None, "text": "/start"}})
@@ -122,9 +122,9 @@ class TestTeam3AdvancedSecurity:
         assert xss_payload not in rendered
         assert dossier["submission_id"] == normalize_submission_id(xss_payload)
         assert html.escape(dossier["submission_id"]) in rendered
-    def test_telegram_oversized_message_transport_acknowledgement(self):
+    def test_telegram_oversized_message_transport_acknowledgement(self, telegram_webhook_client):
         """Transport acknowledges updates; runner validation owns message bounds."""
-        client = TestClient(app, raise_server_exceptions=False)
+        client = telegram_webhook_client
         huge_text = "/check " + ("A" * 100_000)
         resp = client.post(
             "/webhook/telegram",

@@ -646,15 +646,9 @@ class TestAdversarialAIVisionAndPromptInjection:
 class TestAdversarialTelegramAndRateLimits:
     """Attacks on rate-limiting race conditions and outbox transaction rollbacks."""
 
-    def test_telegram_callback_query_unhandled_drop(self):
-        """
-        VULNERABILITY: Dropped Telegram Callback Queries.
-        In `main.py`, `/webhook/telegram` inspects only `body.get('message', {})`.
-        When a driver taps an inline button (e.g. `[ 🙋 Yêu cầu kiểm tra lại ]`),
-        Telegram sends a `callback_query` payload, NOT a `message`.
-        The endpoint silently ignores it, providing zero feedback to drivers.
-        """
-        client = TestClient(app)
+    def test_telegram_admin_webhook_dispatches_authenticated_callback(self, monkeypatch, telegram_webhook_client):
+        handle_update = AsyncMock()
+        monkeypatch.setattr("routers.webhooks.get_admin_bot_runner", lambda: MagicMock(handle_update=handle_update))
         callback_payload = {
             "update_id": 99999,
             "callback_query": {
@@ -663,9 +657,10 @@ class TestAdversarialTelegramAndRateLimits:
                 "data": "appeal:sub_demo_001",
             },
         }
-        resp = client.post("/webhook/telegram", json=callback_payload)
+        resp = telegram_webhook_client.post("/webhook/telegram", json=callback_payload)
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+        handle_update.assert_awaited_once_with(callback_payload)
 
     @pytest.mark.asyncio
     async def test_appeal_counter_race_condition_simulation(self):

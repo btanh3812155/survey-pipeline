@@ -4,6 +4,7 @@
 import os
 import secrets
 import subprocess
+import sys
 from pathlib import Path
 
 import psycopg
@@ -29,6 +30,7 @@ def _test_dsn():
 
 def _apply(schema: str, migration: Path = MIGRATION_002, *, expected_success=True):
     env = os.environ.copy()
+    env["UPGRADE_TEST_PYTHON"] = sys.executable
     env["UPGRADE_TEST_PGOPTIONS"] = f"-c search_path={schema},public"
     completed = subprocess.run(
         ["bash", str(APPLY), str(migration)],

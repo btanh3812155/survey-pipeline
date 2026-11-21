@@ -604,9 +604,9 @@ class TestTeam4LegalityAndDecree13Compliance:
         update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE telegram_sent_messages" in c[0][0]]
         assert len(update_calls) == 2
 
-    def test_telegram_webhook_acknowledges_updates_for_runner_authorization(self):
+    def test_telegram_webhook_acknowledges_updates_for_runner_authorization(self, telegram_webhook_client):
         """Transport acknowledges valid updates; the polling runner owns chat authorization."""
-        client = TestClient(app)
+        client = telegram_webhook_client
 
         # 1. Slash command from unauthorized chat ID (e.g. 999888777)
         payload_slash_unauth = {
