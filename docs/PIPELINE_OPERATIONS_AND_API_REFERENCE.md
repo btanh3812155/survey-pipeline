@@ -472,9 +472,16 @@ Authenticated operator UI for migration 009/010 export configuration.
 - `POST /admin/exports/clients` creates a configuration; `POST /admin/exports/clients/{slug}` updates it; `POST /admin/exports/clients/{slug}/delete` removes the configuration only, leaving Drive folders intact.
 - `POST /admin/exports/clients/{slug}/forms/{form_id}` saves a per-form override in `drive_export_clients.form_settings` (migration 010); `.../delete` resets that form to client defaults.
 - `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report. Each form runs with its effective override; missing overrides inherit the client-wide fields, statuses, vehicle kinds, dates, and image flag. Each run also removes Drive folders for archived forms that are not active, deletes stale image files/shortcuts in a submission folder, and removes client/internal submission folders no longer selected by that configuration.
-- Deleting a form removes its current and legacy Drive folders; deleting a submission removes its master image folder and every client/internal shortcut folder. Both hooks are best-effort, and failures never undo the database deletion.
+- Deleting a form or submission writes a `trash_items` snapshot, records `trash_transactions` and `system_audit_log`, records Drive name/ID links, and moves the Drive folders to Drive trash. Archived-form purge during an export maintenance pass is still a separate permanent cleanup.
 - `GET /api/v1/admin/exports` returns settings and configurations for automation.
 - Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks. Client and form saves require an explicit confirmation before submission and show a flash message after redirect.
+
+### 3.12 DB trash and Drive ledger (`/api/v1/admin/trash`)
+Migration 012 adds `trash_items`, `trash_transactions`, and `drive_name_ledger`. Explicit form/submission deletes snapshot the DB row, move local submission media under `data/trash`, move Drive folders to Drive trash, and store name/ID/parent/MIME/shortcut links in the ledger.
+- `GET /api/v1/admin/trash` lists recoverable form/submission snapshots.
+- Retention is age-tiered and compacted: all snapshots for 24 hours, one per entity per hour for 1-7 days, daily for 7-30 days, weekly for 30-90 days, monthly for 90-365 days, then marked expired.
+- Trash, ledger, compaction, and metadata changes are written to `trash_transactions` and `system_audit_log`.
+- Restore and final purge are not exposed yet; the snapshot, local media path, and Drive ledger IDs are retained for that next layer.
 
 ---
 
