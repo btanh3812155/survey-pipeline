@@ -463,14 +463,17 @@ Authenticated operator UI and API for database-backed image and logic modules (m
 - Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; stored JSON is never executed as Python. Destructive/enable actions require the same strict same-origin checks as other admin writes and are audited in `system_audit_log`.
 
 ### 3.11 Admin Google Drive exports (`/admin/exports`)
-Authenticated operator UI for migration 009 export configuration.
-- `GET /admin/exports` renders folder settings and per-client/internal access rules.
+Authenticated operator UI for migration 009/010 export configuration.
+- `GET /admin/exports` renders the client/internal directory tree plus folder settings and run controls.
+- `GET /admin/exports/{slug}` edits the client folder: display fields, enabled state, dates, and which forms the client receives.
+- `GET /admin/exports/{slug}/{form_id}` edits that form's output for that client: fields, statuses, vehicle kinds, dates, and image inclusion.
 - `POST /admin/exports/settings` saves master/client/internal/images folder names.
 - `POST /admin/exports/clients` creates a configuration; `POST /admin/exports/clients/{slug}` updates it; `POST /admin/exports/clients/{slug}/delete` removes the configuration only, leaving Drive folders intact.
-- `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report. Each run also removes Drive folders for archived forms that are not active, deletes stale image files/shortcuts in a submission folder, and removes client/internal submission folders no longer selected by that configuration.
+- `POST /admin/exports/clients/{slug}/forms/{form_id}` saves a per-form override in `drive_export_clients.form_settings` (migration 010); `.../delete` resets that form to client defaults.
+- `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report. Each form runs with its effective override; missing overrides inherit the client-wide fields, statuses, vehicle kinds, dates, and image flag. Each run also removes Drive folders for archived forms that are not active, deletes stale image files/shortcuts in a submission folder, and removes client/internal submission folders no longer selected by that configuration.
 - Deleting a form removes its current and legacy Drive folders; deleting a submission removes its master image folder and every client/internal shortcut folder. Both hooks are best-effort, and failures never undo the database deletion.
 - `GET /api/v1/admin/exports` returns settings and configurations for automation.
-- Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks.
+- Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks. Client and form saves require an explicit confirmation before submission and show a flash message after redirect.
 
 ---
 
