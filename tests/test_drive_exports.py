@@ -601,3 +601,47 @@ def test_form_date_modes_inherit_clear_and_custom():
     assert inherited["date_from"] is None and inherited["date_from_clear"] is False
     with pytest.raises(drive_exports.DriveExportError):
         drive_exports.normalize_form_override({"date_from_mode": "custom"}, client)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_client_and_internal_trees_export_their_own_status_sets(store, monkeypatch, tmp_path):
+    """One run exports approved-only customer rows and all-status internal rows."""
+    pool, conn = store
+    media_root = tmp_path / "submission_photos"
+    media_root.mkdir()
+    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(media_root))
+    for sid in ("VN-CLIENT-ONLY", "VN-INTERNAL-ONLY"):
+        folder = media_root / sid
+        folder.mkdir()
+        Image.new("RGB", (10, 10), (10, 200, 10)).save(folder / "slot_0.png")
+    _insert(conn, "VN-CLIENT-ONLY", status="APPROVED", form_id="TB_TEST")
+    _insert(conn, "VN-INTERNAL-ONLY", status="REJECTED", form_id="TB_TEST")
+    await drive_exports.save_client(pool, {
+        "slug": "customer", "display_name": "Customer", "kind": "client",
+        "folder_name": "Customer", "enabled": True, "form_ids": ["TB_TEST"],
+        "fields": ["submission_id", "status"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": True,
+    }, "tester")
+    await drive_exports.save_client(pool, {
+        "slug": "internal-ops", "display_name": "Internal Ops", "kind": "internal",
+        "category": "OPS", "folder_name": "Internal Ops", "enabled": True,
+        "form_ids": ["TB_TEST"], "fields": ["submission_id", "status"],
+        "statuses": ["APPROVED", "REJECTED"], "vehicle_types": [], "include_images": True,
+    }, "tester")
+
+    fake = FakeDrive()
+    report = await drive_exports.run_drive_exports(
+        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
+    )
+    assert report["status"] == "ok", report
+    customer = next(item for item in fake.sheets if "Client Exports/Customer/" in item[1])
+    internal = next(item for item in fake.sheets if "Internal Exports/OPS/" in item[1])
+    assert b"VN-CLIENT-ONLY" in customer[2] and b"VN-INTERNAL-ONLY" not in customer[2]
+    assert b"VN-CLIENT-ONLY" in internal[2] and b"VN-INTERNAL-ONLY" in internal[2]
+    customer_targets = [target for _name, target, parent in fake.shortcuts if "Client Exports/Customer/" in parent]
+    internal_targets = [target for _name, target, parent in fake.shortcuts if "Internal Exports/OPS/" in parent]
+    assert any("VN-CLIENT-ONLY" in target for target in customer_targets)
+    assert not any("VN-INTERNAL-ONLY" in target for target in customer_targets)
+    assert any("VN-CLIENT-ONLY" in target for target in internal_targets)
+    assert any("VN-INTERNAL-ONLY" in target for target in internal_targets)

@@ -2,12 +2,15 @@ import pytest
 import base64
 from fastapi.testclient import TestClient
 from main import app
+from core.state import verify_admin_auth
 
 
 @pytest.fixture
 def auth_headers():
     token = base64.b64encode(b"admin:12345678").decode("utf-8")
-    return {"Authorization": f"Basic {token}"}
+    app.dependency_overrides[verify_admin_auth] = lambda: "viewer-test-admin"
+    yield {"Authorization": f"Basic {token}"}
+    app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize("path", ["/admin/submissions", "/data"])

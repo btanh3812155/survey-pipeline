@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from config import settings
 from main import app
+from core.state import verify_admin_auth
 from routers import admin_media
 
 client = TestClient(app)
@@ -15,7 +16,9 @@ def auth_header(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", "media-test-password")
     monkeypatch.setattr(admin_media, "MEDIA_STORAGE_DIR", str(tmp_path))
     credentials = base64.b64encode(b"media-test-admin:media-test-password").decode("ascii")
-    return {"Authorization": f"Basic {credentials}"}
+    app.dependency_overrides[verify_admin_auth] = lambda: "media-test-admin"
+    yield {"Authorization": f"Basic {credentials}"}
+    app.dependency_overrides.clear()
 
 
 def test_media_manager_html_and_dir_tree(auth_header):

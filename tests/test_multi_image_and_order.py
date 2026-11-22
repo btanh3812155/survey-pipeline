@@ -161,14 +161,9 @@ class TestMultiImageAndOrder:
             if data.get("status") == "REJECTED":
                 assert "Thứ tự ảnh không chính xác" in data.get("reason", "") or "thứ tự" in data.get("reason", "").lower()
 
-    def test_admin_authentication_passwords(self):
-        """Admin auth with password 12345678 returns 200 OK, while old password returns 401."""
+    def test_admin_auth_fails_closed_without_database(self):
+        """Admin credentials are database-backed; no database means 503, never env fallback."""
         client = TestClient(app)
-
-        # Old password returns 401 Unauthorized
-        old_resp = client.get("/api/v1/dev/submissions", auth=("admin", "Legendofzeus2@"))
-        assert old_resp.status_code == 401
-
-        # New password returns 200 OK
-        new_resp = client.get("/api/v1/dev/submissions", auth=("admin", "12345678"))
-        assert new_resp.status_code == 200
+        for password in ("Legendofzeus2@", "12345678"):
+            response = client.get("/api/v1/dev/submissions", auth=("admin", password))
+            assert response.status_code == 503
