@@ -177,14 +177,22 @@ async def update_module(module_id: str, request: Request, admin_user: str = Depe
 async def toggle_module(module_id: str, request: Request, admin_user: str = Depends(verify_admin_auth)):
     form = await request.form()
     enabled = str(form.get("enabled") or "").lower() in {"1", "true", "yes", "on"}
-    if not await set_module_enabled(_pool_or_503(), module_id, enabled, admin_user):
+    try:
+        changed = await set_module_enabled(_pool_or_503(), module_id, enabled, admin_user)
+    except ModuleDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not changed:
         raise HTTPException(status_code=404, detail="Module not found.")
     return RedirectResponse("/admin/modules?message=Module+updated", status_code=303)
 
 
 @router.post("/admin/modules/{module_id}/delete")
 async def remove_module(module_id: str, admin_user: str = Depends(verify_admin_auth)):
-    if not await delete_module(_pool_or_503(), module_id, admin_user):
+    try:
+        deleted = await delete_module(_pool_or_503(), module_id, admin_user)
+    except ModuleDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail="Module not found.")
     return RedirectResponse("/admin/modules?message=Module+deleted", status_code=303)
 

@@ -249,6 +249,96 @@ async def test_per_form_settings_control_fields_and_images(store, monkeypatch, t
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_client_save_preserves_output_defaults(store):
+    pool, _conn = store
+    await drive_exports.save_client(pool, {
+        "slug": "preserve-client", "display_name": "Preserve", "kind": "client",
+        "folder_name": "Preserve", "enabled": True, "form_ids": ["TB_A"],
+        "fields": ["submission_id", "status"], "statuses": ["REJECTED"],
+        "vehicle_types": ["CAR"], "include_images": False,
+    }, "tester")
+    await drive_exports.save_client(pool, {
+        "slug": "preserve-client", "display_name": "Preserve renamed", "kind": "client",
+        "folder_name": "Preserve", "enabled": True, "form_ids": ["TB_A"],
+    }, "tester")
+    saved = await drive_exports.get_client(pool, "preserve-client")
+    assert saved["fields"] == ["submission_id", "status"]
+    assert saved["statuses"] == ["REJECTED"]
+    assert saved["vehicle_types"] == ["CAR"]
+    assert saved["include_images"] is False
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_deselected_form_with_override_is_not_exported(store):
+    pool, conn = store
+    _insert(conn, "VN-A", form_id="TB_A")
+    _insert(conn, "VN-B", form_id="TB_B")
+    await drive_exports.save_client(pool, {
+        "slug": "selective", "display_name": "Selective", "kind": "client",
+        "folder_name": "Selective", "enabled": True,
+        "form_ids": ["TB_A", "TB_B"], "fields": ["submission_id"],
+        "statuses": ["APPROVED"], "vehicle_types": [], "include_images": False,
+    }, "tester")
+    await drive_exports.save_client_form(pool, "selective", "TB_B", {
+        "fields": ["status"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": False,
+    }, "tester")
+    await drive_exports.save_client(pool, {
+        "slug": "selective", "display_name": "Selective", "kind": "client",
+        "folder_name": "Selective", "enabled": True, "form_ids": ["TB_A"],
+    }, "tester")
+    fake = FakeDrive()
+    report = await drive_exports.run_drive_exports(
+        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
+    )
+    assert report["status"] == "ok", report
+    assert {name for name, _parent, _csv in fake.sheets} == {"TB_A"}
+    assert not any("TB_B" in parent for _name, _target, parent in fake.shortcuts)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_turning_form_images_off_clears_old_shortcuts(store, monkeypatch, tmp_path):
+    pool, conn = store
+    media_root = tmp_path / "submission_photos"
+    media_root.mkdir()
+    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(media_root))
+    sid = "VN-IMG-OFF"
+    image_dir = media_root / sid
+    image_dir.mkdir()
+    Image.new("RGB", (12, 12), (10, 100, 10)).save(image_dir / "slot_1.png")
+    _insert(conn, sid, form_id="TB_IMG")
+    await drive_exports.save_client(pool, {
+        "slug": "images-off", "display_name": "Images Off", "kind": "client",
+        "folder_name": "Images Off", "enabled": True, "form_ids": ["TB_IMG"],
+        "fields": ["submission_id"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": True,
+    }, "tester")
+    fake = FakeDrive()
+    first = await drive_exports.run_drive_exports(
+        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
+    )
+    assert first["shortcuts_created"] == 1
+    human_client_images = next(
+        fid for (parent, name), fid in fake.folders.items()
+        if name == "Images" and "TB_IMG" in parent
+    )
+    assert any(parent == human_client_images for parent, _name in fake.folders)
+
+    await drive_exports.save_client_form(pool, "images-off", "TB_IMG", {
+        "fields": ["submission_id"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": False,
+    }, "tester")
+    second = await drive_exports.run_drive_exports(
+        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
+    )
+    assert second["submission_folders_pruned"] >= 1
+    assert not any(parent == human_client_images for parent, _name in fake.folders)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_export_uploads_images_once_and_shortcuts_each_client(store, monkeypatch, tmp_path):
     pool, conn = store
     media_root = tmp_path / "submission_photos"

@@ -108,6 +108,35 @@ async def test_gsm_profile_prompt_fields_and_disable(store):
 
 
 @pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_engine_disable_is_rejected_when_enabled_object_binds_it(store):
+    pool, _conn = store
+    with pytest.raises(admin_modules.ModuleDefinitionError):
+        await admin_modules.set_module_enabled(pool, "required_fields", False, "tester")
+    assert image_objects.get_engine("required_fields").implementation == "required_fields"
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_disabled_object_does_not_block_engine_delete(store):
+    pool, _conn = store
+    await admin_modules.save_module(pool, "audit-engine", "engine", "Audit engine", "1", {
+        "version": 1, "id": "audit-engine", "label": "Audit engine", "description": "",
+        "implementation": "required_fields", "params_schema": [], "conditions_schema": [],
+    }, True, "tester")
+    await admin_modules.save_module(pool, "audit-object", "object", "Audit object", "1", {
+        "version": 1, "id": "audit-object", "label": "Audit object", "description": "",
+        "prompt": "", "objects": [], "expected_fields": [], "customizable": [],
+        "engines": [{"id": "audit-engine", "params": {}, "conditions": []}],
+        "extractor": "generic",
+    }, True, "tester")
+    assert await admin_modules.set_module_enabled(pool, "audit-object", False, "tester")
+    assert await admin_modules.delete_module(pool, "audit-engine", "tester")
+    with pytest.raises(image_objects.ImageObjectDefinitionError):
+        image_objects.get_engine("audit-engine")
+
+
+@pytest.mark.postgres
 def test_migration_011_allows_engine_modules(database):
     migrations = ROOT / "scripts" / "migrations"
     previous = hashlib.sha256((migrations / "010_drive_export_form_settings.sql").read_bytes()).hexdigest()

@@ -207,12 +207,13 @@ _TEST_FOLDER_SEGMENTS = (
 def is_explicit_test_folder(name: Any) -> bool:
     """
     True only for unambiguous test folders (e.g. DEV-foo, TEST-old, MOCK-x,
-    VN-DRIVE-TEST-01). Real form ids such as TB_GSM_2026_Nov_Test are not matched.
+    VN-DRIVE-TEST-01, income_survey_test). Real form ids such as
+    TB_GSM_2026_Nov_Test are not matched.
     """
     if not name:
         return False
     upper = str(name).upper()
-    if upper.startswith(_TEST_FOLDER_PREFIXES) or upper.endswith("_TEST"):
+    if upper.startswith(_TEST_FOLDER_PREFIXES) or str(name).endswith("_test"):
         return True
     return any(segment in upper for segment in _TEST_FOLDER_SEGMENTS)
 

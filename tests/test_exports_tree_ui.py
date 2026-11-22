@@ -42,6 +42,13 @@ def test_root_renders_navigable_client_and_form_folders():
     assert "custom output" in html
 
 
+def test_all_forms_client_still_shows_form_folders():
+    client = dict(CLIENT, form_ids=[], form_settings={})
+    html = _render_client(client)
+    assert 'href="/admin/exports/acme/' in html
+    assert "client defaults" in html
+
+
 def test_client_page_edits_received_forms_and_confirms_save():
     html = _render_client(CLIENT)
     assert "Forms this folder receives" in html

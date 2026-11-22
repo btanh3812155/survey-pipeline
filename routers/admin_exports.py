@@ -147,9 +147,10 @@ def _client_form(client: dict[str, Any] | None = None, *, create: bool = False) 
 
 def _form_rows(client: dict[str, Any]) -> str:
     overrides = client.get("form_settings") or {}
-    form_ids = sorted(set(str(v) for v in (client.get("form_ids") or [])) | set(overrides))
+    selected = sorted(set(str(v) for v in (client.get("form_ids") or [])))
+    form_ids = selected or sorted(set(FORM_REGISTRY) | set(overrides))
     if not form_ids:
-        return '<div class="muted">All active forms are selected; add a per-form override from the tree.</div>'
+        return '<div class="muted">No active forms are registered yet.</div>'
     return "".join(
         f'<a class="tree-form" href="/admin/exports/{_esc(client["slug"])}/{_esc(form_id)}">'
         f'<span>📄 {_esc(form_id)}</span>'

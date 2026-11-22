@@ -234,19 +234,73 @@ async def save_module(
     return row
 
 
+async def _engine_object_dependents(cur, engine_id: str) -> list[str]:
+    await cur.execute(
+        "SELECT module_id, definition, enabled FROM admin_module_registry WHERE module_type='object'"
+    )
+    dependents: list[str] = []
+    for module_id, definition, enabled in await cur.fetchall():
+        if not enabled:
+            continue
+        if isinstance(definition, str):
+            definition = json.loads(definition)
+        if not isinstance(definition, dict):
+            continue
+        if any(str(binding.get("id")) == engine_id for binding in definition.get("engines") or [] if isinstance(binding, dict)):
+            dependents.append(str(module_id))
+    return sorted(dependents)
+
+
+async def _object_missing_engines(cur, definition: Any) -> list[str]:
+    if isinstance(definition, str):
+        definition = json.loads(definition)
+    if not isinstance(definition, dict):
+        return []
+    bindings = {
+        str(binding.get("id"))
+        for binding in definition.get("engines") or []
+        if isinstance(binding, dict) and binding.get("id")
+    }
+    if not bindings:
+        return []
+    await cur.execute(
+        "SELECT module_id FROM admin_module_registry WHERE module_type='engine' AND enabled"
+    )
+    enabled = {str(row[0]) for row in await cur.fetchall()}
+    return sorted(bindings - enabled)
+
+
 async def set_module_enabled(pool, module_id: str, enabled: bool, actor: str) -> bool:
     if not pool:
         raise RuntimeError("module registry database unavailable")
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor() as cur:
             await cur.execute(
+                "SELECT module_type, definition FROM admin_module_registry WHERE module_id=%s",
+                (module_id,),
+            )
+            current = await cur.fetchone()
+            if not current:
+                return False
+            module_type, definition = current
+            if module_type == "engine" and not enabled:
+                dependents = await _engine_object_dependents(cur, module_id)
+                if dependents:
+                    raise ModuleDefinitionError(
+                        "engine is used by enabled image object(s): " + ", ".join(dependents)
+                    )
+            if module_type == "object" and enabled:
+                missing = await _object_missing_engines(cur, definition)
+                if missing:
+                    raise ModuleDefinitionError(
+                        "object references missing/disabled engine(s): " + ", ".join(missing)
+                    )
+            await cur.execute(
                 "UPDATE admin_module_registry SET enabled=%s,updated_by=%s,updated_at=clock_timestamp() "
                 "WHERE module_id=%s RETURNING module_type",
                 (bool(enabled), actor[:64], module_id),
             )
             row = await cur.fetchone()
-            if not row:
-                return False
             await cur.execute(
                 "INSERT INTO system_audit_log(component_name,action,entity_type,entity_id,actor_type,actor_id,details) "
                 "VALUES ('admin_modules','ADMIN_MODULE_TOGGLED','ADMIN',%s,'ADMIN',%s,%s::jsonb)",
@@ -256,28 +310,38 @@ async def set_module_enabled(pool, module_id: str, enabled: bool, actor: str) ->
         await _refresh_objects_best_effort(pool)
     return True
 
-
 async def delete_module(pool, module_id: str, actor: str) -> bool:
     if not pool:
         raise RuntimeError("module registry database unavailable")
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor() as cur:
             await cur.execute(
+                "SELECT module_type FROM admin_module_registry WHERE module_id=%s",
+                (module_id,),
+            )
+            current = await cur.fetchone()
+            if not current:
+                return False
+            module_type = current[0]
+            if module_type == "engine":
+                dependents = await _engine_object_dependents(cur, module_id)
+                if dependents:
+                    raise ModuleDefinitionError(
+                        "engine is used by enabled image object(s): " + ", ".join(dependents)
+                    )
+            await cur.execute(
                 "DELETE FROM admin_module_registry WHERE module_id=%s RETURNING module_type",
                 (module_id,),
             )
             row = await cur.fetchone()
-            if not row:
-                return False
             await cur.execute(
                 "INSERT INTO system_audit_log(component_name,action,entity_type,entity_id,actor_type,actor_id,details) "
                 "VALUES ('admin_modules','ADMIN_MODULE_DELETED','ADMIN',%s,'ADMIN',%s,%s::jsonb)",
-                (module_id, actor[:64], json.dumps({"module_type": row[0]})),
+                (module_id, actor[:64], json.dumps({"module_type": module_type})),
             )
-    if row[0] in {"object", "engine"}:
+    if module_type in {"object", "engine"}:
         await _refresh_objects_best_effort(pool)
     return True
-
 
 async def refresh_module_registries(pool) -> None:
     if not pool or not _MODULE_REGISTRY_AVAILABLE:
@@ -317,6 +381,8 @@ async def refresh_module_registries(pool) -> None:
             raise ModuleDefinitionError(f"invalid stored image object definition: {module_id}") from exc
         objects[module_id] = obj.model_copy(update={"enabled": bool(row["enabled"])})
     for obj in objects.values():
+        if not obj.enabled:
+            continue
         missing = sorted({binding.id for binding in obj.engines if binding.id not in engines})
         if missing:
             raise ModuleDefinitionError(

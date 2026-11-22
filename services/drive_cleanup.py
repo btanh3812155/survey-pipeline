@@ -243,3 +243,18 @@ async def prune_stale_submission_folders(
             continue
         deleted += await _delete_tree(drive, http, token, child["id"])
     return deleted
+
+
+async def clear_submission_folders(
+    drive: GoogleDriveClient,
+    http: httpx.AsyncClient,
+    token: str,
+    images_folder_id: str,
+) -> int:
+    """Remove every submission shortcut folder when a form stops exporting images."""
+    deleted = 0
+    for child in await drive.list_children(http, token, images_folder_id):
+        if child.get("mimeType") != FOLDER_MIME or not child.get("id"):
+            continue
+        deleted += await _delete_tree(drive, http, token, child["id"])
+    return deleted

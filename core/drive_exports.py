@@ -31,6 +31,7 @@ from services.google_drive_delivery import (
     normalize_image_bytes,
 )
 from services.drive_cleanup import (
+    clear_submission_folders,
     prune_stale_files,
     prune_stale_submission_folders,
     purge_form_folders,
@@ -350,9 +351,13 @@ async def get_client(pool, slug: str) -> dict[str, Any] | None:
 async def save_client(pool, payload: dict[str, Any], actor: str) -> dict[str, Any]:
     if not pool:
         raise RuntimeError("drive export database unavailable")
-    existing = None if "form_settings" in payload else await get_client(pool, str(payload.get("slug") or ""))
-    client = normalize_client(payload)
+    existing = await get_client(pool, str(payload.get("slug") or ""))
+    effective_payload = dict(payload)
     if existing is not None:
+        for key in ("fields", "statuses", "vehicle_types", "include_images"):
+            effective_payload.setdefault(key, existing.get(key))
+    client = normalize_client(effective_payload)
+    if existing is not None and "form_settings" not in payload:
         client["form_settings"] = existing.get("form_settings") or {}
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
@@ -639,9 +644,8 @@ async def run_drive_exports(
                 for config in clients:
                     report["clients"] += 1
                     overrides = config.get("form_settings") or {}
-                    target_forms = set(config.get("form_ids") or []) | set(overrides)
-                    if not config.get("form_ids"):
-                        target_forms |= active_forms
+                    selected_forms = set(config.get("form_ids") or [])
+                    target_forms = selected_forms or (set(overrides) | active_forms)
                     by_form: dict[str, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
                     if target_forms:
                         for form_id in sorted(target_forms):
@@ -691,7 +695,17 @@ async def run_drive_exports(
                             drive, http, access_token, form_id, form_folder,
                             form_rows, list(effective["fields"]), report,
                         )
-                        if not effective["include_images"] or not images_folder:
+                        if not images_folder:
+                            continue
+                        if not effective["include_images"]:
+                            try:
+                                report["submission_folders_pruned"] += await clear_submission_folders(
+                                    drive, http, access_token, images_folder
+                                )
+                            except Exception as exc:
+                                report["errors"].append(
+                                    f"{config['slug']}/{form_id}: image-disable cleanup failed ({type(exc).__name__})"
+                                )
                             continue
                         for row in form_rows:
                             sid = str(row["submission_id"])
@@ -739,7 +753,7 @@ async def run_drive_exports(
                                     report["errors"].append(
                                         f"{config['slug']}/{sid}: stale-image cleanup failed ({type(exc).__name__})"
                                     )
-                        if config["include_images"] and images_folder:
+                        if images_folder:
                             try:
                                 report["submission_folders_pruned"] += await prune_stale_submission_folders(
                                     drive,

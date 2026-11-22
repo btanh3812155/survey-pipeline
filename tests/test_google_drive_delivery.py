@@ -497,6 +497,7 @@ def test_explicit_test_folder_matcher_keeps_real_form_ids():
     assert gd.is_explicit_test_folder("DEMO-z")
     assert gd.is_explicit_test_folder("VN-DRIVE-TEST-01")
     assert not gd.is_explicit_test_folder("TB_GSM_2026_Nov_Test")
+    assert gd.is_explicit_test_folder("income_survey_test")
     assert not gd.is_explicit_test_folder("income_survey")
 
 
