@@ -19,7 +19,15 @@ async def test_delete_submission_cascades_outbox_and_audits(database):
             )
         assert details["submission_id"] == sid
         assert details["form_id"]
+        assert details["trash_id"]
         assert details["outbox_events"] == 1
+        trash = conn.execute(
+            "SELECT entity_type,snapshot->'submission'->>'submission_id' AS snapshot_sid "
+            "FROM trash_items WHERE id=%s",
+            (details["trash_id"],),
+        ).fetchone()
+        assert trash["entity_type"] == "submission"
+        assert trash["snapshot_sid"] == sid
         assert conn.execute(
             "SELECT 1 FROM survey_submissions WHERE submission_id=%s", (sid,)
         ).fetchone() is None

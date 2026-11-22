@@ -401,6 +401,13 @@ async def delete_submission_record(
             form_id = str(row[0])
 
             await cur.execute(
+                "SELECT row_to_json(t)::text FROM survey_submissions t WHERE submission_id=%s",
+                (sub_id,),
+            )
+            snapshot_row = await cur.fetchone()
+            submission_snapshot = json.loads(snapshot_row[0]) if snapshot_row else {}
+
+            await cur.execute(
                 "SELECT 1 FROM collaborator_billing_ledger WHERE submission_id=%s",
                 (sub_id,),
             )
@@ -423,12 +430,28 @@ async def delete_submission_record(
             )
             idempotency_rows = int((await cur.fetchone())[0])
 
+            from core.trash import add_trash_item
+            trash_id = await add_trash_item(
+                cur,
+                "submission",
+                sub_id,
+                f"Submission {sub_id}",
+                {
+                    "submission": submission_snapshot,
+                    "outbox_events": len(event_ids),
+                    "delivery_attempts": attempts,
+                    "idempotency_rows": idempotency_rows,
+                },
+                actor,
+                metadata={"form_id": form_id},
+            )
             details = {
                 "submission_id": sub_id,
                 "form_id": form_id,
                 "outbox_events": len(event_ids),
                 "delivery_attempts": attempts,
                 "idempotency_rows": idempotency_rows,
+                "trash_id": trash_id,
             }
             await cur.execute(
                 "INSERT INTO system_audit_log(component_name,action,entity_type,entity_id,"

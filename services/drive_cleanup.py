@@ -49,6 +49,59 @@ async def _delete_named_folder(
     return await _delete_tree(drive, http, token, folder_id) if folder_id else 0
 
 
+async def _collect_tree(
+    drive: GoogleDriveClient,
+    http: httpx.AsyncClient,
+    token: str,
+    folder_id: str,
+    *,
+    parent_id: str | None = None,
+    parent_name: str | None = None,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for child in await drive.list_children(http, token, folder_id):
+        child_id = child.get("id")
+        if not child_id:
+            continue
+        entries.append({
+            "id": child_id,
+            "name": child.get("name") or "",
+            "parent_id": folder_id,
+            "parent_name": parent_name,
+            "mime_type": child.get("mimeType"),
+            "target_id": (child.get("shortcutDetails") or {}).get("targetId"),
+        })
+        if child.get("mimeType") == FOLDER_MIME:
+            entries.extend(await _collect_tree(
+                drive, http, token, child_id,
+                parent_id=folder_id, parent_name=child.get("name"),
+            ))
+    if parent_id is not None:
+        entries.insert(0, {
+            "id": folder_id, "name": parent_name or "", "parent_id": parent_id,
+            "parent_name": None, "mime_type": FOLDER_MIME, "target_id": None,
+        })
+    return entries
+
+
+async def _trash_named_folder(
+    drive: GoogleDriveClient,
+    http: httpx.AsyncClient,
+    token: str,
+    parent_id: str,
+    name: str,
+) -> tuple[int, list[dict[str, Any]]]:
+    folder_id = await _find_folder(drive, http, token, parent_id, name)
+    if not folder_id:
+        return 0, []
+    entries = await _collect_tree(
+        drive, http, token, folder_id, parent_id=parent_id, parent_name=name
+    )
+    if await drive.trash_file(http, token, folder_id):
+        return 1, entries
+    return 0, []
+
+
 async def _tier_folders(
     drive: GoogleDriveClient, http: httpx.AsyncClient, token: str, root_id: str, settings: dict[str, Any]
 ) -> list[str]:
@@ -66,36 +119,25 @@ async def _tier_folders(
     return folders
 
 
-async def _delete_submission_from_form_folder(
-    drive: GoogleDriveClient, http: httpx.AsyncClient, token: str, form_folder_id: str, submission_id: str
-) -> int:
-    deleted = 0
-    images_id = await _find_folder(drive, http, token, form_folder_id, "Images")
-    if images_id:
-        deleted += await _delete_named_folder(drive, http, token, images_id, submission_id)
-    # Older layouts put submission folders directly under the form folder.
-    deleted += await _delete_named_folder(drive, http, token, form_folder_id, submission_id)
-    return deleted
-
-
-async def _legacy_submission_cleanup(
+async def _legacy_submission_trash(
     drive: GoogleDriveClient, http: httpx.AsyncClient, token: str, root_id: str,
     form_id: str, submission_id: str,
-) -> int:
+) -> tuple[int, list[dict[str, Any]]]:
     deleted = 0
+    ledger: list[dict[str, Any]] = []
+    candidates: list[tuple[str, str]] = []
     legacy_images = await _find_folder(drive, http, token, root_id, "Images")
     if legacy_images:
         form_folder = await _find_folder(drive, http, token, legacy_images, form_id)
         if form_folder:
             submissions = await _find_folder(drive, http, token, form_folder, "submissions")
             if submissions:
-                deleted += await _delete_named_folder(drive, http, token, submissions, submission_id)
-    for parent_name in (form_id,):
-        form_folder = await _find_folder(drive, http, token, root_id, parent_name)
-        if form_folder:
-            submissions = await _find_folder(drive, http, token, form_folder, "submissions")
-            if submissions:
-                deleted += await _delete_named_folder(drive, http, token, submissions, submission_id)
+                candidates.append((submissions, submission_id))
+    form_folder = await _find_folder(drive, http, token, root_id, form_id)
+    if form_folder:
+        submissions = await _find_folder(drive, http, token, form_folder, "submissions")
+        if submissions:
+            candidates.append((submissions, submission_id))
     internal = await _find_folder(drive, http, token, root_id, "Internal")
     if internal:
         form_folder = await _find_folder(drive, http, token, internal, form_id)
@@ -104,11 +146,110 @@ async def _legacy_submission_cleanup(
             if submissions:
                 for status_folder in await drive.list_children(http, token, submissions):
                     if status_folder.get("mimeType") == FOLDER_MIME and status_folder.get("id"):
-                        deleted += await _delete_named_folder(
-                            drive, http, token, status_folder["id"], submission_id
-                        )
-    return deleted
+                        candidates.append((status_folder["id"], submission_id))
+    for parent_id, name in candidates:
+        count, entries = await _trash_named_folder(drive, http, token, parent_id, name)
+        deleted += count
+        ledger.extend(entries)
+    return deleted, ledger
 
+async def cleanup_form_drive(form_id: str, pool=None) -> dict[str, Any]:
+    """Move every Drive folder tied to a deleted form to Drive trash and return ledger entries."""
+    from core.drive_exports import DEFAULT_SETTINGS, get_settings
+    drive = GoogleDriveClient()
+    http = httpx.AsyncClient(timeout=60.0)
+    try:
+        token = await drive.get_token(http)
+        if not token or not drive.root_folder_id:
+            return {"status": "unavailable", "deleted": 0, "ledger": []}
+        settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
+        deleted = 0
+        ledger: list[dict[str, Any]] = []
+        for tier_id in await _tier_folders(drive, http, token, drive.root_folder_id, settings):
+            count, entries = await _trash_named_folder(drive, http, token, tier_id, form_id)
+            deleted += count
+            ledger.extend(entries)
+        root_id = drive.root_folder_id
+        master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
+        if master_id:
+            images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
+            if images_id:
+                count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
+                deleted += count
+                ledger.extend(entries)
+        count, entries = await _trash_named_folder(drive, http, token, root_id, form_id)
+        deleted += count
+        ledger.extend(entries)
+        internal = await _find_folder(drive, http, token, root_id, "Internal")
+        if internal:
+            count, entries = await _trash_named_folder(drive, http, token, internal, form_id)
+            deleted += count
+            ledger.extend(entries)
+        logger.info("Drive cleanup trashed %s items for deleted form %s", deleted, form_id)
+        return {"status": "ok", "deleted": deleted, "ledger": ledger}
+    except Exception as exc:
+        logger.warning("Drive cleanup failed for form %s: %s", form_id, type(exc).__name__)
+        return {"status": "error", "deleted": 0, "ledger": [], "error": type(exc).__name__}
+    finally:
+        await http.aclose()
+
+async def cleanup_submission_drive(form_id: str, submission_id: str, pool=None) -> dict[str, Any]:
+    """Move master and client shortcut folders for one submission to Drive trash."""
+    from core.drive_exports import DEFAULT_SETTINGS, get_settings
+    drive = GoogleDriveClient()
+    http = httpx.AsyncClient(timeout=60.0)
+    try:
+        token = await drive.get_token(http)
+        if not token or not drive.root_folder_id:
+            return {"status": "unavailable", "deleted": 0, "ledger": []}
+        settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
+        root_id = drive.root_folder_id
+        deleted = 0
+        ledger: list[dict[str, Any]] = []
+        master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
+        if master_id:
+            images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
+            if images_id:
+                form_folder = await _find_folder(drive, http, token, images_id, form_id)
+                if form_folder:
+                    count, entries = await _trash_named_folder(
+                        drive, http, token, form_folder, submission_id
+                    )
+                    deleted += count
+                    ledger.extend(entries)
+        for tier_id in await _tier_folders(drive, http, token, root_id, settings):
+            form_folder = await _find_folder(drive, http, token, tier_id, form_id)
+            if form_folder:
+                images_id = await _find_folder(drive, http, token, form_folder, "Images")
+                if images_id:
+                    count, entries = await _trash_named_folder(
+                        drive, http, token, images_id, submission_id
+                    )
+                    deleted += count
+                    ledger.extend(entries)
+                count, entries = await _trash_named_folder(
+                    drive, http, token, form_folder, submission_id
+                )
+                deleted += count
+                ledger.extend(entries)
+        legacy_count, legacy_entries = await _legacy_submission_trash(
+            drive, http, token, root_id, form_id, submission_id
+        )
+        deleted += legacy_count
+        ledger.extend(legacy_entries)
+        logger.info(
+            "Drive cleanup trashed %s items for deleted submission %s/%s",
+            deleted, form_id, submission_id,
+        )
+        return {"status": "ok", "deleted": deleted, "ledger": ledger}
+    except Exception as exc:
+        logger.warning(
+            "Drive cleanup failed for submission %s/%s: %s",
+            form_id, submission_id, type(exc).__name__,
+        )
+        return {"status": "error", "deleted": 0, "ledger": [], "error": type(exc).__name__}
+    finally:
+        await http.aclose()
 
 async def purge_form_folders(
     drive: GoogleDriveClient,
@@ -118,7 +259,7 @@ async def purge_form_folders(
     settings: dict[str, Any],
     form_id: str,
 ) -> int:
-    """Delete form folders under the current layout and legacy mirrors."""
+    """Permanently purge archived-form folders during an export maintenance pass."""
     deleted = 0
     for tier_id in await _tier_folders(drive, http, token, root_id, settings):
         deleted += await _delete_named_folder(drive, http, token, tier_id, form_id)
@@ -127,79 +268,11 @@ async def purge_form_folders(
         images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
         if images_id:
             deleted += await _delete_named_folder(drive, http, token, images_id, form_id)
-    # Remove legacy root-level mirrors as well.
     deleted += await _delete_named_folder(drive, http, token, root_id, form_id)
     internal = await _find_folder(drive, http, token, root_id, "Internal")
     if internal:
         deleted += await _delete_named_folder(drive, http, token, internal, form_id)
     return deleted
-
-
-async def cleanup_form_drive(form_id: str, pool=None) -> dict[str, Any]:
-    """Remove every Drive folder tied to a deleted form ID."""
-    from core.drive_exports import DEFAULT_SETTINGS, get_settings
-    drive = GoogleDriveClient()
-    http = httpx.AsyncClient(timeout=60.0)
-    try:
-        token = await drive.get_token(http)
-        if not token or not drive.root_folder_id:
-            return {"status": "unavailable", "deleted": 0}
-        settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
-        deleted = await purge_form_folders(
-            drive, http, token, drive.root_folder_id, settings, form_id
-        )
-        logger.info("Drive cleanup removed %s items for deleted form %s", deleted, form_id)
-        return {"status": "ok", "deleted": deleted}
-    except Exception as exc:
-        logger.warning("Drive cleanup failed for form %s: %s", form_id, type(exc).__name__)
-        return {"status": "error", "deleted": 0, "error": type(exc).__name__}
-    finally:
-        await http.aclose()
-
-
-async def cleanup_submission_drive(form_id: str, submission_id: str, pool=None) -> dict[str, Any]:
-    """Remove the master images and every client/internal shortcut folder for one submission."""
-    from core.drive_exports import DEFAULT_SETTINGS, get_settings
-    drive = GoogleDriveClient()
-    http = httpx.AsyncClient(timeout=60.0)
-    try:
-        token = await drive.get_token(http)
-        if not token or not drive.root_folder_id:
-            return {"status": "unavailable", "deleted": 0}
-        settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
-        root_id = drive.root_folder_id
-        deleted = 0
-        master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
-        if master_id:
-            images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
-            if images_id:
-                form_folder = await _find_folder(drive, http, token, images_id, form_id)
-                if form_folder:
-                    deleted += await _delete_named_folder(
-                        drive, http, token, form_folder, submission_id
-                    )
-        for tier_id in await _tier_folders(drive, http, token, root_id, settings):
-            form_folder = await _find_folder(drive, http, token, tier_id, form_id)
-            if form_folder:
-                deleted += await _delete_submission_from_form_folder(
-                    drive, http, token, form_folder, submission_id
-                )
-        deleted += await _legacy_submission_cleanup(
-            drive, http, token, root_id, form_id, submission_id
-        )
-        logger.info(
-            "Drive cleanup removed %s items for deleted submission %s/%s",
-            deleted, form_id, submission_id,
-        )
-        return {"status": "ok", "deleted": deleted}
-    except Exception as exc:
-        logger.warning(
-            "Drive cleanup failed for submission %s/%s: %s",
-            form_id, submission_id, type(exc).__name__,
-        )
-        return {"status": "error", "deleted": 0, "error": type(exc).__name__}
-    finally:
-        await http.aclose()
 
 
 async def prune_stale_files(

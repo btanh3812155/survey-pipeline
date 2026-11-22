@@ -305,10 +305,12 @@ async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)
         raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
 
     backup_id = None
+    trash_id = None
     schema_json = schema.model_dump_json()
     db_pool = get_db_pool()
     if db_pool:
         try:
+            from core.trash import add_trash_item
             async with db_pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -330,6 +332,12 @@ async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)
                     )
                     row = await cur.fetchone()
                     backup_id = row[0] if row else None
+                    trash_id = await add_trash_item(
+                        cur, "form", form_id, schema.title,
+                        {"form_id": form_id, "title": schema.title, "schema": json.loads(schema_json)},
+                        admin_user,
+                        metadata={"legacy_archive_id": backup_id},
+                    )
                 await conn.commit()
         except Exception as e:
             logger.error(f"DB archive failed for form {form_id}; falling back to file backup: {e}")
@@ -352,6 +360,19 @@ async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)
     try:
         from services.drive_cleanup import cleanup_form_drive
         drive_cleanup = await cleanup_form_drive(form_id, db_pool)
+        ledger = drive_cleanup.pop("ledger", [])
+        if db_pool and trash_id:
+            from core.trash import record_drive_ledger, update_trash_metadata, compact_trash
+            await record_drive_ledger(
+                db_pool, "form", form_id, ledger, admin_user,
+                trash_id=trash_id, action="DRIVE_TRASHED",
+            )
+            await update_trash_metadata(
+                db_pool, trash_id,
+                {"backup": backup_id, "drive_cleanup": drive_cleanup, "drive_ledger_items": len(ledger)},
+                admin_user,
+            )
+            await compact_trash(db_pool)
     except Exception as exc:
         logger.warning("Drive cleanup skipped for deleted form %s: %s", form_id, type(exc).__name__)
         drive_cleanup = {"status": "error", "error": type(exc).__name__}
@@ -359,8 +380,18 @@ async def delete_form(form_id: str, admin_user: str = Depends(verify_admin_auth)
         "status": "success",
         "form_id": form_id,
         "backup": backup_id,
+        "trash_id": trash_id,
         "drive_cleanup": drive_cleanup,
     }
+
+
+@router.get("/api/v1/admin/trash")
+async def list_deleted_items(
+    limit: int = 200, admin_user: str = Depends(verify_admin_auth)
+):
+    """List recoverable form/submission snapshots; superadmin-only by route policy."""
+    from core.trash import list_trash
+    return {"items": await list_trash(get_db_pool(), limit=limit)}
 
 
 @router.get("/api/v1/forms/draft/{slug}")

@@ -9,6 +9,7 @@ import os
 import re
 import logging
 import shutil
+import time
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, status
 from fastapi.responses import HTMLResponse, FileResponse
@@ -109,22 +110,53 @@ async def delete_submission(
 
     media_root = os.path.realpath(os.path.join(os.getcwd(), "data", "submission_photos"))
     target = os.path.realpath(os.path.join(media_root, safe_id))
-    if target.startswith(media_root + os.sep):
-        shutil.rmtree(target, ignore_errors=True)
-    upload = os.path.join(os.getcwd(), "data", "uploads", "surveys", f"{safe_id}.webp")
+    trash_dir = os.path.join(
+        os.getcwd(), "data", "trash", "submission_media", safe_id,
+        f"{int(time.time())}-{os.getpid()}",
+    )
+    media_trash_path = None
     try:
+        if target.startswith(media_root + os.sep) and os.path.isdir(target):
+            os.makedirs(trash_dir, exist_ok=True)
+            shutil.move(target, os.path.join(trash_dir, "photos"))
+            media_trash_path = os.path.relpath(trash_dir, os.getcwd())
+        upload = os.path.join(os.getcwd(), "data", "uploads", "surveys", f"{safe_id}.webp")
         if os.path.isfile(upload):
-            os.remove(upload)
+            os.makedirs(trash_dir, exist_ok=True)
+            shutil.move(upload, os.path.join(trash_dir, "fallback.webp"))
+            media_trash_path = media_trash_path or os.path.relpath(trash_dir, os.getcwd())
     except OSError as exc:
-        logger.warning("Could not remove fallback media for %s: %s", safe_id, exc)
+        logger.warning("Could not move media to trash for %s: %s", safe_id, exc)
     try:
         from services.drive_cleanup import cleanup_submission_drive
-        details["drive_cleanup"] = await cleanup_submission_drive(
+        drive_cleanup = await cleanup_submission_drive(
             str(details.get("form_id") or ""), safe_id, get_db_pool()
         )
+        ledger = drive_cleanup.pop("ledger", [])
+        trash_id = details.get("trash_id")
+        pool = get_db_pool()
+        if pool and trash_id:
+            from core.trash import record_drive_ledger, update_trash_metadata, compact_trash
+            await record_drive_ledger(
+                pool, "submission", safe_id, ledger, admin_user,
+                trash_id=trash_id, action="DRIVE_TRASHED",
+            )
+            await update_trash_metadata(
+                pool, trash_id,
+                {
+                    "media_trash_path": media_trash_path,
+                    "drive_cleanup": drive_cleanup,
+                    "drive_ledger_items": len(ledger),
+                },
+                admin_user,
+            )
+            await compact_trash(pool)
+        details["drive_cleanup"] = drive_cleanup
+        details["media_trash_path"] = media_trash_path
     except Exception as exc:
         logger.warning("Drive cleanup skipped for submission %s: %s", safe_id, type(exc).__name__)
         details["drive_cleanup"] = {"status": "error", "error": type(exc).__name__}
+        details["media_trash_path"] = media_trash_path
     return {"status": "deleted", "submission_id": safe_id, "details": details}
 
 
