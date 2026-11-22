@@ -728,7 +728,7 @@ class TelegramPollingRunner:
                 "• <code>/audit &lt;mã_phiếu&gt;</code> - Xem hồ sơ và đổi quyết định đã chốt\n"
                 "• <code>/forms</code> - Xem biểu mẫu đang mở\n"
                 "• <code>/surveys &lt;mã_ctv hoặc số_điện_thoại&gt;</code> - Tra cứu phiếu gần đây\n"
-                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem hạn mức của một CTV\n"
+                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem mục tiêu của một CTV\n"
                 "• <code>/stats</code> - Xem thống kê tiến độ duyệt phiếu\n"
                 "• <code>/close</code> - Kết thúc phiên chat hỗ trợ trực tiếp\n\n"
                 "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng lệnh <code>/check</code>!</i>"
@@ -739,7 +739,7 @@ class TelegramPollingRunner:
                 "🤖 <b>Bot Điều Hành Trust Bridge (@TrustBridgeVNAdmin_Bot)</b>\n\n"
                 "Lệnh điều hành:\n"
                 "• <code>/check &lt;mã_phiếu&gt;</code> - Mở hồ sơ & ảnh phiếu để xét duyệt\n"
-                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem hạn mức của một CTV\n\n"
+                "• <code>/quota &lt;mã_ctv&gt;</code> - Xem mục tiêu của một CTV\n\n"
                 "👉 <i>Mẹo: Bạn có thể reply (trả lời) trực tiếp tin nhắn thông báo bằng lệnh <code>/check</code>!</i>"
             )
             await self.send_message(chat_id, help_msg)

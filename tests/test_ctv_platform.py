@@ -204,7 +204,7 @@ async def test_schema_seed_and_cache_read_helpers():
         "Vỹ_PV_HCM_004",
     ]
 
-    # authorized_users only fills phone/telegram on known static codes.
+    # authorized_users only fills phone/telegram on known static CTV codes.
     authorized_updates = [
         params for sql, params in pool.executed
         if "phone = COALESCE(ctv_directory.phone" in sql

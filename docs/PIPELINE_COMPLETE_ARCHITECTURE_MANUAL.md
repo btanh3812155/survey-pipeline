@@ -1,11 +1,13 @@
-# Survey Verification Pipeline: Complete Production Architecture Manual
+# Survey Verification Pipeline: Historical Architecture Design Reference
 
-**Document Classification:** Authoritative Technical Manual & System Architecture Specification  
-**Version:** 3.0.0 (Production Release & Forensic Baseline)  
-**Target Operating Throughput:** 20,000+ daily submissions (~600,000 surveys/month)  
-**Nominal Service Level Agreement (SLA):** Synchronous validation loop < 2,500 ms (p50), < 3,800 ms (p99 under complete dual-AI failover)  
-**Target Operating Infrastructure Cost:** ~$83.00 - $93.00 / month (DigitalOcean SGP1 + Cloudflare R2 + API inference)  
-**Authoritative Administrative Account:** `admin@trustbridgevn.com` (Designated for Google Drive deliverables, cloud storage targets, and all Trust Bridge operations)
+**Document Classification:** Historical target architecture; not a verified description of the current checkout  
+**Version:** 3.0.0 (historical design baseline)  
+**Target Operating Throughput:** Historical, unverified target: 20,000+ daily submissions  
+**Nominal Service Level Agreement (SLA):** Historical, unverified target; measure current behavior before relying on these figures  
+**Target Operating Infrastructure Cost:** Historical, unverified estimate  
+**Administrative Account:** See current deployment configuration and operator-approved credential store; do not treat this manual as deployment authority
+
+> **Implementation status warning:** This document contains target-state diagrams and historical performance, cost, and behavior claims. They have not been verified against the reviewed checkout. At `master` revision `494c7e9`, survey processing also schedules in-process background tasks, and several outbox branches are placeholders rather than durable integrations. Use [`MODULE_DESIGNER_HANDOFF.md`](MODULE_DESIGNER_HANDOFF.md) for the current code review, open bugs, and recommended architecture. Verify every claim against the exact implementation and deployment before relying on it.
 
 ---
 
