@@ -523,6 +523,25 @@ async def test_google_drive_cleanup_trashes_duplicate_root_folders():
 
 
 @pytest.mark.asyncio
+async def test_untrash_file_patches_trashed_false():
+    from services.google_drive_delivery import GoogleDriveClient
+    import httpx
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH" and "/drive/v3/files/trash-id" in str(request.url):
+            captured["body"] = request.content
+            return httpx.Response(200, json={"id": "trash-id", "trashed": False})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        assert await GoogleDriveClient(root_folder_id="root").untrash_file(client, "token", "trash-id")
+    assert b'"trashed": false' in captured["body"] or b'"trashed":false' in captured["body"]
+
+
+@pytest.mark.asyncio
 async def test_upload_file_patch_when_existing():
     """Tests that upload_file performs PATCH with media when file already exists."""
     from services.google_drive_delivery import GoogleDriveClient

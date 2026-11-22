@@ -233,3 +233,97 @@ async def list_trash(pool, limit: int = 200) -> list[dict[str, Any]]:
                 (max(1, min(int(limit), 1000)),),
             )
             return await cur.fetchall()
+
+
+async def get_trash_item(pool, trash_id: str) -> dict[str, Any] | None:
+    if not pool:
+        return None
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """SELECT id,entity_type,entity_id,label,snapshot,deleted_by,deleted_at,
+                          expires_at,retention_tier,restored_at,purged_at,metadata
+                   FROM trash_items WHERE id=%s""",
+                (trash_id,),
+            )
+            return await cur.fetchone()
+
+
+async def mark_restored(
+    pool, trash_id: str, actor: str, details: dict[str, Any] | None = None
+) -> bool:
+    if not pool:
+        return False
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE trash_items SET restored_at=clock_timestamp()
+                   WHERE id=%s AND restored_at IS NULL AND purged_at IS NULL
+                   RETURNING entity_type,entity_id""",
+                (trash_id,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return False
+            await record_transaction(cur, trash_id, "RESTORED", actor, details or {})
+            await cur.execute(
+                """INSERT INTO system_audit_log
+                   (component_name,action,entity_type,entity_id,actor_type,actor_id,details)
+                   VALUES ('trash','TRASH_RESTORED',%s,%s,'ADMIN',%s,%s::jsonb)""",
+                (row[0], row[1], str(actor)[:64], json.dumps({"trash_id": trash_id, **(details or {})})),
+            )
+            return True
+
+
+async def restore_drive_ledger(
+    pool, entity_type: str, entity_id: str, actor: str
+) -> dict[str, Any]:
+    """Untrash top-level ledger folders and mark the entity's links active."""
+    if not pool:
+        return {"status": "unavailable", "restored": 0}
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """SELECT id,drive_id,object_name,parent_drive_id,state
+                   FROM drive_name_ledger WHERE entity_type=%s AND entity_id=%s""",
+                (entity_type, entity_id),
+            )
+            rows = await cur.fetchall()
+    if not rows:
+        return {"status": "empty", "restored": 0}
+    from services.google_drive_delivery import GoogleDriveClient
+    import httpx
+
+    drive = GoogleDriveClient()
+    http = httpx.AsyncClient(timeout=60.0)
+    restored = 0
+    try:
+        token = await drive.get_token(http)
+        if not token:
+            return {"status": "no_credentials", "restored": 0}
+        ledger_ids = {str(row["drive_id"]) for row in rows}
+        roots = [
+            row for row in rows
+            if row["state"] == "TRASHED" and str(row["parent_drive_id"] or "") not in ledger_ids
+        ]
+        for row in roots:
+            if await drive.untrash_file(http, token, str(row["drive_id"])):
+                restored += 1
+        async with pool.connection() as conn:
+            async with conn.transaction(), conn.cursor() as cur:
+                await cur.execute(
+                    """UPDATE drive_name_ledger
+                       SET state='ACTIVE',last_seen_at=clock_timestamp(),last_action='DRIVE_RESTORED'
+                       WHERE entity_type=%s AND entity_id=%s""",
+                    (entity_type, entity_id),
+                )
+                await record_transaction(
+                    cur, None, "DRIVE_RESTORED", actor,
+                    {"entity_type": entity_type, "entity_id": entity_id, "roots": restored},
+                )
+        return {"status": "ok", "restored": restored}
+    except Exception as exc:
+        logger.warning("Drive restore failed for %s/%s: %s", entity_type, entity_id, type(exc).__name__)
+        return {"status": "error", "restored": restored, "error": type(exc).__name__}
+    finally:
+        await http.aclose()

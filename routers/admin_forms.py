@@ -5,8 +5,10 @@ Decouples survey form definition, visual 3-tab editor, CTV draft persistence,
 and schema validation from submission ingress.
 """
 
+import html
 import json
 import os
+import shutil
 import time
 import logging
 from datetime import datetime, timezone
@@ -392,6 +394,135 @@ async def list_deleted_items(
     """List recoverable form/submission snapshots; superadmin-only by route policy."""
     from core.trash import list_trash
     return {"items": await list_trash(get_db_pool(), limit=limit)}
+
+
+@router.get("/admin/trash", response_class=HTMLResponse)
+async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
+    """Minimal trash browser with restore actions."""
+    from core.trash import RETENTION_FREQUENCIES, list_trash
+    items = await list_trash(get_db_pool(), limit=500)
+    rows = []
+    for item in items:
+        meta = item.get("metadata") or {}
+        media = meta.get("media_trash_path") or ""
+        rows.append(
+            f"<tr><td><code>{html.escape(str(item['id']))}</code></td>"
+            f"<td>{html.escape(str(item['entity_type']))}</td>"
+            f"<td><code>{html.escape(str(item['entity_id']))}</code><br><span class=muted>{html.escape(str(item['label'] or ''))}</span></td>"
+            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(str(item['retention_tier']))}</span></td>"
+            f"<td>{'local media' if media else 'no media'}<br><span class=muted>{html.escape(str(len(meta.get('drive_ledger_items', 0))))} Drive links</span></td>"
+            f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Restore</button></td></tr>"
+        )
+    policy = "".join(f"<li><b>{html.escape(k)}</b>: {html.escape(v)}</li>" for k, v in RETENTION_FREQUENCIES.items())
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trash</title><style>
+:root{{color-scheme:dark;--bg:#0b1220;--panel:#131d30;--line:#2a3952;--fg:#e5edf7;--muted:#9aabc1;--accent:#38bdf8}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}}main{{max-width:1200px;margin:auto;padding:24px}}
+table{{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}}th,td{{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}}
+th{{color:var(--accent)}}.muted{{color:var(--muted);font-size:.78rem}}code{{color:#67e8f9}}button{{background:#0369a1;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}}
+.card{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}}
+</style></head><body><main><h1>Trash</h1><p class=muted>Forms restore intact. Submissions restore to MANUAL_REVIEW; outbox and Telegram effects are not replayed.</p>
+<div class=card><b>Retention</b><ul>{policy}</ul></div>
+<table><thead><tr><th>ID</th><th>Type</th><th>Entity</th><th>Deleted</th><th>Artifacts</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=6 class=muted>Trash is empty.</td></tr>'}</tbody></table>
+<script>
+async function restoreTrash(id) {{
+  if (!confirm('Restore this item? Forms restore intact; submissions restore to MANUAL_REVIEW.')) return;
+  const resp = await fetch('/api/v1/admin/trash/' + encodeURIComponent(id) + '/restore', {{method:'POST', credentials:'include'}});
+  const body = await resp.json().catch(() => ({{}}));
+  if (resp.ok) window.location.reload();
+  else alert(body.detail || 'Restore failed');
+}}
+</script></main></body></html>""")
+
+
+def _restore_media(metadata: dict) -> dict:
+    media_path = str((metadata or {}).get("media_trash_path") or "").strip()
+    if not media_path:
+        return {"status": "none"}
+    root = os.path.realpath(os.path.join(os.getcwd(), "data", "trash"))
+    source = os.path.realpath(os.path.join(os.getcwd(), media_path))
+    if not source.startswith(root + os.sep):
+        return {"status": "rejected", "path": media_path}
+    photos = os.path.join(source, "photos")
+    fallback = os.path.join(source, "fallback.webp")
+    warnings = []
+    if os.path.isdir(photos):
+        dest_root = os.path.realpath(os.path.join(os.getcwd(), "data", "submission_photos"))
+        dest = os.path.realpath(os.path.join(dest_root, os.path.basename(os.path.dirname(source))))
+        if os.path.exists(dest):
+            warnings.append("submission media destination already exists")
+        else:
+            os.makedirs(dest_root, exist_ok=True)
+            shutil.move(photos, dest)
+    if os.path.isfile(fallback):
+        upload = os.path.join(os.getcwd(), "data", "uploads", "surveys", f"{os.path.basename(os.path.dirname(source))}.webp")
+        if os.path.exists(upload):
+            warnings.append("fallback upload destination already exists")
+        else:
+            os.makedirs(os.path.dirname(upload), exist_ok=True)
+            shutil.move(fallback, upload)
+    return {"status": "restored" if not warnings else "partial", "warnings": warnings}
+
+
+@router.post("/api/v1/admin/trash/{trash_id}/restore")
+async def restore_deleted_item(trash_id: str, admin_user: str = Depends(verify_admin_auth)):
+    """Restore a form intact or a submission into MANUAL_REVIEW without replaying side effects."""
+    from core.trash import get_trash_item, mark_restored, restore_drive_ledger
+    pool = get_db_pool()
+    item = await get_trash_item(pool, trash_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Trash item not found")
+    if item.get("restored_at") or item.get("purged_at"):
+        raise HTTPException(status_code=409, detail="Trash item is already restored or purged")
+    entity_type = str(item["entity_type"])
+    entity_id = str(item["entity_id"])
+    metadata = item.get("metadata") or {}
+
+    if entity_type == "form":
+        snapshot = (item.get("snapshot") or {}).get("schema")
+        try:
+            schema = FormSchema.model_validate(snapshot)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail={"message": "Trash schema is invalid", "errors": exc.errors()}) from exc
+        refresh_form_registry_from_disk()
+        schema_path = os.path.join(FORMS_STORAGE_DIR, f"{schema.form_id}.json")
+        if schema.form_id in FORM_REGISTRY or os.path.exists(schema_path):
+            raise HTTPException(status_code=409, detail="A form with this ID already exists")
+        result = await _persist_form_schema(schema, "", admin_user)
+        drive = await restore_drive_ledger(pool, entity_type, entity_id, admin_user)
+        if not await mark_restored(pool, trash_id, admin_user, {"drive": drive, "form_id": schema.form_id}):
+            raise HTTPException(status_code=409, detail="Trash item lost a concurrent restore race")
+        return {"status": "restored", "entity_type": entity_type, "entity_id": schema.form_id, "form": result, "drive": drive}
+
+    if entity_type == "submission":
+        snapshot = dict((item.get("snapshot") or {}).get("submission") or {})
+        if not snapshot.get("submission_id"):
+            raise HTTPException(status_code=400, detail="Trash submission snapshot is invalid")
+        submission_id = str(snapshot["submission_id"])
+        snapshot["status"] = "MANUAL_REVIEW"
+        snapshot["rejection_reason"] = "Khôi phục từ thùng rác; chờ duyệt lại."
+        snapshot["moderated_at"] = None
+        snapshot["moderated_by_admin_id"] = None
+        snapshot["moderation_notes"] = None
+        try:
+            async with pool.connection() as conn:
+                async with conn.transaction(), conn.cursor() as cur:
+                    await cur.execute(
+                        "INSERT INTO survey_submissions SELECT * FROM json_populate_record(NULL::survey_submissions, %s::json) "
+                        "ON CONFLICT (submission_id) DO NOTHING RETURNING submission_id",
+                        (json.dumps(snapshot, default=str),),
+                    )
+                    if not await cur.fetchone():
+                        raise HTTPException(status_code=409, detail="A submission with this ID already exists")
+        except HTTPException:
+            raise
+        media = _restore_media(metadata)
+        drive = await restore_drive_ledger(pool, entity_type, submission_id, admin_user)
+        if not await mark_restored(pool, trash_id, admin_user, {"drive": drive, "media": media, "submission_id": submission_id}):
+            raise HTTPException(status_code=409, detail="Trash item lost a concurrent restore race")
+        return {"status": "restored", "entity_type": entity_type, "entity_id": submission_id, "submission_status": "MANUAL_REVIEW", "media": media, "drive": drive}
+
+    raise HTTPException(status_code=400, detail="Unsupported trash entity type")
 
 
 @router.get("/api/v1/forms/draft/{slug}")

@@ -1,5 +1,6 @@
 """Database-side trash retention, transaction audit, and Drive name/ID ledger."""
 from datetime import datetime, timedelta, timezone
+import json
 import hashlib
 import os
 from pathlib import Path
@@ -14,6 +15,11 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from core.trash import add_trash_item, compact_trash, list_trash, record_drive_ledger
+from services.form_engine import FormSchema
+from core.state import verify_admin_auth
+from routers import admin_forms
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from tests.postgres_harness import SCHEMA_PATH, apply_schema, resolve_test_database_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +131,85 @@ def test_migration_013_retunes_retention(database):
                 conn.execute("INSERT INTO trash_items VALUES ('00000000-0000-0000-0000-000000000002', NULL, 'four_hourly')")
         finally:
             root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_form_restore_api_rewrites_schema_and_marks_trash(pool, tmp_path, monkeypatch):
+    schema = FormSchema(form_id="RESTORE_FORM", title="Restore me", questions=[])
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            trash_id = await add_trash_item(
+                cur, "form", "RESTORE_FORM", "Restore me",
+                {"form_id": "RESTORE_FORM", "title": "Restore me", "schema": schema.model_dump(mode="json")},
+                "tester",
+            )
+    async def fake_drive_restore(*args, **kwargs):
+        return {"status": "ok", "restored": 0}
+    monkeypatch.setattr("core.trash.restore_drive_ledger", fake_drive_restore)
+    monkeypatch.setattr(admin_forms, "FORMS_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(admin_forms, "get_db_pool", lambda: pool)
+    from core.state import FORM_REGISTRY
+    FORM_REGISTRY.pop("RESTORE_FORM", None)
+    app = FastAPI()
+    app.include_router(admin_forms.router)
+    app.dependency_overrides[verify_admin_auth] = lambda: "tester"
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/api/v1/admin/trash/{trash_id}/restore")
+        assert response.status_code == 200, response.text
+        assert (tmp_path / "RESTORE_FORM.json").exists()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT restored_at FROM trash_items WHERE id=%s", (trash_id,))
+                assert (await cur.fetchone())[0] is not None
+    finally:
+        FORM_REGISTRY.pop("RESTORE_FORM", None)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_submission_restore_returns_to_manual_review(pool, tmp_path, monkeypatch):
+    sid = "RESTORE_SUB"
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO survey_submissions(submission_id,form_id,status,form_data,media_manifest) "
+                "VALUES (%s,'RESTORE_FORM','APPROVED','{}'::jsonb,'[]'::jsonb)",
+                (sid,),
+            )
+            await cur.execute(
+                "SELECT row_to_json(t)::text FROM survey_submissions t WHERE submission_id=%s", (sid,)
+            )
+            snapshot = json.loads((await cur.fetchone())[0])
+            await cur.execute("DELETE FROM survey_submissions WHERE submission_id=%s", (sid,))
+    trash_root = tmp_path / "data" / "trash" / "submission_media" / sid / "stamp"
+    (trash_root / "photos").mkdir(parents=True)
+    (trash_root / "photos" / "slot_1.webp").write_bytes(b"photo")
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            trash_id = await add_trash_item(
+                cur, "submission", sid, f"Submission {sid}",
+                {"submission": snapshot}, "tester",
+                metadata={"media_trash_path": str(trash_root.relative_to(tmp_path))},
+            )
+    async def fake_drive_restore(*args, **kwargs):
+        return {"status": "ok", "restored": 0}
+    monkeypatch.setattr("core.trash.restore_drive_ledger", fake_drive_restore)
+    monkeypatch.setattr(admin_forms.os, "getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(admin_forms, "get_db_pool", lambda: pool)
+    app = FastAPI()
+    app.include_router(admin_forms.router)
+    app.dependency_overrides[verify_admin_auth] = lambda: "tester"
+    with TestClient(app) as client:
+        response = client.post(f"/api/v1/admin/trash/{trash_id}/restore")
+    assert response.status_code == 200, response.text
+    assert response.json()["submission_status"] == "MANUAL_REVIEW"
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT status FROM survey_submissions WHERE submission_id=%s", (sid,))
+            assert (await cur.fetchone())[0] == "MANUAL_REVIEW"
+    assert (tmp_path / "data" / "submission_photos" / sid / "slot_1.webp").exists()
 
 
 @pytest.mark.postgres

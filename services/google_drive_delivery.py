@@ -868,6 +868,15 @@ class GoogleDriveClient:
         )
         return resp.status_code == 200
 
+    async def untrash_file(self, client: httpx.AsyncClient, token: str, file_id: str) -> bool:
+        """Restore one file or folder tree from the Drive trash."""
+        resp = await client.patch(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"trashed": False},
+        )
+        return resp.status_code == 200
+
     async def create_shortcut(
         self,
         client: httpx.AsyncClient,

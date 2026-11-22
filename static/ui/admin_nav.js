@@ -20,6 +20,7 @@
     ['/admin/accounts/password', 'Đổi mật khẩu'],
     ...(superadmin ? [
       ['/admin/accounts', 'Tài khoản'],
+      ['/admin/trash', 'Thùng rác'],
       ['/admin/recovery/email', 'Email khôi phục'],
     ] : []),
   ];
