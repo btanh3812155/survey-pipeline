@@ -17,9 +17,9 @@
       ['/admin/modules', 'Module'],
       ['/admin/exports', 'Exports'],
     ] : []),
-    ['/admin/accounts/password', 'Đổi mật khẩu'],
+    ['/admin/account', 'Tài khoản của tôi'],
     ...(superadmin ? [
-      ['/admin/accounts', 'Tài khoản'],
+      ['/admin/accounts', 'Quản lý tài khoản'],
       ['/admin/trash', 'Thùng rác'],
       ['/admin/recovery/email', 'Email khôi phục'],
     ] : []),
@@ -32,7 +32,6 @@
       return path === '/admin/submissions' || path.startsWith('/admin/submissions/')
         || path === '/admin/data' || path.startsWith('/admin/data/');
     }
-    if (href === '/admin/accounts' && path === '/admin/accounts/password') return false;
     return path === href || path.startsWith(href + '/');
   };
   const style = document.createElement('style');

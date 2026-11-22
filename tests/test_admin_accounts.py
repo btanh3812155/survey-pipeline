@@ -35,6 +35,8 @@ from tests.test_outbox_delivery import database
 
 ORIGIN = "https://admin.test"
 ACCOUNTS = "/admin/accounts"
+ACCOUNT_PAGE = "/admin/account"
+ACCOUNT_PASSWORD_PAGE = f"{ACCOUNT_PAGE}/password"
 PASSWORD_PAGE = f"{ACCOUNTS}/password"
 TEST_PASSWORD = "fixture-password"
 SAME_ORIGIN = {"Origin": ORIGIN}
@@ -172,10 +174,13 @@ async def test_staff_routes_require_superadmin_except_own_password(accounts_db):
         for role in ADMIN_ROLES:
             assert await create_admin_account(pool, role, _fixture_hash(), role)
             auth = (role, TEST_PASSWORD)
-            page = await client.get(PASSWORD_PAGE, auth=auth)
+            page = await client.get(ACCOUNT_PAGE, auth=auth)
             assert page.status_code == 200
             assert 'href="/admin/recovery"' not in page.text
             assert 'name="current_password"' in page.text
+            legacy = await client.get(PASSWORD_PAGE, auth=auth)
+            assert legacy.status_code == 303
+            assert legacy.headers["location"] == ACCOUNT_PAGE
             staff = await client.get(ACCOUNTS, auth=auth)
             assert staff.status_code == (200 if role == "superadmin" else 403)
             if role == "superadmin":
@@ -189,23 +194,28 @@ async def test_staff_routes_require_superadmin_except_own_password(accounts_db):
                         f"{ACCOUNTS}/superadmin/{operation}", headers=SAME_ORIGIN, auth=auth, data={"role": role}
                     )
                     assert response.status_code == 403
+                section = await client.post(
+                    f"{ACCOUNTS}/role", headers=SAME_ORIGIN, auth=auth,
+                    data={"username": "superadmin", "role": role},
+                )
+                assert section.status_code == 403
 
         auth = ("viewer", TEST_PASSWORD)
         change = {"current_password": TEST_PASSWORD, "new_password": "x" * 1024, "confirm_password": "x" * 1024}
         for headers in ({}, {"Origin": "http://admin.test"}, {"Origin": "https://other.test"}):
-            response = await client.post(PASSWORD_PAGE, auth=auth, data=change, headers=headers)
+            response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=change, headers=headers)
             assert response.status_code == 403
         for length in (11, 1025):
             invalid = dict(change, new_password="x" * length, confirm_password="x" * length)
-            response = await client.post(PASSWORD_PAGE, auth=auth, data=invalid, headers=SAME_ORIGIN)
+            response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=invalid, headers=SAME_ORIGIN)
             assert response.status_code == 303
-            assert response.headers["location"] == PASSWORD_PAGE + "?err=password_policy"
+            assert response.headers["location"] == ACCOUNT_PAGE + "?err=password_policy"
         wrong = dict(change, current_password="wrong")
-        response = await client.post(PASSWORD_PAGE, auth=auth, data=wrong, headers=SAME_ORIGIN)
-        assert response.headers["location"] == PASSWORD_PAGE + "?err=current_password"
-        changed = await client.post(PASSWORD_PAGE, auth=auth, data=change, headers=SAME_ORIGIN)
+        response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=wrong, headers=SAME_ORIGIN)
+        assert response.headers["location"] == ACCOUNT_PAGE + "?err=current_password"
+        changed = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=change, headers=SAME_ORIGIN)
         assert changed.status_code == 200
-        assert (await client.get(PASSWORD_PAGE, auth=auth)).status_code == 401
+        assert (await client.get(ACCOUNT_PAGE, auth=auth)).status_code == 401
         assert await _authenticate("viewer", change["new_password"]) == ("viewer", "viewer")
         assert await _authenticate("superadmin") == ("superadmin", "superadmin")
 
@@ -238,7 +248,11 @@ async def test_staff_management_and_bin(accounts_db):
         for operation in ("deactivate", "delete", "role"):
             denied = await post(f"/owner/{operation}", {"role": "viewer"})
             assert denied.headers["location"].endswith("?err=self_change")
-        assert (await post("/member/role", {"role": "superadmin"})).status_code == 303
+        denied_section = await post("/role", {"username": "owner", "role": "viewer"})
+        assert denied_section.headers["location"].endswith("?err=self_change")
+        role_section = await post("/role", {"username": "member", "role": "superadmin"})
+        assert role_section.status_code == 303
+        assert role_section.headers["location"].endswith("?msg=account_role_changed")
         assert await _authenticate("member", password) == ("member", "superadmin")
         assert (await post("/member/deactivate")).headers["location"].endswith("?msg=account_deactivated")
         assert not (await get_admin_account(pool, "member"))["is_active"]
@@ -282,3 +296,16 @@ def test_staff_html_escapes_legacy_account_names_without_javascript():
     assert f'action="{ACCOUNTS}/{quote(username, safe="")}/deactivate"' in page
     assert f'action="{ACCOUNTS}/{quote(username, safe="")}/restore"' in page
     assert "onsubmit=" not in page
+
+
+def test_accounts_page_has_role_section_and_manage_panel():
+    owner = {"username": "owner", "role": "superadmin", "is_active": True, "created_at": None}
+    member = {"username": "member", "role": "viewer", "is_active": False, "created_at": None}
+    page = routes._render_accounts("owner", [owner, member], [], "", "")
+    assert "Phân quyền tài khoản" in page
+    assert f'action="{ACCOUNTS}/role"' in page
+    assert 'name="username"' in page
+    assert "<summary>Quản lý</summary>" in page
+    assert f'action="{ACCOUNT_PASSWORD_PAGE}"' in page
+    assert 'name="current_password"' in page
+    assert f'action="{ACCOUNTS}/member/activate"' in page

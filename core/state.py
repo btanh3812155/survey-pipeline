@@ -260,6 +260,8 @@ def _admin_roles_for_path(path: str, method: str) -> set[str]:
     reviewers = {"superadmin", "manager", "reviewer"}
     if path == "/admin/accounts/password":
         return everyone
+    if path == "/admin/account" or path.startswith("/admin/account/"):
+        return everyone
     if path.startswith(("/admin/accounts", "/admin/recovery", "/api/v1/admin/recovery")):
         return {"superadmin"}
     if path.startswith("/api/v1/dev/submissions"):

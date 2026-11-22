@@ -21,6 +21,7 @@ PROTECTED_PAGES = (
     "/admin/samples",
     "/admin/accounts",
     "/admin/accounts/password",
+    "/admin/account",
     "/admin/audit",
     "/audit",
     "/admin/ctvs",
@@ -45,7 +46,8 @@ EXPECTED_AUTHENTICATED = {
     "/admin": 302,
     "/admin/samples": 302,
     "/admin/accounts": 503,
-    "/admin/accounts/password": 503,
+    "/admin/accounts/password": 303,
+    "/admin/account": 503,
     "/admin/audit": 200,
     "/audit": 200,
     "/admin/ctvs": 200,
@@ -97,6 +99,7 @@ def test_authenticated_admin_page_matrix_is_accounted_for(monkeypatch):
     import main
     monkeypatch.setattr(state, "db_pool", None)
     monkeypatch.setattr(main, "db_pool", None)
+    monkeypatch.setattr(admin_forms, "refresh_form_registry_from_disk", lambda *a, **k: None)
     app = _app()
     app.dependency_overrides[verify_admin_auth] = lambda: "matrix-admin"
     client = TestClient(app, raise_server_exceptions=False)

@@ -84,6 +84,8 @@ def test_admin_role_map_fails_closed_and_scopes_writes():
     operators = {"superadmin", "manager"}
     reviewers = {"superadmin", "manager", "reviewer"}
     assert _admin_roles_for_path("/admin/accounts/password", "POST") == everyone
+    assert _admin_roles_for_path("/admin/account", "GET") == everyone
+    assert _admin_roles_for_path("/admin/account/password", "POST") == everyone
     assert _admin_roles_for_path("/admin/accounts", "GET") == {"superadmin"}
     assert _admin_roles_for_path("/api/v1/submissions", "GET") == everyone
     assert _admin_roles_for_path("/api/v1/submissions/ABC/actions", "GET") == reviewers

@@ -12,6 +12,7 @@ from core.admin_accounts import (
     ADMIN_ROLES,
     LastActiveSuperadminError,
     create_admin_account,
+    get_admin_account,
     list_admin_accounts,
     list_deleted_admin_accounts,
     purge_expired_admin_accounts,
@@ -29,6 +30,8 @@ router = APIRouter(tags=["Admin Accounts"])
 MIN_PASSWORD = 12
 MAX_PASSWORD = 1024
 ACCOUNTS_PATH = "/admin/accounts"
+ACCOUNT_PATH = "/admin/account"
+ACCOUNT_PASSWORD_PATH = f"{ACCOUNT_PATH}/password"
 PASSWORD_PATH = f"{ACCOUNTS_PATH}/password"
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
 
@@ -134,6 +137,13 @@ tr:last-child td {{ border-bottom:none; }}
 .badge.on {{ background:rgba(16,185,129,.15); color:#6ee7b7; }}
 .badge.off {{ background:rgba(239,68,68,.15); color:#fca5a5; }}
 .actions {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }}
+.inline-form {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; align-items:end; }}
+.inline-form button {{ align-self:end; }}
+.manage summary {{ cursor:pointer; padding:8px 12px; border:1px solid var(--border); border-radius:8px; color:#93c5fd; font-weight:700; list-style:none; }}
+.manage summary::-webkit-details-marker {{ display:none; }}
+.manage[open] summary {{ border-color:var(--accent); }}
+.manage-body {{ margin-top:10px; padding:12px; border:1px solid var(--border); border-radius:10px; background:#0b1220; min-width:260px; }}
+.manage-body form {{ margin-bottom:10px; }}
 .muted {{ color:var(--muted); font-size:.78rem; }}
 .notice {{ padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:.85rem; }}
 .notice.ok {{ background:rgba(16,185,129,.15); color:#a7f3d0; }}
@@ -155,24 +165,45 @@ def _date(value) -> str:
     return html.escape(value.strftime("%d/%m/%Y %H:%M")) if value else "-"
 
 
+def _password_form(action: str) -> str:
+    return f"""
+    <form method="post" action="{action}">
+      <label>Mật khẩu hiện tại<input type="password" name="current_password" required autocomplete="current-password"></label>
+      <label>Mật khẩu mới (12–1024 ký tự ASCII in được)<input type="password" name="new_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+      <label>Nhập lại mật khẩu mới<input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+      <button type="submit">Đổi mật khẩu</button>
+    </form>"""
+
+
+def _manage_panel(username: str, admin_user: str, role: str, active: bool) -> str:
+    if username == admin_user:
+        body = _password_form(ACCOUNT_PASSWORD_PATH)
+        body += f'<p><a href="{ACCOUNT_PATH}">Mở trang tài khoản của tôi</a></p>'
+    else:
+        body = _action_form(
+            username, "role", "Cập nhật vai trò",
+            fields=f'<label>Vai trò mới<select name="role">{_role_options(role)}</select></label>',
+        )
+        body += (
+            _action_form(username, "deactivate", "Tắt tài khoản", danger=True) if active
+            else _action_form(username, "activate", "Bật tài khoản")
+        )
+        body += _action_form(username, "delete", "Xóa tài khoản", danger=True)
+    return f'<details class="manage"><summary>Quản lý</summary><div class="manage-body">{body}</div></details>'
+
+
 def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> str:
+    role_accounts = "".join(
+        f'<option value="{html.escape(str(account["username"]))}">{html.escape(str(account["username"]))} '
+        f'({html.escape(str(account["role"]))})</option>'
+        for account in accounts
+    )
     rows = []
     for account in accounts:
         username = account["username"]
         role = account["role"]
         active = account["is_active"]
-        if username == admin_user:
-            actions = '<span class="muted">Tài khoản hiện tại</span>'
-        else:
-            actions = _action_form(
-                username, "role", "Đổi vai trò",
-                fields=f'<select aria-label="Vai trò mới" name="role">{_role_options(role)}</select>',
-            )
-            actions += (
-                _action_form(username, "deactivate", "Tắt", danger=True) if active
-                else _action_form(username, "activate", "Bật")
-            )
-            actions += _action_form(username, "delete", "Xóa", danger=True)
+        actions = _manage_panel(username, admin_user, role, active)
         rows.append(
             f'<tr><td><code>{html.escape(username)}</code></td><td>{html.escape(role)}</td>'
             f'<td><span class="badge {"on" if active else "off"}">{"Hoạt động" if active else "Đã tắt"}</span></td>'
@@ -198,6 +229,15 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
     <button type="submit">Tạo tài khoản</button>
   </form>
 </section>
+<section class="card">
+  <h2>Phân quyền tài khoản</h2>
+  <p class="muted">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa superadmin cuối cùng.</p>
+  <form method="post" action="{ACCOUNTS_PATH}/role" class="inline-form">
+    <label>Tài khoản<select name="username" required>{role_accounts}</select></label>
+    <label>Vai trò mới<select name="role" required><option value="" disabled selected>Chọn vai trò</option>{_role_options()}</select></label>
+    <button type="submit">Cập nhật vai trò</button>
+  </form>
+</section>
 <h2>Tài khoản quản trị</h2>
 <table>
   <thead><tr><th>Tên đăng nhập</th><th>Vai trò</th><th>Trạng thái</th><th>Tạo lúc</th><th></th></tr></thead>
@@ -212,17 +252,18 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
     return _render("Quản lý tài khoản quản trị", admin_user, content, msg, err)
 
 
-def _render_password(admin_user: str, msg: str = "", err: str = "") -> str:
+def _render_own_account(admin_user: str, account, msg: str = "", err: str = "") -> str:
     content = f"""
 <section class="card">
-  <form method="post" action="{PASSWORD_PATH}">
-    <label>Mật khẩu hiện tại<input type="password" name="current_password" required autocomplete="current-password"></label>
-    <label>Mật khẩu mới (12–1024 ký tự ASCII in được)<input type="password" name="new_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-    <label>Nhập lại mật khẩu mới<input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-    <button type="submit">Đổi mật khẩu</button>
-  </form>
+  <h2>Tài khoản của tôi</h2>
+  <p><b>Tên đăng nhập:</b> <code>{html.escape(admin_user)}</code></p>
+  <p><b>Vai trò:</b> {html.escape(str(account.get("role") or ""))}</p>
+</section>
+<section class="card">
+  <h2>Đổi mật khẩu</h2>
+  {_password_form(ACCOUNT_PASSWORD_PATH)}
 </section>"""
-    return _render("Đổi mật khẩu của bạn", admin_user, content, msg, err)
+    return _render("Tài khoản của tôi", admin_user, content, msg, err)
 
 
 @router.get(ACCOUNTS_PATH, response_class=HTMLResponse)
@@ -233,12 +274,23 @@ async def admin_accounts_page(msg: str = "", err: str = "", admin_user: str = De
     return HTMLResponse(_render_accounts(admin_user, accounts, deleted, msg, err))
 
 
-@router.get(PASSWORD_PATH, response_class=HTMLResponse)
-async def admin_password_page(err: str = "", admin_user: str = Depends(verify_admin_auth)):
-    await _accounts_pool()
-    return HTMLResponse(_render_password(admin_user, err=err))
+@router.get(ACCOUNT_PATH, response_class=HTMLResponse)
+async def admin_own_account_page(
+    msg: str = "", err: str = "", admin_user: str = Depends(verify_admin_auth)
+):
+    pool = await _accounts_pool()
+    account = await get_admin_account(pool, admin_user)
+    if not account:
+        raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
+    return HTMLResponse(_render_own_account(admin_user, account, msg=msg, err=err))
 
 
+@router.get(PASSWORD_PATH)
+async def legacy_password_page(admin_user: str = Depends(verify_admin_auth)):
+    return RedirectResponse(url=ACCOUNT_PATH, status_code=303)
+
+
+@router.post(ACCOUNT_PASSWORD_PATH, response_class=HTMLResponse)
 @router.post(PASSWORD_PATH, response_class=HTMLResponse)
 async def change_admin_password(
     request: Request,
@@ -250,19 +302,20 @@ async def change_admin_password(
     require_admin_same_origin(request)
     pool = await _accounts_pool()
     if not _valid_password(new_password):
-        return _redirect(PASSWORD_PATH, err="password_policy")
+        return _redirect(ACCOUNT_PATH, err="password_policy")
     if new_password != confirm_password:
-        return _redirect(PASSWORD_PATH, err="password_mismatch")
+        return _redirect(ACCOUNT_PATH, err="password_mismatch")
     current_hash = request.state.admin_password_hash
     if not verify_password(current_password, current_hash):
-        return _redirect(PASSWORD_PATH, err="current_password")
+        return _redirect(ACCOUNT_PATH, err="current_password")
     if current_password == new_password:
-        return _redirect(PASSWORD_PATH, err="same_password")
+        return _redirect(ACCOUNT_PATH, err="same_password")
     if not await update_admin_password(pool, admin_user, hash_password(new_password), expected_hash=current_hash):
-        return _redirect(PASSWORD_PATH, err="current_password")
+        return _redirect(ACCOUNT_PATH, err="current_password")
     await _audit(pool, "ADMIN_PASSWORD_CHANGED", admin_user, admin_user)
-    # Basic auth may still send the old password on a redirect.
-    return HTMLResponse(_render_password(admin_user, msg="password_changed"))
+    # Basic auth may still send the old password on this response.
+    account = await get_admin_account(pool, admin_user)
+    return HTMLResponse(_render_own_account(admin_user, account or {}, msg="password_changed"))
 
 
 @router.post(ACCOUNTS_PATH)
@@ -290,6 +343,30 @@ async def create_account(
         return _redirect(err="account_exists")
     await _audit(pool, "ADMIN_ACCOUNT_CREATED", admin_user, username, role=role)
     return _redirect(msg="account_created")
+
+
+@router.post(ACCOUNTS_PATH + "/role")
+async def change_account_role(
+    request: Request,
+    username: str = Form(...),
+    role: str = Form(...),
+    admin_user: str = Depends(verify_admin_auth),
+):
+    require_admin_same_origin(request)
+    pool = await _accounts_pool()
+    username = username.strip()
+    if role not in ADMIN_ROLES:
+        return _redirect(err="invalid_role")
+    if username == admin_user and role != "superadmin":
+        return _redirect(err="self_change")
+    try:
+        changed = await update_admin_role(pool, username, role)
+    except LastActiveSuperadminError:
+        return _redirect(err="last_admin")
+    if not changed:
+        return _redirect(err="not_found")
+    await _audit(pool, "ADMIN_ACCOUNT_ROLE_CHANGED", admin_user, username, role=role)
+    return _redirect(msg="account_role_changed")
 
 
 @router.post(ACCOUNTS_PATH + "/{username}/{operation}")
