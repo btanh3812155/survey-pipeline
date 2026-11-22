@@ -617,8 +617,13 @@ def test_projection_adapter_accepts_any_income_bearing_object():
 # ==============================================================================
 
 def test_admin_api_returns_on_disk_definitions():
-    client = TestClient(app)
-    response = client.get("/api/v1/image-objects", auth=("admin", "12345678"))
+    from core.state import verify_admin_auth
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        client = TestClient(app)
+        response = client.get("/api/v1/image-objects", auth=("admin", "12345678"))
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)
     assert response.status_code == 200
     body = response.json()
     assert set(body) == {"objects", "engines"}
@@ -629,16 +634,20 @@ def test_admin_api_returns_on_disk_definitions():
 
 
 def test_admin_page_lists_objects_and_engines():
-    client = TestClient(app)
-    response = client.get("/admin/image-objects", auth=("admin", "12345678"))
+    from core.state import verify_admin_auth
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        client = TestClient(app)
+        response = client.get("/admin/image-objects", auth=("admin", "12345678"))
+        forms_page = client.get("/admin/forms", auth=("admin", "12345678"))
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)
     assert response.status_code == 200
     assert "weekly_income" in response.text
     assert "period_granularity" in response.text
     assert "constraints" in response.text
-
-    forms_page = client.get("/admin/forms", auth=("admin", "12345678"))
     assert forms_page.status_code == 200
-    assert 'href="/admin/image-objects"' in forms_page.text
+    assert '/static/ui/admin_nav.js' in forms_page.text
 
 
 def test_admin_save_and_delete_object_roundtrip():

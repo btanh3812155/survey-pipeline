@@ -132,7 +132,9 @@ class ImageObjectDefinition(BaseModel):
     # Built-in extraction profile (income_statement/profile/vehicle/generic/none).
     # This is a registry key, never executable code.
     extractor: str = "generic"
-    # Friendly classifier category used by the vision role classifier.
+    # Disabled definitions remain visible to administrators but cannot resolve in surveys.
+    enabled: bool = True
+    json_output_instruction: bool = False
     classify_role: Optional[str] = None
 
     @model_validator(mode="after")
@@ -198,6 +200,19 @@ def engines_dir() -> str:
 
 
 _CACHE: Dict[str, Any] = {"signature": None, "registry": None}
+_DATABASE_OBJECTS: Optional[Dict[str, ImageObjectDefinition]] = None
+
+
+def set_database_object_registry(objects: Dict[str, ImageObjectDefinition]) -> None:
+    """Replace file objects with the latest database-backed catalog snapshot."""
+    global _DATABASE_OBJECTS
+    _DATABASE_OBJECTS = dict(objects)
+    cached = _CACHE.get("registry")
+    if cached is not None:
+        updated = dict(cached)
+        updated["objects"] = dict(_DATABASE_OBJECTS)
+        updated["objects_raw"] = {key: value.model_dump(mode="json") for key, value in _DATABASE_OBJECTS.items()}
+        _CACHE["registry"] = updated
 
 
 def _scan_dir(directory: str) -> List[Tuple[str, int, int]]:
@@ -267,6 +282,9 @@ def load_registry(force: bool = False) -> Dict[str, Any]:
         objects[model.id] = model
         object_raw[model.id] = raw
 
+    if _DATABASE_OBJECTS is not None:
+        objects = dict(_DATABASE_OBJECTS)
+        object_raw = {key: value.model_dump(mode="json") for key, value in objects.items()}
     registry = {
         "objects": objects,
         "engines": engines,
@@ -294,7 +312,7 @@ def list_engines() -> List[EngineDefinition]:
     return list(load_registry()["engines"].values())
 
 
-def get_object(object_id: str) -> ImageObjectDefinition:
+def get_object(object_id: str, *, require_enabled: bool = False) -> ImageObjectDefinition:
     registry = load_registry()
     obj = registry["objects"].get(str(object_id))
     if obj is None:
@@ -304,6 +322,8 @@ def get_object(object_id: str) -> ImageObjectDefinition:
         raise ImageObjectDefinitionError(
             f"image object '{object_id}' references missing engine(s): {', '.join(missing)}"
         )
+    if require_enabled and not obj.enabled:
+        raise ImageObjectDefinitionError(f"image object '{object_id}' is disabled")
     return obj
 
 
@@ -344,8 +364,10 @@ def build_detection_prompt(obj: ImageObjectDefinition, slot_config: Optional[Dic
         .replace("{{fields}}", fields)
         .replace("{{config}}", json.dumps(config, ensure_ascii=False, sort_keys=True))
     )
-    prompt = resolve_placeholders(prompt, config)
-    if obj.expected_fields:
+    if obj.expected_fields and obj.json_output_instruction:
+        keys = ", ".join(field.key for field in obj.expected_fields)
+        prompt = f'{prompt}\nReturn only one valid JSON object with exactly these keys: {keys}. Include every key; use null when a value is not visible. Do not return prose or Markdown.'
+    elif obj.expected_fields:
         keys = ", ".join(field.key for field in obj.expected_fields)
         prompt = f"{prompt}\nUse exactly these snake_case JSON keys, untranslated: {keys}."
     return prompt.strip()
@@ -480,7 +502,7 @@ def run_object_checks(
     slot_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Validate extraction fields and execute the object's bound engines."""
-    return run_definition_checks(get_object(object_id), extraction, slot_config)
+    return run_definition_checks(get_object(object_id, require_enabled=True), extraction, slot_config)
 
 
 # ==============================================================================
@@ -488,6 +510,7 @@ def run_object_checks(
 # ==============================================================================
 
 _ROLE_ALIASES = {
+    "gsm_profile_screen": "gsm-profile-screen",
     "app_profile": "app_profile",
     "profile": "app_profile",
     "app_income": "weekly_income",
@@ -559,7 +582,7 @@ def resolve_slot_object(slot: Any) -> ImageObjectDefinition:
         return _legacy_object_for_slot({})
     object_type = str(slot.get("object_type") or "").strip()
     if object_type:
-        return get_object(object_type)
+        return get_object(object_type, require_enabled=True)
 
     if str(slot.get("ai_detection_prompt") or "").strip():
         return _custom_prompt_object(slot)
@@ -567,15 +590,15 @@ def resolve_slot_object(slot: Any) -> ImageObjectDefinition:
     role = str(slot.get("role") or "").strip().lower()
     resolved = object_type_for_classified_role(role)
     if resolved:
-        return get_object(resolved)
+        return get_object(resolved, require_enabled=True)
 
     title = str(slot.get("title") or "").lower()
     if "hồ sơ" in title or "profile" in title or "màn hình chính" in title:
-        return get_object("app_profile")
+        return get_object("app_profile", require_enabled=True)
     if "thu nhập" in title or "income" in title or "tuần" in title:
-        return get_object("weekly_income")
+        return get_object("weekly_income", require_enabled=True)
     if "thân xe" in title or "đầu xe" in title or "vô lăng" in title or "phương tiện" in title:
-        return get_object("vehicle_exterior_or_interior")
+        return get_object("vehicle_exterior_or_interior", require_enabled=True)
     return _legacy_object_for_slot(slot)
 
 

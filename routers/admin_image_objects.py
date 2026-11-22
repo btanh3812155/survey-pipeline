@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from core.state import verify_admin_auth
+from core.state import get_db_pool, verify_admin_auth
+from core.admin_modules import delete_module, save_module
 from services.image_check_engines import ENGINE_IMPLEMENTATIONS
 from services.image_objects import (
     ImageObjectDefinitionError,
@@ -57,7 +58,7 @@ def _object_form(obj: Any) -> str:
     return f"""
     <details class="card" {'open' if obj is not None else ''}>
       <summary><span class="mono">{object_id or '＋ Tạo object mới'}</span> <span class="muted">{_esc(raw.get('label', ''))}</span></summary>
-      <div class="src">File: data/image_objects/{object_id or '<id>'}.json</div>
+      <div class="src">Module registry definition: {object_id or '&lt;id&gt;'} (database-authoritative when migration 008 is active)</div>
       <form method="post" action="/admin/image-objects/{object_id}">
         <div class="grid">
           <label>ID<input name="id" value="{object_id}" {'disabled' if obj is not None else 'required'}></label>
@@ -175,8 +176,7 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
   .src {{ font-size:0.72rem; color:#64748b; margin-bottom:10px; }}
 </style></head>
 <body>
-<header><h1>Image Object Types &amp; Check Engines</h1>
-<nav><a href="/admin/forms">← Forms</a><a href="/admin/media">Media</a><a href="/api/v1/image-objects">API JSON</a></nav></header>
+<header><h1>Image Object Types &amp; Check Engines</h1></header>
 <main>
   {banner}
   {errors_html}
@@ -303,6 +303,12 @@ async def create_image_object(request: Request, admin_user: str = Depends(verify
     }
     try:
         save_object(object_id, payload)
+        pool = get_db_pool()
+        if pool:
+            try:
+                await save_module(pool, object_id, "object", str(payload["label"]), "1", payload, True, admin_user)
+            except Exception as exc:
+                logger.warning("[IMAGE OBJECTS] module registry mirror failed: %s", type(exc).__name__)
     except (ValueError, ImageObjectDefinitionError) as exc:
         if _wants_json(request):
             raise HTTPException(status_code=400, detail=str(exc))
@@ -328,6 +334,15 @@ async def save_image_object(
     try:
         payload = _object_payload(data, object_id)
         save_object(object_id, payload)
+        pool = get_db_pool()
+        if pool:
+            try:
+                await save_module(
+                    pool, object_id, "object", str(payload.get("label") or object_id),
+                    str(payload.get("version") or "1"), payload, True, admin_user,
+                )
+            except Exception as exc:
+                logger.warning("[IMAGE OBJECTS] module registry mirror failed: %s", type(exc).__name__)
     except (ValueError, ImageObjectDefinitionError) as exc:
         logger.warning("[IMAGE OBJECTS] save %s failed: %s", object_id, exc)
         if _wants_json(request):
@@ -348,6 +363,12 @@ async def save_image_object(
 async def delete_image_object(object_id: str, admin_user: str = Depends(verify_admin_auth)):
     try:
         deleted = delete_object(object_id)
+        pool = get_db_pool()
+        if pool:
+            try:
+                await delete_module(pool, object_id, admin_user)
+            except Exception as exc:
+                logger.warning("[IMAGE OBJECTS] module registry mirror failed: %s", type(exc).__name__)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not deleted:

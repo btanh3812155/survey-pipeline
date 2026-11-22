@@ -146,9 +146,6 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
         header {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px; background: var(--card); border-bottom: 1px solid var(--border); flex-wrap: wrap; }}
         h1 {{ margin: 0; font-size: 1.15rem; }}
         p.sub {{ margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }}
-        .nav-actions {{ display: flex; flex-wrap: wrap; gap: 8px; }}
-        .nav-btn {{ display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); text-decoration: none; font-size: 0.82rem; font-weight: 600; }}
-        .nav-btn.primary {{ background: var(--primary); border-color: var(--primary); color: #fff; }}
         main {{ padding: 24px; max-width: 1280px; margin: 0 auto; }}
         table {{ width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 0.88rem; }}
         th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }}
@@ -169,13 +166,6 @@ def _render_page(rows: List[Dict[str, Any]]) -> str:
         <div>
             <h1>Quản Lý Cộng Tác Viên (CTV)</h1>
             <p class="sub">Danh bạ CTV trung tâm: mã, liên hệ, Telegram và mục tiêu. Bấm "Sửa" để cập nhật.</p>
-        </div>
-        <div class="nav-actions">
-            <a href="/admin/forms" class="nav-btn">Quản Lý Form</a>
-            <a href="/admin/submissions" class="nav-btn">Dữ Liệu Nộp</a>
-            <a href="/admin/audit" class="nav-btn">Nhật Ký Kiểm Toán</a>
-            <a href="/admin/media" class="nav-btn">Quản Lý Media</a>
-            <a href="/admin/ctvs" class="nav-btn primary">CTV</a>
         </div>
     </header>
     <main>

@@ -51,7 +51,7 @@ allow_code() {
   case "$1" in
     *credential*|*secret*|*service_account*|*private_key*|*devfile*|*backup*|*token*) return 1 ;;
   esac
-  [[ $1 =~ ^(main\.py|config\.py|(core|routers|services|workers)/[a-z_][a-z0-9_]*\.py|static/(ui/[a-z_][a-z0-9_]*\.html|ui/admin_nav\.js|qrcode\.min\.js)|scripts/migrations/(001_submission_attempts|002_outbox_delivery|003_outbox_operations)\.sql)$ ]]
+  [[ $1 =~ ^(main\.py|config\.py|(core|routers|services|workers)/[a-z_][a-z0-9_]*\.py|static/(ui/[a-z_][a-z0-9_]*\.html|ui/admin_nav\.js|qrcode\.min\.js)|scripts/migrations/(001_submission_attempts|002_outbox_delivery|003_outbox_operations|007_admin_account_bin|008_admin_module_registry|009_drive_exports)\.sql)$ ]]
 }
 
 if [[ -n "$ROLLBACK" ]]; then
@@ -228,7 +228,10 @@ if (( pending )); then
       -v "migration_002_sha256=${EXPECTED_LEDGER[1]#*|}" \
       -v "migration_003_sha256=${EXPECTED_LEDGER[2]#*|}" \
       -v "migration_004_sha256=${EXPECTED_LEDGER[3]#*|}" \
-      -v "migration_005_sha256=${EXPECTED_LEDGER[4]#*|}" >/dev/null
+      -v "migration_005_sha256=${EXPECTED_LEDGER[4]#*|}" \
+      -v "migration_006_sha256=${EXPECTED_LEDGER[5]#*|}" \
+      -v "migration_007_sha256=${EXPECTED_LEDGER[6]#*|}" \
+      -v "migration_008_sha256=${EXPECTED_LEDGER[7]#*|}" >/dev/null
     check_ledger
     (( ${#LEDGER[@]} > i )) || die 'migration did not record the expected checksum'
   done

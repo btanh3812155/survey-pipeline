@@ -45,7 +45,7 @@ The checked-in `app-dev`/opt-in `outbox-v2` Compose file is a development descri
 
 1. Select only explicit allowlisted code files or tracked `--all-code` files; validate path containment, reject symlinks and hash every file. Newly added, untracked modules must be explicitly selected until committed. Never select runtime trees.
 2. On target, take the release lock and verify actual container/environment/build/database/private-mount identity before mutation. Validate migration ledger/checksums and compile staged Python without executing it.
-3. Back up selected prior code under `.release-backups/release-XXXXXXXX/`, record target identity, then pause app and worker. When migrations are pending, require `--apply-migrations` and a nonempty target database backup before applying 001, 002 and 003 in order.
+3. Back up selected prior code under `.release-backups/release-XXXXXXXX/`, record target identity, then pause app and worker. When migrations are pending, require `--apply-migrations` and a nonempty target database backup before applying every pending migration in checksum order (001–007).
 4. Verify ledger/schema, atomically replace selected code and check installed hashes. No recursive runtime-root synchronization or deletion occurs.
 5. Start worker first. Require protocol/operations versions, supported targets, expected build/worker identity and a finite, nonnegative, fresh heartbeat recorded after this process started. Start app only after that proof; verify `/health` and `/ready` and report queue ages/failures/uncertainty read-only.
 6. Return `DEPLOY_RESULT` only after all gates pass. Enable an approved producer/cohort separately; inspect durable outcomes before expanding it.
@@ -72,7 +72,7 @@ Before historical transfer, quiesce/drain the legacy producer and inspect provid
 
 ## Schema and worker behavior
 
-Migration 001 retains the Wave 3 attempt/private-media contract. Migration 002 adds durable owner/decision revisions, target/action identities, token leases and receipts while retaining legacy rows/four statuses. Migration 003 adds operational heartbeat/build evidence. Migration 004 adds `image_dinov2_exceptions`, a time-bound per-form allowlist for the inter-submission fraud tiers; the detector requires a 384-d DINOv2 cosine match (`>= 0.99`) and ignores rows once `expires_at` passes, so revocation needs no cron. `schema.sql` mirrors fresh-install structure; it is not an upgrade command. For an owned disposable target, the isolated helper applies each version explicitly:
+Migration 001 retains the Wave 3 attempt/private-media contract. Migration 002 adds durable owner/decision revisions, target/action identities, token leases and receipts while retaining legacy rows/four statuses. Migration 003 adds operational heartbeat/build evidence. Migration 004 adds `image_dinov2_exceptions`, a time-bound per-form allowlist for the inter-submission fraud tiers; the detector requires a 384-d DINOv2 cosine match (`>= 0.99`) and ignores rows once `expires_at` passes, so revocation needs no cron. Migration 008 adds `admin_module_registry` plus a one-time seed marker for `/admin/modules`; object definitions are database-authoritative after startup, and logic modules may reference only implementations compiled in `services/logic_modules.py` — stored JSON never executes code. Migration 009 adds `drive_export_settings` and `drive_export_clients` for `/admin/exports`. `schema.sql` mirrors fresh-install structure; it is not an upgrade command. For an owned disposable target, the isolated helper applies each version explicitly:
 
 ```bash
 bash scripts/apply_migration.sh scripts/migrations/001_submission_attempts.sql
@@ -85,6 +85,88 @@ That helper requires an explicitly isolated `UPGRADE_TEST_DATABASE_URL` and, for
 Workers have two execution slots, 60-second token leases renewed every 15 seconds, at most five claims, due-time backoff and target fairness. Every finish/renewal/projection transition is token-fenced. Telegram success requires bot/chat/message identity; ambiguous acceptance is `FAILED/DELIVERY_UNCERTAIN`, not automatic resend. Billing preserves an existing ledger/paid state. Disabled/unconfigured policies have explicit skip reasons. Private R2 uses a separately approved bucket and immutable hashes, never the public/local fallback. Drive publication uses the existing advisory exclusion and holds current approved-row locks during publication, trading moderation concurrency for stale-export prevention.
 
 `python -m workers.outbox_worker --health` is read-only. It reports schema/capabilities, build/poll evidence and queue state; invoking it does not manufacture a heartbeat. `/health` is liveness; `/ready` requires writer schema and, when any durable producer is enabled, its delivery schema. Bounded embedding work is lifespan-owned: one execution slot plus one waiter; saturation returns 503 with Retry-After instead of a made-up verdict.
+
+## Google Drive exports
+
+`GET /admin/exports` is the operator UI for Drive export configuration (migration 009 required). Folder layout under `GOOGLE_DRIVE_ROOT_FOLDER_ID`:
+
+```
+<master folder>/
+  Client Exports/
+    <client folder>/<form>/<form> (Google Sheet)
+    <client folder>/<form>/Images/<submission>/<shortcut>
+  Internal Exports/
+    <category>/<form>/<form> (Google Sheet)
+    <category>/<form>/Images/<submission>/<shortcut>
+  Images Master/
+    <form>/<submission>/<image>
+```
+
+Each client or internal configuration selects a date range, forms, fields, statuses, vehicle kinds, and whether images are included. Empty form/vehicle selections mean all forms/kinds present in the filtered rows; empty fields use the safe default. Only real submissions are exported; DEV/TEST-style IDs are excluded. Output sheets are native Google Sheets named after the form and are overwritten on each run. Images are uploaded once to `Images Master`; every client/internal image folder contains Drive shortcuts to the master file, never duplicate uploads. The run acquires a PostgreSQL advisory lock so two admin clicks cannot overlap. The page stores the last run report; no provider call is made unless an operator presses Run. Drive sharing permissions for each client folder remain a separate manual/provider operation; this page controls data selection, not Google ACLs. Shortcuts also require the viewer to have access to the target master file, so grant per-file or approved-group access where clients must open images. Run this only after the target's Drive credentials, root folder, migration 009, and client permissions are approved.
+
+## Admin recovery mail and break glass
+
+Apply checksum-guarded migration `007_admin_account_bin.sql` (requires `006`) before enabling recovery on an upgrade; `schema.sql` mirrors its tables for fresh installs. Migration 007 normalizes legacy `admin` roles to `reviewer` except the active, nondeleted legacy owner `admin`, which receives `superadmin` and `admin@trustbridgevn.com` if its address was empty. Re-running the migration does not re-promote a demoted owner or restore an old email. `ADMIN_RECOVERY_EMAIL` seeds a new empty database and supplies a default address for newly created/promoted superadmins with no address; it is not a reset or email-change override.
+
+Provision these app-service settings using approved deployment secrets, not git or shell history:
+
+| Setting | Required value |
+|---|---|
+| `SMTP_HOST` | Provider's authenticated SMTP submission hostname, matching its TLS certificate |
+| `SMTP_PORT`, `SMTP_TLS_MODE` | `587` + `starttls` or `465` + `implicit`, as documented by the provider; no plaintext mode |
+| `SMTP_USERNAME` | Provider's SMTP login (for Google Workspace, the complete sending mailbox address) |
+| `SMTP_PASSWORD` | Provider-issued SMTP credential or app password, not the mailbox's interactive password |
+| `SMTP_FROM_EMAIL` | Defaults to `admin@trustbridgevn.com`; the SMTP provider must authorize that mailbox or an approved alias as a sender |
+| `APP_SECRET` | Same private random value of at least 32 characters across all web app replicas; rotation invalidates pending codes |
+| `FORWARDED_ALLOW_IPS` | Only trusted reverse-proxy peer IPs, never `*`; the app should not be directly internet-accessible |
+
+For Google Workspace SMTP, use `smtp.gmail.com` with the settings above. The sending mailbox must have 2-Step Verification enabled, and account/organization policy must allow creation of an App Password. Use that generated App Password as `SMTP_PASSWORD`; a Drive OAuth token, service-account JSON or ordinary Google password does not qualify. If Workspace policy disallows App Passwords, obtain a different approved authenticated SMTP provider and its verified sender credentials. The app also needs outbound DNS and TCP access to the provider, a current CA trust store, and a trusted HTTPS reverse proxy supplying the client IP and original scheme. Provision separate staging credentials and approved test inboxes; code delivery has no fake fallback. Updating secret injection requires recreating the app service, not just copying code or restarting an existing container with unchanged environment.
+
+`GET /admin/recovery` is public. Its request response is conditional to avoid revealing whether an account exists or a message was accepted. Missing SMTP configuration returns 503; when a configured provider fails, no code becomes usable and the app logs only the exception class. An authenticated `superadmin` uses `/admin/recovery/email` and must confirm separate codes sent to both the old and new addresses; a failed send to either returns 503 and invalidates the pending challenge. Codes expire after ten minutes and are limited to five guesses; resends are spaced by one minute. Request and confirmation limits are shared across replicas in PostgreSQL. Do not enable mail until the approved mailbox, sender and egress are provisioned and the recipient is verified out of band.
+
+### SSH + database break glass (password only)
+
+If mail is unavailable or inaccessible, obtain incident approval and SSH to the explicitly selected, pinned-host target. Verify the app/container and database identities and take an approved backup first. On that host, from the approved release environment (with `RELEASE_APP` and `RELEASE_DB_NAME` set), run the following using an interactive TTY. It prompts without echo, hashes locally with the application's PBKDF2-SHA256 implementation, and atomically changes exactly one active, nondeleted superadmin and records an audit event. No plaintext password enters shell history, environment, SQL or logs. Record the change in the incident record and confirm a new HTTPS login afterward.
+
+```bash
+: "${RELEASE_APP:?select the approved app container}" "${RELEASE_DB_NAME:?select the approved database}"
+docker exec -it "$RELEASE_APP" python -c '
+import getpass, os, sys, warnings
+import psycopg
+from core.admin_recovery import valid_password
+from core.passwords import hash_password
+
+if not sys.stdin.isatty():
+    sys.exit("Interactive TTY required")
+warnings.simplefilter("error", getpass.GetPassWarning)
+username = input("Superadmin username: ").strip()
+password = getpass.getpass("New password: ")
+if not valid_password(password) or password != getpass.getpass("Confirm password: "):
+    sys.exit("Passwords must match and contain 12–1024 printable ASCII characters")
+encoded = hash_password(password)
+del password
+with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+    if conn.execute("SELECT current_database()").fetchone()[0] != sys.argv[1]:
+        sys.exit("Wrong database; no change made")
+    with conn.transaction():
+        updated = conn.execute("""
+            UPDATE admin_accounts SET password_hash=%s, updated_at=clock_timestamp()
+            WHERE username=%s AND role=%s AND is_active AND deleted_at IS NULL
+            RETURNING username
+        """, (encoded, username, "superadmin")).fetchone()
+        if updated is None:
+            sys.exit("No eligible account; no change made")
+        conn.execute("""
+            INSERT INTO system_audit_log
+                (component_name,action,entity_type,entity_id,actor_type,actor_id,details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
+        """, ("admin_recovery", "ADMIN_PASSWORD_BREAK_GLASS", "ADMIN", username,
+              "SYSTEM", "ssh_db_operator", "{}"))
+print("Password changed; older recovery challenges are invalid.")
+' "$RELEASE_DB_NAME"
+```
+
+If the old recovery mailbox is permanently lost, keep email recovery unavailable until an approved, audited DBA correction verifies mailbox ownership and updates `recovery_email` with `updated_at`. Never change `ADMIN_PASSWORD`, `ADMIN_PASSWORD_HASH` or `ADMIN_RECOVERY_EMAIL` as a recovery procedure for an existing database account. There is no HTTP or environment-variable recovery backdoor.
 
 ## Acceptance evidence and external gates
 
@@ -106,9 +188,9 @@ Temporary image exception (2026-11-21, build `3b2ae127bb09de2ea662ee76f03881612b
 
 Driver verdict delivery (2026-11-21): `0961281310` was bound to Telegram `8094247707` with source `contact_share`, which verdict delivery rejects. An admin upgrade to `admin_verified` preserved the original `updated_at` (2026-11-21 02:36 UTC), so the lookup validates for submissions at or after that time. `VN-630441852EDE7A05` was resent through the driver path (`message_id=349`). The form remains on `tg_response_source: "question"`; the CTV code remains unlinked and is not used for this form.
 
-Admin console (2026-11-21, build `578ae789a02dbf05164a1dbef6d5fbe204d1cb52`, migration 006): every `/admin` HTML response is wrapped by a middleware that injects `/static/ui/admin_nav.js`; the bar links Forms, Submissions, Audit, Media, CTV, Image Objects and Accounts. Migration 006 adds `admin_accounts`; startup creates the table and seeds the environment administrator once. Basic auth uses the database row when it exists and only falls back to `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` when no row exists. `/admin/accounts` (authenticated) supports self password change with a current-password reprompt and a 12-character minimum, account creation, activate/deactivate, self-deactivation and last-active guards. A successful password change returns the page directly; redirecting would re-send the old Basic credential and 401. Actions are audited as `ADMIN_PASSWORD_CHANGED`, `ADMIN_ACCOUNT_CREATED`, `ADMIN_ACCOUNT_DEACTIVATED` and `ADMIN_ACCOUNT_ACTIVATED`. Live: accounts/forms pages 200 with nav, temp account create/login/change (200; old 401, new 200)/deactivate (inactive 401), temp row removed, admin remains active.
+Admin console security update (local implementation, not deployed; historical console baseline was build `578ae789a02dbf05164a1dbef6d5fbe204d1cb52`, migration 006): every `/admin` HTML response gets shared role-aware navigation. Database-backed Basic authentication requires an active account row; missing accounts and unavailable storage never fall back to environment credentials. Roles `superadmin`, `manager`, `reviewer` and `viewer` receive route-specific read/write access; password changes remain available to every role. `/admin/accounts` provides audited role assignment, activation, soft-delete and restore through a 30-day bin, with self-change and concurrent last-superadmin guards. Admin POSTs require exact same-origin Origin/Referer, unsafe pages are non-cacheable and unframeable, and failed Basic credentials use shared Redis rate limits. Public email-OTP password recovery and two-address, superadmin-only recovery-email rotation are implemented after migration 007 and SMTP provisioning. No 2FA or 2FA dependency is added. Production deployment and email delivery are not verified.
 
-Known admin-console gaps: no forgot-password or peer reset (an admin can only change their own password); no delete (deactivate only); no roles/permissions; no 2FA, lockout/rate limit or breach check; no CSRF token (Origin/Referer check only, with a current-password reprompt only on password change); no last-login/last-actor surface on the page (use `/admin/audit`); the environment break-glass credential is active only when no DB row exists and would be reseeded if the table were empty; no credential email or forced first-login change; the top bar requires JavaScript; Basic auth has no explicit logout.
+External admin-security gates: SMTP host/port/TLS credentials, sender authorization, outbound DNS/TCP, and confirmed access to both recovery addresses are not provisioned here. Until then, mail recovery returns unavailable; use the documented approved SSH/database break-glass runbook. The admin navigation is client-side convenience only; API route role checks are authoritative.
 
 Notification policy (2026-11-21, build `54fea522d8d8edff69ea63bf36e9a3b4e9bbe6e5`): verdict delivery resolves any non-conflicted `phone_telegram_links` binding that existed at the submission's original timestamp, preferring `verified_contact`/`admin_verified`. Unverified recipients receive the verdict plus a short system explanation, a "no action required if this is not your number" note, and a verification reply keyboard. Verification remains required for further actions (history, appeal, cancel, repair); the bot prompts when an unverified account attempts one. The durable producer mirrors the same lookup and notice. A phone with no binding cannot be messaged by the bot; the number owner must have started the bot (shared contact or `/linkphone`) before the verdict. CTV quotas are goals: reports use "Mục tiêu", show progress toward the goal, and never block a submission. Self-test `VN-TEST-UNVERIFIED` delivered the unverified notice (`message_id=350`).
 

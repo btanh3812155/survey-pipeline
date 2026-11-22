@@ -43,6 +43,7 @@ from services.image_objects import (
     resolve_slot_object,
     run_definition_checks,
 )
+from core.admin_modules import refresh_image_object_registry
 from services.image_types import parse_date_range_from_text
 from services.normalizer import compute_laplacian_blur_score, normalize_image_to_webp, sanitize_and_normalize_image
 from services.online_and_ai_detector import compute_dhash_int, hamming_distance
@@ -866,6 +867,13 @@ async def _evaluate(
     target_question_id = prepared.target_question_id
     target_q = next((q for q in schema.questions if q.id == target_question_id), None) if schema else None
     camera_questions = prepared.camera_questions
+    if deps.db_pool and any(getattr(question, "image_slots", None) for question in camera_questions):
+        try:
+            await refresh_image_object_registry(deps.db_pool)
+        except Exception as exc:
+            logger.warning("[IMAGE OBJECTS] database registry refresh failed: %s", type(exc).__name__)
+            if deps.production:
+                raise SubmissionUnavailable("Không thể tải cấu hình kiểm tra ảnh; vui lòng thử lại sau.") from exc
     upload_items = prepared.upload_items
     raw_bytes_list = prepared.raw_bytes
     driver_phone = prepared.phone

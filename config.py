@@ -1,5 +1,5 @@
 import socket
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "12345678"
     ADMIN_PASSWORD_HASH: Optional[str] = None
+    ADMIN_RECOVERY_EMAIL: str = "admin@trustbridgevn.com"
+    # Admin recovery uses authenticated SMTP over certificate-validated TLS only.
+    SMTP_HOST: str = ""
+    SMTP_PORT: str = "587"
+    SMTP_TLS_MODE: str = "starttls"
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: Optional[SecretStr] = None
+    SMTP_FROM_EMAIL: str = "admin@trustbridgevn.com"
     # security pepper / secret
     APP_SECRET: str = "survey_secret_salt_pepper_survey_pipeline_2026"
 

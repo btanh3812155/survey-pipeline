@@ -52,6 +52,9 @@ from routers import (
     admin_ctvs_router,
     admin_image_objects_router,
     admin_accounts_router,
+    admin_modules_router,
+    admin_exports_router,
+    admin_recovery_router,
     actions_router,
     webhooks_router,
     survey_router,
@@ -99,8 +102,8 @@ async def lifespan(app: FastAPI):
         )
         http_client = state.http_client
 
-        # 2. Initialize Redis async connection pool. Redis is an optional
-        # accelerator; PostgreSQL is the required production dependency.
+        # Redis supplies shared caches and the production admin-auth failure limiter.
+        # Admin authentication fails closed if Redis cannot provide that limiter.
         state.redis_client = aioredis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
@@ -113,7 +116,7 @@ async def lifespan(app: FastAPI):
             redis_client = state.redis_client
             logger.info("[REDIS] Successfully connected to Redis pool.")
         except Exception as e:
-            logger.warning("[REDIS] Redis unavailable: %s. Falling back to in-memory cache.", e)
+            logger.warning("[REDIS] unavailable: %s. Production admin authentication will fail closed.", e)
             try:
                 await state.redis_client.aclose()
             except Exception:
@@ -166,13 +169,33 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"[PHONE LINKS] Schema init failed: {e}")
 
-        # 3d. Admin accounts: create the table and seed the environment admin once.
+        # 3d. Admin accounts: schema, one-time environment admin seed, and 30-day bin purge.
         try:
-            from core.admin_accounts import ensure_admin_accounts, seed_env_admin
+            from core.admin_accounts import ensure_admin_accounts, purge_expired_admin_accounts, seed_env_admin
             await ensure_admin_accounts(state.db_pool)
             await seed_env_admin(state.db_pool)
+            await purge_expired_admin_accounts(state.db_pool)
+            from core.admin_recovery import ensure_admin_recovery
+            if not await ensure_admin_recovery(state.db_pool):
+                logger.warning("[ADMIN RECOVERY] Migration 007 schema is unavailable")
         except Exception as e:
             logger.warning(f"[ADMIN ACCOUNTS] init failed: {e}")
+
+        # 3e. Registry-backed image/logic modules (migration 008).
+        try:
+            from core.admin_modules import ensure_admin_module_registry
+            if not await ensure_admin_module_registry(state.db_pool):
+                logger.warning("[ADMIN MODULES] migration 008 is unavailable")
+        except Exception as e:
+            logger.warning("[ADMIN MODULES] registry init failed: %s", type(e).__name__)
+
+        # 3f. Google Drive export configuration (migration 009).
+        try:
+            from core.drive_exports import ensure_drive_exports
+            if not await ensure_drive_exports(state.db_pool):
+                logger.warning("[DRIVE EXPORTS] migration 009 is unavailable")
+        except Exception as e:
+            logger.warning("[DRIVE EXPORTS] init failed: %s", type(e).__name__)
 
         # 4. Seed media directory
         seed_media_storage()
@@ -239,8 +262,13 @@ app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 
 @app.middleware("http")
 async def inject_admin_nav(request, call_next):
-    """Add the shared admin top bar without editing every page template."""
+    """Add the shared admin top bar and the authenticated account role."""
     response = await call_next(request)
+    if request.url.path.startswith("/admin") or getattr(request.state, "admin_user", None):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "same-origin"
     if request.url.path.startswith("/admin") and response.headers.get(
         "content-type", ""
     ).startswith("text/html"):
@@ -248,6 +276,12 @@ async def inject_admin_nav(request, call_next):
             body = b"".join([chunk async for chunk in response.body_iterator])
         else:
             body = getattr(response, "body", b"")
+        role = getattr(request.state, "admin_role", "viewer")
+        if role not in {"superadmin", "manager", "reviewer", "viewer"}:
+            role = "viewer"
+        meta = f'<meta name="admin-role" content="{role}">'.encode()
+        if b"</head>" in body:
+            body = body.replace(b"</head>", meta + b"</head>", 1)
         if b"</body>" in body:
             body = body.replace(
                 b"</body>",
@@ -283,6 +317,9 @@ app.include_router(admin_media_router)
 app.include_router(admin_ctvs_router)
 app.include_router(admin_image_objects_router)
 app.include_router(admin_accounts_router)
+app.include_router(admin_modules_router)
+app.include_router(admin_exports_router)
+app.include_router(admin_recovery_router)
 app.include_router(actions_router)
 app.include_router(webhooks_router)
 app.include_router(survey_router)

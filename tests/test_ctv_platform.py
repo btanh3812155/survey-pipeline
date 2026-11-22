@@ -500,16 +500,17 @@ def test_form_settings_tags_validation_and_serialization():
 
 def test_admin_ctv_directory_page_requires_auth_and_shows_static_fallback():
     from fastapi.testclient import TestClient
-    from config import settings as app_settings
     from main import app
+    from core.state import verify_admin_auth
 
     client = TestClient(app)
     assert client.get("/admin/ctvs").status_code == 401
 
-    response = client.get(
-        "/admin/ctvs",
-        auth=(app_settings.ADMIN_USERNAME, app_settings.ADMIN_PASSWORD),
-    )
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        response = client.get("/admin/ctvs")
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)
     assert response.status_code == 200
     assert "TUAN_LM_HCM_001" in response.text
     assert "Quản Lý CTV" in response.text
@@ -544,24 +545,28 @@ async def test_admin_update_endpoint_redirects_and_refreshes_cache():
 
     # A legacy client sending telegram_user_id must not change it.
     from fastapi.testclient import TestClient
-    from config import settings as app_settings
     from main import app
+    from core.state import verify_admin_auth
 
     pool = FakePool(
         directory_rows=[("ALPHA_001", "Alpha", None, 99999, True, "seed:static")],
     )
     with patch.object(admin_ctvs, "get_db_pool", return_value=pool):
         client = TestClient(app)
-        response = client.post(
-            "/admin/ctvs/ALPHA_001",
-            data={
-                "display_name": "Alpha Form",
-                "phone": "0909 222 333",
-                "telegram_user_id": "11111",
-                "is_active": "1",
-            },
-            auth=(app_settings.ADMIN_USERNAME, app_settings.ADMIN_PASSWORD),
-        )
+        app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+        try:
+            response = client.post(
+                "/admin/ctvs/ALPHA_001",
+                headers={"Origin": "http://testserver"},
+                data={
+                    "display_name": "Alpha Form",
+                    "phone": "0909 222 333",
+                    "telegram_user_id": "11111",
+                    "is_active": "1",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(verify_admin_auth, None)
     assert response.status_code == 200
     entry = get_ctv_entry("ALPHA_001")
     assert entry["display_name"] == "Alpha Form"

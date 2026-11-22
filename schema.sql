@@ -270,14 +270,101 @@ CREATE TABLE IF NOT EXISTS image_dinov2_exceptions (
 CREATE INDEX IF NOT EXISTS idx_image_dinov2_exceptions_active
 ON image_dinov2_exceptions (form_id, expires_at);
 
--- 6c. Database-backed admin web accounts.
+-- 6c. Database-backed admin accounts, recovery, roles and 30-day bin.
 CREATE TABLE IF NOT EXISTS admin_accounts (
     username VARCHAR(64) PRIMARY KEY,
     password_hash TEXT NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'reviewer' CHECK (role IN ('superadmin','manager','reviewer','viewer')),
+    recovery_email VARCHAR(254),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    deleted_by VARCHAR(64)
 );
+
+
+-- Admin module registry (migration 008 fresh-install mirror).
+CREATE TABLE IF NOT EXISTS admin_module_registry (
+    module_id VARCHAR(64) PRIMARY KEY CHECK (module_id ~ '^[A-Za-z0-9_-]{1,64}$'),
+    module_type VARCHAR(16) NOT NULL CHECK (module_type IN ('object','logic')),
+    display_name VARCHAR(100) NOT NULL,
+    module_version VARCHAR(32) NOT NULL,
+    definition JSONB NOT NULL CHECK (jsonb_typeof(definition)='object'),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by VARCHAR(64),
+    updated_by VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE IF NOT EXISTS admin_module_registry_seed (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    seeded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_module_registry_type_enabled
+    ON admin_module_registry(module_type,enabled,module_id);
+
+-- Google Drive export settings and per-client access configuration (migration 009).
+CREATE TABLE IF NOT EXISTS drive_export_settings (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    master_folder_name VARCHAR(100) NOT NULL DEFAULT 'Master Export',
+    client_folder_name VARCHAR(100) NOT NULL DEFAULT 'Client Exports',
+    internal_folder_name VARCHAR(100) NOT NULL DEFAULT 'Internal Exports',
+    images_folder_name VARCHAR(100) NOT NULL DEFAULT 'Images Master',
+    updated_by VARCHAR(64),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    last_run_at TIMESTAMPTZ,
+    last_report JSONB
+);
+INSERT INTO drive_export_settings(singleton) VALUES (TRUE) ON CONFLICT (singleton) DO NOTHING;
+CREATE TABLE IF NOT EXISTS drive_export_clients (
+    slug VARCHAR(64) PRIMARY KEY CHECK (slug ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
+    display_name VARCHAR(100) NOT NULL,
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('client','internal')),
+    category VARCHAR(100),
+    folder_name VARCHAR(100) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    date_from DATE,
+    date_to DATE,
+    form_ids TEXT[] NOT NULL DEFAULT '{}',
+    fields TEXT[] NOT NULL DEFAULT '{submission_id,form_id,status,created_at,vehicle_type,total_gross_revenue,total_net_income,total_trips}',
+    statuses TEXT[] NOT NULL DEFAULT '{APPROVED}',
+    vehicle_types TEXT[] NOT NULL DEFAULT '{}',
+    include_images BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by VARCHAR(64),
+    updated_by VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK (kind='client' OR (category IS NOT NULL AND btrim(category) <> '')),
+    CHECK (date_to IS NULL OR date_from IS NULL OR date_to >= date_from)
+);
+CREATE INDEX IF NOT EXISTS idx_drive_export_clients_enabled
+    ON drive_export_clients(enabled, kind, display_name);
+-- Migration 007 fresh-install mirror. Initial account creation is handled by the app.
+CREATE TABLE IF NOT EXISTS admin_recovery_challenges (
+    id UUID PRIMARY KEY,
+    username VARCHAR(64) NOT NULL REFERENCES admin_accounts(username) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('reset','email')),
+    state_hash BYTEA NOT NULL CHECK (octet_length(state_hash)=32),
+    old_code_hash BYTEA NOT NULL CHECK (octet_length(old_code_hash)=32),
+    new_code_hash BYTEA CHECK (octet_length(new_code_hash)=32),
+    new_email VARCHAR(254),
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    ready BOOLEAN NOT NULL DEFAULT FALSE,
+    attempts SMALLINT NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+    consumed_at TIMESTAMPTZ,
+    UNIQUE (username,purpose),
+    CHECK ((purpose='email' AND new_email IS NOT NULL AND new_code_hash IS NOT NULL)
+        OR (purpose='reset' AND new_email IS NULL AND new_code_hash IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS admin_recovery_limits (
+    bucket BYTEA PRIMARY KEY CHECK (octet_length(bucket)=32),
+    hits SMALLINT NOT NULL CHECK (hits > 0),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_recovery_limits_expiry ON admin_recovery_limits(expires_at);
 
 -- 7. Vehicle Change Audit & History Ledger
 CREATE TABLE IF NOT EXISTS vehicle_change_history (

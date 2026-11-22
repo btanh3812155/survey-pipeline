@@ -824,6 +824,39 @@ class GoogleDriveClient:
             return existing_id
         return await self.create_folder(client, token, folder_name, parent_id)
 
+    async def create_shortcut(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        name: str,
+        target_id: str,
+        parent_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Creates a Drive shortcut instead of copying an existing file."""
+        existing_id = await self.find_file_or_folder(client, token, name, parent_id)
+        if existing_id:
+            return existing_id
+        metadata: Dict[str, Any] = {
+            "name": name,
+            "mimeType": "application/vnd.google-apps.shortcut",
+            "shortcutDetails": {"targetId": target_id},
+        }
+        if parent_id:
+            metadata["parents"] = [parent_id]
+        try:
+            resp = await client.post(
+                "https://www.googleapis.com/drive/v3/files",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=metadata,
+            )
+            resp.raise_for_status()
+            shortcut_id = resp.json().get("id")
+            logger.info("[GOOGLE DRIVE] Linked '%s' to %s (ID: %s)", name, target_id, shortcut_id)
+            return shortcut_id
+        except Exception as e:
+            logger.error("Failed to create Drive shortcut '%s': %s", name, e)
+            return None
+
     async def upload_file(
         self,
         client: httpx.AsyncClient,

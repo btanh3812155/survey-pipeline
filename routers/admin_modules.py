@@ -1,0 +1,185 @@
+"""Authenticated administration for database-backed image and logic modules."""
+from __future__ import annotations
+
+import html
+import json
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from core.admin_modules import (
+    ModuleDefinitionError,
+    delete_module,
+    execute_logic_module,
+    list_modules,
+    save_module,
+    set_module_enabled,
+)
+from core.state import get_db_pool, verify_admin_auth
+from services.logic_modules import SOURCES
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["Admin Modules"])
+
+
+def _esc(value: Any) -> str:
+    return html.escape(str(value if value is not None else ""), quote=True)
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") -> str:
+    cards = []
+    for module in modules:
+        module_id = str(module["module_id"])
+        kind = str(module["module_type"])
+        definition = module["definition"]
+        if isinstance(definition, str):
+            definition = json.loads(definition)
+        enabled = bool(module["enabled"])
+        card = f"""
+<article class="module" data-search="{_esc(module_id + ' ' + module['display_name'] + ' ' + kind)}">
+  <header><div><strong>{_esc(module['display_name'])}</strong> <code>{_esc(module_id)}</code>
+    <span class="badge">{_esc(kind)}</span><span class="badge">v{_esc(module['module_version'])}</span>
+    <span class="badge {'enabled' if enabled else 'disabled'}">{'enabled' if enabled else 'disabled'}</span></div></header>
+  <form method="post" action="/admin/modules/{_esc(module_id)}">
+    <div class="grid"><label>Name<input name="display_name" value="{_esc(module['display_name'])}" maxlength="100" required></label>
+      <label>Module version<input name="module_version" value="{_esc(module['module_version'])}" maxlength="32" required></label></div>
+    <label>Definition JSON<textarea name="definition" rows="14" spellcheck="false" required>{_esc(_json_text(definition))}</textarea></label>
+    {'<p class="hint">Python is not loaded or executed from the registry. This implementation is fixed in application code.</p><pre>' + _esc(SOURCES.get(definition.get('implementation'), 'Unknown implementation')) + '</pre>' if kind == 'logic' else ''}
+    <button type="submit">Save definition</button>
+  </form>
+  <div class="actions">
+    <form method="post" action="/admin/modules/{_esc(module_id)}/enabled"><input type="hidden" name="enabled" value="{'false' if enabled else 'true'}"><button type="submit">{'Disable' if enabled else 'Enable'}</button></form>
+    <form method="post" action="/admin/modules/{_esc(module_id)}/delete" onsubmit="return confirm('Delete {_esc(module_id)}?')"><button class="danger" type="submit">Delete</button></form>
+  </div>
+  {f'<form method="post" action="/admin/modules/{_esc(module_id)}/run"><label>Test inputs (JSON)<textarea name="inputs" rows="3">{{"target": 7, "total": 10}}</textarea></label><button type="submit">Run safely</button></form>' if kind == 'logic' else ''}
+</article>"""
+        cards.append(card)
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logic &amp; Object Modules</title>
+<style>
+:root {{ color-scheme:dark; --bg:#0b1220; --panel:#131d30; --line:#2a3952; --fg:#e5edf7; --muted:#9aabc1; --accent:#38bdf8; }}
+* {{ box-sizing:border-box }} body {{ margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif }} main {{ max-width:1100px; margin:auto; padding:24px }}
+h1 {{ font-size:1.4rem }} h2 {{ font-size:1rem }} .hint,.muted {{ color:var(--muted) }} .flash {{ padding:10px; margin:12px 0; border:1px solid var(--line); border-radius:8px }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px }} .module {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin:12px 0 }}
+.module header,.actions {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap }} .badge {{ border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); font-size:.75rem }} .enabled {{ color:#86efac }} .disabled {{ color:#fca5a5 }}
+label {{ display:block; margin:10px 0; color:var(--muted); font-size:.85rem }} input,textarea,select {{ display:block; width:100%; margin-top:4px; padding:9px; background:#09111e; color:var(--fg); border:1px solid var(--line); border-radius:6px; font: .9rem ui-monospace,monospace }}
+textarea {{ resize:vertical }} button {{ border:0; border-radius:6px; background:#0369a1; color:white; padding:8px 12px; cursor:pointer }} button.danger {{ background:#991b1b }} pre {{ overflow:auto; background:#09111e; padding:10px }} .actions {{ justify-content:flex-start; margin:10px 0 }} .actions form {{ display:inline }}
+</style></head><body><main><h1>Logic &amp; Object Modules</h1><p class="muted">Registry records are database-backed. Object definitions drive image extraction. Logic execution is limited to implementations compiled into the app; stored JSON never executes code.</p>
+{f'<div class="flash">{_esc(message or error)}</div>' if message or error else ''}
+<div class="grid"><label>Search modules<input id="search" type="search" placeholder="Name, id or type" oninput="filterModules()"></label></div>
+<section><h2>Registered modules ({len(modules)})</h2>{''.join(cards) or '<p class="muted">No modules registered.</p>'}</section>
+<section class="module"><h2>Create module</h2><form method="post" action="/admin/modules">
+<div class="grid"><label>Module id<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Type<select name="module_type"><option value="object">Image object</option><option value="logic">Logic</option></select></label><label>Name<input name="display_name" maxlength="100" required></label><label>Module version<input name="module_version" maxlength="32" value="1" required></label></div>
+<label>Definition JSON<textarea name="definition" rows="10" required>{{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
+<p class="hint">Logic definitions must reference an allowlisted implementation, such as <code>get_percentage</code>; adding arbitrary Python requires a reviewed application-code change.</p><button type="submit">Create module</button></form></section>
+</main><script>
+function filterModules() {{ const query = document.getElementById('search').value.trim().toLowerCase(); for (const item of document.querySelectorAll('.module[data-search]')) item.hidden = !item.dataset.search.toLowerCase().includes(query); }}
+</script></body></html>"""
+
+
+async def _modules() -> list[dict[str, Any]]:
+    pool = get_db_pool()
+    if not pool:
+        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.")
+    try:
+        return await list_modules(pool)
+    except Exception as exc:
+        logger.warning("module registry query failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.") from exc
+
+
+def _pool_or_503():
+    pool = get_db_pool()
+    if not pool:
+        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.")
+    return pool
+
+
+@router.get("/admin/modules", response_class=HTMLResponse)
+async def modules_page(_admin: str = Depends(verify_admin_auth), message: str = "", error: str = ""):
+    return HTMLResponse(_page(await _modules(), message=message, error=error))
+
+
+@router.get("/api/v1/admin/modules")
+async def modules_api(_admin: str = Depends(verify_admin_auth)):
+    modules = await _modules()
+    for module in modules:
+        definition = module["definition"]
+        if isinstance(definition, str):
+            module["definition"] = json.loads(definition)
+    return {"modules": modules}
+
+
+@router.post("/admin/modules")
+async def create_module(request: Request, admin_user: str = Depends(verify_admin_auth)):
+    form = await request.form()
+    module_id = str(form.get("module_id") or "").strip()
+    module_type = str(form.get("module_type") or "object")
+    try:
+        definition = json.loads(str(form.get("definition") or "{}"))
+        await save_module(
+            _pool_or_503(), module_id, module_type, str(form.get("display_name") or ""),
+            str(form.get("module_version") or "1"), definition, True, admin_user,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("module create failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Module could not be created.") from exc
+    return RedirectResponse("/admin/modules?message=Module+created", status_code=303)
+
+
+@router.post("/admin/modules/{module_id}")
+async def update_module(module_id: str, request: Request, admin_user: str = Depends(verify_admin_auth)):
+    form = await request.form()
+    current = next((item for item in await _modules() if item["module_id"] == module_id), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Module not found.")
+    try:
+        definition = json.loads(str(form.get("definition") or "{}"))
+        await save_module(
+            _pool_or_503(), module_id, str(current["module_type"]),
+            str(form.get("display_name") or ""), str(form.get("module_version") or ""),
+            definition, bool(current["enabled"]), admin_user,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("module save failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Module could not be saved.") from exc
+    return RedirectResponse("/admin/modules?message=Module+saved", status_code=303)
+
+
+@router.post("/admin/modules/{module_id}/enabled")
+async def toggle_module(module_id: str, request: Request, admin_user: str = Depends(verify_admin_auth)):
+    form = await request.form()
+    enabled = str(form.get("enabled") or "").lower() in {"1", "true", "yes", "on"}
+    if not await set_module_enabled(_pool_or_503(), module_id, enabled, admin_user):
+        raise HTTPException(status_code=404, detail="Module not found.")
+    return RedirectResponse("/admin/modules?message=Module+updated", status_code=303)
+
+
+@router.post("/admin/modules/{module_id}/delete")
+async def remove_module(module_id: str, admin_user: str = Depends(verify_admin_auth)):
+    if not await delete_module(_pool_or_503(), module_id, admin_user):
+        raise HTTPException(status_code=404, detail="Module not found.")
+    return RedirectResponse("/admin/modules?message=Module+deleted", status_code=303)
+
+
+@router.post("/admin/modules/{module_id}/run")
+async def run_logic_module(module_id: str, request: Request, _admin: str = Depends(verify_admin_auth)):
+    form = await request.form()
+    try:
+        inputs = json.loads(str(form.get("inputs") or "{}"))
+        result = await execute_logic_module(_pool_or_503(), module_id, inputs)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("logic module execution rejected: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Logic module could not run.") from exc
+    return HTMLResponse(_page(await _modules(), message=f"{module_id}: {_json_text(result)}"))

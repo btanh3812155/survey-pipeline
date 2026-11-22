@@ -418,6 +418,24 @@ Webhook receiver for Telegram Bot updates.
 - **Headers Required:** `X-Telegram-Bot-Api-Secret-Token` matching `TELEGRAM_WEBHOOK_SECRET`.
 - **Response `200 OK`:** `{"status": "ok"}`
 
+### 3.10 Admin module registry (`/admin/modules`)
+Authenticated operator UI and API for database-backed image and logic modules (migration 008).
+- `GET /admin/modules` lists/search modules and opens create/edit forms.
+- `POST /admin/modules` creates a module; `POST /admin/modules/{id}` saves name/version/definition.
+- `POST /admin/modules/{id}/enabled` toggles runtime use; `POST /admin/modules/{id}/delete` removes it.
+- `POST /admin/modules/{id}/run` executes an enabled logic module with JSON integer inputs.
+- `GET /api/v1/admin/modules` returns module records for automation.
+- Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; stored JSON is never executed as Python. Destructive/enable actions require the same strict same-origin checks as other admin writes and are audited in `system_audit_log`.
+
+### 3.11 Admin Google Drive exports (`/admin/exports`)
+Authenticated operator UI for migration 009 export configuration.
+- `GET /admin/exports` renders folder settings and per-client/internal access rules.
+- `POST /admin/exports/settings` saves master/client/internal/images folder names.
+- `POST /admin/exports/clients` creates a configuration; `POST /admin/exports/clients/{slug}` updates it; `POST /admin/exports/clients/{slug}/delete` removes the configuration only, leaving Drive folders intact.
+- `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report.
+- `GET /api/v1/admin/exports` returns settings and configurations for automation.
+- Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks.
+
 ---
 
 ## 4. Telegram Bot Moderation & Operations Daemon

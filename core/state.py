@@ -8,15 +8,15 @@ and authentication guards from route definitions.
 import os
 import json
 import logging
-import secrets
 import hashlib
 import time
-from typing import Optional, Dict, Any
+from urllib.parse import urlsplit
+from typing import Any, Dict, Optional
 from psycopg_pool import AsyncConnectionPool
 import redis.asyncio as aioredis
 import httpx
 from services.vision_ai import DualModelVisionClient
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config import settings
 from core.passwords import verify_password
@@ -105,7 +105,73 @@ def refresh_form_registry_from_disk(force: bool = False) -> bool:
     return True
 
 
-admin_security = HTTPBasic()
+
+def require_admin_same_origin(request: Request) -> None:
+    """Reject unsafe browser requests without an exact same-origin source."""
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    source = request.headers.get("origin") or request.headers.get("referer")
+    host = request.headers.get("host", "")
+    if not source or not host:
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    parsed = urlsplit(source)
+    if (
+        parsed.username
+        or parsed.password
+        or parsed.scheme.lower() != request.url.scheme.lower()
+        or parsed.netloc.lower() != host.lower()
+    ):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+
+
+async def _check_admin_auth_rate_limit(request: Request, username: str) -> tuple[Any, str, str]:
+    redis = get_redis_client()
+    if redis is None:
+        if settings.ENVIRONMENT == "production":
+            raise HTTPException(status_code=503, detail="Admin authentication unavailable")
+        return None, "", ""
+    ip = request.client.host if request.client else "unknown"
+    account_key = hashlib.sha256(username[:64].casefold().encode()).hexdigest()
+    ip_key = hashlib.sha256(ip.encode()).hexdigest()
+    account_bucket = f"admin-auth:account:{account_key}"
+    ip_bucket = f"admin-auth:ip:{ip_key}"
+    try:
+        limited = await redis.eval(
+            "return (tonumber(redis.call('GET', KEYS[1]) or '0') >= 10 "
+            "or tonumber(redis.call('GET', KEYS[2]) or '0') >= 60) and 1 or 0",
+            2,
+            account_bucket,
+            ip_bucket,
+        )
+    except Exception as exc:
+        logger.warning("admin auth limiter unavailable: %s", type(exc).__name__)
+        if settings.ENVIRONMENT == "production":
+            raise HTTPException(status_code=503, detail="Admin authentication unavailable")
+        return None, "", ""
+    if int(limited or 0):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed admin login attempts; retry in 60 seconds.",
+            headers={"Retry-After": "60"},
+        )
+    return redis, account_bucket, ip_bucket
+
+
+async def _record_admin_auth_failure(redis, account_bucket: str, ip_bucket: str) -> None:
+    if redis is None:
+        return
+    try:
+        await redis.eval(
+            "for i=1,2 do local n=redis.call('INCR', KEYS[i]); "
+            "if n == 1 then redis.call('EXPIRE', KEYS[i], 60) end end; return 1",
+            2,
+            account_bucket,
+            ip_bucket,
+        )
+    except Exception as exc:
+        logger.warning("admin auth limiter update failed: %s", type(exc).__name__)
+        if settings.ENVIRONMENT == "production":
+            raise HTTPException(status_code=503, detail="Admin authentication unavailable")
 
 
 _ADMIN_HASH_CACHE: Dict[str, float] = {}
@@ -134,22 +200,28 @@ def _verify_admin_password(password: str, encoded: str) -> bool:
 async def _load_admin_account(username: str) -> Optional[Dict[str, Any]]:
     pool = get_db_pool()
     if not pool:
-        return None
+        raise HTTPException(status_code=503, detail="Admin authentication unavailable")
     try:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "SELECT password_hash, is_active FROM admin_accounts WHERE username=%s",
+                    "SELECT password_hash, is_active, role, deleted_at FROM admin_accounts WHERE username=%s",
                     (username,),
                 )
                 row = await cur.fetchone()
-    except Exception:
-        return None
+    except Exception as exc:
+        logger.warning("admin account lookup failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Admin authentication unavailable") from exc
     if not row:
         return None
     if isinstance(row, dict):
-        return {"password_hash": row.get("password_hash"), "is_active": row.get("is_active")}
-    return {"password_hash": row[0], "is_active": row[1]}
+        return {
+            "password_hash": row.get("password_hash"),
+            "is_active": row.get("is_active"),
+            "role": row.get("role"),
+            "deleted_at": row.get("deleted_at"),
+        }
+    return {"password_hash": row[0], "is_active": row[1], "role": row[2], "deleted_at": row[3]}
 
 
 def _auth_error() -> HTTPException:
@@ -160,28 +232,76 @@ def _auth_error() -> HTTPException:
     )
 
 
-async def verify_admin_auth(credentials: HTTPBasicCredentials = Depends(admin_security)) -> str:
-    """Protects administrative endpoints with HTTP Basic Authentication.
+def _admin_roles_for_path(path: str, method: str) -> set[str]:
+    path = (path or "/").rstrip("/") or "/"
+    method = (method or "GET").upper()
+    everyone = {"superadmin", "manager", "reviewer", "viewer"}
+    operators = {"superadmin", "manager"}
+    reviewers = {"superadmin", "manager", "reviewer"}
+    if path == "/admin/accounts/password":
+        return everyone
+    if path.startswith(("/admin/accounts", "/admin/recovery", "/api/v1/admin/recovery")):
+        return {"superadmin"}
+    if path.startswith("/api/v1/dev/submissions"):
+        return {"superadmin"}
+    if path == "/api/v1/telegram/set-webhooks":
+        return {"superadmin"}
+    if path in {"/admin/submissions", "/admin/data", "/submissions", "/data"} or path.startswith("/admin/data/"):
+        return everyone if method == "GET" else operators
+    if path.startswith("/admin/submissions/"):
+        return everyone if method == "GET" else operators
+    if path == "/api/v1/submissions":
+        return everyone if method == "GET" else operators
+    if path.startswith("/api/v1/submissions/"):
+        if "/photos" in path:
+            return everyone if method == "GET" else operators
+        if path.endswith("/actions"):
+            return reviewers if method == "GET" else operators
+        return reviewers if method == "GET" else operators
+    if path == "/api/v1/surveys/history":
+        return operators
+    if path in {"/admin/audit", "/audit"} or path.startswith("/api/v1/audit/"):
+        return operators
+    if path.startswith(("/admin/forms", "/admin/samples", "/api/v1/forms")):
+        return operators
+    if path.startswith(("/admin/ctvs", "/api/v1/ctvs")):
+        return operators
+    if path.startswith(("/admin/media", "/api/v1/media")):
+        return operators
+    if path.startswith(("/admin/image-objects", "/api/v1/image-objects")):
+        return operators
+    if path.startswith(("/admin/modules", "/api/v1/admin/modules")):
+        return operators
+    if path.startswith(("/admin/exports", "/api/v1/admin/exports")):
+        return operators
+    return {"superadmin"}
 
-    A database account is authoritative when its row exists; the environment
-    credential is a break-glass fallback only when no row exists.
-    """
+
+admin_security = HTTPBasic()
+async def verify_admin_auth(
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(admin_security),
+) -> str:
+    """Authenticate through the database and enforce route roles."""
+    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+        require_admin_same_origin(request)
+    redis, account_bucket, ip_bucket = await _check_admin_auth_rate_limit(
+        request, credentials.username
+    )
     account = await _load_admin_account(credentials.username)
-    if account is not None:
-        valid = bool(account.get("is_active")) and _verify_admin_password(
-            credentials.password, str(account.get("password_hash") or "")
-        )
-        if not valid:
-            raise _auth_error()
-        return credentials.username
-
-    is_user_ok = secrets.compare_digest(credentials.username, settings.ADMIN_USERNAME)
-    if settings.ADMIN_PASSWORD_HASH:
-        is_pass_ok = _verify_admin_password(credentials.password, settings.ADMIN_PASSWORD_HASH)
-    else:
-        is_pass_ok = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
-    if not (is_user_ok and is_pass_ok):
+    if account is None or not account.get("is_active") or account.get("deleted_at") is not None:
+        await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
         raise _auth_error()
+    password_hash = str(account.get("password_hash") or "")
+    if not _verify_admin_password(credentials.password, password_hash):
+        await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
+        raise _auth_error()
+    role = str(account.get("role") or "viewer")
+    if role not in _admin_roles_for_path(request.url.path, request.method):
+        raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")
+    request.state.admin_user = credentials.username
+    request.state.admin_role = role
+    request.state.admin_password_hash = password_hash
     return credentials.username
 
 
