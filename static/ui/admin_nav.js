@@ -36,6 +36,8 @@
   };
   const style = document.createElement('style');
   style.textContent = `
+    body { padding: 0 !important; }
+    body > .container { width: 100% !important; padding: 20px 16px !important; }
     #adminTopBar { position: sticky; top: 0; z-index: 10000; background: #0b1220;
       border-bottom: 1px solid #23314f; font-family: -apple-system, BlinkMacSystemFont,
       "Segoe UI", Roboto, Arial, sans-serif; }
@@ -59,6 +61,7 @@
     #adminTopBar a.active { background: #2563eb; color: #fff; }
     @media (max-width: 640px) { #adminTopBar .inner { padding: 6px 10px; }
       #adminTopBar .brand { display: none; }
+      body > .container { padding: 16px 12px !important; }
       #adminTopBar .menu { left: 10px; width: min(320px, calc(100vw - 20px)); } }
   `;
   document.head.appendChild(style);

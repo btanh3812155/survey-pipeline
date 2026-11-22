@@ -16,6 +16,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 import redis.asyncio as aioredis
@@ -283,11 +284,10 @@ async def inject_admin_nav(request, call_next):
         if b"</head>" in body:
             body = body.replace(b"</head>", meta + b"</head>", 1)
         if b"</body>" in body:
-            body = body.replace(
-                b"</body>",
-                b'<script src="/static/ui/admin_nav.js" defer></script></body>',
-                1,
-            )
+            nav_script = (
+                f'<script src="/static/ui/admin_nav.js?v={quote(settings.APP_BUILD_ID, safe="")}" defer></script>'
+            ).encode()
+            body = body.replace(b"</body>", nav_script + b"</body>", 1)
         headers = {
             key: value
             for key, value in response.headers.items()
