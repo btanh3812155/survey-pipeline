@@ -11,14 +11,14 @@ from psycopg.rows import dict_row
 
 logger = logging.getLogger("core.trash")
 
-RETENTION_DAYS = 365
+LAST_SNAPSHOTS_KEPT = 10
 RETENTION_FREQUENCIES = {
-    "all": "0-24 hours: every deletion snapshot",
-    "hourly": "1-7 days: one snapshot per entity per hour",
+    "hourly": "0-24 hours: one snapshot per entity per hour",
+    "four_hourly": "1-7 days: one snapshot per entity per 4 hours",
     "daily": "7-30 days: one snapshot per entity per day",
     "weekly": "30-90 days: one snapshot per entity per week",
     "monthly": "90-365 days: one snapshot per entity per month",
-    "expired": "after 365 days: marked purged",
+    "semiannual": "over 365 days: one snapshot per entity per 6 months, forever",
 }
 
 
@@ -26,23 +26,23 @@ def retention_tier(deleted_at: datetime, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     age = now - deleted_at
     if age < timedelta(days=1):
-        return "all"
-    if age < timedelta(days=7):
         return "hourly"
+    if age < timedelta(days=7):
+        return "four_hourly"
     if age < timedelta(days=30):
         return "daily"
     if age < timedelta(days=90):
         return "weekly"
-    if age < timedelta(days=RETENTION_DAYS):
+    if age < timedelta(days=365):
         return "monthly"
-    return "expired"
+    return "semiannual"
 
 
 def _bucket(tier: str, deleted_at: datetime) -> tuple[int, ...]:
-    if tier == "all":
-        return (int(deleted_at.timestamp()),)
     if tier == "hourly":
         return (deleted_at.year, deleted_at.month, deleted_at.day, deleted_at.hour)
+    if tier == "four_hourly":
+        return (deleted_at.year, deleted_at.month, deleted_at.day, deleted_at.hour // 4)
     if tier == "daily":
         return (deleted_at.year, deleted_at.month, deleted_at.day)
     if tier == "weekly":
@@ -50,7 +50,7 @@ def _bucket(tier: str, deleted_at: datetime) -> tuple[int, ...]:
         return (iso.year, iso.week)
     if tier == "monthly":
         return (deleted_at.year, deleted_at.month)
-    return (int(deleted_at.timestamp()),)
+    return (deleted_at.year, 0 if deleted_at.month <= 6 else 1)
 
 
 async def add_trash_item(
@@ -67,7 +67,7 @@ async def add_trash_item(
     """Write one trash snapshot and its audit transaction inside the caller's transaction."""
     deleted_at = deleted_at or datetime.now(timezone.utc)
     trash_id = str(uuid.uuid4())
-    expires_at = deleted_at + timedelta(days=RETENTION_DAYS)
+    expires_at = None
     tier = retention_tier(deleted_at)
     await cur.execute(
         """INSERT INTO trash_items
@@ -163,61 +163,60 @@ async def record_drive_ledger(
 
 
 async def compact_trash(pool, now: datetime | None = None) -> dict[str, int]:
-    """Thin old snapshots by age and mark rows older than the retention window expired."""
+    """Keep the last 10 snapshots plus one representative per retention bucket."""
     now = now or datetime.now(timezone.utc)
     if not pool:
-        return {"kept": 0, "removed": 0, "expired": 0}
+        return {"kept": 0, "removed": 0, "protected_recent": 0}
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """SELECT id,entity_type,entity_id,deleted_at
                    FROM trash_items
                    WHERE restored_at IS NULL AND purged_at IS NULL
-                   ORDER BY entity_type,entity_id,deleted_at"""
+                   ORDER BY entity_type,entity_id,deleted_at DESC,id DESC"""
             )
             rows = await cur.fetchall()
             groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
             for row in rows:
                 groups.setdefault((row["entity_type"], row["entity_id"]), []).append(row)
-            kept = removed = expired = 0
+            kept = removed = protected_recent = 0
             for (entity_type, entity_id), items in groups.items():
+                protected = {str(item["id"]) for item in items[:LAST_SNAPSHOTS_KEPT]}
+                protected_recent += len(protected)
                 seen_buckets: set[tuple[int, ...]] = set()
                 for item in items:
+                    item_id = str(item["id"])
                     tier = retention_tier(item["deleted_at"], now)
-                    if tier == "expired":
+                    if item_id in protected:
                         await cur.execute(
-                            "UPDATE trash_items SET purged_at=%s,retention_tier='expired' WHERE id=%s",
-                            (now, item["id"]),
+                            "UPDATE trash_items SET retention_tier=%s,expires_at=NULL WHERE id=%s",
+                            (tier, item_id),
                         )
-                        await record_transaction(
-                            cur, str(item["id"]), "TRASH_EXPIRED", "system",
-                            {"entity_type": entity_type, "entity_id": entity_id},
-                        )
-                        expired += 1
+                        kept += 1
                         continue
                     bucket = _bucket(tier, item["deleted_at"])
                     if bucket in seen_buckets:
-                        await cur.execute("DELETE FROM trash_items WHERE id=%s", (item["id"],))
+                        await cur.execute("DELETE FROM trash_items WHERE id=%s", (item_id,))
                         removed += 1
                         continue
                     seen_buckets.add(bucket)
                     await cur.execute(
-                        "UPDATE trash_items SET retention_tier=%s WHERE id=%s",
-                        (tier, item["id"]),
+                        "UPDATE trash_items SET retention_tier=%s,expires_at=NULL WHERE id=%s",
+                        (tier, item_id),
                     )
                     kept += 1
-            if removed or expired:
+            if removed:
                 await record_transaction(
                     cur, None, "TRASH_COMPACTED", "system",
-                    {"kept": kept, "removed": removed, "expired": expired},
+                    {"kept": kept, "removed": removed, "protected_recent": protected_recent},
                 )
                 await cur.execute(
                     """INSERT INTO system_audit_log
                        (component_name,action,entity_type,entity_id,actor_type,actor_id,details)
                        VALUES ('trash','TRASH_COMPACTED','TRASH','retention','SYSTEM','system',%s::jsonb)""",
-                    (json.dumps({"kept": kept, "removed": removed, "expired": expired}),),
+                    (json.dumps({"kept": kept, "removed": removed, "protected_recent": protected_recent}),),
                 )
-            return {"kept": kept, "removed": removed, "expired": expired}
+            return {"kept": kept, "removed": removed, "protected_recent": protected_recent}
 
 
 async def list_trash(pool, limit: int = 200) -> list[dict[str, Any]]:

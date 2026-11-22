@@ -316,9 +316,9 @@ CREATE TABLE IF NOT EXISTS trash_items (
     snapshot JSONB NOT NULL CHECK (jsonb_typeof(snapshot)='object'),
     deleted_by VARCHAR(64),
     deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    retention_tier VARCHAR(16) NOT NULL DEFAULT 'all'
-        CHECK (retention_tier IN ('all','hourly','daily','weekly','monthly','expired')),
+    expires_at TIMESTAMPTZ,
+    retention_tier VARCHAR(16) NOT NULL DEFAULT 'hourly'
+        CHECK (retention_tier IN ('hourly','four_hourly','daily','weekly','monthly','semiannual')),
     restored_at TIMESTAMPTZ,
     purged_at TIMESTAMPTZ,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
