@@ -134,6 +134,9 @@ The engine resolves dependency graphs dynamically:
   "kind": "logic",
   "module_id": "get-percentage",
   "enabled": true,
+  "scope": "form",
+  "question_id": null,
+  "slot_index": null,
   "inputs": [
     {"name": "target", "source": "question", "question_id": "daily_trips"},
     {"name": "total", "source": "literal", "literal": 20}
@@ -151,7 +154,10 @@ The engine resolves dependency graphs dynamically:
 - `kind: "all"` is a composite check. Its inputs reference earlier modules only; it passes when every referenced module passed.
 - Outputs are persisted as `form_data.module_outputs` and included in the submission response. Because they live in `form_data`, selected Drive export fields include them.
 - `reject_on_false` turns a false module output into a rejected submission with `reject_message`.
+- `scope` is `form`, `question`, or `slot`. `question` requires `question_id`; `slot` requires `question_id` plus `slot_index` pointing at an existing image slot. Scope controls which editor section owns the module and labels the failure; execution order remains the ordered `settings.modules` list.
 - Modules may reference only earlier modules, output names must be unique across the form, and input questions must exist.
+- The form editor groups question conditions, scoped modules, and consent-gate settings in a collapsed `Tùy chọn câu hỏi` block; image slots have their own scoped module block.
+- `GET /api/v1/forms/export` downloads a versioned `survey-pipeline-forms` JSON bundle; `GET /api/v1/forms/{form_id}/export` downloads one form. `POST /api/v1/forms/import[?overwrite=true]` accepts either shape. Import rejects existing IDs with HTTP 409 unless `overwrite=true`, in which case the replaced schema is first copied to `data/form_backups`.
 
 ### 1.2 Multi-Slot Camera Workflow
 To prevent drivers from submitting out-of-order or mismatched photos (e.g., swapping the odometer photo with the revenue screen), the WebRTC camera interface introduces a multi-slot architecture:
@@ -461,7 +467,8 @@ Authenticated operator UI for migration 009 export configuration.
 - `GET /admin/exports` renders folder settings and per-client/internal access rules.
 - `POST /admin/exports/settings` saves master/client/internal/images folder names.
 - `POST /admin/exports/clients` creates a configuration; `POST /admin/exports/clients/{slug}` updates it; `POST /admin/exports/clients/{slug}/delete` removes the configuration only, leaving Drive folders intact.
-- `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report.
+- `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report. Each run also removes Drive folders for archived forms that are not active, deletes stale image files/shortcuts in a submission folder, and removes client/internal submission folders no longer selected by that configuration.
+- Deleting a form removes its current and legacy Drive folders; deleting a submission removes its master image folder and every client/internal shortcut folder. Both hooks are best-effort, and failures never undo the database deletion.
 - `GET /api/v1/admin/exports` returns settings and configurations for automation.
 - Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks.
 

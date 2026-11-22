@@ -392,11 +392,13 @@ async def delete_submission_record(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT 1 FROM survey_submissions WHERE submission_id=%s FOR UPDATE",
+                "SELECT form_id FROM survey_submissions WHERE submission_id=%s FOR UPDATE",
                 (sub_id,),
             )
-            if not await cur.fetchone():
+            row = await cur.fetchone()
+            if not row:
                 raise ValueError("NOT_FOUND")
+            form_id = str(row[0])
 
             await cur.execute(
                 "SELECT 1 FROM collaborator_billing_ledger WHERE submission_id=%s",
@@ -423,6 +425,7 @@ async def delete_submission_record(
 
             details = {
                 "submission_id": sub_id,
+                "form_id": form_id,
                 "outbox_events": len(event_ids),
                 "delivery_attempts": attempts,
                 "idempotency_rows": idempotency_rows,

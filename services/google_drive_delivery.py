@@ -824,6 +824,40 @@ class GoogleDriveClient:
             return existing_id
         return await self.create_folder(client, token, folder_name, parent_id)
 
+    async def list_children(
+        self, client: httpx.AsyncClient, token: str, folder_id: str
+    ) -> List[Dict[str, Any]]:
+        """List a folder's non-trashed children with IDs, names and MIME types."""
+        url = "https://www.googleapis.com/drive/v3/files"
+        headers = {"Authorization": f"Bearer {token}"}
+        entries: List[Dict[str, Any]] = []
+        page_token = None
+        while True:
+            params = {
+                "q": f"'{folder_id}' in parents and trashed = false",
+                "fields": "nextPageToken, files(id,name,mimeType,shortcutDetails(targetId))",
+                "pageSize": 1000,
+                "spaces": "drive",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            entries.extend(data.get("files") or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return entries
+
+    async def delete_file(self, client: httpx.AsyncClient, token: str, file_id: str) -> bool:
+        """Permanently delete one file, shortcut or empty folder by ID."""
+        resp = await client.delete(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        return resp.status_code in (200, 204)
+
     async def create_shortcut(
         self,
         client: httpx.AsyncClient,

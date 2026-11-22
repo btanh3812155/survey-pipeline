@@ -116,6 +116,9 @@ def render_forms_list_html(
                 <a href="/admin/forms/edit/{form_id_str}" class="btn-action edit" title="Sửa Biểu Mẫu" aria-label="Sửa Biểu Mẫu">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                 </a>
+                <a href="/api/v1/forms/{form_id_str}/export" class="btn-action export" title="Xuất JSON" aria-label="Xuất JSON" download>
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+                </a>
             </div>
         </div>
         """

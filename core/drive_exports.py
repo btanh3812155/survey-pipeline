@@ -30,6 +30,11 @@ from services.google_drive_delivery import (
     is_test_submission,
     normalize_image_bytes,
 )
+from services.drive_cleanup import (
+    prune_stale_files,
+    prune_stale_submission_folders,
+    purge_form_folders,
+)
 from services.submission_media import manifest_paths
 
 logger = logging.getLogger("core.drive_exports")
@@ -427,6 +432,10 @@ async def run_drive_exports(
         "sheets_updated": 0,
         "images_uploaded": 0,
         "images_present": 0,
+        "images_pruned": 0,
+        "submission_folders_pruned": 0,
+        "drive_items_cleaned": 0,
+        "archived_forms_skipped": 0,
         "shortcuts_created": 0,
         "shortcuts_present": 0,
         "errors": [],
@@ -465,6 +474,31 @@ async def run_drive_exports(
                     report["status"] = "folder_error"
                     report["errors"].append("could not create the master export folder tree")
                     return report
+                archived_forms: set[str] = set()
+                try:
+                    async with pool.connection() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute("SELECT DISTINCT form_id FROM deleted_forms")
+                            archived_ids = {str(row[0]) for row in await cur.fetchall()}
+                    from core.state import FORM_REGISTRY, refresh_form_registry_from_disk
+                    try:
+                        refresh_form_registry_from_disk()
+                    except Exception:
+                        pass
+                    active_forms = set(FORM_REGISTRY)
+                    archived_forms = archived_ids - active_forms
+                except Exception:
+                    # Older databases may not have the archive table yet.
+                    archived_forms = set()
+                for archived_id in sorted(archived_forms):
+                    try:
+                        report["drive_items_cleaned"] += await purge_form_folders(
+                            drive, http, access_token, root, settings, archived_id
+                        )
+                    except Exception as exc:
+                        report["errors"].append(
+                            f"archived form cleanup failed for {archived_id} ({type(exc).__name__})"
+                        )
                 master_images_cache: dict[tuple[str, str, str], str] = {}
                 for config in clients:
                     report["clients"] += 1
@@ -478,6 +512,11 @@ async def run_drive_exports(
                     by_form: dict[str, list[dict[str, Any]]] = {}
                     for row in rows:
                         by_form.setdefault(str(row.get("form_id") or "unknown_form"), []).append(row)
+                    if archived_forms:
+                        skipped = [form_id for form_id in by_form if form_id in archived_forms]
+                        for form_id in skipped:
+                            by_form.pop(form_id, None)
+                        report["archived_forms_skipped"] += len(skipped)
                     tier3_root = internal_root if config["kind"] == "internal" else client_root
                     tier3_id = await drive.get_or_create_folder(http, access_token, config["folder_name"], tier3_root)
                     if not tier3_id:
@@ -505,7 +544,9 @@ async def run_drive_exports(
                             if not master_sub or not client_sub:
                                 report["errors"].append(f"{config['slug']}/{form_id}/{sid}: could not create image folders")
                                 continue
-                            for image in _image_payloads(sid, row.get("media_manifest")):
+                            images = _image_payloads(sid, row.get("media_manifest"))
+                            expected_names = [image["name"] for image in images]
+                            for image in images:
                                 cache_key = (form_id, sid, image["name"])
                                 master_file_id = master_images_cache.get(cache_key)
                                 if not master_file_id:
@@ -529,6 +570,31 @@ async def run_drive_exports(
                                     report["shortcuts_created"] += 1
                                 else:
                                     report["errors"].append(f"{config['slug']}/{sid}: shortcut failed for {image['name']}")
+                            if expected_names:
+                                try:
+                                    report["images_pruned"] += await prune_stale_files(
+                                        drive, http, access_token, master_sub, expected_names
+                                    )
+                                    report["images_pruned"] += await prune_stale_files(
+                                        drive, http, access_token, client_sub, expected_names
+                                    )
+                                except Exception as exc:
+                                    report["errors"].append(
+                                        f"{config['slug']}/{sid}: stale-image cleanup failed ({type(exc).__name__})"
+                                    )
+                        if config["include_images"] and images_folder:
+                            try:
+                                report["submission_folders_pruned"] += await prune_stale_submission_folders(
+                                    drive,
+                                    http,
+                                    access_token,
+                                    images_folder,
+                                    {str(row["submission_id"]) for row in form_rows},
+                                )
+                            except Exception as exc:
+                                report["errors"].append(
+                                    f"{config['slug']}/{form_id}: stale-submission cleanup failed ({type(exc).__name__})"
+                                )
             finally:
                 if own_http:
                     await http.aclose()

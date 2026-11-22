@@ -128,3 +128,46 @@ def test_output_names_must_be_unique_across_modules():
 def test_output_source_requires_output_key():
     with pytest.raises(ValidationError):
         FormModuleInput(name="x", source="output", module_uid="m1")
+
+
+def test_scoped_modules_require_existing_question_and_slot():
+    question = FormQuestion(
+        id="camera", title="Camera", type=QuestionType.CAMERA_WEBRTC,
+        image_slots=[{"slot": 0, "title": "Front"}],
+    )
+    question_module = FormModule(
+        uid="qcheck", name="Question check", kind="engine", module_id="required_fields",
+        scope="question", question_id="camera",
+        inputs=[FormModuleInput(name="fields", source="literal", literal=["camera"])],
+    )
+    slot_module = FormModule(
+        uid="scheck", name="Slot check", kind="engine", module_id="required_fields",
+        scope="slot", question_id="camera", slot_index=0,
+        inputs=[FormModuleInput(name="fields", source="literal", literal=["camera"])],
+    )
+    schema = _schema([question_module, slot_module], [question])
+    assert schema.settings.modules[0].scope == "question"
+    assert schema.settings.modules[1].slot_index == 0
+
+    with pytest.raises(ValidationError):
+        _schema([question_module.model_copy(update={"question_id": "missing"})], [question])
+    with pytest.raises(ValidationError):
+        _schema([slot_module.model_copy(update={"slot_index": 1})], [question])
+
+
+@pytest.mark.asyncio
+async def test_scoped_module_failure_reports_scope():
+    question = FormQuestion(id="name", title="Name", type=QuestionType.TEXT)
+    module = FormModule(
+        uid="check", name="Name required", kind="engine", module_id="required_fields",
+        scope="question", question_id="name",
+        inputs=[FormModuleInput(name="fields", source="literal", literal=["name"])],
+        outputs=[FormModuleOutput(key="passed", name="name_ok")],
+        reject_on_false=True,
+        reject_message="Name is required",
+    )
+    schema = _schema([module], [question])
+    failed = await run_form_modules(schema, {})
+    assert failed["failure"]["scope"] == "question"
+    assert failed["failure"]["question_id"] == "name"
+    assert failed["modules"]["check"]["scope"] == "question"

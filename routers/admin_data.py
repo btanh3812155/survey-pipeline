@@ -117,6 +117,14 @@ async def delete_submission(
             os.remove(upload)
     except OSError as exc:
         logger.warning("Could not remove fallback media for %s: %s", safe_id, exc)
+    try:
+        from services.drive_cleanup import cleanup_submission_drive
+        details["drive_cleanup"] = await cleanup_submission_drive(
+            str(details.get("form_id") or ""), safe_id, get_db_pool()
+        )
+    except Exception as exc:
+        logger.warning("Drive cleanup skipped for submission %s: %s", safe_id, type(exc).__name__)
+        details["drive_cleanup"] = {"status": "error", "error": type(exc).__name__}
     return {"status": "deleted", "submission_id": safe_id, "details": details}
 
 

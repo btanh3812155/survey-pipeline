@@ -23,6 +23,7 @@ from psycopg_pool import AsyncConnectionPool
 from core import drive_exports
 from services import submission_media
 from services.google_drive_delivery import GoogleDriveClient
+from services.drive_cleanup import purge_form_folders
 from tests.postgres_harness import SCHEMA_PATH, apply_schema, resolve_test_database_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +133,33 @@ class FakeDrive:
         self.uploads = []
         self.shortcuts = []
         self.sheets = []
+        self.deleted_files = []
+
+    async def list_children(self, http, token, folder_id):
+        folders = [
+            {"id": child_id, "name": name, "mimeType": "application/vnd.google-apps.folder"}
+            for (parent, name), child_id in self.folders.items()
+            if parent == folder_id
+        ]
+        files = [
+            {"id": file_id, "name": name, "mimeType": "image/webp"}
+            for (parent, name), file_id in self.files.items()
+            if parent == folder_id
+        ]
+        return folders + files
+
+    async def delete_file(self, http, token, file_id):
+        for key, value in list(self.folders.items()):
+            if value == file_id:
+                del self.folders[key]
+                self.deleted_files.append(file_id)
+                return True
+        for key, value in list(self.files.items()):
+            if value == file_id:
+                del self.files[key]
+                self.deleted_files.append(file_id)
+                return True
+        return False
 
     async def get_token(self, http):
         return "token"
@@ -143,7 +171,7 @@ class FakeDrive:
         return self.folders[key]
 
     async def find_file_or_folder(self, http, token, name, parent, mime_type=None):
-        return self.files.get((parent, name))
+        return self.files.get((parent, name)) or self.folders.get((parent, name))
 
     async def upload_file(self, http, token, name, payload, mime, parent):
         key = (parent, name)
@@ -185,11 +213,22 @@ async def test_export_uploads_images_once_and_shortcuts_each_client(store, monke
             "statuses": ["APPROVED"], "vehicle_types": ["CAR"], "include_images": True,
         }, "tester")
     fake = FakeDrive()
+    master_sub = f"folder:folder:folder:folder:root/Master Export/Images Master/TB_TEST/{sid}"
+    client_a_images = "folder:folder:folder:folder:folder:root/Master Export/Client Exports/Client A/TB_TEST/Images"
+    client_a_sub = f"folder:{client_a_images}/{sid}"
+    fake.files[(master_sub, "slot_1_oldversion.webp")] = "stale-master"
+    fake.files[(client_a_sub, "slot_1_oldversion.webp")] = "stale-client"
+    fake.folders[(client_a_images, "VN-OLD-SUB")] = "stale-submission-folder"
     report = await drive_exports.run_drive_exports(
         pool, client=fake, http_client=object(), token="token", root_folder_id="root"
     )
     assert report["status"] == "ok", report
     assert report["images_uploaded"] == 1
+    assert report["images_pruned"] == 2
+    assert report["submission_folders_pruned"] == 1
+    assert set(fake.deleted_files) == {
+        "stale-master", "stale-client", "stale-submission-folder",
+    }
     assert report["shortcuts_created"] == 2
     assert len(fake.uploads) == 1
     assert len(fake.shortcuts) == 2
@@ -202,6 +241,51 @@ async def test_export_uploads_images_once_and_shortcuts_each_client(store, monke
     assert sid.encode() in client_a_sheet[2]
     settings = await drive_exports.get_settings(pool)
     assert settings["last_report"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_purge_form_folders_removes_current_and_legacy_layouts():
+    fake = FakeDrive()
+    settings = {
+        "master_folder_name": "Master Export",
+        "client_folder_name": "Client Exports",
+        "internal_folder_name": "Internal Exports",
+        "images_folder_name": "Images Master",
+    }
+    fake.folders.update({
+        ("root", "Master Export"): "master",
+        ("master", "Client Exports"): "clients",
+        ("master", "Internal Exports"): "internals",
+        ("master", "Images Master"): "images",
+        ("clients", "Client A"): "client-a",
+        ("client-a", "KEEP_FORM"): "keep-form",
+        ("client-a", "OLD_FORM"): "old-client-form",
+        ("old-client-form", "Images"): "old-client-images",
+        ("old-client-images", "SUB"): "old-client-sub",
+        ("internals", "Category"): "internal-cat",
+        ("internal-cat", "OLD_FORM"): "old-internal-form",
+        ("images", "OLD_FORM"): "old-master-form",
+        ("old-master-form", "SUB"): "old-master-sub",
+        ("root", "OLD_FORM"): "old-legacy-form",
+        ("root", "Internal"): "legacy-internal",
+        ("legacy-internal", "OLD_FORM"): "old-legacy-internal-form",
+    })
+    fake.files[("old-client-sub", "photo.webp")] = "old-client-file"
+    fake.files[("old-master-sub", "photo.webp")] = "old-master-file"
+
+    deleted = await purge_form_folders(
+        fake, object(), "token", "root", settings, "OLD_FORM"
+    )
+
+    assert deleted >= 10
+    assert {
+        "old-client-form", "old-client-images", "old-client-sub", "old-client-file",
+        "old-internal-form", "old-master-form", "old-master-sub", "old-master-file",
+        "old-legacy-form", "old-legacy-internal-form",
+    }.issubset(set(fake.deleted_files))
+    assert "keep-form" not in fake.deleted_files
+    assert "client-a" not in fake.deleted_files
+    assert "master" not in fake.deleted_files
 
 
 class _Resp:

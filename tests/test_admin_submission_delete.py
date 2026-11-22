@@ -18,6 +18,7 @@ async def test_delete_submission_cascades_outbox_and_audits(database):
                 sid, "admin", ip_address="127.0.0.1", db_pool=pool
             )
         assert details["submission_id"] == sid
+        assert details["form_id"]
         assert details["outbox_events"] == 1
         assert conn.execute(
             "SELECT 1 FROM survey_submissions WHERE submission_id=%s", (sid,)

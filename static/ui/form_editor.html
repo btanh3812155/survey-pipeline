@@ -535,18 +535,35 @@
                 }
             }));
         }
+        function retargetScopedModules(oldId, newId) {
+            if (!oldId || oldId === newId) return;
+            formModules.forEach(module => {
+                if (module.scope !== 'form' && module.question_id === oldId) {
+                    module.question_id = newId;
+                }
+                (module.inputs || []).forEach(input => {
+                    if (input.source === 'question' && input.question_id === oldId) {
+                        input.question_id = newId;
+                    }
+                });
+            });
+        }
         function updateQuestionId(idx, newId) {
             const q = questions[idx];
             if (!q) return;
             // Conditions are wired by __uid, so the visible id can change freely.
+            const oldId = q.id || '';
             q.id = (newId || '').trim();
+            retargetScopedModules(oldId, q.id);
         }
         function syncQuestionId(idx) {
             const q = questions[idx];
             if (!q) return;
             const titleSlug = slugifyText(q.title);
             if (titleSlug && (!q.id || q.id.startsWith('q_') || q.id.startsWith('new_'))) {
+                const oldId = q.id || '';
                 q.id = `${titleSlug}_${idx + 1}`;
+                retargetScopedModules(oldId, q.id);
                 const idInput = document.getElementById(`qid_${idx}`);
                 if (idInput) idInput.value = q.id;
             }
@@ -557,6 +574,9 @@
             if (removed) {
                 const removedUid = removed.__uid;
                 const removedId = (removed.id || '').trim();
+                formModules = formModules.filter(module => {
+                    return !(module.scope !== 'form' && module.question_id === removedId);
+                });
                 questions.forEach(q => {
                     if (!Array.isArray(q.condition_groups)) return;
                     q.condition_groups = q.condition_groups
@@ -568,7 +588,7 @@
                         .filter(group => group.length > 0);
                 });
             }
-            renderQuestions();
+            renderModuleSurfaces();
         }
         const CONDITION_OPERATORS = [
             ['equals', 'Bằng (==)'],
@@ -907,12 +927,23 @@
         }
         function removeImageSlot(qidx, sidx) {
             if (questions[qidx].image_slots) {
+                const questionId = questions[qidx].id || '';
+                formModules = formModules.filter(module => {
+                    return !(module.scope === 'slot' && module.question_id === questionId
+                        && Number(module.slot_index) === Number(sidx));
+                });
+                formModules.forEach(module => {
+                    if (module.scope === 'slot' && module.question_id === questionId
+                        && Number(module.slot_index) > Number(sidx)) {
+                        module.slot_index = Number(module.slot_index) - 1;
+                    }
+                });
                 questions[qidx].image_slots.splice(sidx, 1);
                 questions[qidx].image_slots.forEach((s, i) => { s.slot = i; });
                 questions[qidx].min_images = questions[qidx].image_slots.length;
                 questions[qidx].max_images = questions[qidx].image_slots.length;
                 questions[qidx].exact_image_count = questions[qidx].image_slots.length;
-                renderQuestions();
+                renderModuleSurfaces();
             }
         }
         function updateImageSlot(qidx, sidx, field, val) {
@@ -1121,6 +1152,7 @@
                             ` : ''}
                         </div>
                     </details>
+                    ${renderScopedModulesSection('slot', q.id, sidx, 'Module kiểm tra cho slot này', 'Module cấp slot chạy theo thứ tự module toàn biểu mẫu; lỗi được gắn với slot ảnh này.')}
                 </div>
             `).join('');
         }
@@ -1405,12 +1437,16 @@
         }
         function normalizeFormModule(raw) {
             const kind = raw && ['logic', 'engine', 'all'].includes(raw.kind) ? raw.kind : 'logic';
+            const scope = raw && ['form', 'question', 'slot'].includes(raw.scope) ? raw.scope : 'form';
             return {
                 uid: raw && raw.uid ? String(raw.uid) : newModuleUid(),
                 name: raw && raw.name != null ? String(raw.name) : '',
                 kind,
                 module_id: kind === 'all' ? '' : String((raw && raw.module_id) || ''),
                 enabled: !(raw && raw.enabled === false),
+                scope,
+                question_id: scope !== 'form' && raw && raw.question_id != null ? String(raw.question_id) : '',
+                slot_index: scope === 'slot' && raw && raw.slot_index != null ? Number(raw.slot_index) : null,
                 inputs: Array.isArray(raw && raw.inputs) ? raw.inputs.map(normalizeModuleInput) : [],
                 outputs: Array.isArray(raw && raw.outputs)
                     ? raw.outputs.filter(Boolean).map(o => ({ key: String((o && o.key) || ''), name: String((o && o.name) || '') }))
@@ -1673,8 +1709,31 @@
                 </div>
             </div>`).join('');
         }
-        function renderModuleCard(module, midx) {
+        function scopedModuleIndexes(scope, questionId, slotIndex) {
+            return formModules
+                .map((module, index) => ({ module, index }))
+                .filter(({ module }) => {
+                    if (scope === 'form') return module.scope === 'form';
+                    if (module.scope !== scope || module.question_id !== questionId) return false;
+                    return scope !== 'slot' || Number(module.slot_index) === Number(slotIndex);
+                })
+                .map(({ index }) => index);
+        }
+        function renderModuleCard(module, midx, scopeContext = null) {
             const isAll = module.kind === 'all';
+            const scopeIndexes = scopeContext
+                ? scopedModuleIndexes(scopeContext.scope, scopeContext.question_id, scopeContext.slot_index)
+                : formModules.map((_module, index) => index);
+            const scopePos = scopeIndexes.indexOf(midx);
+            const scopeArgs = scopeContext
+                ? `, '${escapeHtml(scopeContext.scope)}', '${escapeHtml(scopeContext.question_id || '')}', ${scopeContext.slot_index == null ? 'null' : Number(scopeContext.slot_index)}`
+                : '';
+            const upAction = scopeContext
+                ? `moveScopedModule(${midx}, -1${scopeArgs})`
+                : `moveFormModule(${midx}, -1)`;
+            const downAction = scopeContext
+                ? `moveScopedModule(${midx}, 1${scopeArgs})`
+                : `moveFormModule(${midx}, 1)`;
             let moduleSelect = '';
             if (isAll) {
                 moduleSelect = '<select disabled><option>Tổng hợp - không dùng module_id</option></select>';
@@ -1716,8 +1775,8 @@
                         <span>Bật</span>
                     </label>
                     <div style="display:flex; gap:4px;">
-                        <button type="button" class="btn-move" onclick="moveFormModule(${midx}, -1)" ${midx === 0 ? 'disabled' : ''}>↑</button>
-                        <button type="button" class="btn-move" onclick="moveFormModule(${midx}, 1)" ${midx === formModules.length - 1 ? 'disabled' : ''}>↓</button>
+                        <button type="button" class="btn-move" onclick="${upAction}" ${scopePos <= 0 ? 'disabled' : ''}>↑</button>
+                        <button type="button" class="btn-move" onclick="${downAction}" ${scopePos < 0 || scopePos === scopeIndexes.length - 1 ? 'disabled' : ''}>↓</button>
                         <button type="button" class="btn-delete" onclick="removeFormModule(${midx})">Xóa</button>
                     </div>
                 </div>
@@ -1755,9 +1814,61 @@
         function renderFormModules() {
             const list = document.getElementById('formModulesList');
             if (!list) return;
-            const cards = formModules.map((module, idx) => renderModuleCard(module, idx)).join('');
-            const empty = '<div style="font-size:0.8rem; color:#94a3b8; border:1px dashed #334155; border-radius:8px; padding:10px;">Chưa có module nào. Bấm "+ Thêm Module" để bắt đầu.</div>';
+            const cards = formModules
+                .map((module, idx) => ({ module, idx }))
+                .filter(({ module }) => module.scope === 'form' || !module.scope)
+                .map(({ module, idx }) => renderModuleCard(module, idx))
+                .join('');
+            const empty = '<div style="font-size:0.8rem; color:#94a3b8; border:1px dashed #334155; border-radius:8px; padding:10px;">Chưa có module cấp biểu mẫu. Bấm "+ Thêm Module" để bắt đầu.</div>';
             list.innerHTML = moduleCatalogWarningHtml() + (cards || empty);
+        }
+        function renderModuleSurfaces() {
+            renderFormModules();
+            renderQuestions();
+        }
+        function renderScopedModulesSection(scope, questionId, slotIndex, title, hint) {
+            const indexes = scopedModuleIndexes(scope, questionId, slotIndex);
+            const cards = indexes.map(idx => renderModuleCard(formModules[idx], idx, {
+                scope, question_id: questionId, slot_index: slotIndex
+            })).join('');
+            const slotArg = slotIndex == null ? 'null' : Number(slotIndex);
+            return `<details style="background:rgba(15,23,42,0.7); border:1px solid ${indexes.length ? '#7c3aed' : 'var(--border)'}; border-radius:8px; padding:10px 12px; margin-top:8px;" ${indexes.length ? 'open' : ''}>
+                <summary style="font-size:0.82rem; font-weight:800; color:#c4b5fd; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px;">
+                    <span>${escapeHtml(title)}</span>
+                    <span style="font-size:0.7rem; color:#94a3b8; font-weight:600;">(${indexes.length})</span>
+                </summary>
+                <div style="font-size:0.72rem; color:#94a3b8; margin:6px 0 8px;">${escapeHtml(hint || '')}</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">${cards || '<div style="font-size:0.75rem; color:#64748b; font-style:italic;">Chưa có module kiểm tra nào.</div>'}</div>
+                <button type="button" style="margin-top:10px; background:rgba(124,58,237,0.18); border:1px solid #7c3aed; color:#c4b5fd; padding:6px 12px; border-radius:7px; font-size:0.76rem; font-weight:700; cursor:pointer;" onclick="addScopedModule('${escapeHtml(scope)}', '${escapeHtml(questionId || '')}', ${slotArg})">+ Thêm module kiểm tra</button>
+            </details>`;
+        }
+        function addScopedModule(scope, questionId, slotIndex) {
+            if (!['question', 'slot'].includes(scope)) return;
+            const module = normalizeFormModule({
+                uid: newModuleUid(),
+                name: '',
+                kind: 'logic',
+                module_id: firstModuleIdForKind('logic'),
+                enabled: true,
+                scope,
+                question_id: questionId,
+                slot_index: scope === 'slot' ? slotIndex : null,
+                inputs: [],
+                outputs: [],
+                reject_on_false: false,
+                reject_message: ''
+            });
+            syncModuleStructure(module);
+            formModules.push(module);
+            renderModuleSurfaces();
+        }
+        function moveScopedModule(idx, delta, scope, questionId, slotIndex) {
+            const indexes = scopedModuleIndexes(scope, questionId, slotIndex);
+            const pos = indexes.indexOf(idx);
+            const target = indexes[pos + delta];
+            if (pos < 0 || target === undefined) return;
+            [formModules[idx], formModules[target]] = [formModules[target], formModules[idx]];
+            renderModuleSurfaces();
         }
         function addFormModule() {
             const module = normalizeFormModule({
@@ -1773,12 +1884,12 @@
             });
             syncModuleStructure(module);
             formModules.push(module);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function removeFormModule(idx) {
             if (idx < 0 || idx >= formModules.length) return;
             formModules.splice(idx, 1);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function moveFormModule(idx, delta) {
             const target = idx + delta;
@@ -1801,7 +1912,7 @@
             module.outputs = [];
             module.module_id = kind === 'all' ? '' : firstModuleIdForKind(kind);
             syncModuleStructure(module);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setModuleChoice(idx, moduleId) {
             const module = formModules[idx];
@@ -1810,7 +1921,7 @@
             module.inputs = [];
             module.outputs = [];
             syncModuleStructure(module);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setModuleOutputName(idx, oidx, value) {
             const module = formModules[idx];
@@ -1821,7 +1932,7 @@
             const module = formModules[idx];
             if (!module) return;
             module.reject_on_false = Boolean(value);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setModuleRejectMessage(idx, value) {
             if (formModules[idx]) formModules[idx].reject_message = value;
@@ -1848,7 +1959,7 @@
             } else if (source === 'literal' && (input.literal === undefined || input.literal === null)) {
                 input.literal = '';
             }
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setModuleInputField(midx, iidx, key, value) {
             const module = formModules[midx];
@@ -1865,7 +1976,7 @@
                 const refKeys = ref ? (ref.outputs || []).map(output => output.key) : [];
                 input.output_key = refKeys[0] || '';
             }
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setModuleInputLiteral(midx, iidx, raw) {
             const module = formModules[midx];
@@ -1894,7 +2005,7 @@
                 output_key: '',
                 literal: null
             });
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function setAllModuleInput(midx, iidx, uid) {
             const module = formModules[midx];
@@ -1910,7 +2021,7 @@
             const module = formModules[midx];
             if (!module || !Array.isArray(module.inputs)) return;
             module.inputs.splice(iidx, 1);
-            renderFormModules();
+            renderModuleSurfaces();
         }
         function validateFormModules() {
             for (let i = 0; i < formModules.length; i += 1) {
@@ -1918,6 +2029,16 @@
                 const label = `Module #${i + 1}`;
                 if (!String(module.name || '').trim()) return `${label} chưa có tên.`;
                 if (module.kind !== 'all' && !module.module_id) return `${label} chưa chọn module.`;
+                if (module.scope === 'question' || module.scope === 'slot') {
+                    const target = questions.find(q => q.id === module.question_id);
+                    if (!target) return `${label}: câu hỏi đích không còn tồn tại.`;
+                    if (module.scope === 'slot') {
+                        const slots = Array.isArray(target.image_slots) ? target.image_slots : [];
+                        if (module.slot_index == null || Number(module.slot_index) < 0 || Number(module.slot_index) >= slots.length) {
+                            return `${label}: slot ảnh đích không còn tồn tại.`;
+                        }
+                    }
+                }
                 const priorUids = new Set(formModules.slice(0, i).map(item => item.uid));
                 const outputNames = (module.outputs || []).map(output => String(output.name || '').trim() || defaultModuleOutputName(module, output.key));
                 if (new Set(outputNames).size !== outputNames.length) return `${label}: tên output bị trùng.`;
@@ -1946,12 +2067,16 @@
         function cleanFormModules() {
             return formModules.map(module => {
                 const kind = ['logic', 'engine', 'all'].includes(module.kind) ? module.kind : 'logic';
+                const scope = ['form', 'question', 'slot'].includes(module.scope) ? module.scope : 'form';
                 return {
                     uid: module.uid,
                     name: String(module.name || '').trim(),
                     kind,
                     module_id: kind === 'all' ? '' : String(module.module_id || ''),
                     enabled: module.enabled !== false,
+                    scope,
+                    question_id: scope === 'form' ? null : String(module.question_id || ''),
+                    slot_index: scope === 'slot' ? Number(module.slot_index) : null,
                     inputs: (module.inputs || []).map(input => cleanModuleInput(input, kind)),
                     outputs: (module.outputs || []).map(output => ({
                         key: String(output.key || '').trim(),
@@ -1995,6 +2120,22 @@
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
+        }
+        function renderQuestionOptionsBlock(q, idx) {
+            const scopedCount = formModules.filter(module => module.scope === 'question' && module.question_id === q.id).length;
+            const conditionCount = Array.isArray(q.condition_groups) ? q.condition_groups.length : 0;
+            const hasOptions = scopedCount > 0 || conditionCount > 0 || Boolean(q.is_consent_gate);
+            return `<details style="background:rgba(15,23,42,0.55); border:1px solid ${hasOptions ? '#38bdf8' : 'var(--border)'}; border-radius:8px; padding:8px 12px; margin-top:8px;" ${hasOptions ? 'open' : ''}>
+                <summary style="font-size:0.82rem; font-weight:800; color:#7dd3fc; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <span>Tùy chọn câu hỏi</span>
+                    <span style="font-size:0.7rem; color:#94a3b8; font-weight:600;">(module: ${scopedCount}, điều kiện: ${conditionCount}${q.is_consent_gate ? ', consent gate' : ''})</span>
+                </summary>
+                <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                    ${renderScopedModulesSection('question', q.id, null, 'Module kiểm tra cho câu này', 'Module cấp câu hỏi chạy theo thứ tự module toàn biểu mẫu; lỗi được gắn với câu hỏi này.')}
+                    ${renderConditionalBuilderHtml(q, idx)}
+                    ${renderConsentGateBuilderHtml(q, idx)}
+                </div>
+            </details>`;
         }
         function renderQuestions() {
             const wrap = document.getElementById('questionsBuilderList');
@@ -2136,8 +2277,7 @@
                             </div>
                         </details>
                     ` : ''}
-                    ${renderConditionalBuilderHtml(q, idx)}
-                    ${renderConsentGateBuilderHtml(q, idx)}
+                    ${renderQuestionOptionsBlock(q, idx)}
                 `;
                 wrap.appendChild(item);
             });

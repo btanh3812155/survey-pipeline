@@ -299,6 +299,7 @@
         .btn-action.qr:hover { background: #0284c7; border-color: #0284c7; }
         .btn-action.view:hover { background: #10b981; border-color: #10b981; }
         .btn-action.edit:hover { background: #2563eb; border-color: #2563eb; }
+        .btn-action.export:hover { background: #7c3aed; border-color: #7c3aed; }
         .btn-action svg { width: 16px; height: 16px; }
 
         /* Row Mode (List View) */
@@ -526,6 +527,15 @@
                 </div>
             </div>
             <div class="nav-actions">
+                <a href="/api/v1/forms/export" class="nav-btn" id="btnExportAllForms" download>
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+                    Xuất tất cả
+                </a>
+                <button type="button" class="nav-btn" id="btnImportForms" onclick="document.getElementById('importFormsFile').click()">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zM5 18h14v2H5v-2z"/></svg>
+                    Nhập biểu mẫu
+                </button>
+                <input type="file" id="importFormsFile" accept="application/json,.json" style="display:none" onchange="importFormsFile(this)">
                 <a href="/admin/forms/create" class="nav-btn primary" id="btnAdminCreate">
                     <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                     Tạo Biểu Mẫu Mới
@@ -641,6 +651,52 @@
     <script src="/static/qrcode.min.js"></script>
     <script>
         let currentAdminQrFormId = "";
+
+        async function importFormsFile(input) {
+            const file = input && input.files ? input.files[0] : null;
+            if (!file) return;
+            let payload;
+            try {
+                payload = JSON.parse(await file.text());
+            } catch (err) {
+                alert('Tệp JSON không hợp lệ: ' + err.message);
+                input.value = '';
+                return;
+            }
+            const overwrite = confirm(
+                'Nếu mã biểu mẫu đã tồn tại, bạn có muốn ghi đè không?\n\n' +
+                'Bấm OK để ghi đè (schema cũ được sao lưu vào data/form_backups).\n' +
+                'Bấm Cancel để chỉ nhập các biểu mẫu mới.'
+            );
+            const button = document.getElementById('btnImportForms');
+            if (button) { button.disabled = true; button.textContent = 'Đang nhập...'; }
+            try {
+                const resp = await fetch('/api/v1/forms/import?overwrite=' + (overwrite ? 'true' : 'false'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(payload)
+                });
+                let body = null;
+                try { body = await resp.json(); } catch (err) { body = null; }
+                if (!resp.ok) {
+                    const detail = body && body.detail;
+                    let message = detail && detail.message ? detail.message : JSON.stringify(detail || body || {});
+                    if (detail && Array.isArray(detail.conflicts)) {
+                        message += '\nMã trùng: ' + detail.conflicts.join(', ');
+                    }
+                    alert('Lỗi nhập (HTTP ' + resp.status + '): ' + message);
+                    return;
+                }
+                alert('Đã nhập ' + ((body && body.count) || 0) + ' biểu mẫu.');
+                window.location.reload();
+            } catch (err) {
+                alert('Lỗi kết nối: ' + err.message);
+            } finally {
+                input.value = '';
+                if (button) { button.disabled = false; button.textContent = 'Nhập biểu mẫu'; }
+            }
+        }
 
         function setFormViewMode(mode) {
             const container = document.getElementById("formsContainer");

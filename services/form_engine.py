@@ -177,6 +177,9 @@ class FormModule(BaseModel):
     kind: str = "logic"  # logic | engine | all
     module_id: Optional[str] = None
     enabled: bool = True
+    scope: str = "form"  # form | question | slot
+    question_id: Optional[str] = None
+    slot_index: Optional[int] = None
     inputs: List[FormModuleInput] = Field(default_factory=list)
     outputs: List[FormModuleOutput] = Field(default_factory=list)
     reject_on_false: bool = False
@@ -190,6 +193,22 @@ class FormModule(BaseModel):
             raise ValueError(f"module '{self.name}' requires module_id")
         if self.kind == "all" and self.module_id:
             raise ValueError(f"composite module '{self.name}' must not set module_id")
+        if self.scope not in {"form", "question", "slot"}:
+            raise ValueError("module scope must be form, question or slot")
+        if self.scope == "form":
+            self.question_id = None
+            self.slot_index = None
+        elif self.scope == "question":
+            if not self.question_id:
+                raise ValueError(f"question-scoped module '{self.name}' requires question_id")
+            self.slot_index = None
+        else:
+            if not self.question_id or self.slot_index is None:
+                raise ValueError(
+                    f"slot-scoped module '{self.name}' requires question_id and slot_index"
+                )
+            if self.slot_index < 0:
+                raise ValueError(f"slot-scoped module '{self.name}' has a negative slot_index")
         names = [item.name for item in self.inputs]
         if len(names) != len(set(names)):
             raise ValueError(f"module '{self.name}' input names must be unique")
@@ -297,9 +316,26 @@ class FormSchema(BaseModel):
         seen_modules = set()
         output_names = set()
         question_ids = {q.id for q in self.questions}
+        questions_by_id = {q.id: q for q in self.questions}
         for module in modules:
             if module.uid in seen_modules:
                 raise ValueError(f"Mã module trùng lặp: '{module.uid}'")
+            if module.scope == "question" and module.question_id not in question_ids:
+                raise ValueError(
+                    f"Module '{module.name}' gắn vào câu hỏi chưa tồn tại: '{module.question_id}'"
+                )
+            if module.scope == "slot":
+                target = questions_by_id.get(module.question_id or "")
+                if not target:
+                    raise ValueError(
+                        f"Module '{module.name}' gắn vào câu hỏi chưa tồn tại: '{module.question_id}'"
+                    )
+                slots = target.image_slots or []
+                if module.slot_index is None or module.slot_index >= len(slots):
+                    raise ValueError(
+                        f"Module '{module.name}' tham chiếu slot ảnh không tồn tại: "
+                        f"'{module.question_id}[{module.slot_index}]'"
+                    )
             for inp in module.inputs:
                 if inp.source == "question" and inp.question_id not in question_ids:
                     raise ValueError(

@@ -67,6 +67,46 @@ def test_editor_slot_has_object_selector_and_custom_prompt():
     assert "renderImageObjectsWarning()" in html
 
 
+def test_editor_scoped_modules_and_collapsible_question_options():
+    html = render_form_editor_html(_camera_schema([]), is_new=False)
+    assert "function renderQuestionOptionsBlock" in html
+    assert "Tùy chọn câu hỏi" in html
+    assert "function renderScopedModulesSection" in html
+    assert "function addScopedModule" in html
+    assert "renderScopedModulesSection('question'" in html
+    assert "renderScopedModulesSection('slot'" in html
+    assert "scope: module.scope" not in html
+    assert "question_id: scope === 'form' ? null" in html
+    assert "slot_index: scope === 'slot' ? Number(module.slot_index) : null" in html
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_editor_adds_question_and_slot_scoped_modules():
+    slot = {"slot": 0, "title": "Front", "role": "custom_object", "required": True}
+    html = render_form_editor_html(_camera_schema([slot]), is_new=False)
+    body = (
+        "const t = sandbox.__t;\n"
+        "function check(cond, msg) { if (!cond) throw new Error(msg); }\n"
+        "const q = t.questions[0];\n"
+        "t.addScopedModule('question', q.id, null);\n"
+        "check(t.formModules.length === 1, 'question module not added');\n"
+        "check(t.formModules[0].scope === 'question', 'question scope missing');\n"
+        "check(t.formModules[0].question_id === q.id, 'question id missing');\n"
+        "check(t.formModules[0].slot_index === null, 'question module must not have slot_index');\n"
+        "const questionHtml = t.renderQuestionOptionsBlock(q, 0);\n"
+        "check(questionHtml.includes('Tùy chọn câu hỏi'), 'collapsible question options missing');\n"
+        "check(questionHtml.includes('Module kiểm tra cho câu này'), 'question module section missing');\n"
+        "t.addScopedModule('slot', q.id, 0);\n"
+        "check(t.formModules.length === 2, 'slot module not added');\n"
+        "check(t.formModules[1].scope === 'slot', 'slot scope missing');\n"
+        "check(t.formModules[1].slot_index === 0, 'slot index missing');\n"
+        "const slotHtml = t.renderScopedModulesSection('slot', q.id, 0, 'Slot modules', 'hint');\n"
+        "check(slotHtml.includes('Slot modules'), 'slot module section missing');\n"
+        "check(t.scopedModuleIndexes('slot', q.id, 0).length === 1, 'slot scope index wrong');\n"
+    )
+    _run_editor_js(html, body)
+
+
 def test_editor_renders_every_customizable_control_type():
     html = render_form_editor_html(_camera_schema([]), is_new=False)
     src = html[html.index("function renderSlotObjectControl"):]
@@ -221,7 +261,8 @@ def _run_editor_js(rendered_html: str, body_js: str) -> None:
         "vm.createContext(sandbox);\n"
         "vm.runInContext(script + '\\n;globalThis.__t = { questions, setSlotObjectType, renderSlotObjectControl, "
         "addSlotObjectConstraint, removeSlotObjectConstraint, setSlotObjectConstraintValue, "
-        "pruneSlotObjectConfig };', sandbox);\n"
+        "pruneSlotObjectConfig, formModules, renderQuestionOptionsBlock, "
+        "renderScopedModulesSection, addScopedModule, scopedModuleIndexes };', sandbox);\n"
         + body_js
     )
     fd, path = tempfile.mkstemp(suffix=".js")

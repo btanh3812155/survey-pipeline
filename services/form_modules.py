@@ -137,6 +137,9 @@ async def run_form_modules(
             failure = failure or {
                 "module_uid": module.uid,
                 "module_name": module.name,
+                "scope": module.scope,
+                "question_id": module.question_id,
+                "slot_index": module.slot_index,
                 "message": reason,
             }
 
@@ -157,6 +160,9 @@ async def run_form_modules(
         module_results[module.uid] = {
             "passed": passed,
             "reason": reason,
+            "scope": module.scope,
+            "question_id": module.question_id,
+            "slot_index": module.slot_index,
             "outputs": named,
         }
 
@@ -164,6 +170,9 @@ async def run_form_modules(
             failure = {
                 "module_uid": module.uid,
                 "module_name": module.name,
+                "scope": module.scope,
+                "question_id": module.question_id,
+                "slot_index": module.slot_index,
                 "message": module.reject_message or f"Kiểm tra '{module.name}' không đạt.",
             }
 
