@@ -150,7 +150,7 @@ The engine resolves dependency graphs dynamically:
 ```
 
 - `kind: "logic"` runs an allowlisted module from `/admin/modules`; its declared `inputs` are mapped by name.
-- `kind: "engine"` wraps a check engine from `/api/v1/image-objects`; `params_schema` keys become inputs, and form answers are available to the engine.
+- `kind: "engine"` references an enabled `engine` module from `/admin/modules` (also exposed by `/api/v1/image-objects`); `params_schema` keys become inputs, and form answers are available to the engine.
 - `kind: "all"` is a composite check. Its inputs reference earlier modules only; it passes when every referenced module passed.
 - Outputs are persisted as `form_data.module_outputs` and included in the submission response. Because they live in `form_data`, selected Drive export fields include them.
 - `reject_on_false` turns a false module output into a rejected submission with `reject_message`.
@@ -454,13 +454,14 @@ Webhook receiver for Telegram Bot updates.
 - **Response `200 OK`:** `{"status": "ok"}`
 
 ### 3.10 Admin module registry (`/admin/modules`)
-Authenticated operator UI and API for database-backed image and logic modules (migration 008).
-- `GET /admin/modules` lists/search modules and opens create/edit forms.
+Authenticated operator UI and API for database-backed image, logic, and engine modules (migrations 008/011).
+- `GET /admin/modules` lists/search modules and opens create/edit forms. Module types are `object`, `logic`, and `engine`.
 - `POST /admin/modules` creates a module; `POST /admin/modules/{id}` saves name/version/definition.
 - `POST /admin/modules/{id}/enabled` toggles runtime use; `POST /admin/modules/{id}/delete` removes it.
 - `POST /admin/modules/{id}/run` executes an enabled logic module with JSON integer inputs.
 - `GET /api/v1/admin/modules` returns module records for automation.
-- Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; stored JSON is never executed as Python. Destructive/enable actions require the same strict same-origin checks as other admin writes and are audited in `system_audit_log`.
+- Check engines are `engine` modules. File definitions under `data/check_engines` seed the registry once (migration 011); enabled engine modules become the runtime registry used by image objects and form engine modules. The image-object page shows engines read-only and links edits to `/admin/modules`.
+- Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; engine definitions reference only implementations compiled in `services/image_check_engines.py`. Stored JSON is never executed as Python. Destructive/enable actions require the same strict same-origin checks as other admin writes and are audited in `system_audit_log`.
 
 ### 3.11 Admin Google Drive exports (`/admin/exports`)
 Authenticated operator UI for migration 009/010 export configuration.

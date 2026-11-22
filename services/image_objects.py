@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-File-defined image object types and check-engine registry.
+Image object types and check engines.
 
-Objects live in `data/image_objects/<id>.json`, engines in
-`data/check_engines/<id>.json`. JSON never contains executable code: the
-`implementation` field maps to the built-in registry in
-`services.image_check_engines.py`. Loading is cached by file mtime/size and
-invalid or missing definitions are surfaced loudly (logs + admin page) instead
-of silently falling back to a hardcoded object.
+Object files live in `data/image_objects/<id>.json`; engine files in
+`data/check_engines/<id>.json` are the seed/fallback. After migration 011,
+enabled check engines are database-backed `engine` modules in
+`admin_module_registry` and replace the file registry at startup. JSON never
+contains executable code: the `implementation` field maps to the built-in
+registry in `services.image_check_engines.py`.
 """
 
 import json

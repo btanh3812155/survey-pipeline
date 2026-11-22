@@ -1,4 +1,4 @@
-"""Database-backed catalog for declarative object and allowlisted logic modules."""
+"""Database-backed catalog for declarative object, logic and check-engine modules."""
 from __future__ import annotations
 
 import json
