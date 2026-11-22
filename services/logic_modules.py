@@ -11,6 +11,7 @@ def get_percentage(inputs: dict[str, Any]) -> dict[str, float | int]:
 
 
 IMPLEMENTATIONS = {"get_percentage": get_percentage}
+OUTPUTS = {"get_percentage": ("percentage",)}
 SOURCES = {
     "get_percentage": "def get_percentage(inputs):\n    target = inputs['target']\n    total = inputs['total']\n    return {'percentage': target * 100.0 / total if total else 0.0}\n"
 }
@@ -27,4 +28,5 @@ def default_get_percentage_definition() -> dict[str, Any]:
             {"name": "target", "type": "integer", "required": True},
             {"name": "total", "type": "integer", "required": True},
         ],
+        "outputs": ["percentage"],
     }

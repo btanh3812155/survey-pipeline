@@ -145,6 +145,63 @@ class FormQuestion(BaseModel):
         folded["condition_groups"] = groups
         return folded
 
+class FormModuleInput(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    source: str = "question"  # question | output | module | literal
+    question_id: Optional[str] = None
+    module_uid: Optional[str] = None
+    output_key: Optional[str] = None
+    literal: Any = None
+
+    @model_validator(mode="after")
+    def _source_contract(self) -> "FormModuleInput":
+        if self.source not in {"question", "output", "module", "literal"}:
+            raise ValueError("module input source must be question, output, module or literal")
+        if self.source == "question" and not self.question_id:
+            raise ValueError(f"module input '{self.name}' requires question_id")
+        if self.source in {"output", "module"} and not self.module_uid:
+            raise ValueError(f"module input '{self.name}' requires module_uid")
+        if self.source == "output" and not self.output_key:
+            raise ValueError(f"module input '{self.name}' requires output_key")
+        return self
+
+
+class FormModuleOutput(BaseModel):
+    key: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=64)
+
+
+class FormModule(BaseModel):
+    uid: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    name: str = Field(..., min_length=1, max_length=100)
+    kind: str = "logic"  # logic | engine | all
+    module_id: Optional[str] = None
+    enabled: bool = True
+    inputs: List[FormModuleInput] = Field(default_factory=list)
+    outputs: List[FormModuleOutput] = Field(default_factory=list)
+    reject_on_false: bool = False
+    reject_message: str = ""
+
+    @model_validator(mode="after")
+    def _module_contract(self) -> "FormModule":
+        if self.kind not in {"logic", "engine", "all"}:
+            raise ValueError("module kind must be logic, engine or all")
+        if self.kind in {"logic", "engine"} and not self.module_id:
+            raise ValueError(f"module '{self.name}' requires module_id")
+        if self.kind == "all" and self.module_id:
+            raise ValueError(f"composite module '{self.name}' must not set module_id")
+        names = [item.name for item in self.inputs]
+        if len(names) != len(set(names)):
+            raise ValueError(f"module '{self.name}' input names must be unique")
+        keys = [item.key for item in self.outputs]
+        if len(keys) != len(set(keys)):
+            raise ValueError(f"module '{self.name}' output keys must be unique")
+        names_out = [item.name for item in self.outputs]
+        if len(names_out) != len(set(names_out)):
+            raise ValueError(f"module '{self.name}' output names must be unique")
+        return self
+
+
 class FormSettings(BaseModel):
     response_limit: Optional[int] = None # Cap total responses
     current_responses: int = 0
@@ -166,6 +223,7 @@ class FormSettings(BaseModel):
     tg_response_question_id: Optional[str] = None
     is_test_mode: bool = False
     image_checks: ImageCheckConfig = Field(default_factory=ImageCheckConfig)
+    modules: List[FormModule] = Field(default_factory=list)
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -193,6 +251,7 @@ class FormSettings(BaseModel):
         return tags
 
 MAX_QUESTIONS_PER_FORM: int = 100
+MAX_FORM_MODULES: int = 50
 
 class FormSchema(BaseModel):
     form_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
@@ -231,6 +290,30 @@ class FormSchema(BaseModel):
                     if types.get(rule.depends_on_question_id) == QuestionType.SIGNATURE:
                         rule.operator = "not_empty"
                         rule.expected_value = None
+
+        modules = self.settings.modules or []
+        if len(modules) > MAX_FORM_MODULES:
+            raise ValueError(f"Số lượng module vượt quá giới hạn ({MAX_FORM_MODULES})")
+        seen_modules = set()
+        output_names = set()
+        question_ids = {q.id for q in self.questions}
+        for module in modules:
+            if module.uid in seen_modules:
+                raise ValueError(f"Mã module trùng lặp: '{module.uid}'")
+            for inp in module.inputs:
+                if inp.source == "question" and inp.question_id not in question_ids:
+                    raise ValueError(
+                        f"Module '{module.name}' tham chiếu câu hỏi chưa tồn tại: '{inp.question_id}'"
+                    )
+                if inp.source in {"output", "module"} and inp.module_uid not in seen_modules:
+                    raise ValueError(
+                        f"Module '{module.name}' chỉ được tham chiếu module nằm trước nó: '{inp.module_uid}'"
+                    )
+            for output in module.outputs:
+                if output.name in output_names:
+                    raise ValueError(f"Tên output module bị trùng: '{output.name}'")
+                output_names.add(output.name)
+            seen_modules.add(module.uid)
 
         return self
 def effective_gates(schema: FormSchema) -> List[FormQuestion]:

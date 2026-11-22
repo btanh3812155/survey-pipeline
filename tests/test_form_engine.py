@@ -11,6 +11,20 @@ from services.form_engine import (
     DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
 )
+
+ORIGIN = {"Origin": "http://testserver"}
+
+
+def _admin_override():
+    from core.state import verify_admin_auth
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    return verify_admin_auth
+
+
+def _clear_admin_override(key):
+    app.dependency_overrides.pop(key, None)
+
+
 def test_default_schema_valid_submission():
     valid_answers = {
         "driver_signature": "data:image/png;base64,mock",
@@ -163,20 +177,25 @@ def test_api_upload_and_render_arbitrary_form():
     unauth_resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema)
     assert unauth_resp.status_code == 401
 
-    resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema, auth=("admin", settings.ADMIN_PASSWORD))
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "success"
-    assert resp.json()["form_id"] == "customer_feedback_v1"
+    admin_key = _admin_override()
+    try:
+        resp = client.post("/api/v1/forms/upload-schema", json=arbitrary_schema, headers=ORIGIN)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
+        assert resp.json()["form_id"] == "customer_feedback_v1"
 
-    # 2. Render form HTML dynamically
-    html_resp = client.get("/forms/customer_feedback_v1?ref=ctv001")
-    assert html_resp.status_code == 200
-    assert "Khảo Sát Ý Kiến Khách Hàng" in html_resp.text
-    assert "Đánh giá độ hài lòng" in html_resp.text
+        # 2. Render form HTML dynamically
+        html_resp = client.get("/forms/customer_feedback_v1?ref=ctv001")
+        assert html_resp.status_code == 200
+        assert "Khảo Sát Ý Kiến Khách Hàng" in html_resp.text
+        assert "Đánh giá độ hài lòng" in html_resp.text
 
-    # This is a throwaway upload fixture, not a production form.
-    del_resp = client.delete("/api/v1/forms/customer_feedback_v1", auth=("admin", settings.ADMIN_PASSWORD))
-    assert del_resp.status_code == 200
+        # This is a throwaway upload fixture, not a production form.
+        del_resp = client.delete("/api/v1/forms/customer_feedback_v1", headers=ORIGIN)
+        assert del_resp.status_code == 200
+    finally:
+        _clear_admin_override(admin_key)
+
 
 def test_dev_test_mode_submission_routing(monkeypatch):
     monkeypatch.setenv("MOCK_AI", "1")
@@ -219,16 +238,20 @@ def test_dev_test_mode_submission_routing(monkeypatch):
     assert res_json["submission_id"].startswith("DEV-")
 
     # 3. Inspect temporary dev storage endpoint
-    get_resp = client.get("/api/v1/dev/submissions", auth=("admin", settings.ADMIN_PASSWORD))
-    assert get_resp.status_code == 200
-    dev_data = get_resp.json()
-    assert dev_data["count"] >= 1
-    assert any(s["submission_id"] == res_json["submission_id"] for s in dev_data["submissions"])
+    admin_key = _admin_override()
+    try:
+        get_resp = client.get("/api/v1/dev/submissions")
+        assert get_resp.status_code == 200
+        dev_data = get_resp.json()
+        assert dev_data["count"] >= 1
+        assert any(s["submission_id"] == res_json["submission_id"] for s in dev_data["submissions"])
 
-    # 4. Clean up dev storage
-    del_resp = client.delete("/api/v1/dev/submissions", auth=("admin", settings.ADMIN_PASSWORD))
-    assert del_resp.status_code == 200
-    assert del_resp.json()["status"] == "cleared"
+        # 4. Clean up dev storage
+        del_resp = client.delete("/api/v1/dev/submissions", headers=ORIGIN)
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "cleared"
+    finally:
+        _clear_admin_override(admin_key)
 
 @pytest.mark.asyncio
 async def test_idempotency_duplicate_submission(monkeypatch):
@@ -327,26 +350,27 @@ def test_survey_history_admin_access(monkeypatch, tmp_path):
     unauth_resp = client.get("/api/v1/surveys/history?phone=0988123456")
     assert unauth_resp.status_code == 401
 
-    admin_auth = ("test-history-admin", "test-history-password")
-    sanitized_resp = client.get(
-        "/api/v1/surveys/history?phone=%200988-123-456%20", auth=admin_auth
-    )
-    assert sanitized_resp.status_code == 200
-    assert sanitized_resp.json()["phone"] == "0988123456"
+    admin_key = _admin_override()
+    try:
+        sanitized_resp = client.get("/api/v1/surveys/history?phone=%200988-123-456%20")
+        assert sanitized_resp.status_code == 200
+        assert sanitized_resp.json()["phone"] == "0988123456"
 
-    bad_resp = client.get("/api/v1/surveys/history?phone=invalid_phone", auth=admin_auth)
-    assert bad_resp.status_code == 400
+        bad_resp = client.get("/api/v1/surveys/history?phone=invalid_phone")
+        assert bad_resp.status_code == 400
 
-    rate_limited = False
-    for _ in range(35):
-        resp = client.get("/api/v1/surveys/history?phone=0999888777", auth=admin_auth)
-        if resp.status_code == 429:
-            rate_limited = True
-            break
-    assert rate_limited is True
-    assert len(redis.counts) == 1
-    assert "0988123456" not in next(iter(redis.counts))
-    assert "0999888777" not in next(iter(redis.counts))
+        rate_limited = False
+        for _ in range(35):
+            resp = client.get("/api/v1/surveys/history?phone=0999888777")
+            if resp.status_code == 429:
+                rate_limited = True
+                break
+        assert rate_limited is True
+        assert len(redis.counts) == 1
+        assert "0988123456" not in next(iter(redis.counts))
+        assert "0999888777" not in next(iter(redis.counts))
+    finally:
+        _clear_admin_override(admin_key)
 
 def test_multi_image_validation_count_enforcement():
     # Test schema with exact_image_count, min_images, max_images
@@ -697,11 +721,12 @@ def test_delete_form_backs_up_schema_and_removes_registry(monkeypatch):
     )
     backup_dir = os.path.join(os.getcwd(), "data", "form_backups")
     before = set(os.listdir(backup_dir)) if os.path.isdir(backup_dir) else set()
+    admin_key = _admin_override()
     try:
         with monkeypatch.context() as m:
             m.setattr("routers.admin_forms.get_db_pool", lambda: None)
             resp = TestClient(app).delete(
-                f"/api/v1/forms/{fid}", auth=("admin", "12345678")
+                f"/api/v1/forms/{fid}", headers=ORIGIN
             )
         assert resp.status_code == 200, resp.text
         assert fid not in FORM_REGISTRY
@@ -713,6 +738,7 @@ def test_delete_form_backs_up_schema_and_removes_registry(monkeypatch):
         with open(backup_path, encoding="utf-8") as f:
             assert _json.load(f)["form_id"] == fid
     finally:
+        _clear_admin_override(admin_key)
         FORM_REGISTRY.pop(fid, None)
         if os.path.isdir(backup_dir):
             for name in set(os.listdir(backup_dir)) - before:
@@ -733,9 +759,10 @@ def test_form_id_rename_migrates_registry_and_file(monkeypatch):
         "questions": [{"id": "q1", "title": "Q", "type": "text", "required": False}],
     }
     client = TestClient(app)
+    admin_key = _admin_override()
     try:
         assert client.post("/api/v1/forms/upload-schema", json=payload,
-                           auth=("admin", "12345678")).status_code == 200
+                           headers=ORIGIN).status_code == 200
         moved = []
         monkeypatch.setattr(
             "services.google_drive_delivery.rename_local_form_folder",
@@ -747,13 +774,14 @@ def test_form_id_rename_migrates_registry_and_file(monkeypatch):
         monkeypatch.setattr("services.google_drive_delivery.rename_form_folder", fake_drive_rename)
 
         payload2 = dict(payload, form_id=new_id, previous_form_id=old_id, title="Rename Probe Renamed")
-        resp = client.post("/api/v1/forms/upload-schema", json=payload2, auth=("admin", "12345678"))
+        resp = client.post("/api/v1/forms/upload-schema", json=payload2, headers=ORIGIN)
         assert resp.status_code == 200, resp.text
         assert old_id not in FORM_REGISTRY and new_id in FORM_REGISTRY
         assert not os.path.exists(os.path.join(FORMS_STORAGE_DIR, f"{old_id}.json"))
         assert os.path.exists(os.path.join(FORMS_STORAGE_DIR, f"{new_id}.json"))
         assert ("local", old_id, new_id) in moved and ("drive", old_id, new_id) in moved
     finally:
+        _clear_admin_override(admin_key)
         FORM_REGISTRY.pop(old_id, None)
         FORM_REGISTRY.pop(new_id, None)
         for fid in (old_id, new_id):

@@ -6,9 +6,11 @@ validation, and the exact payload saveForm builds.
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -94,7 +96,13 @@ def _run_editor_js(body_js: str) -> None:
         + body_js
         + "\n})().catch(e => { console.error(e && e.stack || e); process.exit(1); });\n"
     )
-    proc = subprocess.run([shutil.which("node"), "-e", harness], capture_output=True, text=True, timeout=60)
+    fd, path = tempfile.mkstemp(suffix=".js")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(harness)
+        proc = subprocess.run([shutil.which("node"), path], capture_output=True, text=True, timeout=60)
+    finally:
+        os.unlink(path)
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
 

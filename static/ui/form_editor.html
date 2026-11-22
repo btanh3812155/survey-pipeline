@@ -411,6 +411,21 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Options section: ordered execution modules -->
+                <div class="card" id="formModulesCard">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:200px;">
+                            <h3 style="font-size:0.95rem; font-weight:700; color:#60a5fa; margin-bottom:6px;">Modules</h3>
+                            <p style="font-size:0.78rem; color:#94a3b8; line-height:1.5;">
+                                Các module thực thi tuần tự từ trên xuống dưới. Input của module có thể lấy từ câu hỏi
+                                hoặc output của module phía trên. Tên output là output tùy chỉnh của biểu mẫu.
+                            </p>
+                        </div>
+                        <button type="button" class="btn-add-q" style="width:auto; padding:9px 14px; white-space:nowrap;" onclick="addFormModule()">+ Thêm Module</button>
+                    </div>
+                    <div id="formModulesList" style="display:flex; flex-direction:column; gap:12px;"></div>
+                </div>
             </div>
 
                     <div style="margin-top: 20px; border-top: 1px solid rgba(239,68,68,0.4); padding-top: 14px;">
@@ -438,6 +453,9 @@
     <script>
         const INITIAL_SCHEMA = {schema_json_str};
         let questions = JSON.parse(JSON.stringify(INITIAL_SCHEMA.questions || []));
+        let formModules = [];
+        let logicModules = [];
+        let moduleCatalogError = '';
 
         function refreshTgResponseQuestionOptions() {
             const sel = document.getElementById('tgResponseQuestion');
@@ -467,6 +485,7 @@
                 document.getElementById('tabOptions').classList.add('active');
                 refreshTgResponseQuestionOptions();
                 toggleTgResponseSource();
+                renderFormModules();
             } else if (tabId === 'questions') {
                 document.getElementById('btnTabQuestions').classList.add('active');
                 document.getElementById('tabQuestions').classList.add('active');
@@ -1365,6 +1384,585 @@
                 Không tải được danh sách loại đối tượng ảnh (${escapeHtml(window.IMAGE_OBJECTS_ERROR)}). Vẫn có thể dùng chế độ tự nhập prompt.
             </div>`;
         }
+
+        // ================= Form modules (Options tab) =================
+        function newModuleUid() {
+            let uid;
+            do {
+                uid = 'mod_' + Math.random().toString(36).slice(2, 10);
+            } while (formModules.some(m => m.uid === uid));
+            return uid;
+        }
+        function normalizeModuleInput(raw) {
+            return {
+                name: raw && raw.name != null ? String(raw.name) : '',
+                source: raw && ['question', 'output', 'module', 'literal'].includes(raw.source) ? raw.source : 'question',
+                question_id: raw && raw.question_id != null ? String(raw.question_id) : '',
+                module_uid: raw && raw.module_uid != null ? String(raw.module_uid) : '',
+                output_key: raw && raw.output_key != null ? String(raw.output_key) : '',
+                literal: raw ? raw.literal : ''
+            };
+        }
+        function normalizeFormModule(raw) {
+            const kind = raw && ['logic', 'engine', 'all'].includes(raw.kind) ? raw.kind : 'logic';
+            return {
+                uid: raw && raw.uid ? String(raw.uid) : newModuleUid(),
+                name: raw && raw.name != null ? String(raw.name) : '',
+                kind,
+                module_id: kind === 'all' ? '' : String((raw && raw.module_id) || ''),
+                enabled: !(raw && raw.enabled === false),
+                inputs: Array.isArray(raw && raw.inputs) ? raw.inputs.map(normalizeModuleInput) : [],
+                outputs: Array.isArray(raw && raw.outputs)
+                    ? raw.outputs.filter(Boolean).map(o => ({ key: String((o && o.key) || ''), name: String((o && o.name) || '') }))
+                    : [],
+                reject_on_false: Boolean(raw && raw.reject_on_false),
+                reject_message: raw && raw.reject_message != null ? String(raw.reject_message) : ''
+            };
+        }
+        function engineList() {
+            return Array.isArray(window.CHECK_ENGINES) ? window.CHECK_ENGINES : [];
+        }
+        function engineId(engine) {
+            return String((engine && (engine.id || engine.engine_id)) || '');
+        }
+        function logicModuleDef(moduleId) {
+            const found = logicModules.find(item => item.module_id === moduleId);
+            return found ? found.definition : null;
+        }
+        function engineDef(engineIdValue) {
+            return engineList().find(item => engineId(item) === engineIdValue) || null;
+        }
+        function moduleDefinition(module) {
+            if (!module) return null;
+            if (module.kind === 'logic') return logicModuleDef(module.module_id);
+            if (module.kind === 'engine') return engineDef(module.module_id);
+            return null;
+        }
+        function moduleInputDefs(module) {
+            const def = moduleDefinition(module);
+            if (!def) return [];
+            if (module.kind === 'logic') {
+                return (Array.isArray(def.inputs) ? def.inputs : [])
+                    .filter(Boolean)
+                    .map(item => ({
+                        name: String(item.name || ''),
+                        label: item.label ? String(item.label) : String(item.name || ''),
+                        type: item.type ? String(item.type) : '',
+                        required: Boolean(item.required)
+                    }))
+                    .filter(item => item.name);
+            }
+            return (Array.isArray(def.params_schema) ? def.params_schema : [])
+                .filter(Boolean)
+                .map(item => ({
+                    name: String(item.key || ''),
+                    label: item.label ? String(item.label) : String(item.key || ''),
+                    type: item.type ? String(item.type) : '',
+                    required: Boolean(item.required)
+                }))
+                .filter(item => item.name);
+        }
+        function moduleOutputKeys(module) {
+            if (!module) return [];
+            if (module.kind === 'all') return ['passed'];
+            if (module.kind === 'engine') return ['passed', 'reason'];
+            const def = logicModuleDef(module.module_id);
+            if (!def) return [];
+            const raw = Array.isArray(def.outputs) ? def.outputs : [];
+            const keys = raw
+                .map(item => (typeof item === 'string' ? item : String((item && (item.name || item.key)) || '')))
+                .filter(Boolean);
+            return keys.length ? keys : ['result'];
+        }
+        function moduleSlug(module) {
+            return slugifyText(String((module && (module.name || module.module_id)) || '').trim());
+        }
+        function defaultModuleOutputName(module, key) {
+            const slug = moduleSlug(module);
+            if (key === 'passed') return slug ? `${slug}_passed` : 'passed';
+            if (key === 'reason') return slug ? `${slug}_reason` : 'reason';
+            return key;
+        }
+        function firstModuleIdForKind(kind) {
+            if (kind === 'logic') return logicModules.length ? logicModules[0].module_id : '';
+            if (kind === 'engine') return engineList().length ? engineId(engineList()[0]) : '';
+            return '';
+        }
+        function defaultModuleInput(def) {
+            const firstQuestion = questions[0];
+            return {
+                name: def.name,
+                source: firstQuestion ? 'question' : 'literal',
+                question_id: firstQuestion ? (firstQuestion.id || '') : '',
+                module_uid: '',
+                output_key: '',
+                literal: firstQuestion ? null : ''
+            };
+        }
+        function syncModuleStructure(module) {
+            if (!module) return;
+            if (module.kind === 'all') {
+                if (!Array.isArray(module.inputs)) module.inputs = [];
+                module.inputs = module.inputs.map(input => ({
+                    ...normalizeModuleInput(input),
+                    source: 'module',
+                    question_id: '',
+                    output_key: '',
+                    literal: null
+                }));
+                const previousPassed = (module.outputs || []).find(output => output.key === 'passed');
+                module.outputs = [{ key: 'passed', name: (previousPassed && previousPassed.name) || defaultModuleOutputName(module, 'passed') }];
+                return;
+            }
+            // Catalog unavailable: keep whatever was hydrated instead of wiping inputs.
+            if (!moduleDefinition(module)) return;
+            const previousInputs = Array.isArray(module.inputs) ? module.inputs : [];
+            module.inputs = moduleInputDefs(module).map(def => {
+                const previous = previousInputs.find(input => input.name === def.name);
+                return previous ? { ...normalizeModuleInput(previous), name: def.name } : defaultModuleInput(def);
+            });
+            const previousOutputs = Array.isArray(module.outputs) ? module.outputs : [];
+            module.outputs = moduleOutputKeys(module).map(key => {
+                const previous = previousOutputs.find(output => output.key === key && output.name);
+                return { key, name: previous ? previous.name : defaultModuleOutputName(module, key) };
+            });
+        }
+        async function loadFormModules() {
+            try {
+                const resp = await fetch('/api/v1/admin/modules', { credentials: 'include' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                const list = (data && Array.isArray(data.modules)) ? data.modules : [];
+                logicModules = list
+                    .filter(item => item && item.module_type === 'logic' && item.enabled !== false)
+                    .map(item => {
+                        let definition = item.definition;
+                        if (typeof definition === 'string') {
+                            try { definition = JSON.parse(definition); } catch (e) { definition = {}; }
+                        }
+                        return {
+                            module_id: String(item.module_id || ''),
+                            display_name: String(item.display_name || item.module_id || ''),
+                            definition: (definition && typeof definition === 'object') ? definition : {}
+                        };
+                    })
+                    .filter(item => item.module_id);
+                moduleCatalogError = '';
+                formModules.forEach(syncModuleStructure);
+                return true;
+            } catch (e) {
+                logicModules = [];
+                moduleCatalogError = (e && e.message) ? e.message : 'không kết nối được';
+                return false;
+            }
+        }
+        function moduleCatalogWarningHtml() {
+            if (!moduleCatalogError) return '';
+            return `<div style="font-size:0.75rem; color:#fbbf24; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.35); border-radius:6px; padding:6px 10px;">
+                Không tải được danh sách module logic (${escapeHtml(moduleCatalogError)}). Vẫn có thể dùng check engine và các module đã cấu hình.
+            </div>`;
+        }
+        function priorModuleLabel(module) {
+            const index = formModules.indexOf(module);
+            return (module.name || module.module_id || module.uid) + ' (#' + (index + 1) + ')';
+        }
+        function renderPriorOptions(midx, input) {
+            const prior = formModules.slice(0, midx);
+            const known = prior.some(item => item.uid === input.module_uid);
+            return `<option value="">-- Chọn module phía trên --</option>`
+                + prior.map(item => `<option value="${escapeHtml(item.uid)}" ${item.uid === input.module_uid ? 'selected' : ''}>${escapeHtml(priorModuleLabel(item))}</option>`).join('')
+                + (input.module_uid && !known ? `<option value="${escapeHtml(input.module_uid)}" selected>${escapeHtml(input.module_uid + ' (không hợp lệ)')}</option>` : '');
+        }
+        function renderQuestionInputControl(midx, iidx, input) {
+            const known = questions.some(q => q.id === input.question_id);
+            return `<div class="field-group">
+                <label>Câu hỏi</label>
+                <select onchange="setModuleInputField(${midx}, ${iidx}, 'question_id', this.value)">
+                    ${questions.length ? '' : '<option value="">-- Chưa có câu hỏi --</option>'}
+                    ${questions.map(q => `<option value="${escapeHtml(q.id)}" ${q.id === input.question_id ? 'selected' : ''}>${escapeHtml((q.title || q.id) + ' (' + q.id + ')')}</option>`).join('')}
+                    ${input.question_id && !known ? `<option value="${escapeHtml(input.question_id)}" selected>${escapeHtml(input.question_id + ' (không tìm thấy)')}</option>` : ''}
+                </select>
+            </div>`;
+        }
+        function renderPriorModuleControl(midx, iidx, input) {
+            return `<div class="field-group">
+                <label>Module phía trên</label>
+                <select onchange="setModuleInputModule(${midx}, ${iidx}, this.value)">
+                    ${renderPriorOptions(midx, input)}
+                </select>
+            </div>`;
+        }
+        function renderOutputInputControl(midx, iidx, input) {
+            const prior = formModules.slice(0, midx);
+            const ref = prior.find(item => item.uid === input.module_uid) || null;
+            const keys = ref ? (ref.outputs || []).map(output => output.key).filter(Boolean) : [];
+            const known = keys.includes(input.output_key);
+            return `<div class="field-group">
+                <label>Module + output</label>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:6px;">
+                    <select onchange="setModuleInputModule(${midx}, ${iidx}, this.value)">
+                        ${renderPriorOptions(midx, input)}
+                    </select>
+                    <select onchange="setModuleInputField(${midx}, ${iidx}, 'output_key', this.value)" ${keys.length ? '' : 'disabled'}>
+                        <option value="">-- Output --</option>
+                        ${keys.map(key => `<option value="${escapeHtml(key)}" ${key === input.output_key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
+                        ${input.output_key && !known ? `<option value="${escapeHtml(input.output_key)}" selected>${escapeHtml(input.output_key + ' (không hợp lệ)')}</option>` : ''}
+                    </select>
+                </div>
+            </div>`;
+        }
+        function literalInputValue(value) {
+            if (typeof value === 'string') return value;
+            if (value === undefined) return '';
+            try { return JSON.stringify(value); } catch (e) { return String(value); }
+        }
+        function renderInputSourceSelect(midx, iidx, input) {
+            const sources = [
+                ['question', 'Câu hỏi'],
+                ['output', 'Output module trước'],
+                ['module', 'Toàn bộ module trước'],
+                ['literal', 'Giá trị cố định']
+            ];
+            return `<div class="field-group">
+                <label>Nguồn input</label>
+                <select onchange="setModuleInputSource(${midx}, ${iidx}, this.value)">
+                    ${sources.map(([value, label]) => `<option value="${value}" ${input.source === value ? 'selected' : ''}>${label}</option>`).join('')}
+                </select>
+            </div>`;
+        }
+        function renderTypedModuleInputs(module, midx) {
+            return (module.inputs || []).map((input, iidx) => {
+                const def = moduleInputDefs(module).find(item => item.name === input.name)
+                    || { name: input.name, label: input.name, type: '', required: false };
+                let control = '';
+                if (input.source === 'question') {
+                    control = renderQuestionInputControl(midx, iidx, input);
+                } else if (input.source === 'output') {
+                    control = renderOutputInputControl(midx, iidx, input);
+                } else if (input.source === 'module') {
+                    control = renderPriorModuleControl(midx, iidx, input);
+                } else {
+                    control = `<div class="field-group">
+                        <label>Giá trị (JSON hoặc chuỗi)</label>
+                        <input type="text" value="${escapeHtml(literalInputValue(input.literal))}" placeholder="Ví dụ: 42 hoặc true" oninput="setModuleInputLiteral(${midx}, ${iidx}, this.value)">
+                    </div>`;
+                }
+                return `<div style="border:1px solid #1e293b; border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:8px;">
+                    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                        <code style="color:#38bdf8; font-size:0.75rem;">${escapeHtml(input.name)}</code>
+                        <span style="font-size:0.72rem; color:#94a3b8;">${escapeHtml(def.label)}${def.type ? ' · ' + escapeHtml(def.type) : ''}${def.required ? ' · bắt buộc' : ''}</span>
+                    </div>
+                    <div class="row-2">
+                        ${renderInputSourceSelect(midx, iidx, input)}
+                        ${control}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        function renderAllModuleInputs(midx) {
+            const module = formModules[midx];
+            return (module.inputs || []).map((input, iidx) => `<div class="row-2" style="align-items:end;">
+                <div class="field-group">
+                    <label>Module phía trên</label>
+                    <select onchange="setAllModuleInput(${midx}, ${iidx}, this.value)">
+                        ${renderPriorOptions(midx, input)}
+                    </select>
+                </div>
+                <div class="field-group" style="justify-content:flex-end;">
+                    <button type="button" class="btn-delete" onclick="removeAllModuleInput(${midx}, ${iidx})">Bỏ input</button>
+                </div>
+            </div>`).join('');
+        }
+        function renderModuleCard(module, midx) {
+            const isAll = module.kind === 'all';
+            let moduleSelect = '';
+            if (isAll) {
+                moduleSelect = '<select disabled><option>Tổng hợp - không dùng module_id</option></select>';
+            } else if (module.kind === 'logic') {
+                const known = logicModules.some(item => item.module_id === module.module_id);
+                moduleSelect = `<select onchange="setModuleChoice(${midx}, this.value)">
+                    <option value="">-- Chọn logic module --</option>
+                    ${logicModules.map(item => `<option value="${escapeHtml(item.module_id)}" ${item.module_id === module.module_id ? 'selected' : ''}>${escapeHtml(item.display_name + ' (' + item.module_id + ')')}</option>`).join('')}
+                    ${module.module_id && !known ? `<option value="${escapeHtml(module.module_id)}" selected>${escapeHtml(module.module_id + ' (không tìm thấy / bị tắt)')}</option>` : ''}
+                </select>`;
+            } else {
+                const known = engineList().some(item => engineId(item) === module.module_id);
+                moduleSelect = `<select onchange="setModuleChoice(${midx}, this.value)">
+                    <option value="">-- Chọn check engine --</option>
+                    ${engineList().map(item => {
+                        const id = engineId(item);
+                        return `<option value="${escapeHtml(id)}" ${id === module.module_id ? 'selected' : ''}>${escapeHtml(String(item.label || id) + ' (' + id + ')')}</option>`;
+                    }).join('')}
+                    ${module.module_id && !known ? `<option value="${escapeHtml(module.module_id)}" selected>${escapeHtml(module.module_id + ' (không tìm thấy)')}</option>` : ''}
+                </select>`;
+            }
+            const kindOptions = [
+                ['logic', 'Logic module'],
+                ['engine', 'Check engine'],
+                ['all', 'Tổng hợp (all)']
+            ];
+            const inputsHtml = isAll ? renderAllModuleInputs(midx) : renderTypedModuleInputs(module, midx);
+            const outputsHtml = (module.outputs || []).map((output, oidx) => `<div class="field-group">
+                <label><code style="color:#38bdf8;">${escapeHtml(output.key)}</code> - tên output</label>
+                <input type="text" value="${escapeHtml(output.name || '')}" placeholder="${escapeHtml(defaultModuleOutputName(module, output.key))}" oninput="setModuleOutputName(${midx}, ${oidx}, this.value)">
+            </div>`).join('');
+            return `<div class="question-item" style="gap:12px; ${isAll ? 'border-color:#7c3aed;' : ''}">
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span style="font-weight:800; color:#60a5fa; font-size:0.82rem; min-width:26px;">#${midx + 1}</span>
+                    <input type="text" value="${escapeHtml(module.name)}" placeholder="Tên module" oninput="setModuleName(${midx}, this.value)" style="flex:1; min-width:150px; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                    <label class="toggle-switch" style="white-space:nowrap;">
+                        <input type="checkbox" ${module.enabled ? 'checked' : ''} onchange="setModuleEnabled(${midx}, this.checked)">
+                        <span class="toggle-slider"></span>
+                        <span>Bật</span>
+                    </label>
+                    <div style="display:flex; gap:4px;">
+                        <button type="button" class="btn-move" onclick="moveFormModule(${midx}, -1)" ${midx === 0 ? 'disabled' : ''}>↑</button>
+                        <button type="button" class="btn-move" onclick="moveFormModule(${midx}, 1)" ${midx === formModules.length - 1 ? 'disabled' : ''}>↓</button>
+                        <button type="button" class="btn-delete" onclick="removeFormModule(${midx})">Xóa</button>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:8px;">
+                    <div class="field-group">
+                        <label>Loại module</label>
+                        <select onchange="setModuleKind(${midx}, this.value)">
+                            ${kindOptions.map(([value, label]) => `<option value="${value}" ${module.kind === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label>Module</label>
+                        ${moduleSelect}
+                    </div>
+                </div>
+                <div style="background:#0b1120; border:1px solid #1e293b; border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:8px;">
+                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Inputs</div>
+                    ${inputsHtml || `<div style="font-size:0.75rem; color:#64748b;">${isAll ? 'Chưa có input. Thêm input để tham chiếu module phía trên.' : 'Module này không có input.'}</div>`}
+                    ${isAll ? `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addAllModuleInput(${midx})">+ Thêm input</button>` : ''}
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Outputs (tên output công khai)</div>
+                    <div class="row-2">${outputsHtml || '<div style="font-size:0.75rem; color:#64748b;">Chưa có output.</div>'}</div>
+                </div>
+                <div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${module.reject_on_false ? 'checked' : ''} onchange="setModuleReject(${midx}, this.checked)">
+                        <span class="toggle-slider"></span>
+                        <span>Từ chối bài gửi khi module không đạt</span>
+                    </label>
+                    <input type="text" value="${escapeHtml(module.reject_message || '')}" placeholder="Thông báo từ chối (tùy chọn)" oninput="setModuleRejectMessage(${midx}, this.value)" style="background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.82rem;">
+                </div>
+            </div>`;
+        }
+        function renderFormModules() {
+            const list = document.getElementById('formModulesList');
+            if (!list) return;
+            const cards = formModules.map((module, idx) => renderModuleCard(module, idx)).join('');
+            const empty = '<div style="font-size:0.8rem; color:#94a3b8; border:1px dashed #334155; border-radius:8px; padding:10px;">Chưa có module nào. Bấm "+ Thêm Module" để bắt đầu.</div>';
+            list.innerHTML = moduleCatalogWarningHtml() + (cards || empty);
+        }
+        function addFormModule() {
+            const module = normalizeFormModule({
+                uid: newModuleUid(),
+                name: '',
+                kind: 'logic',
+                module_id: firstModuleIdForKind('logic'),
+                enabled: true,
+                inputs: [],
+                outputs: [],
+                reject_on_false: false,
+                reject_message: ''
+            });
+            syncModuleStructure(module);
+            formModules.push(module);
+            renderFormModules();
+        }
+        function removeFormModule(idx) {
+            if (idx < 0 || idx >= formModules.length) return;
+            formModules.splice(idx, 1);
+            renderFormModules();
+        }
+        function moveFormModule(idx, delta) {
+            const target = idx + delta;
+            if (target < 0 || target >= formModules.length) return;
+            const [moved] = formModules.splice(idx, 1);
+            formModules.splice(target, 0, moved);
+            renderFormModules();
+        }
+        function setModuleName(idx, value) {
+            if (formModules[idx]) formModules[idx].name = value;
+        }
+        function setModuleEnabled(idx, value) {
+            if (formModules[idx]) formModules[idx].enabled = Boolean(value);
+        }
+        function setModuleKind(idx, kind) {
+            const module = formModules[idx];
+            if (!module || !['logic', 'engine', 'all'].includes(kind) || module.kind === kind) return;
+            module.kind = kind;
+            module.inputs = [];
+            module.outputs = [];
+            module.module_id = kind === 'all' ? '' : firstModuleIdForKind(kind);
+            syncModuleStructure(module);
+            renderFormModules();
+        }
+        function setModuleChoice(idx, moduleId) {
+            const module = formModules[idx];
+            if (!module) return;
+            module.module_id = moduleId || '';
+            module.inputs = [];
+            module.outputs = [];
+            syncModuleStructure(module);
+            renderFormModules();
+        }
+        function setModuleOutputName(idx, oidx, value) {
+            const module = formModules[idx];
+            const output = module && module.outputs ? module.outputs[oidx] : null;
+            if (output) output.name = value;
+        }
+        function setModuleReject(idx, value) {
+            const module = formModules[idx];
+            if (!module) return;
+            module.reject_on_false = Boolean(value);
+            renderFormModules();
+        }
+        function setModuleRejectMessage(idx, value) {
+            if (formModules[idx]) formModules[idx].reject_message = value;
+        }
+        function setModuleInputSource(midx, iidx, source) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (!input || !['question', 'output', 'module', 'literal'].includes(source)) return;
+            input.source = source;
+            if (source === 'question') {
+                if (!input.question_id) input.question_id = questions[0] ? (questions[0].id || '') : '';
+            } else if (source === 'output' || source === 'module') {
+                const prior = formModules.slice(0, midx);
+                if (!prior.some(item => item.uid === input.module_uid)) {
+                    input.module_uid = prior.length ? prior[prior.length - 1].uid : '';
+                }
+                if (source === 'output') {
+                    const ref = prior.find(item => item.uid === input.module_uid);
+                    const refKeys = ref ? (ref.outputs || []).map(output => output.key) : [];
+                    if (!refKeys.includes(input.output_key)) input.output_key = refKeys[0] || '';
+                } else {
+                    input.output_key = '';
+                }
+            } else if (source === 'literal' && (input.literal === undefined || input.literal === null)) {
+                input.literal = '';
+            }
+            renderFormModules();
+        }
+        function setModuleInputField(midx, iidx, key, value) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (input) input[key] = value;
+        }
+        function setModuleInputModule(midx, iidx, uid) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (!input) return;
+            input.module_uid = uid || '';
+            if (input.source === 'output') {
+                const ref = formModules.slice(0, midx).find(item => item.uid === input.module_uid);
+                const refKeys = ref ? (ref.outputs || []).map(output => output.key) : [];
+                input.output_key = refKeys[0] || '';
+            }
+            renderFormModules();
+        }
+        function setModuleInputLiteral(midx, iidx, raw) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (!input) return;
+            try {
+                input.literal = JSON.parse(raw);
+            } catch (e) {
+                input.literal = raw;
+            }
+        }
+        function addAllModuleInput(midx) {
+            const module = formModules[midx];
+            if (!module) return;
+            if (!Array.isArray(module.inputs)) module.inputs = [];
+            const used = new Set(module.inputs.map(input => input.name));
+            let n = module.inputs.length + 1;
+            let name = `check_${n}`;
+            while (used.has(name)) { n += 1; name = `check_${n}`; }
+            const prior = formModules.slice(0, midx);
+            module.inputs.push({
+                name,
+                source: 'module',
+                question_id: '',
+                module_uid: prior.length ? prior[prior.length - 1].uid : '',
+                output_key: '',
+                literal: null
+            });
+            renderFormModules();
+        }
+        function setAllModuleInput(midx, iidx, uid) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (!input) return;
+            input.source = 'module';
+            input.module_uid = uid || '';
+            input.question_id = '';
+            input.output_key = '';
+            input.literal = null;
+        }
+        function removeAllModuleInput(midx, iidx) {
+            const module = formModules[midx];
+            if (!module || !Array.isArray(module.inputs)) return;
+            module.inputs.splice(iidx, 1);
+            renderFormModules();
+        }
+        function validateFormModules() {
+            for (let i = 0; i < formModules.length; i += 1) {
+                const module = formModules[i];
+                const label = `Module #${i + 1}`;
+                if (!String(module.name || '').trim()) return `${label} chưa có tên.`;
+                if (module.kind !== 'all' && !module.module_id) return `${label} chưa chọn module.`;
+                const priorUids = new Set(formModules.slice(0, i).map(item => item.uid));
+                const outputNames = (module.outputs || []).map(output => String(output.name || '').trim() || defaultModuleOutputName(module, output.key));
+                if (new Set(outputNames).size !== outputNames.length) return `${label}: tên output bị trùng.`;
+                for (const input of (module.inputs || [])) {
+                    if (module.kind === 'all' || input.source === 'module' || input.source === 'output') {
+                        if (!input.module_uid) return `${label}: input "${input.name}" chưa chọn module phía trên.`;
+                        if (!priorUids.has(input.module_uid)) return `${label}: input "${input.name}" tham chiếu module không nằm phía trên.`;
+                    }
+                    if (input.source === 'output' && !input.output_key) return `${label}: input "${input.name}" chưa chọn output.`;
+                    if (input.source === 'question' && !input.question_id) return `${label}: input "${input.name}" chưa chọn câu hỏi.`;
+                }
+            }
+            return '';
+        }
+        function cleanModuleInput(input, moduleKind) {
+            const source = moduleKind === 'all' ? 'module' : input.source;
+            return {
+                name: String(input.name || '').trim(),
+                source,
+                question_id: source === 'question' ? (input.question_id || null) : null,
+                module_uid: (source === 'output' || source === 'module') ? (input.module_uid || null) : null,
+                output_key: source === 'output' ? (input.output_key || null) : null,
+                literal: source === 'literal' ? input.literal : null
+            };
+        }
+        function cleanFormModules() {
+            return formModules.map(module => {
+                const kind = ['logic', 'engine', 'all'].includes(module.kind) ? module.kind : 'logic';
+                return {
+                    uid: module.uid,
+                    name: String(module.name || '').trim(),
+                    kind,
+                    module_id: kind === 'all' ? '' : String(module.module_id || ''),
+                    enabled: module.enabled !== false,
+                    inputs: (module.inputs || []).map(input => cleanModuleInput(input, kind)),
+                    outputs: (module.outputs || []).map(output => ({
+                        key: String(output.key || '').trim(),
+                        name: String(output.name || '').trim() || defaultModuleOutputName(module, output.key)
+                    })).filter(output => output.key),
+                    reject_on_false: Boolean(module.reject_on_false),
+                    reject_message: String(module.reject_message || '')
+                };
+            });
+        }
+
         function toggleSlotImageChecks(qidx, sidx, isEnabled) {
             const slot = questions[qidx]?.image_slots?.[sidx];
             if (!slot) return;
@@ -1632,6 +2230,12 @@
                 switchTab('questions');
                 return;
             }
+            const moduleErrors = validateFormModules();
+            if (moduleErrors) {
+                alert("Không thể lưu module:\n" + moduleErrors);
+                switchTab('options');
+                return;
+            }
 
             const payload = {
                 form_id: formId,
@@ -1651,6 +2255,7 @@
                         .map(t => t.trim().toLowerCase())
                         .filter(t => t.length > 0),
                     notify_telegram_chat_id: parseInt(document.getElementById('notifyChatId').value) || null,
+                    modules: cleanFormModules(),
                     image_checks: {
                         ...((INITIAL_SCHEMA.settings || {}).image_checks || {}),
                         enable_blur_check: document.getElementById('globalEnableBlurCheck') ? document.getElementById('globalEnableBlurCheck').checked : true,
@@ -1773,6 +2378,7 @@
             document.getElementById('formTitle').value = s.title || '';
             document.getElementById('formDesc').value = s.description || '';
             const st = s.settings || {};
+            formModules = (Array.isArray(st.modules) ? st.modules : []).map(normalizeFormModule);
             document.getElementById('responseLimit').value = st.response_limit != null ? st.response_limit : '';
             document.getElementById('notifyChatId').value = st.notify_telegram_chat_id != null ? st.notify_telegram_chat_id : '';
             document.getElementById('accessControl').value = st.access_control || 'public';
@@ -1839,9 +2445,13 @@
             normalizeSignatureRules();
             hydrateEditorFromSchema();
             renderQuestions();
+            renderFormModules();
             // Non-blocking: the editor stays usable with custom prompts if this fails.
             loadImageObjects().then(() => {
                 if (questions.some(q => q.type === 'camera_webrtc')) renderQuestions();
+                return loadFormModules();
+            }).then(() => {
+                renderFormModules();
             });
         });
     </script>

@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from services.image_objects import ImageObjectDefinition, load_registry, set_database_object_registry
-from services.logic_modules import IMPLEMENTATIONS, default_get_percentage_definition
+from services.logic_modules import IMPLEMENTATIONS, OUTPUTS, default_get_percentage_definition
 
 logger = logging.getLogger(__name__)
 MODULE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -38,6 +38,7 @@ class LogicModule(BaseModel):
     description: str = Field(default="", max_length=2000)
     implementation: str
     inputs: list[LogicInput]
+    outputs: list[str] = Field(default_factory=list)
 
     @field_validator("implementation")
     @classmethod
@@ -100,7 +101,11 @@ def _normalise_definition(module_id: str, module_type: str, definition: Any) -> 
                 raise ModuleDefinitionError("references missing engine(s): " + ", ".join(missing))
             return model.model_dump(mode="json")
         if module_type == "logic":
-            return LogicModule.model_validate(payload).model_dump(mode="json")
+            model = LogicModule.model_validate(payload)
+            data = model.model_dump(mode="json")
+            if not data["outputs"]:
+                data["outputs"] = list(OUTPUTS.get(data["implementation"], ["result"]))
+            return data
     except (ValidationError, ValueError) as exc:
         raise ModuleDefinitionError(str(exc)) from exc
     raise ModuleDefinitionError("module type must be object or logic")
@@ -157,7 +162,17 @@ async def list_modules(pool) -> list[dict[str, Any]]:
                 "SELECT module_id,module_type,display_name,module_version,definition,enabled,created_at,updated_at "
                 "FROM admin_module_registry ORDER BY module_type,module_id"
             )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+    for row in rows:
+        if row["module_type"] != "logic":
+            continue
+        definition = row["definition"]
+        if isinstance(definition, str):
+            definition = json.loads(definition)
+        if isinstance(definition, dict) and not definition.get("outputs"):
+            definition["outputs"] = list(OUTPUTS.get(definition.get("implementation"), ["result"]))
+        row["definition"] = definition
+    return rows
 
 
 async def save_module(

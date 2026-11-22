@@ -124,6 +124,35 @@ The engine resolves dependency graphs dynamically:
 - **Regulatory Opt-Out (Decree 13 Dissent):** When `consent_choice` is `"Tôi không đồng ý"`, dependent questions (phone number, license plate, revenue, photos) are hidden and skipped. The survey is submitted anonymously with zero personal data saved (`driver_phone = NULL`, `driver_name = NULL`).
 - **Circular Dependency Guard:** The schema validator detects self-referencing (`Q1 -> Q1`) and circular dependencies (`Q1 <-> Q2`) at upload time, rejecting invalid schemas with HTTP 422.
 
+#### 1.1.3 Form Modules and Custom Outputs
+`settings.modules` defines an ordered computation pipeline. Modules execute top to bottom after question validation and before the final verdict. Inputs may reference a question, an earlier named output, an entire earlier module, or a literal. Output names become the form's custom outputs.
+
+```json
+{
+  "uid": "m1",
+  "name": "Completion",
+  "kind": "logic",
+  "module_id": "get-percentage",
+  "enabled": true,
+  "inputs": [
+    {"name": "target", "source": "question", "question_id": "daily_trips"},
+    {"name": "total", "source": "literal", "literal": 20}
+  ],
+  "outputs": [
+    {"key": "percentage", "name": "completion"}
+  ],
+  "reject_on_false": false,
+  "reject_message": ""
+}
+```
+
+- `kind: "logic"` runs an allowlisted module from `/admin/modules`; its declared `inputs` are mapped by name.
+- `kind: "engine"` wraps a check engine from `/api/v1/image-objects`; `params_schema` keys become inputs, and form answers are available to the engine.
+- `kind: "all"` is a composite check. Its inputs reference earlier modules only; it passes when every referenced module passed.
+- Outputs are persisted as `form_data.module_outputs` and included in the submission response. Because they live in `form_data`, selected Drive export fields include them.
+- `reject_on_false` turns a false module output into a rejected submission with `reject_message`.
+- Modules may reference only earlier modules, output names must be unique across the form, and input questions must exist.
+
 ### 1.2 Multi-Slot Camera Workflow
 To prevent drivers from submitting out-of-order or mismatched photos (e.g., swapping the odometer photo with the revenue screen), the WebRTC camera interface introduces a multi-slot architecture:
 

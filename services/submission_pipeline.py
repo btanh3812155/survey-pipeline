@@ -36,6 +36,7 @@ from services.form_engine import (
     FormSchema, _is_blank, effective_gates, gate_satisfied, get_effective_image_checks,
     validate_submission_against_schema,
 )
+from services.form_modules import run_form_modules
 from services.image_object_projection import image_object_result, project_income_totals, project_income_weeks
 from services.image_objects import (
     ImageObjectDefinitionError,
@@ -1309,6 +1310,28 @@ async def _evaluate(
                                 is_approved = False
                                 status_str = "MANUAL_REVIEW"
                                 reason_str = "Hệ thống đã tiếp nhận ảnh và chuyển sang chờ kiểm tra thủ công."
+    if is_schema_valid and schema and getattr(schema.settings, "modules", None):
+        try:
+            module_eval = await run_form_modules(schema, prepared.form_data, deps.db_pool)
+        except Exception as exc:
+            logger.error("[FORM MODULES] execution failed: %s", type(exc).__name__)
+            module_eval = {
+                "outputs": {},
+                "failure": {
+                    "module_uid": "",
+                    "module_name": "form modules",
+                    "message": "Không thể chạy cấu hình module của biểu mẫu; vui lòng thử lại sau.",
+                },
+            }
+        if module_eval.get("outputs"):
+            ai_res["module_outputs"] = module_eval["outputs"]
+            prepared.form_data["module_outputs"] = module_eval["outputs"]
+        failure = module_eval.get("failure")
+        if failure:
+            is_approved = False
+            status_str = "REJECTED"
+            reason_str = failure["message"]
+            ai_res["module_failure"] = failure
     if is_approved and not is_bypassed and prepared.answers.get("consent_choice") != "Tôi không đồng ý" and not input.is_test_mode:
         status_str = "MANUAL_REVIEW"
         reason_str = "Phiếu khảo sát của bạn đã được ghi nhận. Ban Quản Trị đang tiến hành đối soát thủ công. Vui lòng mở Telegram @TrustBridgeVN_bot để nhận kết quả!"
@@ -1457,6 +1480,8 @@ def _response(
     }
     if ai.get("duplicate_detected"):
         response.update(duplicate_detected=ai["duplicate_detected"], duplicate_type=ai.get("duplicate_type"))
+    if ai.get("module_outputs"):
+        response["module_outputs"] = ai["module_outputs"]
     if eval.blur_score is not None:
         response["blur_score"] = eval.blur_score
     return response
