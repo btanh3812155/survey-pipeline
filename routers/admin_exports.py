@@ -159,6 +159,23 @@ def _form_rows(client: dict[str, Any]) -> str:
     )
 
 
+def _date_mode(override: dict[str, Any], key: str) -> str:
+    if override.get(f"{key}_clear") is True:
+        return "clear"
+    return "custom" if override.get(key) else "inherit"
+
+
+def _date_controls(override: dict[str, Any], key: str, label: str, client_value: str) -> str:
+    mode = _date_mode(override, key)
+    inherited = _esc(client_value or "any")
+    return f"""<fieldset><legend>{label}</legend>
+<label class="check"><input type="radio" name="{key}_mode" value="inherit"{_checked(mode == 'inherit')}> Inherit client range ({inherited})</label>
+<label class="check"><input type="radio" name="{key}_mode" value="clear"{_checked(mode == 'clear')}> No {label.lower()} limit</label>
+<label class="check"><input type="radio" name="{key}_mode" value="custom"{_checked(mode == 'custom')}> Custom date</label>
+<label>Date<input type="date" name="{key}" value="{_esc(override.get(key) or '')}"></label>
+</fieldset>"""
+
+
 def _tree(clients: list[dict[str, Any]]) -> str:
     if not clients:
         return '<p class="muted">No export configurations yet. Create one below.</p>'
@@ -246,8 +263,9 @@ def _render_form(
     if selected_forms and form_id not in selected_forms:
         warning = f'<div class="flash bad">This form is not selected for the client yet. Saving this form adds it to the client.</div>'
     date_hint = (
-        f"Blank means inherit client range "
-        f"({_esc(client.get('date_from') or 'any')} to {_esc(client.get('date_to') or 'any')})."
+        f"Inherit uses the client range "
+        f"({_esc(client.get('date_from') or 'any')} to {_esc(client.get('date_to') or 'any')}); "
+        "Custom requires a date."
     )
     body = f"""
 {_crumbs([('Drive Exports', '/admin/exports'), (str(client.get('display_name') or slug), f'/admin/exports/{slug}'), (f'📄 {form_id}', None)])}
@@ -262,10 +280,10 @@ def _render_form(
     <fieldset><legend>Vehicle kinds</legend><p class="hint">No selection means all vehicles.</p>{_checkbox_group('vehicle_types', [(kind, kind) for kind in VEHICLE_TYPES], list(effective.get('vehicle_types') or []))}</fieldset>
   </div>
   <div class="grid">
-    <label>From date<input type="date" name="date_from" value="{_esc(override.get('date_from') or '')}"></label>
-    <label>To date<input type="date" name="date_to" value="{_esc(override.get('date_to') or '')}"></label>
+    {_date_controls(override, 'date_from', 'From date', str(client.get('date_from') or ''))}
+    {_date_controls(override, 'date_to', 'To date', str(client.get('date_to') or ''))}
   </div>
-  <p class="hint">{date_hint}</p>
+  <p class="hint">{date_hint} Choose <b>No limit</b> to override a client date range with an unbounded form export.</p>
   <label class="check"><input type="checkbox" name="include_images" value="on"{_checked(bool(effective.get('include_images', True)))}> Include submission images as shortcuts to the master image tree</label>
   <div class="actions"><button type="submit">Save form output</button></div>
 </form>
@@ -297,6 +315,8 @@ def _form_payload(form) -> dict[str, Any]:
         "include_images": str(form.get("include_images") or "").lower() in {"on", "true", "1", "yes"},
         "date_from": str(form.get("date_from") or "").strip() or None,
         "date_to": str(form.get("date_to") or "").strip() or None,
+        "date_from_mode": str(form.get("date_from_mode") or "inherit"),
+        "date_to_mode": str(form.get("date_to_mode") or "inherit"),
     }
 
 

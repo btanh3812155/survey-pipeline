@@ -150,6 +150,8 @@ def _form_override_defaults(client: dict[str, Any]) -> dict[str, Any]:
         "include_images": bool(client.get("include_images", True)),
         "date_from": client.get("date_from"),
         "date_to": client.get("date_to"),
+        "date_from_clear": False,
+        "date_to_clear": False,
     }
 
 
@@ -157,10 +159,35 @@ def effective_form_config(client: dict[str, Any], form_id: str) -> dict[str, Any
     """Merge one form's override over the client-wide export defaults."""
     effective = _form_override_defaults(client)
     override = (client.get("form_settings") or {}).get(str(form_id)) or {}
-    for key in ("fields", "statuses", "vehicle_types", "include_images", "date_from", "date_to"):
+    for key in ("fields", "statuses", "vehicle_types", "include_images"):
         if key in override and override[key] is not None:
             effective[key] = override[key]
+    for key in ("date_from", "date_to"):
+        if override.get(f"{key}_clear") is True:
+            effective[key] = None
+            effective[f"{key}_clear"] = True
+        elif override.get(key) is not None:
+            effective[key] = override[key]
+            effective[f"{key}_clear"] = False
     return effective
+
+
+def _date_override(payload: dict[str, Any], key: str, label: str) -> tuple[str | None, bool]:
+    raw_mode = payload.get(f"{key}_mode")
+    if raw_mode is None:
+        mode = "custom" if payload.get(key) else "inherit"
+    else:
+        mode = str(raw_mode).strip().lower()
+    if mode == "inherit":
+        return None, False
+    if mode == "clear":
+        return None, True
+    if mode != "custom":
+        raise DriveExportError(f"{label} mode must be inherit, clear, or custom")
+    parsed = _parse_optional_date(payload.get(key), label)
+    if not parsed:
+        raise DriveExportError(f"{label} is required for a custom date")
+    return parsed.isoformat(), False
 
 
 def normalize_form_override(payload: dict[str, Any], client: dict[str, Any]) -> dict[str, Any]:
@@ -170,8 +197,8 @@ def normalize_form_override(payload: dict[str, Any], client: dict[str, Any]) -> 
     vehicle_types = _clean_list(
         [str(v).upper() for v in (payload.get("vehicle_types") or [])], VEHICLE_TYPES
     )
-    date_from = _parse_optional_date(payload.get("date_from"), "date-from")
-    date_to = _parse_optional_date(payload.get("date_to"), "date-to")
+    date_from, date_from_clear = _date_override(payload, "date_from", "date-from")
+    date_to, date_to_clear = _date_override(payload, "date_to", "date-to")
     if date_from and date_to and date_to < date_from:
         raise DriveExportError("date-to cannot be before date-from")
     return {
@@ -179,8 +206,10 @@ def normalize_form_override(payload: dict[str, Any], client: dict[str, Any]) -> 
         "statuses": statuses or defaults["statuses"],
         "vehicle_types": vehicle_types,
         "include_images": bool(payload.get("include_images", defaults["include_images"])),
-        "date_from": date_from.isoformat() if date_from else None,
-        "date_to": date_to.isoformat() if date_to else None,
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_from_clear": date_from_clear,
+        "date_to_clear": date_to_clear,
     }
 
 

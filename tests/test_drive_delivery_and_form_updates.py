@@ -633,25 +633,13 @@ async def test_execute_delivery_no_summary_csv(monkeypatch):
     assert any("application/vnd.google-apps.spreadsheet" in body for body in uploaded_files)
     assert not any("summary.csv" in body for body in uploaded_files)
 
-def test_manual_drive_sync_endpoint(monkeypatch):
-    """Tests POST /api/v1/admin/sync-drive endpoint triggers sync background task."""
-    from config import settings
-    client = TestClient(app)
-    # Unauthorized without credentials
-    unauth_resp = client.post("/api/v1/admin/sync-drive")
-    assert unauth_resp.status_code == 401
-
-    # Mock has_google_credentials
-    monkeypatch.setattr("main.has_google_credentials", lambda: True)
-    sync_called = []
-    async def mock_sync(db_pool=None):
-        sync_called.append(True)
-        return True
-    monkeypatch.setattr("main.sync_all_approved_to_drive", mock_sync)
-
-    resp = client.post("/api/v1/admin/sync-drive", auth=(settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD))
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "QUEUED"
-    assert "Đã kích hoạt đồng bộ Google Drive" in data["message"]
-    assert len(sync_called) == 1
+def test_manual_drive_sync_endpoint_is_retired():
+    """The legacy root-form sync cannot recreate directories; scoped exports replace it."""
+    from fastapi import FastAPI
+    from routers import admin_data
+    test_app = FastAPI()
+    test_app.include_router(admin_data.router)
+    test_app.dependency_overrides[admin_data.verify_admin_auth] = lambda: "test-admin"
+    resp = TestClient(test_app).post("/api/v1/admin/sync-drive")
+    assert resp.status_code == 410
+    assert "/admin/exports" in resp.json()["detail"]

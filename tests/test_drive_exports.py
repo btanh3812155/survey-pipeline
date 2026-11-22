@@ -575,3 +575,29 @@ async def test_exports_page_renders(store, monkeypatch):
     assert "Google Drive Exports" in response.text
     assert "Create configuration" in response.text
     assert "Images Master" in response.text
+
+
+def test_form_date_modes_inherit_clear_and_custom():
+    client = {
+        "fields": ["submission_id"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": True,
+        "date_from": "2026-01-01", "date_to": "2026-12-31",
+    }
+    cleared = drive_exports.normalize_form_override(
+        {"fields": ["submission_id"], "date_from_mode": "clear",
+         "date_to_mode": "custom", "date_to": "2026-06-01"},
+        client,
+    )
+    assert cleared["date_from"] is None and cleared["date_from_clear"] is True
+    assert cleared["date_to"] == "2026-06-01" and cleared["date_to_clear"] is False
+    merged = drive_exports.effective_form_config(
+        {**client, "form_settings": {"TB_A": cleared}}, "TB_A"
+    )
+    assert merged["date_from"] is None
+    assert merged["date_to"] == "2026-06-01"
+    inherited = drive_exports.normalize_form_override(
+        {"date_from_mode": "inherit", "date_to_mode": "inherit"}, client
+    )
+    assert inherited["date_from"] is None and inherited["date_from_clear"] is False
+    with pytest.raises(drive_exports.DriveExportError):
+        drive_exports.normalize_form_override({"date_from_mode": "custom"}, client)

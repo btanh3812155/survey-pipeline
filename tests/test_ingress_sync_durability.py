@@ -16,7 +16,7 @@ import httpx
 import psycopg
 import psycopg_pool
 import pytest
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI
 from psycopg.rows import dict_row
 
 from core import durable_work
@@ -212,60 +212,15 @@ async def test_lark_rejected_image_retains_private_evidence_without_r2(
     lark.r2.assert_not_awaited()
 
 
-def _drive_app(monkeypatch):
-    monkeypatch.setattr(admin_data.settings, "DURABLE_DRIVE_ENABLED", True)
-    monkeypatch.setattr(admin_data, "has_google_credentials", lambda: True)
-    legacy = AsyncMock()
-    monkeypatch.setattr(admin_data, "sync_all_approved_to_drive", legacy)
-    # Preserve the route's existing main-module compatibility seam.
-    import sys
-    if "main" in sys.modules:
-        monkeypatch.setattr(sys.modules["main"], "has_google_credentials", lambda: True)
-        monkeypatch.setattr(sys.modules["main"], "sync_all_approved_to_drive", legacy)
+@pytest.mark.asyncio
+async def test_manual_drive_sync_endpoint_is_gone():
     app = FastAPI()
     app.include_router(admin_data.router)
     app.dependency_overrides[admin_data.verify_admin_auth] = lambda: "test-admin"
-    return app, legacy
-
-
-@pytest.mark.postgres
-@pytest.mark.asyncio
-async def test_manual_drive_job_visible_before_queued(database, monkeypatch):
-    dsn, observer, ids = database
-    app, legacy = _drive_app(monkeypatch)
-    async with psycopg_pool.AsyncConnectionPool(dsn, min_size=1, max_size=2, open=False) as pool:
-        monkeypatch.setattr(admin_data, "get_db_pool", lambda: pool)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            result = await client.post("/api/v1/admin/sync-drive")
-        assert result.status_code == 200 and result.json()["status"] == "QUEUED"
-        job_id = result.json()["job_id"]
-        ids.append(job_id)
-        row = observer.execute("SELECT * FROM outbox_events WHERE aggregate_id=%s", (job_id,)).fetchone()
-        assert (row["aggregate_kind"], row["flow_target"], row["event_type"]) == (
-            "drive_sync", "GDRIVE_EXPORT", "drive.full_sync",
-        )
-    legacy.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_manual_drive_commit_failure_is_503_not_background(monkeypatch):
-    _, legacy = _drive_app(monkeypatch)
-    conn = SimpleNamespace(commit=AsyncMock(side_effect=psycopg.OperationalError("commit failed")))
-
-    @asynccontextmanager
-    async def connection():
-        yield conn
-
-    monkeypatch.setattr(admin_data, "get_db_pool", lambda: SimpleNamespace(connection=connection))
-    enqueue = AsyncMock(return_value="uncommitted-job")
-    monkeypatch.setattr(durable_work, "queue_drive_sync", enqueue)
-    background = BackgroundTasks()
-    with pytest.raises(HTTPException) as exc:
-        await admin_data.trigger_manual_drive_sync(background, "test-admin")
-    assert exc.value.status_code == 503 and not background.tasks
-    enqueue.assert_awaited_once_with(conn, actor="test-admin")
-    conn.commit.assert_awaited_once()
-    legacy.assert_not_awaited()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        result = await client.post("/api/v1/admin/sync-drive")
+    assert result.status_code == 410
+    assert "/admin/exports" in result.json()["detail"]
 
 
 @pytest.mark.asyncio

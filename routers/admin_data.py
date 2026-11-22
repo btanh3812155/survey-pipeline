@@ -11,13 +11,12 @@ import logging
 import shutil
 import time
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, FileResponse
 from config import settings
 from core.state import verify_admin_auth, FORM_REGISTRY, DEV_STORAGE_FILE, STATIC_DIR, get_db_pool
 from core.repositories import fetch_aggregated_submissions, delete_submission_record
 from services.submissions_viewer_html import render_submissions_viewer_html
-from services.google_drive_delivery import has_google_credentials, sync_all_approved_to_drive
 from services.submission_media import load_manifest, manifest_paths, safe_media_path
 
 logger = logging.getLogger("routers.admin_data")
@@ -203,44 +202,9 @@ async def clear_dev_submissions(admin_user: str = Depends(verify_admin_auth)):
 
 
 @router.post("/api/v1/admin/sync-drive")
-async def trigger_manual_drive_sync(
-    background_tasks: BackgroundTasks,
-    admin_user: str = Depends(verify_admin_auth),
-):
-    """Queue a full Google Drive sync, or use the legacy background sync before cutover."""
-    import sys
-    main_mod = sys.modules.get("main")
-    _has_creds = getattr(main_mod, "has_google_credentials", has_google_credentials) if main_mod else has_google_credentials
-    _sync_all = getattr(main_mod, "sync_all_approved_to_drive", sync_all_approved_to_drive) if main_mod else sync_all_approved_to_drive
-    if not _has_creds():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google Drive credentials (OAuth2 / Service Account) are not configured.",
-        )
-    if settings.DURABLE_DRIVE_ENABLED:
-        from core.durable_work import queue_drive_sync
-
-        try:
-            pool = get_db_pool()
-            if pool is None:
-                raise RuntimeError("database pool unavailable")
-            async with pool.connection() as conn:
-                job_id = await queue_drive_sync(conn, actor=admin_user)
-                await conn.commit()
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Google Drive sync queue is unavailable.",
-            ) from None
-        return {
-            "status": "QUEUED",
-            "message": "Đã kích hoạt đồng bộ Google Drive thành công trong nền.",
-            "target_account": settings.GOOGLE_ADMIN_EMAIL,
-            "job_id": job_id,
-        }
-    background_tasks.add_task(_sync_all, db_pool=get_db_pool())
-    return {
-        "status": "QUEUED",
-        "message": "Đã kích hoạt đồng bộ Google Drive thành công trong nền.",
-        "target_account": settings.GOOGLE_ADMIN_EMAIL,
-    }
+async def trigger_manual_drive_sync(admin_user: str = Depends(verify_admin_auth)):
+    """Retired legacy root-form sync; use the scoped Drive exports tree."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Legacy root-form Drive sync is retired. Use /admin/exports to run a scoped export.",
+    )

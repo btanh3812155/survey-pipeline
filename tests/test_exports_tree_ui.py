@@ -66,6 +66,34 @@ def test_form_page_edits_output_and_confirms_save_and_reset():
     assert 'name="statuses"' in html
     assert 'name="vehicle_types"' in html
     assert 'name="include_images"' in html
+    assert 'name="date_from_mode"' in html
+    assert 'name="date_to_mode"' in html
+    assert "Inherit client range" in html
+    assert "No from date limit" in html
     assert "return confirm('Save output settings for acme / TB_GSM_2026_Nov_Test?')" in html
     assert "Reset to client defaults" in html
     assert "Reset this form to client defaults?" in html
+
+
+def test_form_date_override_can_clear_a_client_range():
+    client = dict(
+        CLIENT,
+        date_from="2026-01-01",
+        date_to="2026-12-31",
+        form_settings={
+            "TB_GSM_2026_Nov_Test": {
+                "fields": ["submission_id"],
+                "statuses": ["APPROVED"],
+                "vehicle_types": [],
+                "include_images": False,
+                "date_from": None,
+                "date_to": None,
+                "date_from_clear": True,
+                "date_to_clear": False,
+            }
+        },
+    )
+    html = _render_form(client, "TB_GSM_2026_Nov_Test")
+    assert 'value="clear" checked' in html
+    assert "Inherit client range (2026-01-01)" in html
+    assert "No from date limit" in html
