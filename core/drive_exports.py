@@ -131,6 +131,57 @@ def _clean_list(values: Any, allowed: Iterable[str]) -> list[str]:
     return [value for value in values if value in allowed_set]
 
 
+def _parse_optional_date(value: Any, label: str) -> date | None:
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise DriveExportError(f"{label} must use YYYY-MM-DD") from exc
+
+
+def _form_override_defaults(client: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fields": list(client.get("fields") or DEFAULT_FIELDS),
+        "statuses": list(client.get("statuses") or ["APPROVED"]),
+        "vehicle_types": list(client.get("vehicle_types") or []),
+        "include_images": bool(client.get("include_images", True)),
+        "date_from": client.get("date_from"),
+        "date_to": client.get("date_to"),
+    }
+
+
+def effective_form_config(client: dict[str, Any], form_id: str) -> dict[str, Any]:
+    """Merge one form's override over the client-wide export defaults."""
+    effective = _form_override_defaults(client)
+    override = (client.get("form_settings") or {}).get(str(form_id)) or {}
+    for key in ("fields", "statuses", "vehicle_types", "include_images", "date_from", "date_to"):
+        if key in override and override[key] is not None:
+            effective[key] = override[key]
+    return effective
+
+
+def normalize_form_override(payload: dict[str, Any], client: dict[str, Any]) -> dict[str, Any]:
+    defaults = _form_override_defaults(client)
+    fields = _clean_list([str(v) for v in (payload.get("fields") or [])], FIELD_KEYS)
+    statuses = _clean_list([str(v).upper() for v in (payload.get("statuses") or [])], EXPORT_STATUSES)
+    vehicle_types = _clean_list(
+        [str(v).upper() for v in (payload.get("vehicle_types") or [])], VEHICLE_TYPES
+    )
+    date_from = _parse_optional_date(payload.get("date_from"), "date-from")
+    date_to = _parse_optional_date(payload.get("date_to"), "date-to")
+    if date_from and date_to and date_to < date_from:
+        raise DriveExportError("date-to cannot be before date-from")
+    return {
+        "fields": fields or defaults["fields"],
+        "statuses": statuses or defaults["statuses"],
+        "vehicle_types": vehicle_types,
+        "include_images": bool(payload.get("include_images", defaults["include_images"])),
+        "date_from": date_from.isoformat() if date_from else None,
+        "date_to": date_to.isoformat() if date_to else None,
+    }
+
+
 async def ensure_drive_exports(pool) -> bool:
     if not pool:
         return False
@@ -231,6 +282,27 @@ def normalize_client(payload: dict[str, Any]) -> dict[str, Any]:
     if not statuses:
         statuses = ["APPROVED"]
     vehicle_types = _clean_list([str(v).upper() for v in (payload.get("vehicle_types") or [])], VEHICLE_TYPES)
+    base_client = {
+        "fields": fields,
+        "statuses": statuses,
+        "vehicle_types": sorted(set(vehicle_types)),
+        "include_images": bool(payload.get("include_images", True)),
+        "date_from": date_from.isoformat() if date_from else None,
+        "date_to": date_to.isoformat() if date_to else None,
+    }
+    raw_form_settings = payload.get("form_settings")
+    if raw_form_settings in (None, ""):
+        raw_form_settings = {}
+    if not isinstance(raw_form_settings, dict):
+        raise DriveExportError("form_settings must be an object keyed by form id")
+    form_settings: dict[str, Any] = {}
+    for form_id, override in raw_form_settings.items():
+        form_id = str(form_id).strip()
+        if not _ROLE_RE.fullmatch(form_id):
+            raise DriveExportError("invalid form id in form_settings")
+        if not isinstance(override, dict):
+            raise DriveExportError(f"form settings for '{form_id}' must be an object")
+        form_settings[form_id] = normalize_form_override(override, base_client)
     return {
         "slug": slug,
         "display_name": display_name,
@@ -245,6 +317,7 @@ def normalize_client(payload: dict[str, Any]) -> dict[str, Any]:
         "statuses": statuses,
         "vehicle_types": sorted(set(vehicle_types)),
         "include_images": bool(payload.get("include_images", True)),
+        "form_settings": form_settings,
     }
 
 
@@ -277,32 +350,94 @@ async def get_client(pool, slug: str) -> dict[str, Any] | None:
 async def save_client(pool, payload: dict[str, Any], actor: str) -> dict[str, Any]:
     if not pool:
         raise RuntimeError("drive export database unavailable")
+    existing = None if "form_settings" in payload else await get_client(pool, str(payload.get("slug") or ""))
     client = normalize_client(payload)
+    if existing is not None:
+        client["form_settings"] = existing.get("form_settings") or {}
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """INSERT INTO drive_export_clients
                    (slug,display_name,kind,category,folder_name,enabled,date_from,date_to,
-                    form_ids,fields,statuses,vehicle_types,include_images,updated_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    form_ids,fields,statuses,vehicle_types,include_images,form_settings,updated_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT(slug) DO UPDATE SET
                      display_name=EXCLUDED.display_name,kind=EXCLUDED.kind,category=EXCLUDED.category,
                      folder_name=EXCLUDED.folder_name,enabled=EXCLUDED.enabled,
                      date_from=EXCLUDED.date_from,date_to=EXCLUDED.date_to,form_ids=EXCLUDED.form_ids,
                      fields=EXCLUDED.fields,statuses=EXCLUDED.statuses,vehicle_types=EXCLUDED.vehicle_types,
-                     include_images=EXCLUDED.include_images,updated_by=EXCLUDED.updated_by,
-                     updated_at=clock_timestamp()
+                     include_images=EXCLUDED.include_images,form_settings=EXCLUDED.form_settings,
+                     updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()
                    RETURNING *""",
                 (client["slug"], client["display_name"], client["kind"], client["category"],
                  client["folder_name"], client["enabled"], client["date_from"], client["date_to"],
                  client["form_ids"], client["fields"], client["statuses"], client["vehicle_types"],
-                 client["include_images"], actor[:64]),
+                 client["include_images"], json.dumps(client["form_settings"]), actor[:64]),
             )
             row = await cur.fetchone()
             await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_SAVED", client["slug"], {
                 "kind": client["kind"], "enabled": client["enabled"],
             })
             return row
+
+
+async def save_client_form(
+    pool, slug: str, form_id: str, payload: dict[str, Any], actor: str
+) -> dict[str, Any]:
+    """Save one form's output override and make sure the client receives that form."""
+    if not pool:
+        raise RuntimeError("drive export database unavailable")
+    form_id = str(form_id or "").strip()
+    if not _ROLE_RE.fullmatch(form_id):
+        raise DriveExportError("invalid form id")
+    client = await get_client(pool, slug)
+    if not client:
+        raise DriveExportError("client configuration not found")
+    override = normalize_form_override(payload, client)
+    form_settings = dict(client.get("form_settings") or {})
+    form_settings[form_id] = override
+    form_ids = sorted(set(client.get("form_ids") or []))
+    if form_ids and form_id not in form_ids:
+        form_ids = sorted(set(form_ids) | {form_id})
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """UPDATE drive_export_clients
+                   SET form_ids=%s, form_settings=%s::jsonb, updated_by=%s,
+                       updated_at=clock_timestamp()
+                   WHERE slug=%s RETURNING *""",
+                (form_ids, json.dumps(form_settings), actor[:64], slug),
+            )
+            row = await cur.fetchone()
+            await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_FORM_SAVED", f"{slug}/{form_id}", {
+                "fields": override["fields"],
+                "statuses": override["statuses"],
+                "include_images": override["include_images"],
+            })
+            return row
+
+
+async def delete_client_form(pool, slug: str, form_id: str, actor: str) -> bool:
+    """Remove one form override without deleting the client or its form selection."""
+    if not pool:
+        raise RuntimeError("drive export database unavailable")
+    client = await get_client(pool, slug)
+    if not client:
+        raise DriveExportError("client configuration not found")
+    form_settings = dict(client.get("form_settings") or {})
+    if form_id not in form_settings:
+        return False
+    form_settings.pop(form_id, None)
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE drive_export_clients
+                   SET form_settings=%s::jsonb, updated_by=%s, updated_at=clock_timestamp()
+                   WHERE slug=%s""",
+                (json.dumps(form_settings), actor[:64], slug),
+            )
+            await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_FORM_RESET", f"{slug}/{form_id}", {})
+            return True
 
 
 async def delete_client(pool, slug: str, actor: str) -> bool:
@@ -475,6 +610,7 @@ async def run_drive_exports(
                     report["errors"].append("could not create the master export folder tree")
                     return report
                 archived_forms: set[str] = set()
+                active_forms: set[str] = set()
                 try:
                     async with pool.connection() as conn:
                         async with conn.cursor() as cur:
@@ -502,27 +638,48 @@ async def run_drive_exports(
                 master_images_cache: dict[tuple[str, str, str], str] = {}
                 for config in clients:
                     report["clients"] += 1
-                    try:
-                        rows = await select_rows(pool, config)
-                    except Exception as exc:
-                        report["errors"].append(f"{config['slug']}: query failed ({type(exc).__name__})")
-                        continue
-                    if not rows:
-                        continue
-                    by_form: dict[str, list[dict[str, Any]]] = {}
-                    for row in rows:
-                        by_form.setdefault(str(row.get("form_id") or "unknown_form"), []).append(row)
+                    overrides = config.get("form_settings") or {}
+                    target_forms = set(config.get("form_ids") or []) | set(overrides)
+                    if not config.get("form_ids"):
+                        target_forms |= active_forms
+                    by_form: dict[str, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
+                    if target_forms:
+                        for form_id in sorted(target_forms):
+                            effective = effective_form_config(config, form_id)
+                            try:
+                                form_rows = await select_rows(
+                                    pool,
+                                    {**config, **effective, "form_ids": [form_id]},
+                                )
+                            except Exception as exc:
+                                report["errors"].append(
+                                    f"{config['slug']}/{form_id}: query failed ({type(exc).__name__})"
+                                )
+                                continue
+                            if form_rows:
+                                by_form[form_id] = (form_rows, effective)
+                    else:
+                        try:
+                            rows = await select_rows(pool, config)
+                        except Exception as exc:
+                            report["errors"].append(f"{config['slug']}: query failed ({type(exc).__name__})")
+                            continue
+                        for row in rows:
+                            form_id = str(row.get("form_id") or "unknown_form")
+                            by_form.setdefault(form_id, ([], effective_form_config(config, form_id)))[0].append(row)
                     if archived_forms:
                         skipped = [form_id for form_id in by_form if form_id in archived_forms]
                         for form_id in skipped:
                             by_form.pop(form_id, None)
                         report["archived_forms_skipped"] += len(skipped)
+                    if not by_form:
+                        continue
                     tier3_root = internal_root if config["kind"] == "internal" else client_root
                     tier3_id = await drive.get_or_create_folder(http, access_token, config["folder_name"], tier3_root)
                     if not tier3_id:
                         report["errors"].append(f"{config['slug']}: could not create export folder")
                         continue
-                    for form_id, form_rows in sorted(by_form.items()):
+                    for form_id, (form_rows, effective) in sorted(by_form.items()):
                         report["forms"] += 1
                         report["rows"] += len(form_rows)
                         form_folder = await drive.get_or_create_folder(http, access_token, form_id, tier3_id)
@@ -532,9 +689,9 @@ async def run_drive_exports(
                             continue
                         await _sync_sheet(
                             drive, http, access_token, form_id, form_folder,
-                            form_rows, list(config["fields"]), report,
+                            form_rows, list(effective["fields"]), report,
                         )
-                        if not config["include_images"] or not images_folder:
+                        if not effective["include_images"] or not images_folder:
                             continue
                         for row in form_rows:
                             sid = str(row["submission_id"])

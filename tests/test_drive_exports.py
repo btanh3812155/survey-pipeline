@@ -196,6 +196,59 @@ class FakeDrive:
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_per_form_settings_control_fields_and_images(store, monkeypatch, tmp_path):
+    pool, conn = store
+    media_root = tmp_path / "submission_photos"
+    media_root.mkdir()
+    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(media_root))
+    _insert(conn, "VN-A", form_id="TB_A")
+    _insert(conn, "VN-B", form_id="TB_B")
+    image_dir = media_root / "VN-B"
+    image_dir.mkdir()
+    Image.new("RGB", (12, 12), (20, 20, 200)).save(image_dir / "slot_1.png")
+    await drive_exports.save_client(pool, {
+        "slug": "tree-client", "display_name": "Tree Client", "kind": "client",
+        "folder_name": "Tree Client", "enabled": True,
+        "form_ids": ["TB_A", "TB_B"], "fields": ["submission_id", "status"],
+        "statuses": ["APPROVED"], "vehicle_types": [], "include_images": True,
+    }, "tester")
+    await drive_exports.save_client_form(pool, "tree-client", "TB_A", {
+        "fields": ["submission_id"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": False,
+    }, "tester")
+    await drive_exports.save_client_form(pool, "tree-client", "TB_B", {
+        "fields": ["status"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": True,
+    }, "tester")
+    fake = FakeDrive()
+    report = await drive_exports.run_drive_exports(
+        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
+    )
+    assert report["status"] == "ok", report
+    assert report["forms"] == 2
+    sheet_headers = {
+        name: csv_bytes.decode("utf-8-sig").splitlines()[0]
+        for name, _parent, csv_bytes in fake.sheets
+    }
+    assert sheet_headers["TB_A"] == "Submission ID"
+    assert sheet_headers["TB_B"] == "Status"
+    assert len(fake.uploads) == 1
+    assert len(fake.shortcuts) == 1
+    assert "TB_B" in fake.shortcuts[0][2]
+
+    # Saving the client folder again must not wipe per-form overrides.
+    await drive_exports.save_client(pool, {
+        "slug": "tree-client", "display_name": "Tree Client", "kind": "client",
+        "folder_name": "Tree Client", "enabled": True,
+        "form_ids": ["TB_A", "TB_B"], "fields": ["submission_id", "status"],
+        "statuses": ["APPROVED"], "vehicle_types": [], "include_images": True,
+    }, "tester")
+    saved = await drive_exports.get_client(pool, "tree-client")
+    assert set(saved["form_settings"]) == {"TB_A", "TB_B"}
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_export_uploads_images_once_and_shortcuts_each_client(store, monkeypatch, tmp_path):
     pool, conn = store
     media_root = tmp_path / "submission_photos"
@@ -344,6 +397,34 @@ def test_migration_009_creates_export_tables(database):
                 assert conn.execute("SELECT count(*) FROM drive_export_settings").fetchone() == (1,)
                 conn.execute(migration)
                 assert conn.execute("SELECT count(*) FROM drive_export_settings").fetchone() == (1,)
+        finally:
+            root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+@pytest.mark.postgres
+def test_migration_010_adds_form_settings(database):
+    migrations = ROOT / "scripts" / "migrations"
+    previous = hashlib.sha256((migrations / "009_drive_exports.sql").read_bytes()).hexdigest()
+    path = migrations / "010_drive_export_form_settings.sql"
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    migration = path.read_text().replace(":'migration_009_sha256'", f"'{previous}'").replace(":'migration_sha256'", f"'{checksum}'")
+    schema = "export_settings_migration_" + uuid4().hex
+    with psycopg.connect(database, autocommit=True) as root:
+        root.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        try:
+            dsn = make_conninfo(database, options=f"-c search_path={schema}")
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                conn.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)")
+                conn.execute("INSERT INTO schema_migrations VALUES ('009',%s)", (previous,))
+                conn.execute("CREATE TABLE drive_export_clients (slug TEXT PRIMARY KEY)")
+                conn.execute(migration)
+                assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [("009",), ("010",)]
+                assert conn.execute(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema=%s AND table_name='drive_export_clients' AND column_name='form_settings'",
+                    (schema,),
+                ).fetchone() == (1,)
+                conn.execute(migration)
         finally:
             root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 

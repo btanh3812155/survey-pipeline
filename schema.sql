@@ -331,6 +331,7 @@ CREATE TABLE IF NOT EXISTS drive_export_clients (
     statuses TEXT[] NOT NULL DEFAULT '{APPROVED}',
     vehicle_types TEXT[] NOT NULL DEFAULT '{}',
     include_images BOOLEAN NOT NULL DEFAULT TRUE,
+    form_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by VARCHAR(64),
     updated_by VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
