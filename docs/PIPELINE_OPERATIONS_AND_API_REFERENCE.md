@@ -478,10 +478,10 @@ Authenticated operator UI for migration 009/010 export configuration.
 
 ### 3.12 DB trash and Drive ledger (`/api/v1/admin/trash`)
 Migration 012 adds `trash_items`, `trash_transactions`, and `drive_name_ledger`. Explicit form/submission deletes snapshot the DB row, move local submission media under `data/trash`, move Drive folders to Drive trash, and store name/ID/parent/MIME/shortcut links in the ledger.
-- `GET /api/v1/admin/trash` lists recoverable form/submission snapshots.
+- `GET /api/v1/admin/trash` lists recoverable form/submission snapshots; `GET /admin/trash` renders the browser and `POST /api/v1/admin/trash/{id}/restore` restores one.
 - Retention is age-tiered and compacted: one per entity per hour for 0-24 hours; one per 4 hours plus the 10 most recent snapshots for 1-7 days; daily for 7-30 days; weekly for 30-90 days; monthly for 90-365 days; and one per 6 months forever after 365 days.
 - Trash, ledger, compaction, and metadata changes are written to `trash_transactions` and `system_audit_log`.
-- Restore is not exposed yet; the snapshot, local media path, and Drive ledger IDs are retained for that next layer. There is no automatic final purge for old snapshots, including the six-monthly forever tier.
+- Forms restore intact. Submissions restore into `MANUAL_REVIEW`, move media back, and do not replay outbox, Telegram, or delivery effects. There is no automatic final purge for old snapshots, including the six-monthly forever tier.
 
 ---
 
