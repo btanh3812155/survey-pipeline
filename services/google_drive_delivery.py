@@ -212,7 +212,7 @@ def is_explicit_test_folder(name: Any) -> bool:
     if not name:
         return False
     upper = str(name).upper()
-    if upper.startswith(_TEST_FOLDER_PREFIXES):
+    if upper.startswith(_TEST_FOLDER_PREFIXES) or upper.endswith("_TEST"):
         return True
     return any(segment in upper for segment in _TEST_FOLDER_SEGMENTS)
 
@@ -835,7 +835,7 @@ class GoogleDriveClient:
         while True:
             params = {
                 "q": f"'{folder_id}' in parents and trashed = false",
-                "fields": "nextPageToken, files(id,name,mimeType,shortcutDetails(targetId))",
+                "fields": "nextPageToken, files(id,name,mimeType,shortcutDetails(targetId),modifiedTime)",
                 "pageSize": 1000,
                 "spaces": "drive",
             }
@@ -857,6 +857,15 @@ class GoogleDriveClient:
             headers={"Authorization": f"Bearer {token}"},
         )
         return resp.status_code in (200, 204)
+
+    async def trash_file(self, client: httpx.AsyncClient, token: str, file_id: str) -> bool:
+        """Move one file or folder tree to the Drive trash instead of deleting it."""
+        resp = await client.patch(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"trashed": True},
+        )
+        return resp.status_code == 200
 
     async def create_shortcut(
         self,
@@ -1164,6 +1173,37 @@ class GoogleDriveClient:
                 except Exception as e:
                     logger.error(f"Error querying/deleting dev folders from Google Drive: {e}")
                     break
+
+        # 1b. Duplicate root folders: keep the newest, move older copies to Drive trash.
+        if root_id:
+            try:
+                folders_by_name: Dict[str, List[Dict[str, Any]]] = {}
+                for entry in await self.list_children(client, token, root_id):
+                    if entry.get("mimeType") == "application/vnd.google-apps.folder":
+                        folders_by_name.setdefault(str(entry.get("name") or ""), []).append(entry)
+                for name, entries in folders_by_name.items():
+                    if not name or len(entries) < 2:
+                        continue
+                    entries.sort(
+                        key=lambda item: (str(item.get("modifiedTime") or ""), str(item.get("id") or "")),
+                        reverse=True,
+                    )
+                    for duplicate in entries[1:]:
+                        fid = duplicate.get("id")
+                        if not fid:
+                            continue
+                        if await self.trash_file(client, token, fid):
+                            logger.info(
+                                "🗑️ [GOOGLE DRIVE] Trashed duplicate root folder '%s' (ID: %s)",
+                                name, fid,
+                            )
+                            deleted_count += 1
+                        else:
+                            logger.warning(
+                                "Failed to trash duplicate root folder '%s' (ID: %s)", name, fid
+                            )
+            except Exception as e:
+                logger.error(f"Error cleaning duplicate root folders from Google Drive: {e}")
 
         # 2. Duplicate Master_Survey_Deliverables.csv cleanup in root
         try:

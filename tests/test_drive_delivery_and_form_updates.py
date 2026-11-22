@@ -479,6 +479,50 @@ async def test_google_drive_cleanup_dev_folders():
     assert "folder_prod_1" not in deleted_file_ids
 
 @pytest.mark.asyncio
+async def test_google_drive_cleanup_trashes_duplicate_root_folders():
+    """Duplicate root folders keep the newest copy; obsolete test folders are trashed/deleted."""
+    from services.google_drive_delivery import GoogleDriveClient
+    import httpx
+
+    deleted_file_ids = []
+    trashed_file_ids = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if request.method == "GET" and "/drive/v3/files" in url_str:
+            if "name = 'Images'" in url_str or "name+%3D+%27Images%27" in url_str:
+                return httpx.Response(200, json={"files": []})
+            if "Master_Survey_Deliverables.csv" in url_str or "submission_" in url_str:
+                return httpx.Response(200, json={"files": []})
+            return httpx.Response(200, json={"files": [
+                {"id": "internal-old", "name": "Internal", "mimeType": "application/vnd.google-apps.folder", "modifiedTime": "2026-11-18T02:47:14.249Z"},
+                {"id": "internal-new", "name": "Internal", "mimeType": "application/vnd.google-apps.folder", "modifiedTime": "2026-11-20T02:18:12.500Z"},
+                {"id": "income-test", "name": "income_survey_test", "mimeType": "application/vnd.google-apps.folder", "modifiedTime": "2026-11-18T09:18:37.331Z"},
+                {"id": "active-form", "name": "TB_GSM_2026_Nov_Test", "mimeType": "application/vnd.google-apps.folder", "modifiedTime": "2026-11-20T02:13:14.916Z"},
+            ]})
+        if request.method == "DELETE" and "/drive/v3/files/" in url_str:
+            deleted_file_ids.append(url_str.split("/drive/v3/files/")[1])
+            return httpx.Response(204)
+        if request.method == "PATCH" and "/drive/v3/files/" in url_str:
+            trashed_file_ids.append(url_str.split("/drive/v3/files/")[1])
+            return httpx.Response(200, json={"id": url_str.rsplit("/", 1)[-1], "trashed": True})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        gdrive = GoogleDriveClient(root_folder_id="root_folder_123")
+        cleaned = await gdrive.cleanup_drive_clutter(
+            client, "dummy_token", {"TB_GSM_2026_Nov_Test"}
+        )
+
+    assert cleaned == 2
+    assert "income-test" in deleted_file_ids
+    assert trashed_file_ids == ["internal-old"]
+    assert "internal-new" not in trashed_file_ids
+    assert "active-form" not in deleted_file_ids
+
+
+@pytest.mark.asyncio
 async def test_upload_file_patch_when_existing():
     """Tests that upload_file performs PATCH with media when file already exists."""
     from services.google_drive_delivery import GoogleDriveClient
