@@ -5,6 +5,7 @@ Decouples runtime singletons (PostgreSQL connection pool, Redis client, HTTP cli
 and authentication guards from route definitions.
 """
 
+import ipaddress
 import os
 import json
 import logging
@@ -115,8 +116,19 @@ def require_admin_same_origin(request: Request) -> None:
     if not source or not host:
         raise HTTPException(status_code=403, detail="Cross-origin request rejected")
     parsed = urlsplit(source)
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
-    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().lower()
+    try:
+        proxy_ip = ipaddress.ip_address(request.client.host) if request.client else None
+    except ValueError:
+        proxy_ip = None
+    trust_forwarded = bool(proxy_ip and (proxy_ip.is_private or proxy_ip.is_loopback))
+    forwarded_proto = (
+        request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+        if trust_forwarded else ""
+    )
+    forwarded_host = (
+        request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().lower()
+        if trust_forwarded else ""
+    )
     allowed_schemes = {request.url.scheme.lower()}
     allowed_hosts = {host.lower()}
     if forwarded_proto:

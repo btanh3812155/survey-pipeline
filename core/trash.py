@@ -130,8 +130,10 @@ async def record_drive_ledger(
     *,
     trash_id: str | None = None,
     action: str = "DRIVE_TRASHED",
+    state: str = "TRASHED",
 ) -> int:
-    """Upsert Drive name/ID links and audit the Drive trash transaction."""
+    """Upsert Drive name/ID links and audit the Drive ledger transaction."""
+    state = state if state in {"ACTIVE", "TRASHED", "PURGED"} else "TRASHED"
     entries = [entry for entry in entries if entry.get("id") and entry.get("name")]
     if not pool or not entries:
         return 0
@@ -142,18 +144,19 @@ async def record_drive_ledger(
                     """INSERT INTO drive_name_ledger
                        (entity_type,entity_id,object_name,drive_id,parent_drive_id,parent_name,
                         mime_type,target_id,state,last_action,metadata)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'TRASHED',%s,%s::jsonb)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                        ON CONFLICT(drive_id) DO UPDATE SET
                          entity_type=EXCLUDED.entity_type, entity_id=EXCLUDED.entity_id,
                          object_name=EXCLUDED.object_name, parent_drive_id=EXCLUDED.parent_drive_id,
                          parent_name=EXCLUDED.parent_name, mime_type=EXCLUDED.mime_type,
-                         target_id=EXCLUDED.target_id, state='TRASHED',
+                         target_id=EXCLUDED.target_id, state=EXCLUDED.state,
                          last_seen_at=clock_timestamp(), last_action=EXCLUDED.last_action,
                          metadata=drive_name_ledger.metadata || EXCLUDED.metadata""",
                     (
                         entity_type, entity_id, str(entry["name"]), str(entry["id"]),
                         entry.get("parent_id"), entry.get("parent_name"),
-                        entry.get("mime_type"), entry.get("target_id"), action[:32],
+                        entry.get("mime_type"), entry.get("target_id"), state,
+                        action[:32],
                         json.dumps({"trash_id": trash_id} if trash_id else {}),
                     ),
                 )
@@ -426,3 +429,39 @@ async def restore_drive_ledger(
         return {"status": "error", "restored": restored, "error": type(exc).__name__}
     finally:
         await http.aclose()
+
+
+async def ensure_form_trash(pool, form_id: str, actor: str = "system") -> str | None:
+    """Return an active form trash row, creating one from deleted_forms if needed."""
+    if not pool:
+        return None
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """SELECT id FROM trash_items
+                   WHERE entity_type='form' AND entity_id=%s
+                     AND restored_at IS NULL AND purged_at IS NULL
+                   ORDER BY deleted_at DESC LIMIT 1""",
+                (form_id,),
+            )
+            row = await cur.fetchone()
+            if row:
+                return str(row["id"])
+            try:
+                await cur.execute(
+                    """SELECT title,schema_json,deleted_at FROM deleted_forms
+                       WHERE form_id=%s ORDER BY deleted_at DESC,id DESC LIMIT 1""",
+                    (form_id,),
+                )
+                archived = await cur.fetchone()
+            except Exception:
+                archived = None
+            if not archived:
+                return None
+            return await add_trash_item(
+                cur, "form", form_id, str(archived.get("title") or form_id),
+                {"form_id": form_id, "title": archived.get("title"), "schema": archived.get("schema_json")},
+                actor,
+                deleted_at=archived.get("deleted_at"),
+                metadata={"source": "archived_export_cleanup"},
+            )

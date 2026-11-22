@@ -1116,7 +1116,11 @@ class GoogleDriveClient:
         return False
 
     async def cleanup_drive_clutter(
-        self, client: httpx.AsyncClient, token: str, protected_names: Optional[set] = None
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        protected_names: Optional[set] = None,
+        duplicate_names: Optional[set] = None,
     ) -> int:
         """
         Remote Google Drive cleanup routine:
@@ -1191,8 +1195,16 @@ class GoogleDriveClient:
                 for entry in await self.list_children(client, token, root_id):
                     if entry.get("mimeType") == "application/vnd.google-apps.folder":
                         folders_by_name.setdefault(str(entry.get("name") or ""), []).append(entry)
+                allowed_duplicates = {
+                    str(name) for name in (duplicate_names or protected)
+                } | {"Internal", "Images", "_legacy_unknown"}
                 for name, entries in folders_by_name.items():
                     if not name or len(entries) < 2:
+                        continue
+                    if name not in allowed_duplicates:
+                        logger.info(
+                            "Skipping duplicate root folder '%s'; not a pipeline-owned name", name
+                        )
                         continue
                     entries.sort(
                         key=lambda item: (str(item.get("modifiedTime") or ""), str(item.get("id") or "")),

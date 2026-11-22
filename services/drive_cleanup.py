@@ -21,7 +21,17 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 async def _find_folder(
     drive: GoogleDriveClient, http: httpx.AsyncClient, token: str, parent_id: str, name: str
 ) -> Optional[str]:
-    return await drive.find_file_or_folder(http, token, name, parent_id, FOLDER_MIME)
+    matches = [
+        child for child in await drive.list_children(http, token, parent_id)
+        if child.get("name") == name and child.get("mimeType") == FOLDER_MIME and child.get("id")
+    ]
+    if len(matches) > 1:
+        logger.error(
+            "Refusing destructive lookup for ambiguous folder '%s' under %s (%d matches)",
+            name, parent_id, len(matches),
+        )
+        return None
+    return matches[0]["id"] if matches else None
 
 
 async def _delete_tree(
@@ -251,28 +261,37 @@ async def cleanup_submission_drive(form_id: str, submission_id: str, pool=None) 
     finally:
         await http.aclose()
 
-async def purge_form_folders(
+async def trash_form_folders(
     drive: GoogleDriveClient,
     http: httpx.AsyncClient,
     token: str,
     root_id: str,
     settings: dict[str, Any],
     form_id: str,
-) -> int:
-    """Permanently purge archived-form folders during an export maintenance pass."""
-    deleted = 0
+) -> tuple[int, list[dict[str, Any]]]:
+    """Move archived-form folders to Drive trash and return ledger entries."""
+    trashed = 0
+    ledger: list[dict[str, Any]] = []
     for tier_id in await _tier_folders(drive, http, token, root_id, settings):
-        deleted += await _delete_named_folder(drive, http, token, tier_id, form_id)
+        count, entries = await _trash_named_folder(drive, http, token, tier_id, form_id)
+        trashed += count
+        ledger.extend(entries)
     master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
     if master_id:
         images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
         if images_id:
-            deleted += await _delete_named_folder(drive, http, token, images_id, form_id)
-    deleted += await _delete_named_folder(drive, http, token, root_id, form_id)
+            count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
+            trashed += count
+            ledger.extend(entries)
+    count, entries = await _trash_named_folder(drive, http, token, root_id, form_id)
+    trashed += count
+    ledger.extend(entries)
     internal = await _find_folder(drive, http, token, root_id, "Internal")
     if internal:
-        deleted += await _delete_named_folder(drive, http, token, internal, form_id)
-    return deleted
+        count, entries = await _trash_named_folder(drive, http, token, internal, form_id)
+        trashed += count
+        ledger.extend(entries)
+    return trashed, ledger
 
 
 async def prune_stale_files(

@@ -34,8 +34,9 @@ from services.drive_cleanup import (
     clear_submission_folders,
     prune_stale_files,
     prune_stale_submission_folders,
-    purge_form_folders,
+    trash_form_folders,
 )
+from core.trash import ensure_form_trash, record_drive_ledger
 from services.submission_media import manifest_paths
 
 logger = logging.getLogger("core.drive_exports")
@@ -371,13 +372,15 @@ async def save_client(pool, payload: dict[str, Any], actor: str) -> dict[str, An
                      folder_name=EXCLUDED.folder_name,enabled=EXCLUDED.enabled,
                      date_from=EXCLUDED.date_from,date_to=EXCLUDED.date_to,form_ids=EXCLUDED.form_ids,
                      fields=EXCLUDED.fields,statuses=EXCLUDED.statuses,vehicle_types=EXCLUDED.vehicle_types,
-                     include_images=EXCLUDED.include_images,form_settings=EXCLUDED.form_settings,
+                     include_images=EXCLUDED.include_images,
+                     form_settings=CASE WHEN %s THEN drive_export_clients.form_settings ELSE EXCLUDED.form_settings END,
                      updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()
                    RETURNING *""",
                 (client["slug"], client["display_name"], client["kind"], client["category"],
                  client["folder_name"], client["enabled"], client["date_from"], client["date_to"],
                  client["form_ids"], client["fields"], client["statuses"], client["vehicle_types"],
-                 client["include_images"], json.dumps(client["form_settings"]), actor[:64]),
+                 client["include_images"], json.dumps(client["form_settings"]), actor[:64],
+                 "form_settings" not in payload),
             )
             row = await cur.fetchone()
             await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_SAVED", client["slug"], {
@@ -389,29 +392,32 @@ async def save_client(pool, payload: dict[str, Any], actor: str) -> dict[str, An
 async def save_client_form(
     pool, slug: str, form_id: str, payload: dict[str, Any], actor: str
 ) -> dict[str, Any]:
-    """Save one form's output override and make sure the client receives that form."""
+    """Atomically save one form override and keep the client's form selection."""
     if not pool:
         raise RuntimeError("drive export database unavailable")
     form_id = str(form_id or "").strip()
     if not _ROLE_RE.fullmatch(form_id):
         raise DriveExportError("invalid form id")
-    client = await get_client(pool, slug)
-    if not client:
-        raise DriveExportError("client configuration not found")
-    override = normalize_form_override(payload, client)
-    form_settings = dict(client.get("form_settings") or {})
-    form_settings[form_id] = override
-    form_ids = sorted(set(client.get("form_ids") or []))
-    if form_ids and form_id not in form_ids:
-        form_ids = sorted(set(form_ids) | {form_id})
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
+                "SELECT * FROM drive_export_clients WHERE slug=%s FOR UPDATE", (slug,)
+            )
+            client = await cur.fetchone()
+            if not client:
+                raise DriveExportError("client configuration not found")
+            override = normalize_form_override(payload, client)
+            form_ids = sorted(set(client.get("form_ids") or []))
+            if form_ids and form_id not in form_ids:
+                form_ids = sorted(set(form_ids) | {form_id})
+            await cur.execute(
                 """UPDATE drive_export_clients
-                   SET form_ids=%s, form_settings=%s::jsonb, updated_by=%s,
-                       updated_at=clock_timestamp()
+                   SET form_ids=%s,
+                       form_settings=COALESCE(form_settings,'{}'::jsonb)
+                           || jsonb_build_object(%s::text,%s::jsonb),
+                       updated_by=%s,updated_at=clock_timestamp()
                    WHERE slug=%s RETURNING *""",
-                (form_ids, json.dumps(form_settings), actor[:64], slug),
+                (form_ids, form_id, json.dumps(override), actor[:64], slug),
             )
             row = await cur.fetchone()
             await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_FORM_SAVED", f"{slug}/{form_id}", {
@@ -421,29 +427,25 @@ async def save_client_form(
             })
             return row
 
-
 async def delete_client_form(pool, slug: str, form_id: str, actor: str) -> bool:
-    """Remove one form override without deleting the client or its form selection."""
+    """Atomically remove one form override without deleting the client selection."""
     if not pool:
         raise RuntimeError("drive export database unavailable")
-    client = await get_client(pool, slug)
-    if not client:
-        raise DriveExportError("client configuration not found")
-    form_settings = dict(client.get("form_settings") or {})
-    if form_id not in form_settings:
-        return False
-    form_settings.pop(form_id, None)
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor() as cur:
             await cur.execute(
                 """UPDATE drive_export_clients
-                   SET form_settings=%s::jsonb, updated_by=%s, updated_at=clock_timestamp()
-                   WHERE slug=%s""",
-                (json.dumps(form_settings), actor[:64], slug),
+                   SET form_settings=COALESCE(form_settings,'{}'::jsonb) - %s,
+                       updated_by=%s,updated_at=clock_timestamp()
+                   WHERE slug=%s AND COALESCE(form_settings,'{}'::jsonb) ? %s
+                   RETURNING slug""",
+                (form_id, actor[:64], slug, form_id),
             )
+            row = await cur.fetchone()
+            if not row:
+                return False
             await _audit(cur, actor, "DRIVE_EXPORT_CLIENT_FORM_RESET", f"{slug}/{form_id}", {})
             return True
-
 
 async def delete_client(pool, slug: str, actor: str) -> bool:
     if not pool:
@@ -532,23 +534,37 @@ async def _ensure_master_image(
 async def _sync_sheet(
     client: Any, http_client: Any, token: str, name: str, folder_id: str,
     rows: list[dict[str, Any]], fields: list[str], report: dict[str, Any],
-) -> None:
+) -> str | None:
     sheet_id = await client.find_file_or_folder(
         http_client, token, name, folder_id, "application/vnd.google-apps.spreadsheet"
     )
     if sheet_id:
         if await client.update_sheet_values(http_client, token, sheet_id, export_matrix(rows, fields)):
             report["sheets_updated"] += 1
-        else:
-            report["errors"].append(f"sheet update failed: {name}")
-        return
+            return sheet_id
+        report["errors"].append(f"sheet update failed: {name}")
+        return sheet_id
     created = await client.import_csv_as_sheet(
         http_client, token, name, build_export_csv(rows, fields), folder_id
     )
     if created:
         report["sheets_created"] += 1
-    else:
-        report["errors"].append(f"sheet create failed: {name}")
+        return created
+    report["errors"].append(f"sheet create failed: {name}")
+    return None
+
+
+async def _record_export_ledger(pool, slug: str, form_id: str, entries: list[dict[str, Any]]) -> None:
+    if not entries:
+        return
+    entity_id = f"{slug}/{form_id}"[:64]
+    try:
+        await record_drive_ledger(
+            pool, "export", entity_id, entries, "export",
+            action="DRIVE_ACTIVE", state="ACTIVE",
+        )
+    except Exception as exc:
+        logger.warning("Drive ledger write failed for %s/%s: %s", slug, form_id, type(exc).__name__)
 
 
 async def run_drive_exports(
@@ -633,9 +649,16 @@ async def run_drive_exports(
                     archived_forms = set()
                 for archived_id in sorted(archived_forms):
                     try:
-                        report["drive_items_cleaned"] += await purge_form_folders(
+                        trash_id = await ensure_form_trash(pool, archived_id, "export-maintenance")
+                        count, ledger = await trash_form_folders(
                             drive, http, access_token, root, settings, archived_id
                         )
+                        report["drive_items_cleaned"] += count
+                        if ledger:
+                            await record_drive_ledger(
+                                pool, "form", archived_id, ledger, "export-maintenance",
+                                trash_id=trash_id, action="DRIVE_TRASHED",
+                            )
                     except Exception as exc:
                         report["errors"].append(
                             f"archived form cleanup failed for {archived_id} ({type(exc).__name__})"
@@ -686,16 +709,32 @@ async def run_drive_exports(
                     for form_id, (form_rows, effective) in sorted(by_form.items()):
                         report["forms"] += 1
                         report["rows"] += len(form_rows)
+                        folder_mime = "application/vnd.google-apps.folder"
                         form_folder = await drive.get_or_create_folder(http, access_token, form_id, tier3_id)
-                        images_folder = await drive.get_or_create_folder(http, access_token, "Images", form_folder) if form_folder else None
                         if not form_folder:
                             report["errors"].append(f"{config['slug']}/{form_id}: could not create form folder")
                             continue
-                        await _sync_sheet(
+                        images_folder = await drive.get_or_create_folder(http, access_token, "Images", form_folder)
+                        ledger: list[dict[str, Any]] = [{
+                            "id": form_folder, "name": form_id, "parent_id": tier3_id,
+                            "parent_name": config["folder_name"], "mime_type": folder_mime,
+                        }]
+                        if images_folder:
+                            ledger.append({
+                                "id": images_folder, "name": "Images", "parent_id": form_folder,
+                                "parent_name": form_id, "mime_type": folder_mime,
+                            })
+                        sheet_id = await _sync_sheet(
                             drive, http, access_token, form_id, form_folder,
                             form_rows, list(effective["fields"]), report,
                         )
+                        if sheet_id:
+                            ledger.append({
+                                "id": sheet_id, "name": form_id, "parent_id": form_folder,
+                                "parent_name": form_id, "mime_type": "application/vnd.google-apps.spreadsheet",
+                            })
                         if not images_folder:
+                            await _record_export_ledger(pool, config["slug"], form_id, ledger)
                             continue
                         if not effective["include_images"]:
                             try:
@@ -706,15 +745,27 @@ async def run_drive_exports(
                                 report["errors"].append(
                                     f"{config['slug']}/{form_id}: image-disable cleanup failed ({type(exc).__name__})"
                                 )
+                            await _record_export_ledger(pool, config["slug"], form_id, ledger)
                             continue
+                        master_form = await drive.get_or_create_folder(http, access_token, form_id, images_root)
+                        if master_form:
+                            ledger.append({
+                                "id": master_form, "name": form_id, "parent_id": images_root,
+                                "parent_name": settings["images_folder_name"], "mime_type": folder_mime,
+                            })
                         for row in form_rows:
                             sid = str(row["submission_id"])
-                            master_form = await drive.get_or_create_folder(http, access_token, form_id, images_root)
                             master_sub = await drive.get_or_create_folder(http, access_token, sid, master_form) if master_form else None
                             client_sub = await drive.get_or_create_folder(http, access_token, sid, images_folder)
                             if not master_sub or not client_sub:
                                 report["errors"].append(f"{config['slug']}/{form_id}/{sid}: could not create image folders")
                                 continue
+                            ledger.extend([
+                                {"id": master_sub, "name": sid, "parent_id": master_form,
+                                 "parent_name": form_id, "mime_type": folder_mime},
+                                {"id": client_sub, "name": sid, "parent_id": images_folder,
+                                 "parent_name": "Images", "mime_type": folder_mime},
+                            ])
                             images = _image_payloads(sid, row.get("media_manifest"))
                             expected_names = [image["name"] for image in images]
                             for image in images:
@@ -728,17 +779,31 @@ async def run_drive_exports(
                                         master_images_cache[cache_key] = master_file_id
                                 if not master_file_id:
                                     continue
+                                ledger.append({
+                                    "id": master_file_id, "name": image["name"], "parent_id": master_sub,
+                                    "parent_name": sid, "mime_type": image["mime"],
+                                })
                                 existing = await drive.find_file_or_folder(
                                     http, access_token, image["name"], client_sub
                                 )
                                 if existing:
                                     report["shortcuts_present"] += 1
+                                    ledger.append({
+                                        "id": existing, "name": image["name"], "parent_id": client_sub,
+                                        "parent_name": sid, "mime_type": "application/vnd.google-apps.shortcut",
+                                        "target_id": master_file_id,
+                                    })
                                     continue
                                 shortcut = await drive.create_shortcut(
                                     http, access_token, image["name"], master_file_id, client_sub
                                 )
                                 if shortcut:
                                     report["shortcuts_created"] += 1
+                                    ledger.append({
+                                        "id": shortcut, "name": image["name"], "parent_id": client_sub,
+                                        "parent_name": sid, "mime_type": "application/vnd.google-apps.shortcut",
+                                        "target_id": master_file_id,
+                                    })
                                 else:
                                     report["errors"].append(f"{config['slug']}/{sid}: shortcut failed for {image['name']}")
                             if expected_names:
@@ -766,6 +831,7 @@ async def run_drive_exports(
                                 report["errors"].append(
                                     f"{config['slug']}/{form_id}: stale-submission cleanup failed ({type(exc).__name__})"
                                 )
+                        await _record_export_ledger(pool, config["slug"], form_id, ledger)
             finally:
                 if own_http:
                     await http.aclose()

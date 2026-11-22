@@ -23,7 +23,7 @@ from psycopg_pool import AsyncConnectionPool
 from core import drive_exports
 from services import submission_media
 from services.google_drive_delivery import GoogleDriveClient
-from services.drive_cleanup import purge_form_folders
+from services.drive_cleanup import trash_form_folders
 from tests.postgres_harness import SCHEMA_PATH, apply_schema, resolve_test_database_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +148,10 @@ class FakeDrive:
         ]
         return folders + files
 
+    async def trash_file(self, http, token, file_id):
+        self.deleted_files.append(file_id)
+        return True
+
     async def delete_file(self, http, token, file_id):
         for key, value in list(self.folders.items()):
             if value == file_id:
@@ -249,6 +253,32 @@ async def test_per_form_settings_control_fields_and_images(store, monkeypatch, t
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_concurrent_form_overrides_keep_both_writes(store):
+    pool, _conn = store
+    await drive_exports.save_client(pool, {
+        "slug": "concurrent", "display_name": "Concurrent", "kind": "client",
+        "folder_name": "Concurrent", "enabled": True, "form_ids": ["TB_A", "TB_B"],
+        "fields": ["submission_id"], "statuses": ["APPROVED"],
+        "vehicle_types": [], "include_images": False,
+    }, "tester")
+    await asyncio.gather(
+        drive_exports.save_client_form(pool, "concurrent", "TB_A", {
+            "fields": ["status"], "statuses": ["APPROVED"],
+            "vehicle_types": [], "include_images": False,
+        }, "tester"),
+        drive_exports.save_client_form(pool, "concurrent", "TB_B", {
+            "fields": ["created_at"], "statuses": ["APPROVED"],
+            "vehicle_types": [], "include_images": False,
+        }, "tester"),
+    )
+    saved = await drive_exports.get_client(pool, "concurrent")
+    assert set(saved["form_settings"]) == {"TB_A", "TB_B"}
+    assert saved["form_settings"]["TB_A"]["fields"] == ["status"]
+    assert saved["form_settings"]["TB_B"]["fields"] == ["created_at"]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_client_save_preserves_output_defaults(store):
     pool, _conn = store
     await drive_exports.save_client(pool, {
@@ -330,6 +360,8 @@ async def test_turning_form_images_off_clears_old_shortcuts(store, monkeypatch, 
         "fields": ["submission_id"], "statuses": ["APPROVED"],
         "vehicle_types": [], "include_images": False,
     }, "tester")
+    saved = await drive_exports.get_client(pool, "images-off")
+    assert saved["form_settings"]["TB_IMG"]["include_images"] is False
     second = await drive_exports.run_drive_exports(
         pool, client=fake, http_client=object(), token="token", root_folder_id="root"
     )
@@ -384,10 +416,17 @@ async def test_export_uploads_images_once_and_shortcuts_each_client(store, monke
     assert sid.encode() in client_a_sheet[2]
     settings = await drive_exports.get_settings(pool)
     assert settings["last_report"]["status"] == "ok"
+    ledger_rows = conn.execute(
+        "SELECT object_name,state FROM drive_name_ledger "
+        "WHERE entity_type='export' AND entity_id LIKE 'client-a/%'"
+    ).fetchall()
+    assert ledger_rows
+    assert all(row["state"] == "ACTIVE" for row in ledger_rows)
+    assert {"TB_TEST", "Images"} <= {row["object_name"] for row in ledger_rows}
 
 
 @pytest.mark.asyncio
-async def test_purge_form_folders_removes_current_and_legacy_layouts():
+async def test_trash_form_folders_moves_current_and_legacy_layouts():
     fake = FakeDrive()
     settings = {
         "master_folder_name": "Master Export",
@@ -416,16 +455,16 @@ async def test_purge_form_folders_removes_current_and_legacy_layouts():
     fake.files[("old-client-sub", "photo.webp")] = "old-client-file"
     fake.files[("old-master-sub", "photo.webp")] = "old-master-file"
 
-    deleted = await purge_form_folders(
+    trashed, ledger = await trash_form_folders(
         fake, object(), "token", "root", settings, "OLD_FORM"
     )
 
-    assert deleted >= 10
+    assert trashed >= 1
     assert {
-        "old-client-form", "old-client-images", "old-client-sub", "old-client-file",
-        "old-internal-form", "old-master-form", "old-master-sub", "old-master-file",
+        "old-client-form", "old-internal-form", "old-master-form",
         "old-legacy-form", "old-legacy-internal-form",
     }.issubset(set(fake.deleted_files))
+    assert {"old-client-file", "old-master-file"}.issubset({item["id"] for item in ledger})
     assert "keep-form" not in fake.deleted_files
     assert "client-a" not in fake.deleted_files
     assert "master" not in fake.deleted_files

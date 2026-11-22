@@ -14,7 +14,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from core.trash import add_trash_item, compact_trash, last_compaction, list_trash, record_drive_ledger, run_compaction
+from core.trash import add_trash_item, compact_trash, ensure_form_trash, last_compaction, list_trash, record_drive_ledger, run_compaction
 from services.form_engine import FormSchema
 from core.state import verify_admin_auth
 from routers import admin_forms
@@ -131,6 +131,26 @@ def test_migration_013_retunes_retention(database):
                 conn.execute("INSERT INTO trash_items VALUES ('00000000-0000-0000-0000-000000000002', NULL, 'four_hourly')")
         finally:
             root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_archived_form_gets_one_trash_snapshot(pool):
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                "CREATE TABLE IF NOT EXISTS deleted_forms (id SERIAL PRIMARY KEY,form_id VARCHAR(64),title TEXT,schema_json JSONB,deleted_at TIMESTAMPTZ DEFAULT now(),deleted_by TEXT)"
+            )
+            await cur.execute(
+                "INSERT INTO deleted_forms(form_id,title,schema_json) VALUES ('OLD_FORM','Old form','{}'::jsonb)"
+            )
+    first = await ensure_form_trash(pool, "OLD_FORM")
+    second = await ensure_form_trash(pool, "OLD_FORM")
+    assert first and first == second
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT count(*) FROM trash_items WHERE entity_id='OLD_FORM'")
+            assert (await cur.fetchone())[0] == 1
 
 
 @pytest.mark.postgres
