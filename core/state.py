@@ -115,11 +115,19 @@ def require_admin_same_origin(request: Request) -> None:
     if not source or not host:
         raise HTTPException(status_code=403, detail="Cross-origin request rejected")
     parsed = urlsplit(source)
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().lower()
+    allowed_schemes = {request.url.scheme.lower()}
+    allowed_hosts = {host.lower()}
+    if forwarded_proto:
+        allowed_schemes.add(forwarded_proto)
+    if forwarded_host:
+        allowed_hosts.add(forwarded_host)
     if (
         parsed.username
         or parsed.password
-        or parsed.scheme.lower() != request.url.scheme.lower()
-        or parsed.netloc.lower() != host.lower()
+        or parsed.scheme.lower() not in allowed_schemes
+        or parsed.netloc.lower() not in allowed_hosts
     ):
         raise HTTPException(status_code=403, detail="Cross-origin request rejected")
 

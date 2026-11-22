@@ -94,13 +94,17 @@ def test_admin_role_map_fails_closed_and_scopes_writes():
 def test_admin_posts_require_exact_same_origin():
     from starlette.requests import Request
 
-    def request(headers):
+    def request(headers, scheme="https"):
         return Request({
-            "type": "http", "method": "POST", "scheme": "https", "path": "/admin/accounts",
+            "type": "http", "method": "POST", "scheme": scheme, "path": "/admin/accounts",
             "headers": [(b"host", b"admin.test"), *headers],
         })
 
     require_admin_same_origin(request([(b"origin", b"https://admin.test")]))
+    require_admin_same_origin(request(
+        [(b"origin", b"https://admin.test"), (b"x-forwarded-proto", b"https")],
+        scheme="http",
+    ))
     for headers in (
         [],
         [(b"origin", b"http://admin.test")],
