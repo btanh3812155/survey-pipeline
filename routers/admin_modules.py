@@ -42,10 +42,12 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
             definition = json.loads(definition)
         enabled = bool(module["enabled"])
         card = f"""
-<article class="module" data-search="{_esc(module_id + ' ' + module['display_name'] + ' ' + kind)}">
-  <header><div><strong>{_esc(module['display_name'])}</strong> <code>{_esc(module_id)}</code>
-    <span class="badge">{_esc(kind)}</span><span class="badge">v{_esc(module['module_version'])}</span>
-    <span class="badge {'enabled' if enabled else 'disabled'}">{'enabled' if enabled else 'disabled'}</span></div></header>
+<details class="module" data-search="{_esc(module_id + ' ' + module['display_name'] + ' ' + kind)}">
+  <summary>
+    <span class="title"><strong>{_esc(module['display_name'])}</strong> <code>{_esc(module_id)}</code></span>
+    <span class="meta"><span class="badge">{_esc(kind)}</span><span class="badge">v{_esc(module['module_version'])}</span>
+    <span class="badge {'enabled' if enabled else 'disabled'}">{'enabled' if enabled else 'disabled'}</span></span>
+  </summary>
   <form method="post" action="/admin/modules/{_esc(module_id)}">
     <div class="grid"><label>Name<input name="display_name" value="{_esc(module['display_name'])}" maxlength="100" required></label>
       <label>Module version<input name="module_version" value="{_esc(module['module_version'])}" maxlength="32" required></label></div>
@@ -58,7 +60,7 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
     <form method="post" action="/admin/modules/{_esc(module_id)}/delete" onsubmit="return confirm('Delete {_esc(module_id)}?')"><button class="danger" type="submit">Delete</button></form>
   </div>
   {f'<form method="post" action="/admin/modules/{_esc(module_id)}/run"><label>Test inputs (JSON)<textarea name="inputs" rows="3">{{"target": 7, "total": 10}}</textarea></label><button type="submit">Run safely</button></form>' if kind == 'logic' else ''}
-</article>"""
+</details>"""
         cards.append(card)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logic &amp; Object Modules</title>
 <style>
@@ -66,7 +68,13 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
 * {{ box-sizing:border-box }} body {{ margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif }} main {{ max-width:1100px; margin:auto; padding:24px }}
 h1 {{ font-size:1.4rem }} h2 {{ font-size:1rem }} .hint,.muted {{ color:var(--muted) }} .flash {{ padding:10px; margin:12px 0; border:1px solid var(--line); border-radius:8px }}
 .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px }} .module {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin:12px 0 }}
-.module header,.actions {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap }} .badge {{ border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); font-size:.75rem }} .enabled {{ color:#86efac }} .disabled {{ color:#fca5a5 }}
+.module > summary {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; cursor:pointer; list-style:none; }}
+.module > summary::-webkit-details-marker {{ display:none; }}
+.module > summary::after {{ content:'▾'; color:var(--muted); }}
+.module[open] > summary::after {{ transform:rotate(180deg); }}
+.module > summary .meta {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }}
+.module > summary + form {{ margin-top:12px; }}
+.actions {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }} .badge {{ border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); font-size:.75rem }} .enabled {{ color:#86efac }} .disabled {{ color:#fca5a5 }}
 label {{ display:block; margin:10px 0; color:var(--muted); font-size:.85rem }} input,textarea,select {{ display:block; width:100%; margin-top:4px; padding:9px; background:#09111e; color:var(--fg); border:1px solid var(--line); border-radius:6px; font: .9rem ui-monospace,monospace }}
 textarea {{ resize:vertical }} button {{ border:0; border-radius:6px; background:#0369a1; color:white; padding:8px 12px; cursor:pointer }} button.danger {{ background:#991b1b }} pre {{ overflow:auto; background:#09111e; padding:10px }} .actions {{ justify-content:flex-start; margin:10px 0 }} .actions form {{ display:inline }}
 </style></head><body><main><h1>Logic &amp; Object Modules</h1><p class="muted">Registry records are database-backed. Object definitions drive image extraction. Logic execution is limited to implementations compiled into the app; stored JSON never executes code.</p>
