@@ -7,21 +7,21 @@
   const superadmin = role === 'superadmin';
   const operator = superadmin || role === 'manager';
   const links = [
-    ...(operator ? [['/admin/forms', 'Biểu mẫu']] : []),
-    ['/admin/submissions', 'Dữ liệu nộp'],
+    ...(operator ? [['/admin/forms', 'nav_forms']] : []),
+    ['/admin/submissions', 'nav_submissions'],
     ...(operator ? [
-      ['/admin/audit', 'Audit'],
-      ['/admin/media', 'Media'],
-      ['/admin/ctvs', 'CTV'],
-      ['/admin/image-objects', 'Ảnh/Object'],
-      ['/admin/modules', 'Module'],
-      ['/admin/exports', 'Exports'],
+      ['/admin/audit', 'nav_audit'],
+      ['/admin/media', 'nav_media'],
+      ['/admin/ctvs', 'nav_ctvs'],
+      ['/admin/image-objects', 'nav_image_objects'],
+      ['/admin/modules', 'nav_modules'],
+      ['/admin/exports', 'nav_exports'],
     ] : []),
-    ['/admin/account', 'Tài khoản của tôi'],
+    ['/admin/account', 'nav_account'],
     ...(superadmin ? [
-      ['/admin/accounts', 'Quản lý tài khoản'],
-      ['/admin/trash', 'Thùng rác'],
-      ['/admin/recovery/email', 'Email khôi phục'],
+      ['/admin/accounts', 'nav_accounts'],
+      ['/admin/trash', 'nav_trash'],
+      ['/admin/recovery/email', 'nav_recovery_email'],
     ] : []),
   ];
   const isActive = (href) => {
@@ -72,9 +72,10 @@
     + '<button type="button" aria-expanded="false" aria-controls="adminNavMenu"'
     + ' aria-label="Menu điều hướng quản trị"><span aria-hidden="true">&#9776;</span> Menu</button>'
     + '<span class="brand">Trust Bridge Admin</span>'
+    + '<button type="button" id="adminLangToggle" style="margin-left:auto;" aria-label="Đổi ngôn ngữ / Toggle language"><span id="adminLangCode">VI</span></button>'
     + '<div id="adminNavMenu" class="menu" hidden>'
-    + links.map(([href, label]) =>
-      `<a href="${href}"${isActive(href) ? ' class="active" aria-current="page"' : ''}>${label}</a>`
+    + links.map(([href, key]) =>
+      `<a href="${href}" data-i18n="${key}"${isActive(href) ? ' class="active" aria-current="page"' : ''}>${window.AdminI18n ? window.AdminI18n.t(key) : key}</a>`
     ).join('')
     + '</div></div>';
   const button = nav.querySelector('button');
@@ -83,6 +84,22 @@
     button.setAttribute('aria-expanded', String(open));
     menu.hidden = !open;
   };
+  const langButton = nav.querySelector('#adminLangToggle');
+  const langCode = nav.querySelector('#adminLangCode');
+  const updateLangCode = () => {
+    if (langCode) langCode.textContent = window.AdminI18n ? window.AdminI18n.getLang().toUpperCase() : 'VI';
+  };
+  if (langButton && window.AdminI18n) {
+    langButton.addEventListener('click', () => window.AdminI18n.toggle());
+    document.addEventListener('admin-language-change', () => {
+      updateLangCode();
+      nav.querySelectorAll('#adminNavMenu a[data-i18n]').forEach((link) => {
+        link.textContent = window.AdminI18n.t(link.dataset.i18n);
+      });
+    });
+    updateLangCode();
+    window.AdminI18n.apply(nav);
+  }
   button.addEventListener('click', () => setOpen(menu.hidden));
   menu.addEventListener('click', (event) => {
     if (event.target.closest('a')) setOpen(false);

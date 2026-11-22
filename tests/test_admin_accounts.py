@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import quote
 from uuid import uuid4
+from pathlib import Path
 
 import httpx
 import pytest
@@ -305,7 +306,22 @@ def test_accounts_page_has_role_section_and_manage_panel():
     assert "Phân quyền tài khoản" in page
     assert f'action="{ACCOUNTS}/role"' in page
     assert 'name="username"' in page
-    assert "<summary>Quản lý</summary>" in page
+    assert "<summary data-i18n=\"manage\">Quản lý</summary>" in page
+    assert 'data-i18n="role_section_heading"' in page
+    assert 'data-i18n="manage"' in page
+    assert 'data-role-label="superadmin"' in page
+    assert "Quản trị tối cao" in page
     assert f'action="{ACCOUNT_PASSWORD_PAGE}"' in page
     assert 'name="current_password"' in page
     assert f'action="{ACCOUNTS}/member/activate"' in page
+
+
+def test_admin_language_toggle_assets_are_wired():
+    static_dir = Path(__file__).resolve().parents[1] / "static" / "ui"
+    nav = (static_dir / "admin_nav.js").read_text(encoding="utf-8")
+    i18n = (static_dir / "admin_i18n.js").read_text(encoding="utf-8")
+    assert "adminLangToggle" in nav
+    assert "AdminI18n.toggle" in nav
+    assert "localStorage.getItem('tb_lang')" in i18n
+    assert "accounts_title" in i18n and "Admin account management" in i18n
+    assert "role_superadmin" in i18n and "Quản trị tối cao" in i18n

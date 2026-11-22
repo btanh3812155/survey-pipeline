@@ -307,6 +307,7 @@ async def inject_admin_nav(request, call_next):
             body = body.replace(b"</head>", meta + b"</head>", 1)
         if b"</body>" in body:
             nav_script = (
+                f'<script src="/static/ui/admin_i18n.js?v={quote(settings.APP_BUILD_ID, safe="")}" defer></script>'
                 f'<script src="/static/ui/admin_nav.js?v={quote(settings.APP_BUILD_ID, safe="")}" defer></script>'
             ).encode()
             body = body.replace(b"</body>", nav_script + b"</body>", 1)

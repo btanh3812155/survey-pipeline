@@ -84,29 +84,50 @@ def _redirect(path: str = ACCOUNTS_PATH, **params: str) -> RedirectResponse:
     return RedirectResponse(url=f"{path}?{urlencode(params)}", status_code=303)
 
 
+ROLE_LABELS = {
+    "superadmin": "Quản trị tối cao",
+    "manager": "Quản lý",
+    "reviewer": "Kiểm duyệt",
+    "viewer": "Chỉ xem",
+}
+
+
+def _role_label(role: str) -> str:
+    return ROLE_LABELS.get(role, role)
+
+
 def _role_options(selected: str = "") -> str:
     return "".join(
-        f'<option value="{role}"{" selected" if role == selected else ""}>{role}</option>'
+        f'<option value="{role}" data-role-label="{role}"'
+        f'{" selected" if role == selected else ""}>{html.escape(_role_label(role))}</option>'
         for role in ADMIN_ROLES
     )
 
 
-def _action_form(username: str, operation: str, label: str, *, danger: bool = False, fields: str = "") -> str:
+def _action_form(
+    username: str, operation: str, label: str, *, danger: bool = False,
+    fields: str = "", label_key: str = "",
+) -> str:
     action = html.escape(f"{ACCOUNTS_PATH}/{quote(username, safe='')}/{operation}")
     button_class = ' class="danger"' if danger else ""
+    label_attr = f' data-i18n="{label_key}"' if label_key else ""
     return (
         f'<form method="post" action="{action}">{fields}'
-        f'<button type="submit"{button_class}>{label}</button></form>'
+        f'<button type="submit"{button_class}{label_attr}>{label}</button></form>'
     )
 
 
-def _render(title: str, admin_user: str, content: str, msg: str = "", err: str = "") -> str:
+def _render(
+    title: str, admin_user: str, content: str, msg: str = "", err: str = "",
+    title_key: str = "",
+) -> str:
     notice = ""
     if msg in MESSAGES:
-        notice = f'<div class="notice ok">{html.escape(MESSAGES[msg])}</div>'
+        notice = f'<div class="notice ok" data-i18n="msg_{msg}">{html.escape(MESSAGES[msg])}</div>'
     if err in ERRORS:
-        notice = f'<div class="notice bad">{html.escape(ERRORS[err])}</div>'
+        notice = f'<div class="notice bad" data-i18n="err_{err}">{html.escape(ERRORS[err])}</div>'
     title = html.escape(title)
+    title_attr = f' data-i18n="{title_key}"' if title_key else ""
 
     return f"""<!DOCTYPE html>
 <html lang="vi">
@@ -152,8 +173,8 @@ tr:last-child td {{ border-bottom:none; }}
 </head>
 <body>
 <main>
-<h1>{title}</h1>
-<p class="sub">Đang đăng nhập: <code>{html.escape(admin_user)}</code></p>
+<h1{title_attr}>{title}</h1>
+<p class="sub"><span data-i18n="logged_in">Đang đăng nhập:</span> <code>{html.escape(admin_user)}</code></p>
 {notice}
 {content}
 </main>
@@ -168,34 +189,36 @@ def _date(value) -> str:
 def _password_form(action: str) -> str:
     return f"""
     <form method="post" action="{action}">
-      <label>Mật khẩu hiện tại<input type="password" name="current_password" required autocomplete="current-password"></label>
-      <label>Mật khẩu mới (12–1024 ký tự ASCII in được)<input type="password" name="new_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-      <label>Nhập lại mật khẩu mới<input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-      <button type="submit">Đổi mật khẩu</button>
+      <label><span data-i18n="current_password">Mật khẩu hiện tại</span><input type="password" name="current_password" required autocomplete="current-password"></label>
+      <label><span data-i18n="new_password_hint">Mật khẩu mới (12–1024 ký tự ASCII in được)</span><input type="password" name="new_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+      <label><span data-i18n="confirm_new_password">Nhập lại mật khẩu mới</span><input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+      <button type="submit" data-i18n="change_password">Đổi mật khẩu</button>
     </form>"""
 
 
 def _manage_panel(username: str, admin_user: str, role: str, active: bool) -> str:
     if username == admin_user:
         body = _password_form(ACCOUNT_PASSWORD_PATH)
-        body += f'<p><a href="{ACCOUNT_PATH}">Mở trang tài khoản của tôi</a></p>'
+        body += f'<p><a href="{ACCOUNT_PATH}" data-i18n="open_my_account">Mở trang tài khoản của tôi</a></p>'
     else:
         body = _action_form(
-            username, "role", "Cập nhật vai trò",
-            fields=f'<label>Vai trò mới<select name="role">{_role_options(role)}</select></label>',
+            username, "role", "Cập nhật vai trò", label_key="update_role_short",
+            fields=f'<label><span data-i18n="new_role">Vai trò mới</span><select name="role">{_role_options(role)}</select></label>',
         )
         body += (
-            _action_form(username, "deactivate", "Tắt tài khoản", danger=True) if active
-            else _action_form(username, "activate", "Bật tài khoản")
+            _action_form(username, "deactivate", "Tắt tài khoản", danger=True, label_key="deactivate_account") if active
+            else _action_form(username, "activate", "Bật tài khoản", label_key="activate_account")
         )
-        body += _action_form(username, "delete", "Xóa tài khoản", danger=True)
-    return f'<details class="manage"><summary>Quản lý</summary><div class="manage-body">{body}</div></details>'
+        body += _action_form(username, "delete", "Xóa tài khoản", danger=True, label_key="delete_account")
+    return f'<details class="manage"><summary data-i18n="manage">Quản lý</summary><div class="manage-body">{body}</div></details>'
 
 
 def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> str:
     role_accounts = "".join(
-        f'<option value="{html.escape(str(account["username"]))}">{html.escape(str(account["username"]))} '
-        f'({html.escape(str(account["role"]))})</option>'
+        f'<option value="{html.escape(str(account["username"]))}" '
+        f'data-account-option data-account-username="{html.escape(str(account["username"]))}" '
+        f'data-account-role="{html.escape(str(account["role"]))}">'
+        f'{html.escape(str(account["username"]))} ({html.escape(_role_label(str(account["role"])))})</option>'
         for account in accounts
     )
     rows = []
@@ -205,65 +228,67 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
         active = account["is_active"]
         actions = _manage_panel(username, admin_user, role, active)
         rows.append(
-            f'<tr><td><code>{html.escape(username)}</code></td><td>{html.escape(role)}</td>'
-            f'<td><span class="badge {"on" if active else "off"}">{"Hoạt động" if active else "Đã tắt"}</span></td>'
+            f'<tr><td><code>{html.escape(username)}</code></td>'
+            f'<td><span data-role-label="{html.escape(str(role))}">{html.escape(_role_label(str(role)))}</span></td>'
+            f'<td><span class="badge {"on" if active else "off"}" data-i18n="{"status_on" if active else "status_off"}">{"Hoạt động" if active else "Đã tắt"}</span></td>'
             f'<td>{_date(account["created_at"])}</td><td><div class="actions">{actions}</div></td></tr>'
         )
     bin_rows = []
     for account in deleted:
         username = account["username"]
         bin_rows.append(
-            f'<tr><td><code>{html.escape(username)}</code></td><td>{html.escape(account["role"])}</td>'
+            f'<tr><td><code>{html.escape(username)}</code></td>'
+            f'<td><span data-role-label="{html.escape(str(account["role"]))}">{html.escape(_role_label(str(account["role"])))}</span></td>'
             f'<td>{_date(account["deleted_at"])}</td><td>{html.escape(account["deleted_by"] or "-")}</td>'
-            f'<td>{_action_form(username, "restore", "Khôi phục")}</td></tr>'
+            f'<td>{_action_form(username, "restore", "Khôi phục", label_key="restore")}</td></tr>'
         )
-    empty_row = '<tr><td colspan="5" class="muted">Không có tài khoản.</td></tr>'
+    empty_row = '<tr><td colspan="5" class="muted" data-i18n="empty_accounts">Không có tài khoản.</td></tr>'
     content = f"""
 <section class="card">
-  <h2>Tạo tài khoản quản trị</h2>
+  <h2 data-i18n="account_create_heading">Tạo tài khoản quản trị</h2>
   <form method="post" action="{ACCOUNTS_PATH}">
-    <label>Tên đăng nhập<input type="text" name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\\-]+" required autocomplete="off"></label>
-    <label>Vai trò<select name="role" required><option value="" disabled selected>Chọn vai trò</option>{_role_options()}</select></label>
-    <label>Mật khẩu (12–1024 ký tự ASCII in được)<input type="password" name="password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-    <label>Nhập lại mật khẩu<input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
-    <button type="submit">Tạo tài khoản</button>
+    <label><span data-i18n="username">Tên đăng nhập</span><input type="text" name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\\-]+" required autocomplete="off"></label>
+    <label><span data-i18n="role">Vai trò</span><select name="role" required><option value="" disabled selected data-i18n="choose_role">Chọn vai trò</option>{_role_options()}</select></label>
+    <label><span data-i18n="password_hint">Mật khẩu (12–1024 ký tự ASCII in được)</span><input type="password" name="password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+    <label><span data-i18n="confirm_password">Nhập lại mật khẩu</span><input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
+    <button type="submit" data-i18n="create_account">Tạo tài khoản</button>
   </form>
 </section>
 <section class="card">
-  <h2>Phân quyền tài khoản</h2>
-  <p class="muted">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa superadmin cuối cùng.</p>
+  <h2 data-i18n="role_section_heading">Phân quyền tài khoản</h2>
+  <p class="muted" data-i18n="role_section_hint">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa superadmin cuối cùng.</p>
   <form method="post" action="{ACCOUNTS_PATH}/role" class="inline-form">
-    <label>Tài khoản<select name="username" required>{role_accounts}</select></label>
-    <label>Vai trò mới<select name="role" required><option value="" disabled selected>Chọn vai trò</option>{_role_options()}</select></label>
-    <button type="submit">Cập nhật vai trò</button>
+    <label><span data-i18n="account">Tài khoản</span><select name="username" required>{role_accounts}</select></label>
+    <label><span data-i18n="new_role">Vai trò mới</span><select name="role" required><option value="" disabled selected data-i18n="choose_role">Chọn vai trò</option>{_role_options()}</select></label>
+    <button type="submit" data-i18n="update_role">Cập nhật vai trò</button>
   </form>
 </section>
-<h2>Tài khoản quản trị</h2>
+<h2 data-i18n="accounts_table_heading">Tài khoản quản trị</h2>
 <table>
-  <thead><tr><th>Tên đăng nhập</th><th>Vai trò</th><th>Trạng thái</th><th>Tạo lúc</th><th></th></tr></thead>
+  <thead><tr><th data-i18n="th_username">Tên đăng nhập</th><th data-i18n="th_role">Vai trò</th><th data-i18n="th_status">Trạng thái</th><th data-i18n="th_created">Tạo lúc</th><th></th></tr></thead>
   <tbody>{''.join(rows) or empty_row}</tbody>
 </table>
-<h2>Thùng rác</h2>
-<p class="sub">Có thể khôi phục tài khoản trong vòng 30 ngày sau khi xóa.</p>
+<h2 data-i18n="trash_heading">Thùng rác</h2>
+<p class="sub" data-i18n="trash_hint">Có thể khôi phục tài khoản trong vòng 30 ngày sau khi xóa.</p>
 <table>
-  <thead><tr><th>Tên đăng nhập</th><th>Vai trò</th><th>Xóa lúc</th><th>Người xóa</th><th></th></tr></thead>
+  <thead><tr><th data-i18n="th_username">Tên đăng nhập</th><th data-i18n="th_role">Vai trò</th><th data-i18n="th_deleted_at">Xóa lúc</th><th data-i18n="th_deleted_by">Người xóa</th><th></th></tr></thead>
   <tbody>{''.join(bin_rows) or empty_row}</tbody>
 </table>"""
-    return _render("Quản lý tài khoản quản trị", admin_user, content, msg, err)
+    return _render("Quản lý tài khoản quản trị", admin_user, content, msg, err, title_key="accounts_title")
 
 
 def _render_own_account(admin_user: str, account, msg: str = "", err: str = "") -> str:
     content = f"""
 <section class="card">
-  <h2>Tài khoản của tôi</h2>
-  <p><b>Tên đăng nhập:</b> <code>{html.escape(admin_user)}</code></p>
-  <p><b>Vai trò:</b> {html.escape(str(account.get("role") or ""))}</p>
+  <h2 data-i18n="account_self_heading">Tài khoản của tôi</h2>
+  <p><b><span data-i18n="username">Tên đăng nhập</span>:</b> <code>{html.escape(admin_user)}</code></p>
+  <p><b><span data-i18n="role">Vai trò</span>:</b> <span data-role-label="{html.escape(str(account.get("role") or ""))}">{html.escape(_role_label(str(account.get("role") or "")))}</span></p>
 </section>
 <section class="card">
-  <h2>Đổi mật khẩu</h2>
+  <h2 data-i18n="change_password_heading">Đổi mật khẩu</h2>
   {_password_form(ACCOUNT_PASSWORD_PATH)}
 </section>"""
-    return _render("Tài khoản của tôi", admin_user, content, msg, err)
+    return _render("Tài khoản của tôi", admin_user, content, msg, err, title_key="account_title")
 
 
 @router.get(ACCOUNTS_PATH, response_class=HTMLResponse)
