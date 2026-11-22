@@ -309,6 +309,8 @@ async def restore_drive_ledger(
         for row in roots:
             if await drive.untrash_file(http, token, str(row["drive_id"])):
                 restored += 1
+        if len(roots) and restored != len(roots):
+            return {"status": "partial", "restored": restored, "roots": len(roots)}
         async with pool.connection() as conn:
             async with conn.transaction(), conn.cursor() as cur:
                 await cur.execute(
