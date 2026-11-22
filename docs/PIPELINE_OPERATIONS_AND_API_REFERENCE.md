@@ -152,6 +152,22 @@ The engine resolves dependency graphs dynamically:
 - `kind: "logic"` runs an allowlisted module from `/admin/modules`; its declared `inputs` are mapped by name.
 - `kind: "engine"` references an enabled `engine` module from `/admin/modules` (also exposed by `/api/v1/image-objects`); `params_schema` keys become inputs, and form answers are available to the engine.
 - `kind: "all"` is a composite check. Its inputs reference earlier modules only; it passes when every referenced module passed.
+- `kind: "distribution"` is a read-only cross-submission report. Its inputs reference `single_choice`, `multiple_choice`, or `dropdown` questions and it emits one `<question_id>_distribution` output per question. It never runs in the per-submission reject pipeline. `GET /api/v1/forms/{form_id}/distributions` returns `[{question_id, title, type, answered, values:[{value, count, percent}]}]` for each enabled distribution module; multi-choice values are counted once per submission and percentages use the number of submissions that answered that question.
+```json
+{
+  "uid": "dist1",
+  "name": "Answer distribution",
+  "kind": "distribution",
+  "enabled": true,
+  "scope": "form",
+  "inputs": [
+    {"name": "vehicle", "source": "question", "question_id": "vehicle"},
+    {"name": "policies", "source": "question", "question_id": "policies"}
+  ],
+  "outputs": []
+}
+```
+The report shape is `{"modules": [{"uid": "...", "distribution": [{"question_id": "vehicle", "answered": 100, "values": [{"value": "car", "count": 73, "percent": 73.0}, ...]}]}]}`. Multi-choice answers arrive from the web form as comma-separated labels and are also accepted as JSON arrays; each option counts at most once per submission.
 - Outputs are persisted as `form_data.module_outputs` and included in the submission response. Because they live in `form_data`, selected Drive export fields include them.
 - `reject_on_false` turns a false module output into a rejected submission with `reject_message`.
 - `scope` is `form`, `question`, or `slot`. `question` requires `question_id`; `slot` requires `question_id` plus `slot_index` pointing at an existing image slot. Scope controls which editor section owns the module and labels the failure; execution order remains the ordered `settings.modules` list.

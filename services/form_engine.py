@@ -174,7 +174,7 @@ class FormModuleOutput(BaseModel):
 class FormModule(BaseModel):
     uid: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,64}$")
     name: str = Field(..., min_length=1, max_length=100)
-    kind: str = "logic"  # logic | engine | all
+    kind: str = "logic"  # logic | engine | all | distribution
     module_id: Optional[str] = None
     enabled: bool = True
     scope: str = "form"  # form | question | slot
@@ -187,12 +187,22 @@ class FormModule(BaseModel):
 
     @model_validator(mode="after")
     def _module_contract(self) -> "FormModule":
-        if self.kind not in {"logic", "engine", "all"}:
-            raise ValueError("module kind must be logic, engine or all")
+        if self.kind not in {"logic", "engine", "all", "distribution"}:
+            raise ValueError("module kind must be logic, engine, all or distribution")
         if self.kind in {"logic", "engine"} and not self.module_id:
             raise ValueError(f"module '{self.name}' requires module_id")
-        if self.kind == "all" and self.module_id:
-            raise ValueError(f"composite module '{self.name}' must not set module_id")
+        if self.kind in {"all", "distribution"} and self.module_id:
+            raise ValueError(f"module '{self.name}' must not set module_id")
+        if self.kind == "distribution":
+            if self.scope != "form":
+                raise ValueError(f"distribution module '{self.name}' must use form scope")
+            if self.reject_on_false:
+                raise ValueError(f"distribution module '{self.name}' cannot reject submissions")
+            for inp in self.inputs:
+                if inp.source != "question":
+                    raise ValueError(
+                        f"distribution module '{self.name}' inputs must reference questions"
+                    )
         if self.scope not in {"form", "question", "slot"}:
             raise ValueError("module scope must be form, question or slot")
         if self.scope == "form":
@@ -341,6 +351,15 @@ class FormSchema(BaseModel):
                     raise ValueError(
                         f"Module '{module.name}' tham chiếu câu hỏi chưa tồn tại: '{inp.question_id}'"
                     )
+                if module.kind == "distribution":
+                    target = questions_by_id.get(inp.question_id or "")
+                    if target is None or target.type not in {
+                        QuestionType.SINGLE_CHOICE, QuestionType.MULTIPLE_CHOICE, QuestionType.DROPDOWN,
+                    }:
+                        raise ValueError(
+                            f"Distribution module '{module.name}' chỉ nhận câu hỏi single/multiple choice: "
+                            f"'{inp.question_id}'"
+                        )
                 if inp.source in {"output", "module"} and inp.module_uid not in seen_modules:
                     raise ValueError(
                         f"Module '{module.name}' chỉ được tham chiếu module nằm trước nó: '{inp.module_uid}'"

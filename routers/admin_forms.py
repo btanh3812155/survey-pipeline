@@ -209,6 +209,25 @@ async def export_forms(admin_user: str = Depends(verify_admin_auth)):
     )
 
 
+@router.get("/api/v1/forms/{form_id}/distributions")
+async def form_distributions(form_id: str, admin_user: str = Depends(verify_admin_auth)):
+    """Read-only answer distributions for enabled distribution modules on one form."""
+    refresh_form_registry_from_disk()
+    schema = FORM_REGISTRY.get(form_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Không tìm thấy biểu mẫu")
+    pool = get_db_pool()
+    if not pool:
+        raise HTTPException(status_code=503, detail="Cơ sở dữ liệu chưa sẵn sàng")
+    from services.form_distributions import run_form_distributions
+    try:
+        reports = await run_form_distributions(schema, pool)
+    except Exception as exc:
+        logger.warning(f"Distribution report failed for {form_id}: {type(exc).__name__}")
+        raise HTTPException(status_code=503, detail="Không thể tính phân bố câu trả lời.") from exc
+    return {"form_id": form_id, "modules": reports}
+
+
 @router.get("/api/v1/forms/{form_id}/export")
 async def export_form(form_id: str, admin_user: str = Depends(verify_admin_auth)):
     """Download one form in the same JSON shape used by the import endpoint."""

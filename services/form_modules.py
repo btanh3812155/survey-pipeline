@@ -85,6 +85,18 @@ async def run_form_modules(
     failure = None
 
     for module in configured:
+        if module.kind == "distribution":
+            module_results[module.uid] = {
+                "passed": True,
+                "reason": "",
+                "scope": "form",
+                "question_id": None,
+                "slot_index": None,
+                "outputs": {},
+                "aggregate_only": True,
+            }
+            module_outputs[module.uid] = {}
+            continue
         resolved: dict[str, Any] = {}
         for inp in module.inputs:
             resolved[inp.name] = _resolve(inp, answers, module_outputs, module_results)

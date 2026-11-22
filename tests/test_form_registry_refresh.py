@@ -7,7 +7,6 @@ after another "worker" writes a JSON directly, and a separate Python process
 that must pick the same file up through refresh_form_registry_from_disk().
 """
 
-import base64
 import json
 import os
 import subprocess
@@ -17,7 +16,6 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import core.state as state
-from config import settings
 from main import app
 from services.form_engine import FormQuestion, FormSchema, FormSettings, QuestionType
 
@@ -49,13 +47,6 @@ def _schema_dict(form_id: str, title: str = "Refresh test") -> dict:
         ],
     )
     return json.loads(schema.model_dump_json())
-
-
-def _auth_headers() -> dict:
-    token = base64.b64encode(
-        f"{settings.ADMIN_USERNAME}:{settings.ADMIN_PASSWORD}".encode("utf-8")
-    ).decode("ascii")
-    return {"Authorization": f"Basic {token}"}
 
 
 def test_refresh_detects_new_changed_and_deleted_forms(tmp_path, monkeypatch):
@@ -105,9 +96,9 @@ def test_endpoints_see_form_written_by_another_worker():
     )
     try:
         client = TestClient(app)
-        headers = _auth_headers()
+        app.dependency_overrides[state.verify_admin_auth] = lambda: "refresh-admin"
 
-        edit_page = client.get(f"/admin/forms/edit/{form_id}", headers=headers)
+        edit_page = client.get(f"/admin/forms/edit/{form_id}")
         assert edit_page.status_code == 200, edit_page.text[:300]
         assert "Sibling worker form" in edit_page.text
 
@@ -123,6 +114,7 @@ def test_endpoints_see_form_written_by_another_worker():
         assert public_page.status_code == 200
         assert "Sibling worker form" in public_page.text
     finally:
+        app.dependency_overrides.pop(state.verify_admin_auth, None)
         form_path.unlink(missing_ok=True)
         state.FORM_REGISTRY.pop(form_id, None)
         state.refresh_form_registry_from_disk(force=True)

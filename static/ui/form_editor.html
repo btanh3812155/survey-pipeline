@@ -1436,13 +1436,13 @@
             };
         }
         function normalizeFormModule(raw) {
-            const kind = raw && ['logic', 'engine', 'all'].includes(raw.kind) ? raw.kind : 'logic';
+            const kind = raw && ['logic', 'engine', 'all', 'distribution'].includes(raw.kind) ? raw.kind : 'logic';
             const scope = raw && ['form', 'question', 'slot'].includes(raw.scope) ? raw.scope : 'form';
             return {
                 uid: raw && raw.uid ? String(raw.uid) : newModuleUid(),
                 name: raw && raw.name != null ? String(raw.name) : '',
                 kind,
-                module_id: kind === 'all' ? '' : String((raw && raw.module_id) || ''),
+                module_id: ['all', 'distribution'].includes(kind) ? '' : String((raw && raw.module_id) || ''),
                 enabled: !(raw && raw.enabled === false),
                 scope,
                 question_id: scope !== 'form' && raw && raw.question_id != null ? String(raw.question_id) : '',
@@ -1502,6 +1502,7 @@
             if (!module) return [];
             if (module.kind === 'all') return ['passed'];
             if (module.kind === 'engine') return ['passed', 'reason'];
+            if (module.kind === 'distribution') return [];
             const def = logicModuleDef(module.module_id);
             if (!def) return [];
             const raw = Array.isArray(def.outputs) ? def.outputs : [];
@@ -1535,8 +1536,129 @@
                 literal: firstQuestion ? null : ''
             };
         }
+        function distributionQuestions() {
+            return questions.filter(q => ['single_choice', 'multiple_choice', 'dropdown'].includes(String(q.type || '')));
+        }
+        function distributionOutputKeys(module) {
+            return (module.inputs || [])
+                .map(input => String(input.question_id || input.name || '').trim())
+                .filter(Boolean)
+                .map(qid => `${qid}_distribution`);
+        }
+        function renderDistributionInputs(midx) {
+            const module = formModules[midx];
+            const choices = distributionQuestions();
+            const rows = (module.inputs || []).map((input, iidx) => {
+                const selected = String(input.question_id || '');
+                const known = choices.some(q => String(q.id || '') === selected);
+                return `<div class="row-2" style="align-items:end;">
+                    <div class="field-group">
+                        <label>Câu hỏi single/multi choice</label>
+                        <select onchange="setDistributionQuestion(${midx}, ${iidx}, this.value)">
+                            <option value="">-- Chọn câu hỏi --</option>
+                            ${choices.map(q => `<option value="${escapeHtml(q.id || '')}" ${String(q.id || '') === selected ? 'selected' : ''}>${escapeHtml((q.title || q.id) + ' (' + q.id + ')')}</option>`).join('')}
+                            ${selected && !known ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected + ' (không tìm thấy / không phải choice)')}</option>` : ''}
+                        </select>
+                    </div>
+                    <div class="field-group" style="justify-content:flex-end;">
+                        <button type="button" class="btn-delete" onclick="removeDistributionInput(${midx}, ${iidx})">Bỏ câu hỏi</button>
+                    </div>
+                </div>`;
+            }).join('');
+            if (!choices.length) {
+                return `<div style="font-size:0.78rem; color:#fbbf24;">Form chưa có câu hỏi single choice, multiple choice hoặc dropdown.</div>`;
+            }
+            return rows + `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addDistributionInput(${midx})">+ Thêm câu hỏi phân bố</button>`;
+        }
+        function addDistributionInput(midx) {
+            const module = formModules[midx];
+            if (!module) return;
+            const used = new Set((module.inputs || []).map(input => String(input.question_id || '')));
+            const question = distributionQuestions().find(q => !used.has(String(q.id || '')));
+            if (!question) {
+                alert('Không còn câu hỏi choice nào để thêm, hoặc đã chọn hết.');
+                return;
+            }
+            if (!Array.isArray(module.inputs)) module.inputs = [];
+            module.inputs.push({
+                name: String(question.id || ''),
+                source: 'question',
+                question_id: String(question.id || ''),
+                module_uid: '',
+                output_key: '',
+                literal: null
+            });
+            renderModuleSurfaces();
+        }
+        function setDistributionQuestion(midx, iidx, qid) {
+            const module = formModules[midx];
+            const input = module && module.inputs ? module.inputs[iidx] : null;
+            if (!input) return;
+            input.source = 'question';
+            input.question_id = String(qid || '');
+            input.name = String(qid || '') || input.name;
+            renderModuleSurfaces();
+        }
+        function removeDistributionInput(midx, iidx) {
+            const module = formModules[midx];
+            if (!module || !Array.isArray(module.inputs)) return;
+            module.inputs.splice(iidx, 1);
+            renderModuleSurfaces();
+        }
+        async function loadDistributionPreview(midx) {
+            const module = formModules[midx];
+            const output = document.getElementById(`distributionPreview_${midx}`);
+            if (!module || !output) return;
+            const formId = (document.getElementById('formId')?.value || '').trim();
+            if (!formId) {
+                output.textContent = 'Lưu form trước, rồi tải thống kê.';
+                return;
+            }
+            output.textContent = 'Đang tải thống kê đã lưu...';
+            try {
+                const resp = await fetch(`/api/v1/forms/${encodeURIComponent(formId)}/distributions`, { credentials: 'include' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                const report = (Array.isArray(data.modules) ? data.modules : []).find(item => item.uid === module.uid);
+                if (!report) {
+                    output.textContent = 'Chưa có báo cáo. Lưu form và thử lại.';
+                    return;
+                }
+                if (!Array.isArray(report.distribution) || !report.distribution.length) {
+                    output.textContent = 'Chưa có câu hỏi nào được chọn hoặc chưa có dữ liệu.';
+                    return;
+                }
+                output.textContent = report.distribution.map(item => {
+                    const lines = (item.values || []).map(value => `  ${value.value}: ${value.count} (${value.percent}%)`);
+                    return `${item.title || item.question_id} [${item.type}] - ${item.answered} bài trả lời\n${lines.join('\n')}`;
+                }).join('\n\n');
+            } catch (e) {
+                output.textContent = 'Không tải được thống kê: ' + ((e && e.message) || 'lỗi không xác định');
+            }
+        }
         function syncModuleStructure(module) {
             if (!module) return;
+            if (module.kind === 'distribution') {
+                module.scope = 'form';
+                module.module_id = '';
+                module.reject_on_false = false;
+                module.outputs = [];
+                const choiceIds = new Set(distributionQuestions().map(q => String(q.id || '')));
+                module.inputs = (Array.isArray(module.inputs) ? module.inputs : []).map(input => {
+                    const normalized = normalizeModuleInput(input);
+                    const qid = choiceIds.has(normalized.question_id) ? normalized.question_id : '';
+                    return {
+                        ...normalized,
+                        name: qid || normalized.name || '',
+                        source: 'question',
+                        question_id: qid,
+                        module_uid: '',
+                        output_key: '',
+                        literal: null
+                    };
+                });
+                return;
+            }
             if (module.kind === 'all') {
                 if (!Array.isArray(module.inputs)) module.inputs = [];
                 module.inputs = module.inputs.map(input => ({
@@ -1721,6 +1843,7 @@
         }
         function renderModuleCard(module, midx, scopeContext = null) {
             const isAll = module.kind === 'all';
+            const isDistribution = module.kind === 'distribution';
             const scopeIndexes = scopeContext
                 ? scopedModuleIndexes(scopeContext.scope, scopeContext.question_id, scopeContext.slot_index)
                 : formModules.map((_module, index) => index);
@@ -1737,6 +1860,8 @@
             let moduleSelect = '';
             if (isAll) {
                 moduleSelect = '<select disabled><option>Tổng hợp - không dùng module_id</option></select>';
+            } else if (isDistribution) {
+                moduleSelect = '<input type="text" disabled value="Tính phân bố trên toàn bộ bài gửi">';
             } else if (module.kind === 'logic') {
                 const known = logicModules.some(item => item.module_id === module.module_id);
                 moduleSelect = `<select onchange="setModuleChoice(${midx}, this.value)">
@@ -1758,14 +1883,21 @@
             const kindOptions = [
                 ['logic', 'Logic module'],
                 ['engine', 'Check engine'],
-                ['all', 'Tổng hợp (all)']
+                ['all', 'Tổng hợp (all)'],
+                ['distribution', 'Distribution (thống kê đáp án)']
             ];
-            const inputsHtml = isAll ? renderAllModuleInputs(midx) : renderTypedModuleInputs(module, midx);
-            const outputsHtml = (module.outputs || []).map((output, oidx) => `<div class="field-group">
+            const inputsHtml = isDistribution ? renderDistributionInputs(midx) : (isAll ? renderAllModuleInputs(midx) : renderTypedModuleInputs(module, midx));
+            const outputsHtml = isDistribution
+                ? distributionOutputKeys(module).map(key => `<div class="field-group"><label><code style="color:#38bdf8;">${escapeHtml(key)}</code> - output tự động</label><input type="text" disabled value="${escapeHtml(key)}"></div>`).join('')
+                : (module.outputs || []).map((output, oidx) => `<div class="field-group">
                 <label><code style="color:#38bdf8;">${escapeHtml(output.key)}</code> - tên output</label>
                 <input type="text" value="${escapeHtml(output.name || '')}" placeholder="${escapeHtml(defaultModuleOutputName(module, output.key))}" oninput="setModuleOutputName(${midx}, ${oidx}, this.value)">
             </div>`).join('');
-            return `<div class="question-item" style="gap:12px; ${isAll ? 'border-color:#7c3aed;' : ''}">
+            const distributionPreview = isDistribution ? `<div style="background:#020617; border:1px solid #334155; border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:8px;">
+                <button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="loadDistributionPreview(${midx})">Tải thống kê đã lưu</button>
+                <pre id="distributionPreview_${midx}" style="white-space:pre-wrap; margin:0; color:#cbd5e1; font-size:0.75rem;">Lưu form, rồi bấm tải thống kê.</pre>
+            </div>` : '';
+            return `<div class="question-item" style="gap:12px; ${isAll ? 'border-color:#7c3aed;' : ''}${isDistribution ? 'border-color:#0ea5e9;' : ''}">
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <span style="font-weight:800; color:#60a5fa; font-size:0.82rem; min-width:26px;">#${midx + 1}</span>
                     <input type="text" value="${escapeHtml(module.name)}" placeholder="Tên module" oninput="setModuleName(${midx}, this.value)" style="flex:1; min-width:150px; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
@@ -1797,18 +1929,19 @@
                     ${inputsHtml || `<div style="font-size:0.75rem; color:#64748b;">${isAll ? 'Chưa có input. Thêm input để tham chiếu module phía trên.' : 'Module này không có input.'}</div>`}
                     ${isAll ? `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addAllModuleInput(${midx})">+ Thêm input</button>` : ''}
                 </div>
+                ${distributionPreview}
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Outputs (tên output công khai)</div>
                     <div class="row-2">${outputsHtml || '<div style="font-size:0.75rem; color:#64748b;">Chưa có output.</div>'}</div>
                 </div>
-                <div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
+                ${isDistribution ? '' : `<div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
                     <label class="toggle-switch">
                         <input type="checkbox" ${module.reject_on_false ? 'checked' : ''} onchange="setModuleReject(${midx}, this.checked)">
                         <span class="toggle-slider"></span>
                         <span>Từ chối bài gửi khi module không đạt</span>
                     </label>
                     <input type="text" value="${escapeHtml(module.reject_message || '')}" placeholder="Thông báo từ chối (tùy chọn)" oninput="setModuleRejectMessage(${midx}, this.value)" style="background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.82rem;">
-                </div>
+                </div>`}
             </div>`;
         }
         function renderFormModules() {
@@ -1906,11 +2039,13 @@
         }
         function setModuleKind(idx, kind) {
             const module = formModules[idx];
-            if (!module || !['logic', 'engine', 'all'].includes(kind) || module.kind === kind) return;
+            if (!module || !['logic', 'engine', 'all', 'distribution'].includes(kind) || module.kind === kind) return;
             module.kind = kind;
             module.inputs = [];
             module.outputs = [];
-            module.module_id = kind === 'all' ? '' : firstModuleIdForKind(kind);
+            module.reject_on_false = false;
+            module.scope = kind === 'distribution' ? 'form' : module.scope;
+            module.module_id = ['all', 'distribution'].includes(kind) ? '' : firstModuleIdForKind(kind);
             syncModuleStructure(module);
             renderModuleSurfaces();
         }
@@ -2028,6 +2163,18 @@
                 const module = formModules[i];
                 const label = `Module #${i + 1}`;
                 if (!String(module.name || '').trim()) return `${label} chưa có tên.`;
+                if (module.kind === 'distribution') {
+                    const chosen = new Set();
+                    const choices = new Set(distributionQuestions().map(q => String(q.id || '')));
+                    if (!module.inputs || !module.inputs.length) return `${label} chưa chọn câu hỏi phân bố.`;
+                    for (const input of module.inputs) {
+                        if (input.source !== 'question' || !input.question_id) return `${label}: câu hỏi phân bố chưa được chọn.`;
+                        if (!choices.has(String(input.question_id))) return `${label}: "${input.question_id}" không phải câu hỏi choice.`;
+                        if (chosen.has(String(input.question_id))) return `${label}: câu hỏi "${input.question_id}" bị lặp.`;
+                        chosen.add(String(input.question_id));
+                    }
+                    continue;
+                }
                 if (module.kind !== 'all' && !module.module_id) return `${label} chưa chọn module.`;
                 if (module.scope === 'question' || module.scope === 'slot') {
                     const target = questions.find(q => q.id === module.question_id);
@@ -2066,13 +2213,13 @@
         }
         function cleanFormModules() {
             return formModules.map(module => {
-                const kind = ['logic', 'engine', 'all'].includes(module.kind) ? module.kind : 'logic';
+                const kind = ['logic', 'engine', 'all', 'distribution'].includes(module.kind) ? module.kind : 'logic';
                 const scope = ['form', 'question', 'slot'].includes(module.scope) ? module.scope : 'form';
                 return {
                     uid: module.uid,
                     name: String(module.name || '').trim(),
                     kind,
-                    module_id: kind === 'all' ? '' : String(module.module_id || ''),
+                    module_id: ['all', 'distribution'].includes(kind) ? '' : String(module.module_id || ''),
                     enabled: module.enabled !== false,
                     scope,
                     question_id: scope === 'form' ? null : String(module.question_id || ''),
@@ -2082,7 +2229,7 @@
                         key: String(output.key || '').trim(),
                         name: String(output.name || '').trim() || defaultModuleOutputName(module, output.key)
                     })).filter(output => output.key),
-                    reject_on_false: Boolean(module.reject_on_false),
+                    reject_on_false: kind === 'distribution' ? false : Boolean(module.reject_on_false),
                     reject_message: String(module.reject_message || '')
                 };
             });
