@@ -114,8 +114,8 @@ def _render(title: str, admin_user: str, content: str, msg: str = "", err: str =
 <style>
 :root {{ --bg:#090d16; --surface:#131b2e; --border:#23314f; --text:#f8fafc; --muted:#94a3b8; --accent:#2563eb; --danger:#ef4444; --ok:#10b981; }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; padding:24px; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }}
-main {{ max-width:1100px; margin:0 auto; }}
+body {{ margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }}
+main {{ max-width:1100px; margin:0 auto; padding:24px; }}
 h1 {{ font-size:1.3rem; margin:0 0 4px; }}
 p.sub {{ color:var(--muted); margin:0 0 20px; font-size:.85rem; }}
 .card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }}
