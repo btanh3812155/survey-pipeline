@@ -12,6 +12,7 @@ Modular decoupled architecture orchestrating domain routers:
 - routers/survey: Public WebRTC survey ingress, blur pre-checks, dual-AI audits, fraud screening.
 """
 
+import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -94,6 +95,7 @@ logger = logging.getLogger("main_api")
 async def lifespan(app: FastAPI):
     global http_client, redis_client, db_pool
     startup_pool = None
+    trash_compaction_task = None
 
     try:
         # 1. Initialize HTTP client pool
@@ -198,6 +200,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("[DRIVE EXPORTS] init failed: %s", type(e).__name__)
 
+        # 3g. Non-blocking DB trash compaction scheduler (migration 014).
+        try:
+            from core.trash import start_trash_compaction
+            trash_compaction_task = start_trash_compaction(
+                state.db_pool,
+                settings.TRASH_COMPACT_INTERVAL_SEC,
+                settings.TRASH_COMPACT_INITIAL_DELAY_SEC,
+            )
+            if trash_compaction_task:
+                logger.info("[TRASH] compaction scheduler started")
+        except Exception as e:
+            logger.warning("[TRASH] scheduler init failed: %s", type(e).__name__)
+
         # 4. Seed media directory
         seed_media_storage()
 
@@ -233,6 +248,13 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("[POSTGRES] unpublished pool cleanup failed: %s", e)
             startup_pool = None
+        if trash_compaction_task is not None:
+            trash_compaction_task.cancel()
+            try:
+                await trash_compaction_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            trash_compaction_task = None
         # Partial startup and normal shutdown share this cleanup path.
         if state.db_pool:
             try:

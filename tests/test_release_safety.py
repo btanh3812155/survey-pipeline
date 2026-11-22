@@ -25,6 +25,7 @@ MIGRATIONS = (
     "011_engine_modules.sql",
     "012_db_trash.sql",
     "013_trash_retention_policy.sql",
+    "014_trash_compaction_runs.sql",
 )
 TARGET = ("--target", "production", "--schema", "002")
 RUNTIME = (
@@ -81,7 +82,7 @@ elif args[0] == 'stop':
     event('pause')
 elif args[0] == 'start':
     assert len(args) == 2 and args[1] in ('app-id', 'worker-id'), args
-    assert len(ledger.read_text().splitlines()) == 13
+    assert len(ledger.read_text().splitlines()) == 14
     assert (root / 'main.py').read_text() == 'RELEASE = "new"\n'
     event('start ' + args[1])
     if args[1] == 'worker-id':
@@ -239,8 +240,8 @@ def test_manual_path_verifies_target_migrates_before_start_and_can_roll_back(rel
                       "migrate 007", "ledger 7", "migrate 008", "ledger 8", "migrate 009", "ledger 9",
                       "migrate 010", "ledger 10", "migrate 011", "ledger 11",
                       "migrate 012", "ledger 12", "migrate 013", "ledger 13",
-                      "ledger 13", "start worker-id", "worker health",
-                      "start app-id", "GET /health", "GET /ready", "ledger 13", "worker health",
+                      "migrate 014", "ledger 14", "ledger 14", "start worker-id", "worker health",
+                      "start app-id", "GET /health", "GET /ready", "ledger 14", "worker health",
                       "GET /health", "GET /ready", "queue read"]
     outcome = json.loads(next(line.split("=", 1)[1] for line in result.stdout.splitlines()
                               if line.startswith("DEPLOY_RESULT=")))
@@ -253,7 +254,7 @@ def test_manual_path_verifies_target_migrates_before_start_and_can_roll_back(rel
     assert (target / "main.py").read_text() == 'RELEASE = "old"\n'
     assert not (target / "core/extra.py").exists()
     assert (state / "ledger").read_text().splitlines() == ledger
-    assert (state / "events").read_text().splitlines() == ["ssh fixture", "inspect", "ledger 13", "pause"]
+    assert (state / "events").read_text().splitlines() == ["ssh fixture", "inspect", "ledger 14", "pause"]
     assert_runtime(target, staging)
 
 
@@ -333,7 +334,7 @@ def test_standalone_smoke_is_read_only_and_fails_closed_on_stale_heartbeat(relea
     assert result.returncode == 0, result.stderr
     assert 'OUTBOX_METRICS={"failed": 2, "uncertain": 1' in result.stdout
     assert (state / "events").read_text().splitlines() == [
-        "ssh fixture", "inspect", "ledger 13", "worker health", "GET /health", "GET /ready", "queue read"
+        "ssh fixture", "inspect", "ledger 14", "worker health", "GET /health", "GET /ready", "queue read"
     ]
     result = run(*TARGET, script="smoke_prod.sh", HEARTBEAT="121")
     assert result.returncode != 0 and "heartbeat check failed" in result.stderr

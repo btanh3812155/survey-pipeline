@@ -399,8 +399,10 @@ async def list_deleted_items(
 @router.get("/admin/trash", response_class=HTMLResponse)
 async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
     """Minimal trash browser with restore actions."""
-    from core.trash import RETENTION_FREQUENCIES, list_trash
-    items = await list_trash(get_db_pool(), limit=500)
+    from core.trash import RETENTION_FREQUENCIES, last_compaction, list_trash
+    pool = get_db_pool()
+    items = await list_trash(pool, limit=500)
+    last_run = await last_compaction(pool)
     rows = []
     for item in items:
         meta = item.get("metadata") or {}
@@ -414,6 +416,14 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
             f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Restore</button></td></tr>"
         )
     policy = "".join(f"<li><b>{html.escape(k)}</b>: {html.escape(v)}</li>" for k, v in RETENTION_FREQUENCIES.items())
+    last_html = "No compaction has run yet."
+    if last_run:
+        last_html = (
+            f"#{last_run['id']} {html.escape(str(last_run['status']))} "
+            f"at {html.escape(str(last_run['finished_at'] or last_run['started_at']))} "
+            f"(kept {last_run['kept']}, removed {last_run['removed']}, "
+            f"protected {last_run['protected_recent']})"
+        )
     return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Trash</title><style>
 :root{{color-scheme:dark;--bg:#0b1220;--panel:#131d30;--line:#2a3952;--fg:#e5edf7;--muted:#9aabc1;--accent:#38bdf8}}
@@ -423,8 +433,17 @@ th{{color:var(--accent)}}.muted{{color:var(--muted);font-size:.78rem}}code{{colo
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}}
 </style></head><body><main><h1>Trash</h1><p class=muted>Forms restore intact. Submissions restore to MANUAL_REVIEW; outbox and Telegram effects are not replayed.</p>
 <div class=card><b>Retention</b><ul>{policy}</ul></div>
+<div class=card><b>Last compaction</b><div id=lastCompaction>{last_html}</div>
+<button onclick="runCompaction()" style="margin-top:8px;">Run compaction now</button></div>
 <table><thead><tr><th>ID</th><th>Type</th><th>Entity</th><th>Deleted</th><th>Artifacts</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=6 class=muted>Trash is empty.</td></tr>'}</tbody></table>
 <script>
+async function runCompaction() {{
+  if (!confirm('Run trash compaction now?')) return;
+  const resp = await fetch('/api/v1/admin/trash/compact', {{method:'POST', credentials:'include'}});
+  const body = await resp.json().catch(() => ({{}}));
+  if (resp.ok) window.location.reload();
+  else alert(body.detail || 'Compaction failed');
+}}
 async function restoreTrash(id) {{
   if (!confirm('Restore this item? Forms restore intact; submissions restore to MANUAL_REVIEW.')) return;
   const resp = await fetch('/api/v1/admin/trash/' + encodeURIComponent(id) + '/restore', {{method:'POST', credentials:'include'}});
@@ -462,6 +481,21 @@ def _restore_media(metadata: dict) -> dict:
             os.makedirs(os.path.dirname(upload), exist_ok=True)
             shutil.move(fallback, upload)
     return {"status": "restored" if not warnings else "partial", "warnings": warnings}
+
+
+@router.get("/api/v1/admin/trash/compaction")
+async def trash_compaction_report(admin_user: str = Depends(verify_admin_auth)):
+    from core.trash import last_compaction
+    return {"last_run": await last_compaction(get_db_pool())}
+
+
+@router.post("/api/v1/admin/trash/compact")
+async def run_trash_compaction(admin_user: str = Depends(verify_admin_auth)):
+    from core.trash import run_compaction
+    report = await run_compaction(get_db_pool(), actor=admin_user)
+    if report.get("status") == "busy":
+        raise HTTPException(status_code=409, detail="Trash compaction is already running")
+    return report
 
 
 @router.post("/api/v1/admin/trash/{trash_id}/restore")

@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     DURABLE_MODERATION_ENABLED: bool = False
     DURABLE_DRIVE_ENABLED: bool = False
     DURABLE_APPEALS_ENABLED: bool = False
+    TRASH_COMPACT_INTERVAL_SEC: int = 3600
+    TRASH_COMPACT_INITIAL_DELAY_SEC: int = 60
     BILLING_PAYOUT_VND: Optional[int] = None
     BILLING_POLICY_VERSION: str = "configured-v1"
 

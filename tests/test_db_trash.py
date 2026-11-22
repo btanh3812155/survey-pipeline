@@ -14,7 +14,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from core.trash import add_trash_item, compact_trash, list_trash, record_drive_ledger
+from core.trash import add_trash_item, compact_trash, last_compaction, list_trash, record_drive_ledger, run_compaction
 from services.form_engine import FormSchema
 from core.state import verify_admin_auth
 from routers import admin_forms
@@ -135,6 +135,20 @@ def test_migration_013_retunes_retention(database):
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_run_compaction_persists_last_report(pool):
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await add_trash_item(cur, "form", "REPORT_FORM", "Report", {"form_id": "REPORT_FORM"}, "tester")
+    report = await run_compaction(pool, actor="tester")
+    assert report["status"] == "ok"
+    saved = await last_compaction(pool)
+    assert saved["id"] == report["run_id"]
+    assert saved["status"] == "ok"
+    assert saved["kept"] == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_admin_trash_page_renders(pool, monkeypatch):
     async with pool.connection() as conn:
         async with conn.transaction(), conn.cursor() as cur:
@@ -227,6 +241,28 @@ async def test_submission_restore_returns_to_manual_review(pool, tmp_path, monke
             await cur.execute("SELECT status FROM survey_submissions WHERE submission_id=%s", (sid,))
             assert (await cur.fetchone())[0] == "MANUAL_REVIEW"
     assert (tmp_path / "data" / "submission_photos" / sid / "slot_1.webp").exists()
+
+
+@pytest.mark.postgres
+def test_migration_014_creates_compaction_runs(database):
+    migrations = ROOT / "scripts" / "migrations"
+    previous = hashlib.sha256((migrations / "013_trash_retention_policy.sql").read_bytes()).hexdigest()
+    path = migrations / "014_trash_compaction_runs.sql"
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    migration = path.read_text().replace(":'migration_013_sha256'", f"'{previous}'").replace(":'migration_sha256'", f"'{checksum}'")
+    schema = "trash_runs_migration_" + uuid4().hex
+    with psycopg.connect(database, autocommit=True) as root:
+        root.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        try:
+            dsn = make_conninfo(database, options=f"-c search_path={schema}")
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                conn.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)")
+                conn.execute("INSERT INTO schema_migrations VALUES ('013',%s)", (previous,))
+                conn.execute(migration)
+                assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [("013",), ("014",)]
+                assert conn.execute("SELECT to_regclass('trash_compaction_runs') IS NOT NULL").fetchone() == (True,)
+        finally:
+            root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @pytest.mark.postgres

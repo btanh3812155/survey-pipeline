@@ -1,6 +1,7 @@
 """Database-side deletion trash, retention tiers, transaction audit, and Drive name/ID ledger."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -12,6 +13,7 @@ from psycopg.rows import dict_row
 logger = logging.getLogger("core.trash")
 
 LAST_SNAPSHOTS_KEPT = 10
+TRASH_COMPACT_LOCK_KEY = 764539269
 RETENTION_FREQUENCIES = {
     "hourly": "0-24 hours: one snapshot per entity per hour",
     "four_hourly": "1-7 days: one snapshot per entity per 4 hours",
@@ -162,7 +164,7 @@ async def record_drive_ledger(
     return len(entries)
 
 
-async def compact_trash(pool, now: datetime | None = None) -> dict[str, int]:
+async def _compact_trash_unlocked(pool, now: datetime | None = None) -> dict[str, int]:
     """Keep the last 10 snapshots plus one representative per retention bucket."""
     now = now or datetime.now(timezone.utc)
     if not pool:
@@ -217,6 +219,101 @@ async def compact_trash(pool, now: datetime | None = None) -> dict[str, int]:
                     (json.dumps({"kept": kept, "removed": removed, "protected_recent": protected_recent}),),
                 )
             return {"kept": kept, "removed": removed, "protected_recent": protected_recent}
+
+
+
+async def compact_trash(pool, now: datetime | None = None) -> dict[str, Any]:
+    """Run one compaction under a session advisory lock."""
+    if not pool:
+        return {"status": "unavailable", "kept": 0, "removed": 0, "protected_recent": 0}
+    async with pool.connection() as lock_conn:
+        lock_cur = await lock_conn.execute(
+            "SELECT pg_try_advisory_lock(%s)", (TRASH_COMPACT_LOCK_KEY,)
+        )
+        acquired = (await lock_cur.fetchone())[0]
+        if not acquired:
+            return {"status": "busy", "kept": 0, "removed": 0, "protected_recent": 0}
+        try:
+            report = await _compact_trash_unlocked(pool, now)
+            return {"status": "ok", **report}
+        finally:
+            try:
+                await lock_conn.execute("SELECT pg_advisory_unlock(%s)", (TRASH_COMPACT_LOCK_KEY,))
+            except Exception:
+                pass
+
+
+async def run_compaction(pool, actor: str = "system") -> dict[str, Any]:
+    """Run compaction and persist the last-run report."""
+    if not pool:
+        return {"status": "unavailable", "run_id": None}
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO trash_compaction_runs(status) VALUES ('running') RETURNING id"
+            )
+            run_id = (await cur.fetchone())[0]
+    report: dict[str, Any] = {"status": "failed", "kept": 0, "removed": 0, "protected_recent": 0}
+    try:
+        report = await compact_trash(pool)
+    except Exception as exc:
+        report = {"status": "failed", "kept": 0, "removed": 0, "protected_recent": 0,
+                  "error": type(exc).__name__}
+        logger.warning("trash compaction failed: %s", type(exc).__name__)
+    status = str(report.get("status") or "failed")
+    if status not in {"ok", "busy", "failed"}:
+        status = "failed"
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE trash_compaction_runs
+                   SET finished_at=clock_timestamp(),status=%s,kept=%s,removed=%s,
+                       protected_recent=%s,error=%s,details=%s::jsonb
+                   WHERE id=%s""",
+                (
+                    status, int(report.get("kept") or 0), int(report.get("removed") or 0),
+                    int(report.get("protected_recent") or 0), report.get("error"),
+                    json.dumps({"actor": actor[:64]}), run_id,
+                ),
+            )
+            await record_transaction(
+                cur, None, "TRASH_COMPACTION_RUN", actor,
+                {"run_id": run_id, **{k: report.get(k) for k in ("status", "kept", "removed", "protected_recent", "error")}},
+            )
+    return {"run_id": run_id, **report}
+
+
+async def last_compaction(pool) -> dict[str, Any] | None:
+    if not pool:
+        return None
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """SELECT id,started_at,finished_at,status,kept,removed,protected_recent,error,details
+                   FROM trash_compaction_runs ORDER BY id DESC LIMIT 1"""
+            )
+            return await cur.fetchone()
+
+
+async def trash_compaction_loop(pool, interval_sec: int, initial_delay_sec: int) -> None:
+    if not pool or interval_sec <= 0:
+        logger.info("[TRASH] periodic compaction disabled")
+        return
+    await asyncio.sleep(max(0, initial_delay_sec))
+    while True:
+        try:
+            await run_compaction(pool, actor="scheduler")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[TRASH] compaction loop failed: %s", type(exc).__name__)
+        await asyncio.sleep(max(1, interval_sec))
+
+
+def start_trash_compaction(pool, interval_sec: int, initial_delay_sec: int):
+    if not pool or interval_sec <= 0:
+        return None
+    return asyncio.create_task(trash_compaction_loop(pool, interval_sec, initial_delay_sec))
 
 
 async def list_trash(pool, limit: int = 200) -> list[dict[str, Any]]:

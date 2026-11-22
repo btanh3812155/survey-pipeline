@@ -360,6 +360,22 @@ CREATE INDEX IF NOT EXISTS idx_drive_name_ledger_entity
 CREATE INDEX IF NOT EXISTS idx_drive_name_ledger_state
     ON drive_name_ledger(state, last_seen_at DESC);
 
+-- Migration 014 fresh-install mirror: trash compaction run history.
+CREATE TABLE IF NOT EXISTS trash_compaction_runs (
+    id BIGSERIAL PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    finished_at TIMESTAMPTZ,
+    status VARCHAR(16) NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running','ok','busy','failed')),
+    kept INT NOT NULL DEFAULT 0,
+    removed INT NOT NULL DEFAULT 0,
+    protected_recent INT NOT NULL DEFAULT 0,
+    error TEXT,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_trash_compaction_runs_finished
+    ON trash_compaction_runs(finished_at DESC);
+
 -- Google Drive export settings and per-client access configuration (migration 009).
 CREATE TABLE IF NOT EXISTS drive_export_settings (
     singleton BOOLEAN PRIMARY KEY CHECK (singleton),
