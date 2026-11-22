@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS admin_accounts (
 -- Admin module registry (migration 008 fresh-install mirror).
 CREATE TABLE IF NOT EXISTS admin_module_registry (
     module_id VARCHAR(64) PRIMARY KEY CHECK (module_id ~ '^[A-Za-z0-9_-]{1,64}$'),
-    module_type VARCHAR(16) NOT NULL CHECK (module_type IN ('object','logic')),
+    module_type VARCHAR(16) NOT NULL CHECK (module_type IN ('object','logic','engine')),
     display_name VARCHAR(100) NOT NULL,
     module_version VARCHAR(32) NOT NULL,
     definition JSONB NOT NULL CHECK (jsonb_typeof(definition)='object'),
@@ -303,6 +303,10 @@ CREATE TABLE IF NOT EXISTS admin_module_registry_seed (
 );
 CREATE INDEX IF NOT EXISTS idx_admin_module_registry_type_enabled
     ON admin_module_registry(module_type,enabled,module_id);
+CREATE TABLE IF NOT EXISTS admin_module_engine_seed (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    seeded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
 
 -- Google Drive export settings and per-client access configuration (migration 009).
 CREATE TABLE IF NOT EXISTS drive_export_settings (

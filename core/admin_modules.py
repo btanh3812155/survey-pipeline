@@ -9,7 +9,13 @@ from typing import Any
 from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from services.image_objects import ImageObjectDefinition, load_registry, set_database_object_registry
+from services.image_objects import (
+    EngineDefinition,
+    ImageObjectDefinition,
+    load_registry,
+    set_database_engine_registry,
+    set_database_object_registry,
+)
 from services.logic_modules import IMPLEMENTATIONS, OUTPUTS, default_get_percentage_definition
 
 logger = logging.getLogger(__name__)
@@ -106,9 +112,11 @@ def _normalise_definition(module_id: str, module_type: str, definition: Any) -> 
             if not data["outputs"]:
                 data["outputs"] = list(OUTPUTS.get(data["implementation"], ["result"]))
             return data
+        if module_type == "engine":
+            return EngineDefinition.model_validate(payload).model_dump(mode="json")
     except (ValidationError, ValueError) as exc:
         raise ModuleDefinitionError(str(exc)) from exc
-    raise ModuleDefinitionError("module type must be object or logic")
+    raise ModuleDefinitionError("module type must be object, logic or engine")
 
 _MODULE_REGISTRY_AVAILABLE = False
 
@@ -144,11 +152,21 @@ async def ensure_admin_module_registry(pool) -> bool:
                              module_version, json.dumps(definition, ensure_ascii=False)),
                         )
                     await cur.execute("INSERT INTO admin_module_registry_seed(singleton) VALUES (TRUE)")
+                await cur.execute("SELECT 1 FROM admin_module_engine_seed WHERE singleton=TRUE")
+                if not await cur.fetchone():
+                    for module_id, engine in registry["engines"].items():
+                        await cur.execute(
+                            "INSERT INTO admin_module_registry(module_id,module_type,display_name,module_version,definition,enabled) "
+                            "VALUES (%s,'engine',%s,%s,%s::jsonb,TRUE) ON CONFLICT(module_id) DO NOTHING",
+                            (module_id, engine.label, str(engine.version),
+                             json.dumps(engine.model_dump(mode="json"), ensure_ascii=False)),
+                        )
+                    await cur.execute("INSERT INTO admin_module_engine_seed(singleton) VALUES (TRUE)")
         _MODULE_REGISTRY_AVAILABLE = True
-        await refresh_image_object_registry(pool)
+        await refresh_module_registries(pool)
     except Exception as exc:
         _MODULE_REGISTRY_AVAILABLE = False
-        logger.warning("admin module registry unavailable; apply migration 008 (%s)", type(exc).__name__)
+        logger.warning("admin module registry unavailable; apply migration 011 (%s)", type(exc).__name__)
         return False
     return True
 
@@ -184,6 +202,8 @@ async def save_module(
     payload = dict(definition) if isinstance(definition, dict) else definition
     if isinstance(payload, dict) and module_type == "logic":
         payload.update(id=module_id, name=display_name.strip(), version=module_version.strip())
+    if isinstance(payload, dict) and module_type == "engine":
+        payload.update(id=module_id, label=display_name.strip(), version=int(module_version.strip()))
     payload = _normalise_definition(module_id, module_type, payload)
     if not pool:
         raise RuntimeError("module registry database unavailable")
@@ -209,7 +229,7 @@ async def save_module(
                 "VALUES ('admin_modules','ADMIN_MODULE_SAVED','ADMIN',%s,'ADMIN',%s,%s::jsonb)",
                 (module_id, actor[:64], json.dumps({"module_type": module_type, "enabled": bool(enabled)})),
             )
-    if module_type == "object":
+    if module_type in {"object", "engine"}:
         await _refresh_objects_best_effort(pool)
     return row
 
@@ -232,7 +252,7 @@ async def set_module_enabled(pool, module_id: str, enabled: bool, actor: str) ->
                 "VALUES ('admin_modules','ADMIN_MODULE_TOGGLED','ADMIN',%s,'ADMIN',%s,%s::jsonb)",
                 (module_id, actor[:64], json.dumps({"module_type": row[0], "enabled": bool(enabled)})),
             )
-    if row[0] == "object":
+    if row[0] in {"object", "engine"}:
         await _refresh_objects_best_effort(pool)
     return True
 
@@ -254,41 +274,68 @@ async def delete_module(pool, module_id: str, actor: str) -> bool:
                 "VALUES ('admin_modules','ADMIN_MODULE_DELETED','ADMIN',%s,'ADMIN',%s,%s::jsonb)",
                 (module_id, actor[:64], json.dumps({"module_type": row[0]})),
             )
-    if row[0] == "object":
+    if row[0] in {"object", "engine"}:
         await _refresh_objects_best_effort(pool)
     return True
 
 
-async def refresh_image_object_registry(pool) -> None:
+async def refresh_module_registries(pool) -> None:
     if not pool or not _MODULE_REGISTRY_AVAILABLE:
         return
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT module_id,definition,enabled FROM admin_module_registry WHERE module_type='object'"
+                "SELECT module_id,module_type,definition,enabled FROM admin_module_registry "
+                "WHERE module_type IN ('object','engine')"
             )
             rows = await cur.fetchall()
+    engines: dict[str, EngineDefinition] = {}
     objects: dict[str, ImageObjectDefinition] = {}
     for row in rows:
         module_id = str(row["module_id"])
+        module_type = str(row["module_type"])
         definition = row["definition"]
         if isinstance(definition, str):
             definition = json.loads(definition)
-        if not isinstance(definition, dict) or definition.get("id") != module_id:
+        if not isinstance(definition, dict):
+            raise ModuleDefinitionError(f"invalid stored {module_type} definition: {module_id}")
+        if module_type == "engine":
+            if not bool(row["enabled"]):
+                continue
+            if definition.get("id") != module_id:
+                raise ModuleDefinitionError(f"invalid stored engine definition: {module_id}")
+            try:
+                engines[module_id] = EngineDefinition.model_validate(definition)
+            except ValidationError as exc:
+                raise ModuleDefinitionError(f"invalid stored engine definition: {module_id}") from exc
+            continue
+        if definition.get("id") != module_id:
             raise ModuleDefinitionError(f"invalid stored image object definition: {module_id}")
         try:
             obj = ImageObjectDefinition.model_validate(definition)
         except ValidationError as exc:
             raise ModuleDefinitionError(f"invalid stored image object definition: {module_id}") from exc
         objects[module_id] = obj.model_copy(update={"enabled": bool(row["enabled"])})
+    for obj in objects.values():
+        missing = sorted({binding.id for binding in obj.engines if binding.id not in engines})
+        if missing:
+            raise ModuleDefinitionError(
+                f"image object '{obj.id}' references missing/disabled engine(s): {', '.join(missing)}"
+            )
+    set_database_engine_registry(engines)
     set_database_object_registry(objects)
+
+
+async def refresh_image_object_registry(pool) -> None:
+    """Compatibility alias for callers that refresh the shared catalog."""
+    await refresh_module_registries(pool)
 
 
 async def _refresh_objects_best_effort(pool) -> None:
     try:
-        await refresh_image_object_registry(pool)
+        await refresh_module_registries(pool)
     except Exception as exc:
-        logger.error("[ADMIN MODULES] object registry refresh rejected: %s", type(exc).__name__)
+        logger.error("[ADMIN MODULES] module registry refresh rejected: %s", type(exc).__name__)
 
 
 async def execute_logic_module(pool, module_id: str, inputs: dict[str, Any]) -> dict[str, Any]:

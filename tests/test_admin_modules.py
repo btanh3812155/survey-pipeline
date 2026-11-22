@@ -43,7 +43,9 @@ async def store(database, monkeypatch):
     with psycopg.connect(database, autocommit=True, row_factory=dict_row) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS admin_module_registry" + module_block)
         conn.execute("CREATE TABLE IF NOT EXISTS system_audit_log" + audit)
+        conn.execute("CREATE TABLE IF NOT EXISTS admin_module_engine_seed (singleton BOOLEAN PRIMARY KEY CHECK (singleton), seeded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
     old_objects = image_objects._DATABASE_OBJECTS
+    old_engines = image_objects._DATABASE_ENGINES
     try:
         async with AsyncConnectionPool(database, open=False, min_size=1, max_size=4) as pool:
             assert await admin_modules.ensure_admin_module_registry(pool)
@@ -51,6 +53,7 @@ async def store(database, monkeypatch):
             yield pool, conn
     finally:
         image_objects._DATABASE_OBJECTS = old_objects
+        image_objects._DATABASE_ENGINES = old_engines
         image_objects._CACHE["signature"] = None
 
 
@@ -59,8 +62,10 @@ async def store(database, monkeypatch):
 async def test_registry_seeds_examples_and_runs_only_allowlisted_logic(store):
     pool, _conn = store
     modules = {row["module_id"]: row for row in await admin_modules.list_modules(pool)}
-    assert {"gsm-profile-screen", "get-percentage", "weekly_income"} <= set(modules)
+    assert {"gsm-profile-screen", "get-percentage", "weekly_income", "required_fields"} <= set(modules)
     assert modules["get-percentage"]["module_type"] == "logic"
+    assert modules["required_fields"]["module_type"] == "engine"
+    assert image_objects.get_engine("required_fields").implementation == "required_fields"
     assert "function" not in modules["get-percentage"]["definition"]
     result = await admin_modules.execute_logic_module(pool, "get-percentage", {"target": 7, "total": 10})
     assert result == {"percentage": 70.0}
@@ -72,6 +77,13 @@ async def test_registry_seeds_examples_and_runs_only_allowlisted_logic(store):
             "name": "unsafe", "version": "1", "description": "",
             "implementation": "os.system", "inputs": [],
         }, True, "tester")
+    await admin_modules.save_module(pool, "required_fields", "engine", "Required fields updated", "2", {
+        "version": 2, "label": "ignored", "description": "updated engine",
+        "implementation": "required_fields",
+        "params_schema": [{"key": "fields", "label": "Fields", "type": "array", "required": True}],
+        "conditions_schema": [],
+    }, True, "tester")
+    assert image_objects.get_engine("required_fields").description == "updated engine"
 
 
 @pytest.mark.postgres
@@ -93,6 +105,30 @@ async def test_gsm_profile_prompt_fields_and_disable(store):
     with pytest.raises(image_objects.ImageObjectDefinitionError):
         image_objects.resolve_slot_object({"object_type": "gsm-profile-screen"})
     assert image_objects.load_registry()["objects"]["gsm-profile-screen"].enabled is False
+
+
+@pytest.mark.postgres
+def test_migration_011_allows_engine_modules(database):
+    migrations = ROOT / "scripts" / "migrations"
+    previous = hashlib.sha256((migrations / "010_drive_export_form_settings.sql").read_bytes()).hexdigest()
+    path = migrations / "011_engine_modules.sql"
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    migration = path.read_text().replace(":'migration_010_sha256'", f"'{previous}'").replace(":'migration_sha256'", f"'{checksum}'")
+    schema = "engine_module_migration_" + uuid4().hex
+    with psycopg.connect(database, autocommit=True) as root:
+        root.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        try:
+            dsn = make_conninfo(database, options=f"-c search_path={schema}")
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                conn.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)")
+                conn.execute("INSERT INTO schema_migrations VALUES ('010',%s)", (previous,))
+                conn.execute("CREATE TABLE admin_module_registry (module_id TEXT PRIMARY KEY, module_type TEXT NOT NULL CHECK (module_type IN ('object','logic')))")
+                conn.execute(migration)
+                assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [("010",), ("011",)]
+                conn.execute("INSERT INTO admin_module_registry VALUES ('required_fields','engine')")
+                conn.execute(migration)
+        finally:
+            root.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @pytest.mark.postgres

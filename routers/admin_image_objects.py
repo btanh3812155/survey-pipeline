@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Admin management for file-defined image object types and check engines.
+Admin management for image object types; check engines are read-only here and
+edited as engine modules in the shared module registry.
 """
 
 import html
@@ -18,12 +19,10 @@ from services.image_objects import (
     ImageObjectDefinitionError,
     delete_object,
     get_definition_errors,
-    get_engine,
     list_engines,
     list_objects,
     load_registry,
     reload_registry,
-    save_engine,
     save_object,
 )
 
@@ -88,30 +87,13 @@ def _object_form(obj: Any) -> str:
 def _engine_card(engine: Any) -> str:
     raw = engine.model_dump(mode="json")
     engine_id = _esc(raw["id"])
-    options = "".join(
-        f'<option value="{_esc(name)}" {"selected" if name == raw["implementation"] else ""}>{_esc(name)}</option>'
-        for name in sorted(ENGINE_IMPLEMENTATIONS)
-    )
     return f"""
     <details class="card">
       <summary><span class="mono">{engine_id}</span> <span class="muted">{_esc(raw.get("label", ""))}</span></summary>
-      <div class="src">File: data/check_engines/{engine_id}.json</div>
-      <form method="post" action="/admin/image-objects/engines/{engine_id}">
-        <div class="grid">
-          <label>ID<input value="{engine_id}" disabled></label>
-          <label>Label<input name="label" value="{_esc(raw.get('label', ''))}" required></label>
-          <label>Implementation<select name="implementation">{options}</select></label>
-        </div>
-        <label>Description<textarea name="description" rows="2">{_esc(raw.get('description', ''))}</textarea></label>
-        <div class="grid">
-          <label>Params schema (JSON)<textarea name="params_schema" rows="9">{_esc(_json_text(raw.get('params_schema', [])))}</textarea></label>
-          <label>Conditions schema (JSON)<textarea name="conditions_schema" rows="9">{_esc(_json_text(raw.get('conditions_schema', [])))}</textarea></label>
-        </div>
-        <div class="actions"><button type="submit">Lưu engine</button></div>
-      </form>
+      <div class="src">Module registry engine module. Edit this definition in <a href="/admin/modules">Admin → Modules</a>.</div>
+      <pre>{_esc(_json_text(raw))}</pre>
     </details>
     """
-
 
 def render_image_objects_html(message: str = "", error: str = "", selected: Optional[str] = None) -> str:
     registry = load_registry()
@@ -374,44 +356,3 @@ async def delete_image_object(object_id: str, admin_user: str = Depends(verify_a
     if not deleted:
         raise HTTPException(status_code=404, detail=f"object '{object_id}' not found")
     return {"status": "ok", "object_id": object_id, "deleted": True}
-
-
-@router.post("/admin/image-objects/engines/{engine_id}")
-async def save_check_engine(
-    engine_id: str,
-    request: Request,
-    admin_user: str = Depends(verify_admin_auth),
-):
-    data = await _payload(request)
-    try:
-        existing = get_engine(engine_id)
-    except ImageObjectDefinitionError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    implementation = str(data.get("implementation") or existing.implementation)
-    if implementation not in ENGINE_IMPLEMENTATIONS:
-        raise HTTPException(status_code=400, detail="unknown implementation")
-    payload = {
-        "version": int(data.get("version") or existing.version),
-        "id": engine_id,
-        "label": data.get("label") or existing.label,
-        "description": data.get("description", existing.description),
-        "implementation": implementation,
-        "params_schema": _parse_json_field(data.get("params_schema"), "params_schema", existing.model_dump()["params_schema"]),
-        "conditions_schema": _parse_json_field(data.get("conditions_schema"), "conditions_schema", existing.model_dump()["conditions_schema"]),
-    }
-    try:
-        save_engine(engine_id, payload)
-    except (ValueError, ImageObjectDefinitionError) as exc:
-        logger.warning("[IMAGE ENGINES] save %s failed: %s", engine_id, exc)
-        if _wants_json(request):
-            raise HTTPException(status_code=400, detail=str(exc))
-        return RedirectResponse(
-            url=f"/admin/image-objects?error={html.escape(str(exc), quote=True)}",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    if _wants_json(request):
-        return {"status": "ok", "engine_id": engine_id}
-    return RedirectResponse(
-        url=f"/admin/image-objects?message=Đã+lưu+engine+{engine_id}",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )

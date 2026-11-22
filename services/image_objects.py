@@ -201,6 +201,7 @@ def engines_dir() -> str:
 
 _CACHE: Dict[str, Any] = {"signature": None, "registry": None}
 _DATABASE_OBJECTS: Optional[Dict[str, ImageObjectDefinition]] = None
+_DATABASE_ENGINES: Optional[Dict[str, EngineDefinition]] = None
 
 
 def set_database_object_registry(objects: Dict[str, ImageObjectDefinition]) -> None:
@@ -212,6 +213,18 @@ def set_database_object_registry(objects: Dict[str, ImageObjectDefinition]) -> N
         updated = dict(cached)
         updated["objects"] = dict(_DATABASE_OBJECTS)
         updated["objects_raw"] = {key: value.model_dump(mode="json") for key, value in _DATABASE_OBJECTS.items()}
+        _CACHE["registry"] = updated
+
+
+def set_database_engine_registry(engines: Dict[str, EngineDefinition]) -> None:
+    """Replace file engines with the latest database-backed module snapshot."""
+    global _DATABASE_ENGINES
+    _DATABASE_ENGINES = dict(engines)
+    cached = _CACHE.get("registry")
+    if cached is not None:
+        updated = dict(cached)
+        updated["engines"] = dict(_DATABASE_ENGINES)
+        updated["engines_raw"] = {key: value.model_dump(mode="json") for key, value in _DATABASE_ENGINES.items()}
         _CACHE["registry"] = updated
 
 
@@ -266,6 +279,10 @@ def load_registry(force: bool = False) -> Dict[str, Any]:
             continue
         engines[model.id] = model
         engine_raw[model.id] = raw
+
+    if _DATABASE_ENGINES is not None:
+        engines = dict(_DATABASE_ENGINES)
+        engine_raw = {key: value.model_dump(mode="json") for key, value in engines.items()}
 
     for path, _mtime, _size in _scan_dir(objects_dir()):
         try:

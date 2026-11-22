@@ -53,6 +53,7 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
       <label>Module version<input name="module_version" value="{_esc(module['module_version'])}" maxlength="32" required></label></div>
     <label>Definition JSON<textarea name="definition" rows="14" spellcheck="false" required>{_esc(_json_text(definition))}</textarea></label>
     {'<p class="hint">Python is not loaded or executed from the registry. This implementation is fixed in application code.</p><pre>' + _esc(SOURCES.get(definition.get('implementation'), 'Unknown implementation')) + '</pre>' if kind == 'logic' else ''}
+    {'<p class="hint">Check engine module. The implementation is allowlisted in application code; parameters and conditions are declarative JSON.</p>' if kind == 'engine' else ''}
     <button type="submit">Save definition</button>
   </form>
   <div class="actions">
@@ -62,7 +63,7 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
   {f'<form method="post" action="/admin/modules/{_esc(module_id)}/run"><label>Test inputs (JSON)<textarea name="inputs" rows="3">{{"target": 7, "total": 10}}</textarea></label><button type="submit">Run safely</button></form>' if kind == 'logic' else ''}
 </details>"""
         cards.append(card)
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logic &amp; Object Modules</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logic, Object &amp; Engine Modules</title>
 <style>
 :root {{ color-scheme:dark; --bg:#0b1220; --panel:#131d30; --line:#2a3952; --fg:#e5edf7; --muted:#9aabc1; --accent:#38bdf8; }}
 * {{ box-sizing:border-box }} body {{ margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif }} main {{ max-width:1100px; margin:auto; padding:24px }}
@@ -77,16 +78,25 @@ h1 {{ font-size:1.4rem }} h2 {{ font-size:1rem }} .hint,.muted {{ color:var(--mu
 .actions {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }} .badge {{ border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); font-size:.75rem }} .enabled {{ color:#86efac }} .disabled {{ color:#fca5a5 }}
 label {{ display:block; margin:10px 0; color:var(--muted); font-size:.85rem }} input,textarea,select {{ display:block; width:100%; margin-top:4px; padding:9px; background:#09111e; color:var(--fg); border:1px solid var(--line); border-radius:6px; font: .9rem ui-monospace,monospace }}
 textarea {{ resize:vertical }} button {{ border:0; border-radius:6px; background:#0369a1; color:white; padding:8px 12px; cursor:pointer }} button.danger {{ background:#991b1b }} pre {{ overflow:auto; background:#09111e; padding:10px }} .actions {{ justify-content:flex-start; margin:10px 0 }} .actions form {{ display:inline }}
-</style></head><body><main><h1>Logic &amp; Object Modules</h1><p class="muted">Registry records are database-backed. Object definitions drive image extraction. Logic execution is limited to implementations compiled into the app; stored JSON never executes code.</p>
+</style></head><body><main><h1>Logic, Object &amp; Engine Modules</h1><p class="muted">Registry records are database-backed. Object definitions drive image extraction. Check engines are engine modules in this same registry. Logic execution is limited to implementations compiled into the app; stored JSON never executes code.</p>
 {f'<div class="flash">{_esc(message or error)}</div>' if message or error else ''}
 <div class="grid"><label>Search modules<input id="search" type="search" placeholder="Name, id or type" oninput="filterModules()"></label></div>
 <section><h2>Registered modules ({len(modules)})</h2>{''.join(cards) or '<p class="muted">No modules registered.</p>'}</section>
 <section class="module"><h2>Create module</h2><form method="post" action="/admin/modules">
-<div class="grid"><label>Module id<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Type<select name="module_type"><option value="object">Image object</option><option value="logic">Logic</option></select></label><label>Name<input name="display_name" maxlength="100" required></label><label>Module version<input name="module_version" maxlength="32" value="1" required></label></div>
-<label>Definition JSON<textarea name="definition" rows="10" required>{{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
-<p class="hint">Logic definitions must reference an allowlisted implementation, such as <code>get_percentage</code>; adding arbitrary Python requires a reviewed application-code change.</p><button type="submit">Create module</button></form></section>
+<div class="grid"><label>Module id<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Type<select name="module_type" id="moduleType" onchange="setModuleTemplate(this.value)"><option value="object">Image object</option><option value="logic">Logic</option><option value="engine">Check engine</option></select></label><label>Name<input name="display_name" maxlength="100" required></label><label>Module version<input name="module_version" maxlength="32" value="1" required></label></div>
+<label>Definition JSON<textarea id="moduleDefinition" name="definition" rows="10" required>{{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
+<p class="hint">Logic definitions must reference an allowlisted implementation, such as <code>get_percentage</code>; engine definitions must reference an allowlisted implementation such as <code>required_fields</code>. Adding arbitrary Python requires a reviewed application-code change.</p><button type="submit">Create module</button></form></section>
 </main><script>
 function filterModules() {{ const query = document.getElementById('search').value.trim().toLowerCase(); for (const item of document.querySelectorAll('.module[data-search]')) item.hidden = !item.dataset.search.toLowerCase().includes(query); }}
+const MODULE_TEMPLATES = {{
+  object: {{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}},
+  logic: {{"id":"new-logic","name":"new-logic","version":"1","description":"","implementation":"get_percentage","inputs":[{{"name":"target","type":"integer","required":true}},{{"name":"total","type":"integer","required":true}}]}},
+  engine: {{"version":1,"id":"new-engine","label":"New check engine","description":"","implementation":"required_fields","params_schema":[{{"key":"fields","label":"Fields","type":"array","required":true}}],"conditions_schema":[]}},
+}};
+function setModuleTemplate(kind) {{
+  const el = document.getElementById('moduleDefinition');
+  if (el) el.value = JSON.stringify(MODULE_TEMPLATES[kind] || MODULE_TEMPLATES.object, null, 2);
+}}
 </script></body></html>"""
 
 
