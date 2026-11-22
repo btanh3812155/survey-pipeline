@@ -135,6 +135,23 @@ def test_migration_013_retunes_retention(database):
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_admin_trash_page_renders(pool, monkeypatch):
+    async with pool.connection() as conn:
+        async with conn.transaction(), conn.cursor() as cur:
+            await add_trash_item(cur, "form", "PAGE_FORM", "Page form", {"form_id": "PAGE_FORM"}, "tester")
+    monkeypatch.setattr(admin_forms, "get_db_pool", lambda: pool)
+    app = FastAPI()
+    app.include_router(admin_forms.router)
+    app.dependency_overrides[verify_admin_auth] = lambda: "tester"
+    with TestClient(app) as client:
+        response = client.get("/admin/trash")
+    assert response.status_code == 200, response.text
+    assert "restoreTrash(" in response.text
+    assert "PAGE_FORM" in response.text
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_form_restore_api_rewrites_schema_and_marks_trash(pool, tmp_path, monkeypatch):
     schema = FormSchema(form_id="RESTORE_FORM", title="Restore me", questions=[])
     async with pool.connection() as conn:

@@ -410,7 +410,7 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
             f"<td>{html.escape(str(item['entity_type']))}</td>"
             f"<td><code>{html.escape(str(item['entity_id']))}</code><br><span class=muted>{html.escape(str(item['label'] or ''))}</span></td>"
             f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(str(item['retention_tier']))}</span></td>"
-            f"<td>{'local media' if media else 'no media'}<br><span class=muted>{html.escape(str(len(meta.get('drive_ledger_items', 0))))} Drive links</span></td>"
+            f"<td>{'local media' if media else 'no media'}<br><span class=muted>{int(meta.get('drive_ledger_items') or 0)} Drive links</span></td>"
             f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Restore</button></td></tr>"
         )
     policy = "".join(f"<li><b>{html.escape(k)}</b>: {html.escape(v)}</li>" for k, v in RETENTION_FREQUENCIES.items())
