@@ -67,15 +67,6 @@ def evaluate_condition(rule: ConditionalRule, answer: Any) -> bool:
         return (not matched) if op == "not_equals" else matched
     return not _is_blank(answer)
 
-class ValidationRule(BaseModel):
-    # Legacy compatibility only. New/default checks are engine form modules.
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
-    regex_pattern: Optional[str] = None
-    regex_error_message: Optional[str] = None
-    max_length: Optional[int] = None
-    min_length: Optional[int] = None
-    numbers_only: bool = False
 class ImageCheckConfig(BaseModel):
     enable_blur_check: bool = True
     blur_threshold: Optional[float] = None  # None falls back to settings.BLUR_THRESHOLD (40.0)
@@ -99,7 +90,6 @@ class FormQuestion(BaseModel):
     sample_images: Optional[List[str]] = None # List of sample image URLs for visual guidance
     options: Optional[List[Any]] = None # For single_choice, multiple_choice, dropdown
     group_compatibility: Optional[Dict[str, List[str]]] = None # For multiple_choice mutual exclusivity
-    validation: Optional[ValidationRule] = None
     condition_groups: List[List[ConditionalRule]] = Field(default_factory=list) # OR of AND groups; at least one group must fully match
     is_consent_gate: bool = False # every following question depends on this answer
     consent_accept_values: List[str] = Field(default_factory=list) # empty = any non-blank answer
@@ -456,32 +446,6 @@ def validate_submission_against_schema(schema: FormSchema, answers: Dict[str, An
                 return False, f"Câu hỏi '{q.title}' yêu cầu tối thiểu {q.min_images} ảnh (hiện có {count} ảnh)!"
             if q.max_images is not None and count > q.max_images:
                 return False, f"Câu hỏi '{q.title}' không được vượt quá {q.max_images} ảnh!"
-        # Regex / Constraint checks
-        if q.validation:
-            val_str = str(val)
-            if q.validation.numbers_only:
-                if not re.match(r"^[0-9]+$", val_str):
-                    return False, f"Câu hỏi '{q.title}' chỉ được chứa các chữ số!"
-
-            if q.validation.regex_pattern:
-                target_str = val_str[:200]
-                try:
-                    if not re.match(q.validation.regex_pattern, target_str):
-                        err_msg = q.validation.regex_error_message or f"Dữ liệu câu hỏi '{q.title}' không đúng định dạng yêu cầu!"
-                        return False, err_msg
-                except (re.error, Exception):
-                    return False, f"Lỗi định dạng mẫu quy chuẩn của câu hỏi '{q.title}'!"
-
-            if q.validation.min_length and len(val_str) < q.validation.min_length:
-                return False, f"Câu hỏi '{q.title}' yêu cầu tối thiểu {q.validation.min_length} ký tự!"
-
-            if q.validation.max_length and len(val_str) > q.validation.max_length:
-                return False, f"Câu hỏi '{q.title}' không được vượt quá {q.validation.max_length} ký tự!"
-            if q.type == QuestionType.NUMBER:
-                if q.validation.min_value is not None and num_val < q.validation.min_value:
-                    return False, f"Giá trị câu hỏi '{q.title}' không được nhỏ hơn {q.validation.min_value}!"
-                if q.validation.max_value is not None and num_val > q.validation.max_value:
-                    return False, f"Giá trị câu hỏi '{q.title}' không được lớn hơn {q.validation.max_value}!"
         # Mutual exclusivity check for MULTIPLE_CHOICE questions
         if q.type == QuestionType.MULTIPLE_CHOICE and q.options:
             selected_items = val if isinstance(val, list) else [val]

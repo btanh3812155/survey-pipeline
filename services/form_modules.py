@@ -104,6 +104,7 @@ async def run_form_modules(
         passed = True
         reason = ""
         result: dict[str, Any] = {}
+        keys: list[str] = []
         try:
             if module.kind == "logic":
                 definition = logic.get(module.module_id or "")
@@ -146,6 +147,7 @@ async def run_form_modules(
         except Exception as exc:
             passed = False
             reason = f"Không thể chạy module '{module.name}': {exc}"
+            keys = keys or ["passed", "reason", "details"]
             failure = failure or {
                 "module_uid": module.uid,
                 "module_name": module.name,

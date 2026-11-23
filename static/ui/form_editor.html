@@ -890,9 +890,6 @@
         function toggleQuestionNumbersOnly(idx, checked) {
             // Keyboard hint only. Validation belongs to form modules.
             questions[idx].input_mode = checked ? 'numeric' : 'text';
-            if (questions[idx].validation) {
-                delete questions[idx].validation.numbers_only;
-            }
         }
 
         function setQCheck(idx, key, val) {
@@ -2340,7 +2337,7 @@
                     ` : ''}
                     ${q.type === 'text' ? `
                         <div>
-                            <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${idx}, this.checked)" ${(q.input_mode === 'numeric' || q.input_mode === 'tel' || (q.validation && q.validation.numbers_only)) ? 'checked' : ''}> Bàn phím số (numeric keypad, không phải kiểm tra)</label>
+                            <label style="font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; margin-top:4px;"><input type="checkbox" class="chk-numbers-only" onchange="toggleQuestionNumbersOnly(${idx}, this.checked)" ${(q.input_mode === 'numeric' || q.input_mode === 'tel') ? 'checked' : ''}> Bàn phím số (numeric keypad, không phải kiểm tra)</label>
                         </div>
                     ` : ''}
                     <div class="field-group">

@@ -1971,7 +1971,7 @@
                 const inp = document.createElement('input');
                 inp.className = 'q-input';
                 inp.placeholder = '...';
-                const inputMode = q.input_mode || ((q.validation && q.validation.numbers_only) ? 'numeric' : 'text');
+                const inputMode = q.input_mode || 'text';
                 const isNumbersOnly = inputMode === 'tel' || inputMode === 'numeric';
                 if (isNumbersOnly) {
                     inp.type = 'tel';

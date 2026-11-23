@@ -22,15 +22,17 @@ from fastapi.testclient import TestClient
 from config import settings
 import main
 from main import app, DEV_STORAGE_FILE, FORMS_STORAGE_DIR, FORM_REGISTRY, append_dev_submission
+from core.passwords import hash_password
+import core.state as state
 from services.form_engine import (
     FormSchema,
     FormQuestion,
     QuestionType,
-    ValidationRule,
     ConditionalRule,
     FormSettings,
     validate_submission_against_schema,
 )
+from tests.module_checks import check_module, run_checks_sync
 from services.vehicle_tracker import (
     VehiclePersistenceTracker,
     VehicleMatchResult,
@@ -41,24 +43,49 @@ from services.vehicle_tracker import (
 # FIXTURES & TEST HELPERS
 # ==============================================================================
 
+@pytest.fixture(autouse=True)
+def fake_admin_auth(monkeypatch):
+    """Keep auth assertions local and independent of a live database."""
+    digest = hash_password(settings.ADMIN_PASSWORD, iterations=1_000)
+
+    async def load(username):
+        if username == settings.ADMIN_USERNAME:
+            return {"password_hash": digest, "is_active": True, "role": "superadmin", "deleted_at": None}
+        return None
+
+    monkeypatch.setattr(state, "_load_admin_account", load)
+    monkeypatch.setattr(state, "get_redis_client", lambda: None)
+
+
 @pytest.fixture
 def test_client():
     """FastAPI TestClient fixture."""
-    return TestClient(app)
+    return TestClient(app, headers={"Origin": "http://testserver"})
 
 @pytest.fixture
 def validation_schema(monkeypatch):
     schema = FormSchema(
         form_id="adversarial_validation", title="Validation contract",
+        settings=FormSettings(modules=[
+            check_module(
+                "phone_format", "regex",
+                {"field": "driver_phone", "pattern": r"^(?:0[0-9]{9}|[+]84[0-9]{9})$",
+                 "message": "Số điện thoại không hợp lệ"},
+                "Số điện thoại không hợp lệ",
+            ),
+            check_module(
+                "revenue_range", "number_range",
+                {"field": "gross_revenue", "min": 0, "max": 50_000_000,
+                 "message": "Doanh thu ngoài khoảng cho phép"},
+                "Doanh thu ngoài khoảng cho phép",
+            ),
+        ]),
         questions=[
             FormQuestion(id="driver_signature", title="Chữ ký", type=QuestionType.SIGNATURE),
             FormQuestion(id="consent_choice", title="Consent", type=QuestionType.SINGLE_CHOICE,
                          is_consent_gate=True, consent_accept_values=["Tôi đồng ý"]),
-            FormQuestion(id="driver_phone", title="Số điện thoại", type=QuestionType.TEXT,
-                         validation=ValidationRule(regex_pattern=r"^0[0-9]{9,10}$",
-                                                   regex_error_message="Số điện thoại không hợp lệ")),
-            FormQuestion(id="gross_revenue", title="Revenue", type=QuestionType.NUMBER,
-                         validation=ValidationRule(min_value=0, max_value=50_000_000)),
+            FormQuestion(id="driver_phone", title="Số điện thoại", type=QuestionType.TEXT),
+            FormQuestion(id="gross_revenue", title="Revenue", type=QuestionType.NUMBER),
         ],
     )
     monkeypatch.setitem(FORM_REGISTRY, schema.form_id, schema)
@@ -457,7 +484,7 @@ class TestWebRTCClientSideValidationBypass:
         assert resp_neg.status_code == 200
         neg_data = resp_neg.json()
         assert neg_data["status"] == "REJECTED"
-        assert "không được nhỏ hơn 0" in neg_data["reason"]
+        assert "Doanh thu ngoài khoảng cho phép" in neg_data["reason"]
 
         # 2. Astronomical revenue rejection (exceeds schema maximum limit)
         resp_astron = test_client.post(
@@ -479,7 +506,7 @@ class TestWebRTCClientSideValidationBypass:
         )
         assert resp_astron.status_code == 200
         assert resp_astron.json()["status"] == "REJECTED"
-        assert "không được lớn hơn 50000000" in resp_astron.json()["reason"]
+        assert "Doanh thu ngoài khoảng cho phép" in resp_astron.json()["reason"]
 
     def test_webrtc_rejects_driver_phone_regex_violations(self, test_client, sharp_image_bytes, validation_schema):
         """
@@ -512,7 +539,7 @@ class TestWebRTCClientSideValidationBypass:
             assert resp.status_code == 200
             res_json = resp.json()
             assert res_json["status"] == "REJECTED"
-            assert "Số điện thoại" in res_json["reason"]
+            assert "Số điện thoại không hợp lệ" in res_json["reason"]
 
     @pytest.mark.parametrize("missing", ["consent_choice", "signature_png"])
     @pytest.mark.parametrize("blank", [None, "   "])
@@ -565,43 +592,32 @@ class TestWebRTCClientSideValidationBypass:
         assert valid_sig is False
         assert "Chữ ký" in err_sig
 
-        # 2. Invalid phone format is caught
+        # 2. Invalid phone format is caught by the module
         bad_phone = dict(base_valid_answers, driver_phone="INVALID_ALPHA_PHONE")
-        valid_phone, err_phone = validate_submission_against_schema(
-            validation_schema,
-            bad_phone,
-        )
+        valid_phone, err_phone = run_checks_sync(validation_schema, bad_phone)
         assert valid_phone is False
-        assert "Số điện thoại" in err_phone
+        assert "Số điện thoại không hợp lệ" in err_phone
 
-        # 3. Negative revenue is caught
+        # 3. Negative revenue is caught by the module
         neg_income = dict(base_valid_answers, gross_revenue=-99999999)
-        valid_income, err_income = validate_submission_against_schema(
-            validation_schema,
-            neg_income,
-        )
+        valid_income, err_income = run_checks_sync(validation_schema, neg_income)
         assert valid_income is False
-        assert "nhỏ hơn 0" in err_income
+        assert "Doanh thu ngoài khoảng cho phép" in err_income
 
-        # 4. Out of bounds revenue is caught
+        # 4. Out of bounds revenue is caught by the module
         astron_rev = dict(base_valid_answers, gross_revenue=999999999999999)
-        valid_rev, err_rev = validate_submission_against_schema(
-            validation_schema,
-            astron_rev,
-        )
+        valid_rev, err_rev = run_checks_sync(validation_schema, astron_rev)
         assert valid_rev is False
-        assert "lớn hơn 50000000" in err_rev
+        assert "Doanh thu ngoài khoảng cho phép" in err_rev
 # ==============================================================================
 
 class TestFormEngineReDoSAttacks:
     """
     VULNERABILITY: VULN-DOS-01 (Regular Expression Denial of Service)
-    Target: services/form_engine.py:88-91 and POST /api/v1/forms/upload-schema
-    
-    The schema validation engine uses Python's standard backtracking 're' module:
-        if q.validation.regex_pattern:
-            if not re.match(q.validation.regex_pattern, val_str):
-    Custom form schemas accept arbitrary un-sanitized regex patterns.
+    Target: services/form_modules.py and POST /api/v1/forms/upload-schema
+
+    The regex engine uses Python's standard backtracking 're' module. Custom
+    schemas can attach arbitrary un-sanitized patterns as engine modules.
     Pathological patterns with nested quantifiers (e.g. (a+)+$) or overlapping alternations
     cause exponential backtracking when evaluated against non-matching strings,
     locking the synchronous event loop and denying service to all concurrent users.
@@ -617,20 +633,18 @@ class TestFormEngineReDoSAttacks:
         schema = FormSchema(
             form_id="redos_nested_quantifier",
             title="ReDoS Nested Quantifier Test",
+            settings=FormSettings(modules=[
+                check_module("redos", "regex", {"field": "q_redos", "pattern": evil_pattern,
+                                                "message": "Pattern failed"}, "Pattern failed")
+            ]),
             questions=[
-                FormQuestion(
-                    id="q_redos",
-                    title="Evil Regex Question",
-                    type=QuestionType.TEXT,
-                    required=True,
-                    validation=ValidationRule(regex_pattern=evil_pattern)
-                )
+                FormQuestion(id="q_redos", title="Evil Regex Question", type=QuestionType.TEXT, required=True)
             ]
         )
 
         # Baseline: matching input evaluates near-instantaneously (< 1ms)
         t0 = time.perf_counter()
-        valid_match, _ = validate_submission_against_schema(schema, {"q_redos": "a" * 20})
+        valid_match, _ = run_checks_sync(schema, {"q_redos": "a" * 20})
         t_match = time.perf_counter() - t0
         assert valid_match is True
         assert t_match < 0.01
@@ -639,14 +653,12 @@ class TestFormEngineReDoSAttacks:
         # 2^22 states causes significant backtracking latency
         adversarial_input = "a" * 22 + "!"
         t1 = time.perf_counter()
-        valid_evil, _ = validate_submission_against_schema(schema, {"q_redos": adversarial_input})
+        valid_evil, _ = run_checks_sync(schema, {"q_redos": adversarial_input})
         t_evil = time.perf_counter() - t1
 
         assert valid_evil is False
-        # Catastrophic backtracking demonstrates super-linear growth (> 20x slower than matching)
-        assert t_evil > t_match * 20, (
-            f"Expected catastrophic backtracking delay: match={t_match:.5f}s, evil={t_evil:.5f}s"
-        )
+        # The check must terminate quickly instead of hanging the request loop.
+        assert t_evil < 1.0, f"ReDoS check exceeded 1s: match={t_match:.5f}s, evil={t_evil:.5f}s"
 
     def test_redos_overlapping_alternation_backtracking(self):
         """
@@ -657,31 +669,28 @@ class TestFormEngineReDoSAttacks:
         schema = FormSchema(
             form_id="redos_alternation",
             title="ReDoS Alternation Test",
+            settings=FormSettings(modules=[
+                check_module("redos", "regex", {"field": "q_alt", "pattern": evil_pattern,
+                                                "message": "Pattern failed"}, "Pattern failed")
+            ]),
             questions=[
-                FormQuestion(
-                    id="q_alt",
-                    title="Alternation Question",
-                    type=QuestionType.TEXT,
-                    required=True,
-                    validation=ValidationRule(regex_pattern=evil_pattern)
-                )
+                FormQuestion(id="q_alt", title="Alternation Question", type=QuestionType.TEXT, required=True)
             ]
         )
 
         # Matching input
         t0 = time.perf_counter()
-        res_match, _ = validate_submission_against_schema(schema, {"q_alt": "a" * 22})
+        res_match, _ = run_checks_sync(schema, {"q_alt": "a" * 22})
         dur_match = time.perf_counter() - t0
         assert res_match is True
 
         # Non-matching input
         t1 = time.perf_counter()
-        res_evil, _ = validate_submission_against_schema(schema, {"q_alt": "a" * 22 + "x"})
+        res_evil, _ = run_checks_sync(schema, {"q_alt": "a" * 22 + "x"})
         dur_evil = time.perf_counter() - t1
         assert res_evil is False
-
-        assert dur_evil > dur_match * 10, (
-            f"Overlapping alternation backtracking confirmed: match={dur_match:.5f}s vs evil={dur_evil:.5f}s"
+        assert dur_evil < 1.0, (
+            f"Overlapping alternation check exceeded 1s: match={dur_match:.5f}s vs evil={dur_evil:.5f}s"
         )
 
     def test_schema_validation_unhandled_regex_syntax_error(self):
@@ -694,21 +703,19 @@ class TestFormEngineReDoSAttacks:
         schema = FormSchema(
             form_id="invalid_regex_schema",
             title="Invalid Regex Crash Test",
+            settings=FormSettings(modules=[
+                check_module("broken_regex", "regex", {"field": "q_crash", "pattern": invalid_pattern,
+                                                       "message": "Regex error"}, "Regex error")
+            ]),
             questions=[
-                FormQuestion(
-                    id="q_crash",
-                    title="Syntax Error Question",
-                    type=QuestionType.TEXT,
-                    required=True,
-                    validation=ValidationRule(regex_pattern=invalid_pattern)
-                )
+                FormQuestion(id="q_crash", title="Syntax Error Question", type=QuestionType.TEXT, required=True)
             ]
         )
 
-        # Validating input against this schema is handled gracefully without unhandled crash
-        is_valid, err = validate_submission_against_schema(schema, {"q_crash": "test_input"})
+        # The module runner catches the invalid regex and reports a safe failure.
+        is_valid, err = run_checks_sync(schema, {"q_crash": "test_input"})
         assert is_valid is False
-        assert "Lỗi định dạng mẫu" in err
+        assert "Không thể chạy module" in err
 
     def test_upload_schema_accepts_redos_pattern_without_linting(self, test_client):
         """
@@ -724,25 +731,40 @@ class TestFormEngineReDoSAttacks:
                     "id": "driver_code",
                     "title": "Pathological Code",
                     "type": "text",
-                    "required": True,
-                    "validation": {
-                        "regex_pattern": r"^(([a-zA-Z0-9])+)+$",
-                        "regex_error_message": "Invalid code"
-                    }
+                    "required": True
                 }
-            ]
+            ],
+            "settings": {
+                "modules": [{
+                    "uid": "redos",
+                    "name": "ReDoS regex",
+                    "kind": "engine",
+                    "module_id": "regex",
+                    "inputs": [
+                        {"name": "field", "source": "literal", "literal": "driver_code"},
+                        {"name": "pattern", "source": "literal", "literal": "^(([a-zA-Z0-9])+)+$"},
+                        {"name": "message", "source": "literal", "literal": "Invalid code"}
+                    ],
+                    "reject_on_false": True,
+                    "reject_message": "Invalid code"
+                }]
+            }
         }
 
+        from core.state import verify_admin_auth
+        app.dependency_overrides[verify_admin_auth] = lambda: "admin"
         try:
             resp = test_client.post(
                 "/api/v1/forms/upload-schema",
                 json=redos_schema_payload,
                 auth=admin_auth,
+                headers={"Origin": "http://testserver"},
             )
             assert resp.status_code == 200
             assert resp.json()["status"] == "success"
             assert "survey_with_evil_pattern" in FORM_REGISTRY
         finally:
+            app.dependency_overrides.pop(verify_admin_auth, None)
             schema_file = os.path.join(FORMS_STORAGE_DIR, "survey_with_evil_pattern.json")
             if os.path.exists(schema_file):
                 os.remove(schema_file)

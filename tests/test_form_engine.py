@@ -6,7 +6,6 @@ from services.form_engine import (
     FormSchema,
     FormQuestion,
     QuestionType,
-    ValidationRule,
     ConditionalRule,
     DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
@@ -171,7 +170,6 @@ def test_api_upload_and_render_arbitrary_form():
                 "title": "Đánh giá độ hài lòng (1-5 sao)",
                 "type": "number",
                 "required": True,
-                "validation": {"min_value": 1, "max_value": 5}
             },
             {
                 "id": "comment",

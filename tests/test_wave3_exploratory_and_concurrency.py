@@ -22,15 +22,21 @@ from services.form_engine import (
     QuestionType,
     ConditionalRule,
     validate_submission_against_schema,
-    ValidationRule,
 )
+from tests.module_checks import check_module, run_checks_sync
 from services.audit_and_privacy import scrub_driver_pii
 @pytest.fixture
 def numeric_schema():
-    return FormSchema(form_id="wave3_numeric", title="Numeric contract", questions=[
-        FormQuestion(id="gross_revenue", title="Revenue", type=QuestionType.NUMBER,
-                     validation=ValidationRule(min_value=0, max_value=50_000_000)),
-    ])
+    return FormSchema(
+        form_id="wave3_numeric", title="Numeric contract",
+        settings=FormSettings(modules=[
+            check_module("revenue_range", "number_range",
+                         {"field": "gross_revenue", "min": 0, "max": 50_000_000,
+                          "message": "Doanh thu ngoài khoảng cho phép"},
+                         "Doanh thu ngoài khoảng cho phép")
+        ]),
+        questions=[FormQuestion(id="gross_revenue", title="Revenue", type=QuestionType.NUMBER)],
+    )
 
 
 
@@ -237,19 +243,18 @@ class TestTeam2ExploratoryAndConcurrency:
         assert "Không thể giải mã ảnh" in data["reason"]
 
     @pytest.mark.parametrize(
-        "phone_str",
+        "phone_str,valid",
         [
-            "+84 988 123 456",
-            "0988-123-456",
-            "+84988123456",
-            "0988 123 456",
+            ("+84 988 123 456", False),
+            ("0988-123-456", False),
+            ("+84988123456", True),
+            ("0988 123 456", False),
         ],
     )
-    def test_payload_boundary_extreme_vietnamese_phone_strings(self, phone_str: str):
+    def test_payload_boundary_extreme_vietnamese_phone_strings(self, phone_str: str, valid: bool):
         """
-        Test extreme Vietnamese phone number variations against schema validation.
-        The current regex expects strict '^0[0-9]{9,10}$'. Formatted strings with spaces,
-        dashes, or country code '+84' should be rejected by schema.
+        Formatted strings with spaces or dashes are rejected; local 0+9 and
+        +84+9 forms are accepted by the phone module.
         """
         answers = {
             "driver_signature": "data:image/png;base64,mock",
@@ -263,13 +268,20 @@ class TestTeam2ExploratoryAndConcurrency:
             "odometer_km": "50",
             "camera_receipt": "uploaded",
         }
-        schema = FormSchema(form_id="wave3_phone", title="Phone contract", questions=[
-            FormQuestion(id="driver_phone", title="Phone", type=QuestionType.TEXT,
-                         validation=ValidationRule(regex_pattern=r"^0[0-9]{9,10}$")),
-        ])
-        is_valid, err = validate_submission_against_schema(schema, answers)
-        assert is_valid is False
-        assert err
+        schema = FormSchema(
+            form_id="wave3_phone", title="Phone contract",
+            settings=FormSettings(modules=[
+                check_module("phone", "regex",
+                             {"field": "driver_phone",
+                              "pattern": r"^(?:0[0-9]{9}|[+]84[0-9]{9})$",
+                              "message": "Số điện thoại không hợp lệ"},
+                             "Số điện thoại không hợp lệ")
+            ]),
+            questions=[FormQuestion(id="driver_phone", title="Phone", type=QuestionType.TEXT)],
+        )
+        is_valid, err = run_checks_sync(schema, answers)
+        assert is_valid is valid
+        assert (err is None) is valid
 
     def test_payload_boundary_exponential_income_figure(self, numeric_schema):
         """
@@ -288,9 +300,9 @@ class TestTeam2ExploratoryAndConcurrency:
             "odometer_km": "50",
             "camera_receipt": "uploaded",
         }
-        is_valid, err = validate_submission_against_schema(numeric_schema, answers)
+        is_valid, err = run_checks_sync(numeric_schema, answers)
         assert is_valid is False
-        assert err
+        assert "Doanh thu ngoài khoảng cho phép" in err
     @pytest.mark.parametrize("value", ["NaN", float("nan"), "inf", "-inf", {}, 10 ** 400])
     @pytest.mark.parametrize("bounded", [False, True])
     def test_payload_boundary_nan_string_behavior(self, numeric_schema, value, bounded):
@@ -313,7 +325,7 @@ class TestTeam2ExploratoryAndConcurrency:
             "camera_receipt": "uploaded",
         }
         if not bounded:
-            numeric_schema.questions[0].validation = None
+            numeric_schema.settings.modules = []
         is_valid, err = validate_submission_against_schema(numeric_schema, answers)
         assert is_valid is False
         assert err

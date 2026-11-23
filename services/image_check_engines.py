@@ -61,6 +61,11 @@ def _to_number(value: Any) -> Optional[float]:
         text = value.strip()
         if not text:
             return None
+        if re.fullmatch(r"-?\d+(?:\.\d+)?[eE][+-]?\d+", text):
+            try:
+                return float(text)
+            except ValueError:
+                return None
         match = re.search(r"-?\d[\d.,]*", text)
         if not match:
             return None

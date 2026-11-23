@@ -4,7 +4,6 @@ from services.form_engine import (
     FormSchema,
     FormQuestion,
     QuestionType,
-    ValidationRule,
     FormSettings,
     DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
@@ -14,48 +13,18 @@ from services.form_modules import run_form_modules
 from services.form_manager_html import render_form_editor_html
 
 
-def test_validation_numbers_only_rejects_letters():
-    """Test server-side validation: numbers_only=True rejects letters with localized error."""
+def test_input_mode_is_keyboard_only():
+    """input_mode changes the keyboard, not validation; checks live in modules."""
     schema = FormSchema(
         form_id="test_numbers_form",
         title="Test Numbers Form",
         settings=FormSettings(decree13_required=False),
-        questions=[
-            FormQuestion(
-                id="num_field",
-                title="Số điện thoại / Mã số",
-                type=QuestionType.TEXT,
-                required=True,
-                validation=ValidationRule(numbers_only=True),
-            )
-        ],
+        questions=[FormQuestion(
+            id="num_field", title="Số điện thoại / Mã số",
+            type=QuestionType.TEXT, required=True, input_mode="numeric",
+        )],
     )
-
-    invalid_submission = {"num_field": "0988abc123"}
-    is_valid, err = validate_submission_against_schema(schema, invalid_submission)
-    assert is_valid is False
-    assert err == "Câu hỏi 'Số điện thoại / Mã số' chỉ được chứa các chữ số!"
-
-
-def test_validation_numbers_only_accepts_pure_numeric_string():
-    """Test server-side validation: numbers_only=True accepts pure numeric string."""
-    schema = FormSchema(
-        form_id="test_numbers_form",
-        title="Test Numbers Form",
-        settings=FormSettings(decree13_required=False),
-        questions=[
-            FormQuestion(
-                id="num_field",
-                title="Số điện thoại / Mã số",
-                type=QuestionType.TEXT,
-                required=True,
-                validation=ValidationRule(numbers_only=True),
-            )
-        ],
-    )
-
-    valid_submission = {"num_field": "0988123456"}
-    is_valid, err = validate_submission_against_schema(schema, valid_submission)
+    is_valid, err = validate_submission_against_schema(schema, {"num_field": "0988abc123"})
     assert is_valid is True
     assert err is None
 
@@ -65,9 +34,9 @@ async def test_default_schema_driver_phone_uses_regex_module():
     """The default phone check is an engine module, not a question ValidationRule."""
     phone_q = next((q for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions if q.id == "driver_phone"), None)
     assert phone_q is not None
-    assert phone_q.validation is None
+    assert not hasattr(phone_q, "validation")
     assert phone_q.input_mode == "tel"
-    assert all(q.validation is None for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions)
+    assert all(not hasattr(q, "validation") for q in DEFAULT_TRUST_BRIDGE_SCHEMA.questions)
     module = next(m for m in DEFAULT_TRUST_BRIDGE_SCHEMA.settings.modules if m.uid == "phone_format")
     assert module.kind == "engine"
     assert module.module_id == "regex"

@@ -130,7 +130,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [],
       "is_consent_gate": true,
       "consent_accept_values": [],
@@ -158,7 +157,6 @@
         "Không - Chưa có chữ ký hợp lệ của tài xế"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [],
       "is_consent_gate": true,
       "consent_accept_values": [
@@ -188,7 +186,6 @@
         "Xe ô tô"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -233,7 +230,6 @@
         "Khác"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -274,7 +270,6 @@
         "Khác"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -314,7 +309,6 @@
         "Bán thời gian - Đa nền tảng"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -352,7 +346,6 @@
         "Bán thời gian"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -392,7 +385,6 @@
         "Bán thời gian - Đa nền tảng"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -430,7 +422,6 @@
         "Không"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -479,7 +470,6 @@
         "Thuê mua RTO từ đối tác (Trả góp mua xe từ công ty / HTX - không phải GSM)"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -519,7 +509,6 @@
         "Khác"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -554,7 +543,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -610,7 +598,6 @@
         "Khác"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -671,7 +658,6 @@
         "Khác"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -741,7 +727,6 @@
         "Trên 2 năm"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -798,7 +783,6 @@
         "Hạng kim cương"
       ],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -867,7 +851,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -962,7 +945,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -1048,7 +1030,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
@@ -1244,7 +1225,6 @@
       "sample_images": null,
       "options": [],
       "group_compatibility": null,
-      "validation": null,
       "condition_groups": [
         [
           {
