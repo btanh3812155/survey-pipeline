@@ -46,24 +46,24 @@ def _page(modules: list[dict[str, Any]], *, message: str = "", error: str = "") 
   <summary>
     <span class="title"><strong>{_esc(module['display_name'])}</strong> <code>{_esc(module_id)}</code></span>
     <span class="meta"><span class="badge">{_esc(kind)}</span><span class="badge">v{_esc(module['module_version'])}</span>
-    <span class="badge {'enabled' if enabled else 'disabled'}">{'enabled' if enabled else 'disabled'}</span></span>
+    <span class="badge {'enabled' if enabled else 'disabled'}">{'đang bật' if enabled else 'đang tắt'}</span></span>
   </summary>
   <form method="post" action="/admin/modules/{_esc(module_id)}">
-    <div class="grid"><label>Name<input name="display_name" value="{_esc(module['display_name'])}" maxlength="100" required></label>
-      <label>Module version<input name="module_version" value="{_esc(module['module_version'])}" maxlength="32" required></label></div>
-    <label>Definition JSON<textarea name="definition" rows="14" spellcheck="false" required>{_esc(_json_text(definition))}</textarea></label>
-    {'<p class="hint">Python is not loaded or executed from the registry. This implementation is fixed in application code.</p><pre>' + _esc(SOURCES.get(definition.get('implementation'), 'Unknown implementation')) + '</pre>' if kind == 'logic' else ''}
-    {'<p class="hint">Check engine module. The implementation is allowlisted in application code; parameters and conditions are declarative JSON.</p>' if kind == 'engine' else ''}
-    <button type="submit">Save definition</button>
+    <div class="grid"><label>Tên<input name="display_name" value="{_esc(module['display_name'])}" maxlength="100" required></label>
+      <label>Phiên bản module<input name="module_version" value="{_esc(module['module_version'])}" maxlength="32" required></label></div>
+    <label>JSON định nghĩa<textarea name="definition" rows="14" spellcheck="false" required>{_esc(_json_text(definition))}</textarea></label>
+    {'<p class="hint">Python không được nạp hoặc thực thi từ registry. Implementation này cố định trong mã ứng dụng.</p><pre>' + _esc(SOURCES.get(definition.get('implementation'), 'Implementation không xác định')) + '</pre>' if kind == 'logic' else ''}
+    {'<p class="hint">Module check engine. Implementation nằm trong allowlist của mã ứng dụng; tham số và điều kiện là JSON khai báo.</p>' if kind == 'engine' else ''}
+    <button type="submit">Lưu định nghĩa</button>
   </form>
   <div class="actions">
-    <form method="post" action="/admin/modules/{_esc(module_id)}/enabled"><input type="hidden" name="enabled" value="{'false' if enabled else 'true'}"><button type="submit">{'Disable' if enabled else 'Enable'}</button></form>
-    <form method="post" action="/admin/modules/{_esc(module_id)}/delete" onsubmit="return confirm('Delete {_esc(module_id)}?')"><button class="danger" type="submit">Delete</button></form>
+    <form method="post" action="/admin/modules/{_esc(module_id)}/enabled"><input type="hidden" name="enabled" value="{'false' if enabled else 'true'}"><button type="submit">{'Tắt' if enabled else 'Bật'}</button></form>
+    <form method="post" action="/admin/modules/{_esc(module_id)}/delete" onsubmit="return confirm('Xóa {_esc(module_id)}?')"><button class="danger" type="submit">Xóa</button></form>
   </div>
-  {f'<form method="post" action="/admin/modules/{_esc(module_id)}/run"><label>Test inputs (JSON)<textarea name="inputs" rows="3">{{"target": 7, "total": 10}}</textarea></label><button type="submit">Run safely</button></form>' if kind == 'logic' else ''}
+  {f'<form method="post" action="/admin/modules/{_esc(module_id)}/run"><label>Dữ liệu thử (JSON)<textarea name="inputs" rows="3">{{"target": 7, "total": 10}}</textarea></label><button type="submit">Chạy an toàn</button></form>' if kind == 'logic' else ''}
 </details>"""
         cards.append(card)
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logic, Object &amp; Engine Modules</title>
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Module Logic, Object &amp; Engine</title>
 <style>
 :root {{ color-scheme:dark; --bg:#0b1220; --panel:#131d30; --line:#2a3952; --fg:#e5edf7; --muted:#9aabc1; --accent:#38bdf8; }}
 * {{ box-sizing:border-box }} body {{ margin:0; background:var(--bg); color:var(--fg); font:15px system-ui,sans-serif }} main {{ max-width:1100px; margin:auto; padding:24px }}
@@ -78,20 +78,20 @@ h1 {{ font-size:1.4rem }} h2 {{ font-size:1rem }} .hint,.muted {{ color:var(--mu
 .actions {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }} .badge {{ border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); font-size:.75rem }} .enabled {{ color:#86efac }} .disabled {{ color:#fca5a5 }}
 label {{ display:block; margin:10px 0; color:var(--muted); font-size:.85rem }} input,textarea,select {{ display:block; width:100%; margin-top:4px; padding:9px; background:#09111e; color:var(--fg); border:1px solid var(--line); border-radius:6px; font: .9rem ui-monospace,monospace }}
 textarea {{ resize:vertical }} button {{ border:0; border-radius:6px; background:#0369a1; color:white; padding:8px 12px; cursor:pointer }} button.danger {{ background:#991b1b }} pre {{ overflow:auto; background:#09111e; padding:10px }} .actions {{ justify-content:flex-start; margin:10px 0 }} .actions form {{ display:inline }}
-</style></head><body><main><h1>Logic, Object &amp; Engine Modules</h1><p class="muted">Registry records are database-backed. Object definitions drive image extraction. Check engines are engine modules in this same registry. Logic execution is limited to implementations compiled into the app; stored JSON never executes code.</p>
+</style></head><body><main><h1>Module Logic, Object &amp; Engine</h1><p class="muted">Registry lưu trong cơ sở dữ liệu. Object định nghĩa cách trích xuất ảnh. Check engine là module engine trong cùng registry. Logic chỉ chạy implementation đã biên dịch trong ứng dụng; JSON lưu trữ không bao giờ thực thi mã.</p>
 {f'<div class="flash">{_esc(message or error)}</div>' if message or error else ''}
-<div class="grid"><label>Search modules<input id="search" type="search" placeholder="Name, id or type" oninput="filterModules()"></label></div>
-<section><h2>Registered modules ({len(modules)})</h2>{''.join(cards) or '<p class="muted">No modules registered.</p>'}</section>
-<section class="module"><h2>Create module</h2><form method="post" action="/admin/modules">
-<div class="grid"><label>Module id<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Type<select name="module_type" id="moduleType" onchange="setModuleTemplate(this.value)"><option value="object">Image object</option><option value="logic">Logic</option><option value="engine">Check engine</option></select></label><label>Name<input name="display_name" maxlength="100" required></label><label>Module version<input name="module_version" maxlength="32" value="1" required></label></div>
-<label>Definition JSON<textarea id="moduleDefinition" name="definition" rows="10" required>{{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
-<p class="hint">Logic definitions must reference an allowlisted implementation, such as <code>get_percentage</code>; engine definitions must reference an allowlisted implementation such as <code>required_fields</code>. Adding arbitrary Python requires a reviewed application-code change.</p><button type="submit">Create module</button></form></section>
+<div class="grid"><label>Tìm module<input id="search" type="search" placeholder="Tên, id hoặc loại" oninput="filterModules()"></label></div>
+<section><h2>Module đã đăng ký ({len(modules)})</h2>{''.join(cards) or '<p class="muted">Chưa có module nào.</p>'}</section>
+<section class="module"><h2>Tạo module</h2><form method="post" action="/admin/modules">
+<div class="grid"><label>ID module<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Loại<select name="module_type" id="moduleType" onchange="setModuleTemplate(this.value)"><option value="object">Object ảnh</option><option value="logic">Logic</option><option value="engine">Check engine</option></select></label><label>Tên<input name="display_name" maxlength="100" required></label><label>Phiên bản module<input name="module_version" maxlength="32" value="1" required></label></div>
+<label>JSON định nghĩa<textarea id="moduleDefinition" name="definition" rows="10" required>{{"version":1,"label":"Object ảnh mới","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
+<p class="hint">Định nghĩa logic phải tham chiếu implementation trong allowlist, ví dụ <code>get_percentage</code>; định nghĩa engine phải tham chiếu implementation như <code>required_fields</code>. Muốn thêm Python tùy ý phải thay đổi mã ứng dụng và được review.</p><button type="submit">Tạo module</button></form></section>
 </main><script>
 function filterModules() {{ const query = document.getElementById('search').value.trim().toLowerCase(); for (const item of document.querySelectorAll('.module[data-search]')) item.hidden = !item.dataset.search.toLowerCase().includes(query); }}
 const MODULE_TEMPLATES = {{
-  object: {{"version":1,"label":"New image object","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}},
+  object: {{"version":1,"label":"Object ảnh mới","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}},
   logic: {{"id":"new-logic","name":"new-logic","version":"1","description":"","implementation":"get_percentage","inputs":[{{"name":"target","type":"integer","required":true}},{{"name":"total","type":"integer","required":true}}]}},
-  engine: {{"version":1,"id":"new-engine","label":"New check engine","description":"","implementation":"required_fields","params_schema":[{{"key":"fields","label":"Fields","type":"array","required":true}}],"conditions_schema":[]}},
+  engine: {{"version":1,"id":"new-engine","label":"Check engine mới","description":"","implementation":"required_fields","params_schema":[{{"key":"fields","label":"Trường","type":"array","required":true}}],"conditions_schema":[]}},
 }};
 function setModuleTemplate(kind) {{
   const el = document.getElementById('moduleDefinition');

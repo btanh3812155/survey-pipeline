@@ -15,12 +15,12 @@ logger = logging.getLogger("core.trash")
 LAST_SNAPSHOTS_KEPT = 10
 TRASH_COMPACT_LOCK_KEY = 764539269
 RETENTION_FREQUENCIES = {
-    "hourly": "0-24 hours: one snapshot per entity per hour",
-    "four_hourly": "1-7 days: one snapshot per entity per 4 hours",
-    "daily": "7-30 days: one snapshot per entity per day",
-    "weekly": "30-90 days: one snapshot per entity per week",
-    "monthly": "90-365 days: one snapshot per entity per month",
-    "semiannual": "over 365 days: one snapshot per entity per 6 months, forever",
+    "hourly": "0-24 giờ: một snapshot mỗi entity mỗi giờ",
+    "four_hourly": "1-7 ngày: một snapshot mỗi entity mỗi 4 giờ",
+    "daily": "7-30 ngày: một snapshot mỗi entity mỗi ngày",
+    "weekly": "30-90 ngày: một snapshot mỗi entity mỗi tuần",
+    "monthly": "90-365 ngày: một snapshot mỗi entity mỗi tháng",
+    "semiannual": "trên 365 ngày: một snapshot mỗi entity mỗi 6 tháng, vĩnh viễn",
 }
 
 

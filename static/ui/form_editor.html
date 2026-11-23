@@ -410,10 +410,10 @@
                 <div class="card" id="formModulesCard">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
                         <div style="flex:1; min-width:200px;">
-                            <h3 style="font-size:0.95rem; font-weight:700; color:#60a5fa; margin-bottom:6px;">Modules</h3>
+                            <h3 style="font-size:0.95rem; font-weight:700; color:#60a5fa; margin-bottom:6px;">Module</h3>
                             <p style="font-size:0.78rem; color:#94a3b8; line-height:1.5;">
-                                Các module thực thi tuần tự từ trên xuống dưới. Input của module có thể lấy từ câu hỏi
-                                hoặc output của module phía trên. Tên output là output tùy chỉnh của biểu mẫu.
+                                Các module thực thi tuần tự từ trên xuống dưới. Đầu vào của module có thể lấy từ câu hỏi
+                                hoặc đầu ra của module phía trên. Tên đầu ra là đầu ra tùy chỉnh của biểu mẫu.
                             </p>
                         </div>
                         <button type="button" class="btn-add-q" style="width:auto; padding:9px 14px; white-space:nowrap;" onclick="addFormModule()">+ Thêm Module</button>
@@ -1038,7 +1038,7 @@
                         </summary>
                         <div style="margin-top:6px;">
                             <div style="font-size:0.72rem; color:#94a3b8; margin-bottom:4px;">
-                                Mặc định các nhóm khác nhau sẽ <b>đối kháng</b> (mutually exclusive). Nhập JSON mapping những nhóm được phép cùng tồn tại, ví dụ: <code>{"applicable": ["other_group"]}</code>
+                                Mặc định các nhóm khác nhau sẽ <b>đối kháng</b> (loại trừ lẫn nhau). Nhập JSON mapping những nhóm được phép cùng tồn tại, ví dụ: <code>{"applicable": ["other_group"]}</code>
                             </div>
                             <textarea style="width:100%; min-height:60px; background:#020617; border:1px solid #334155; color:#38bdf8; font-size:0.75rem; border-radius:4px; padding:6px; font-family:monospace;" placeholder='{"group_a": ["group_b"]}' oninput="updateGroupCompatibilityJson(${qidx}, this.value)">${escapeHtml(compatJson)}</textarea>
                         </div>
@@ -1748,13 +1748,13 @@
             const keys = ref ? (ref.outputs || []).map(output => output.key).filter(Boolean) : [];
             const known = keys.includes(input.output_key);
             return `<div class="field-group">
-                <label>Module + output</label>
+                <label>Module + đầu ra</label>
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:6px;">
                     <select onchange="setModuleInputModule(${midx}, ${iidx}, this.value)">
                         ${renderPriorOptions(midx, input)}
                     </select>
                     <select onchange="setModuleInputField(${midx}, ${iidx}, 'output_key', this.value)" ${keys.length ? '' : 'disabled'}>
-                        <option value="">-- Output --</option>
+                        <option value="">-- Đầu ra --</option>
                         ${keys.map(key => `<option value="${escapeHtml(key)}" ${key === input.output_key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
                         ${input.output_key && !known ? `<option value="${escapeHtml(input.output_key)}" selected>${escapeHtml(input.output_key + ' (không hợp lệ)')}</option>` : ''}
                     </select>
@@ -1774,7 +1774,7 @@
                 ['literal', 'Giá trị cố định']
             ];
             return `<div class="field-group">
-                <label>Nguồn input</label>
+                <label>Nguồn đầu vào</label>
                 <select onchange="setModuleInputSource(${midx}, ${iidx}, this.value)">
                     ${sources.map(([value, label]) => `<option value="${value}" ${input.source === value ? 'selected' : ''}>${label}</option>`).join('')}
                 </select>
@@ -1819,7 +1819,7 @@
                     </select>
                 </div>
                 <div class="field-group" style="justify-content:flex-end;">
-                    <button type="button" class="btn-delete" onclick="removeAllModuleInput(${midx}, ${iidx})">Bỏ input</button>
+                    <button type="button" class="btn-delete" onclick="removeAllModuleInput(${midx}, ${iidx})">Bỏ đầu vào</button>
                 </div>
             </div>`).join('');
         }
@@ -1873,16 +1873,16 @@
                 </select>`;
             }
             const kindOptions = [
-                ['logic', 'Logic module'],
-                ['engine', 'Check engine'],
-                ['all', 'Tổng hợp (all)'],
-                ['distribution', 'Distribution (thống kê đáp án)']
+                ['logic', 'Module logic'],
+                ['engine', 'Engine kiểm tra'],
+                ['all', 'Tổng hợp (tất cả)'],
+                ['distribution', 'Phân bố (thống kê đáp án)']
             ];
             const inputsHtml = isDistribution ? renderDistributionInputs(midx) : (isAll ? renderAllModuleInputs(midx) : renderTypedModuleInputs(module, midx));
             const outputsHtml = isDistribution
-                ? distributionOutputKeys(module).map(key => `<div class="field-group"><label><code style="color:#38bdf8;">${escapeHtml(key)}</code> - output tự động</label><input type="text" disabled value="${escapeHtml(key)}"></div>`).join('')
+                ? distributionOutputKeys(module).map(key => `<div class="field-group"><label><code style="color:#38bdf8;">${escapeHtml(key)}</code> - đầu ra tự động</label><input type="text" disabled value="${escapeHtml(key)}"></div>`).join('')
                 : (module.outputs || []).map((output, oidx) => `<div class="field-group">
-                <label><code style="color:#38bdf8;">${escapeHtml(output.key)}</code> - tên output</label>
+                <label><code style="color:#38bdf8;">${escapeHtml(output.key)}</code> - tên đầu ra</label>
                 <input type="text" value="${escapeHtml(output.name || '')}" placeholder="${escapeHtml(defaultModuleOutputName(module, output.key))}" oninput="setModuleOutputName(${midx}, ${oidx}, this.value)">
             </div>`).join('');
             const distributionPreview = isDistribution ? `<div style="background:#020617; border:1px solid #334155; border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:8px;">
@@ -1917,14 +1917,14 @@
                     </div>
                 </div>
                 <div style="background:#0b1120; border:1px solid #1e293b; border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Inputs</div>
-                    ${inputsHtml || `<div style="font-size:0.75rem; color:#64748b;">${isAll ? 'Chưa có input. Thêm input để tham chiếu module phía trên.' : 'Module này không có input.'}</div>`}
-                    ${isAll ? `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addAllModuleInput(${midx})">+ Thêm input</button>` : ''}
+                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Đầu vào</div>
+                    ${inputsHtml || `<div style="font-size:0.75rem; color:#64748b;">${isAll ? 'Chưa có đầu vào. Thêm đầu vào để tham chiếu module phía trên.' : 'Module này không có đầu vào.'}</div>`}
+                    ${isAll ? `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addAllModuleInput(${midx})">+ Thêm đầu vào</button>` : ''}
                 </div>
                 ${distributionPreview}
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Outputs (tên output công khai)</div>
-                    <div class="row-2">${outputsHtml || '<div style="font-size:0.75rem; color:#64748b;">Chưa có output.</div>'}</div>
+                    <div style="font-size:0.8rem; font-weight:700; color:#93c5fd;">Đầu ra (tên đầu ra công khai)</div>
+                    <div class="row-2">${outputsHtml || '<div style="font-size:0.75rem; color:#64748b;">Chưa có đầu ra.</div>'}</div>
                 </div>
                 ${isDistribution ? '' : `<div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
                     <label class="toggle-switch">

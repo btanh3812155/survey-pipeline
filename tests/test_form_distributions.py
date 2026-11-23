@@ -170,7 +170,7 @@ async def test_distribution_endpoint_returns_saved_module_report(distribution_st
 
 def test_editor_exposes_distribution_builder():
     html = render_form_editor_html(_schema(_distribution_module()))
-    assert "Distribution (thống kê đáp án)" in html
+    assert "Phân bố (thống kê đáp án)" in html
     assert "loadDistributionPreview" in html
     assert "distributionPreview_" in html
     assert "Tải thống kê đã lưu" in html

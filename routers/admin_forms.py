@@ -422,6 +422,10 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
     pool = get_db_pool()
     items = await list_trash(pool, limit=500)
     last_run = await last_compaction(pool)
+    tier_labels = {
+        "hourly": "mỗi giờ", "four_hourly": "mỗi 4 giờ", "daily": "mỗi ngày",
+        "weekly": "mỗi tuần", "monthly": "mỗi tháng", "semiannual": "mỗi 6 tháng",
+    }
     rows = []
     for item in items:
         meta = item.get("metadata") or {}
@@ -430,45 +434,45 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
             f"<tr><td><code>{html.escape(str(item['id']))}</code></td>"
             f"<td>{html.escape(str(item['entity_type']))}</td>"
             f"<td><code>{html.escape(str(item['entity_id']))}</code><br><span class=muted>{html.escape(str(item['label'] or ''))}</span></td>"
-            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(str(item['retention_tier']))}</span></td>"
-            f"<td>{'local media' if media else 'no media'}<br><span class=muted>{int(meta.get('drive_ledger_items') or 0)} Drive links</span></td>"
-            f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Restore</button></td></tr>"
+            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{tier_labels.get(str(item['retention_tier']), str(item['retention_tier']))}</span></td>"
+            f"<td>{'media nội bộ' if media else 'không có media'}<br><span class=muted>{int(meta.get('drive_ledger_items') or 0)} liên kết Drive</span></td>"
+            f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Khôi phục</button></td></tr>"
         )
     policy = "".join(f"<li><b>{html.escape(k)}</b>: {html.escape(v)}</li>" for k, v in RETENTION_FREQUENCIES.items())
-    last_html = "No compaction has run yet."
+    last_html = "Chưa chạy dọn lần nào."
     if last_run:
         last_html = (
             f"#{last_run['id']} {html.escape(str(last_run['status']))} "
-            f"at {html.escape(str(last_run['finished_at'] or last_run['started_at']))} "
-            f"(kept {last_run['kept']}, removed {last_run['removed']}, "
-            f"protected {last_run['protected_recent']})"
+            f"lúc {html.escape(str(last_run['finished_at'] or last_run['started_at']))} "
+            f"(giữ {last_run['kept']}, xóa {last_run['removed']}, "
+            f"bảo vệ {last_run['protected_recent']})"
         )
-    return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Trash</title><style>
+    return HTMLResponse(f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thùng rác</title><style>
 :root{{color-scheme:dark;--bg:#0b1220;--panel:#131d30;--line:#2a3952;--fg:#e5edf7;--muted:#9aabc1;--accent:#38bdf8}}
 body{{margin:0;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}}main{{max-width:1200px;margin:auto;padding:24px}}
 table{{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}}th,td{{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}}
 th{{color:var(--accent)}}.muted{{color:var(--muted);font-size:.78rem}}code{{color:#67e8f9}}button{{background:#0369a1;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}}
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}}
-</style></head><body><main><h1>Trash</h1><p class=muted>Forms restore intact. Submissions restore to MANUAL_REVIEW; outbox and Telegram effects are not replayed.</p>
-<div class=card><b>Retention</b><ul>{policy}</ul></div>
-<div class=card><b>Last compaction</b><div id=lastCompaction>{last_html}</div>
-<button onclick="runCompaction()" style="margin-top:8px;">Run compaction now</button></div>
-<table><thead><tr><th>ID</th><th>Type</th><th>Entity</th><th>Deleted</th><th>Artifacts</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=6 class=muted>Trash is empty.</td></tr>'}</tbody></table>
+</style></head><body><main><h1>Thùng rác</h1><p class=muted>Form được khôi phục nguyên vẹn. Submission được đưa về MANUAL_REVIEW; outbox và hiệu ứng Telegram không được phát lại.</p>
+<div class=card><b>Thời gian lưu giữ</b><ul>{policy}</ul></div>
+<div class=card><b>Lần dọn gần nhất</b><div id=lastCompaction>{last_html}</div>
+<button onclick="runCompaction()" style="margin-top:8px;">Dọn ngay</button></div>
+<table><thead><tr><th>ID</th><th>Loại</th><th>Thực thể</th><th>Đã xóa</th><th>Tệp lưu</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=6 class=muted>Thùng rác trống.</td></tr>'}</tbody></table>
 <script>
 async function runCompaction() {{
-  if (!confirm('Run trash compaction now?')) return;
+  if (!confirm('Dọn thùng rác ngay?')) return;
   const resp = await fetch('/api/v1/admin/trash/compact', {{method:'POST', credentials:'include'}});
   const body = await resp.json().catch(() => ({{}}));
   if (resp.ok) window.location.reload();
-  else alert(body.detail || 'Compaction failed');
+  else alert(body.detail || 'Dọn thùng rác thất bại');
 }}
 async function restoreTrash(id) {{
-  if (!confirm('Restore this item? Forms restore intact; submissions restore to MANUAL_REVIEW.')) return;
+  if (!confirm('Khôi phục mục này? Form được khôi phục nguyên vẹn; submission về MANUAL_REVIEW.')) return;
   const resp = await fetch('/api/v1/admin/trash/' + encodeURIComponent(id) + '/restore', {{method:'POST', credentials:'include'}});
   const body = await resp.json().catch(() => ({{}}));
   if (resp.ok) window.location.reload();
-  else alert(body.detail || 'Restore failed');
+  else alert(body.detail || 'Khôi phục thất bại');
 }}
 </script></main></body></html>""")
 

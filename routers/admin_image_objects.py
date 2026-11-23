@@ -57,23 +57,23 @@ def _object_form(obj: Any) -> str:
     return f"""
     <details class="card" {'open' if obj is not None else ''}>
       <summary><span class="mono">{object_id or '＋ Tạo object mới'}</span> <span class="muted">{_esc(raw.get('label', ''))}</span></summary>
-      <div class="src">Module registry definition: {object_id or '&lt;id&gt;'} (database-authoritative when migration 008 is active)</div>
+      <div class="src">Định nghĩa trong registry module: {object_id or '&lt;id&gt;'} (cơ sở dữ liệu là nguồn chuẩn khi migration 008 đang bật)</div>
       <form method="post" action="/admin/image-objects/{object_id}">
         <div class="grid">
           <label>ID<input name="id" value="{object_id}" {'disabled' if obj is not None else 'required'}></label>
-          <label>Label<input name="label" value="{_esc(raw.get('label', ''))}" required></label>
-          <label>Extractor<select name="extractor">{''.join(f'<option value="{_esc(v)}" {"selected" if raw.get("extractor", "generic") == v else ""}>{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
-          <label>Classify role<input name="classify_role" value="{_esc(raw.get('classify_role', ''))}"></label>
+          <label>Nhãn<input name="label" value="{_esc(raw.get('label', ''))}" required></label>
+          <label>Bộ trích xuất<select name="extractor">{''.join(f'<option value="{_esc(v)}" {"selected" if raw.get("extractor", "generic") == v else ""}>{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
+          <label>Vai trò phân loại<input name="classify_role" value="{_esc(raw.get('classify_role', ''))}"></label>
         </div>
-        <label>Description<textarea name="description" rows="2">{_esc(raw.get('description', ''))}</textarea></label>
+        <label>Mô tả<textarea name="description" rows="2">{_esc(raw.get('description', ''))}</textarea></label>
         <label>Prompt<textarea name="prompt" rows="7">{_esc(raw.get('prompt', ''))}</textarea></label>
         <div class="grid">
-          <label>Objects (mỗi dòng một mục)<textarea name="objects" rows="4">{_esc(chr(10).join(raw.get('objects', [])))}</textarea></label>
-          <label>Expected fields (JSON)<textarea name="expected_fields" rows="10">{_esc(_json_text(raw.get('expected_fields', [])))}</textarea></label>
+          <label>Đối tượng (mỗi dòng một mục)<textarea name="objects" rows="4">{_esc(chr(10).join(raw.get('objects', [])))}</textarea></label>
+          <label>Trường bắt buộc (JSON)<textarea name="expected_fields" rows="10">{_esc(_json_text(raw.get('expected_fields', [])))}</textarea></label>
         </div>
         <div class="grid">
-          <label>Customizable (JSON)<textarea name="customizable" rows="10">{_esc(_json_text(raw.get('customizable', [])))}</textarea></label>
-          <label>Engines (JSON)<textarea name="engines" rows="10">{_esc(_json_text(raw.get('engines', [])))}</textarea></label>
+          <label>Tùy biến (JSON)<textarea name="customizable" rows="10">{_esc(_json_text(raw.get('customizable', [])))}</textarea></label>
+          <label>Engine (JSON)<textarea name="engines" rows="10">{_esc(_json_text(raw.get('engines', [])))}</textarea></label>
         </div>
         <div class="actions">
           <button type="submit">Lưu object</button>
@@ -90,7 +90,7 @@ def _engine_card(engine: Any) -> str:
     return f"""
     <details class="card">
       <summary><span class="mono">{engine_id}</span> <span class="muted">{_esc(raw.get("label", ""))}</span></summary>
-      <div class="src">Module registry engine module. Edit this definition in <a href="/admin/modules">Admin → Modules</a>.</div>
+      <div class="src">Engine module trong registry. Sửa định nghĩa tại <a href="/admin/modules">Admin → Module</a>.</div>
       <pre>{_esc(_json_text(raw))}</pre>
     </details>
     """
@@ -112,7 +112,7 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
         errors_html = f"""
         <section class="panel bad">
           <h2>Lỗi định nghĩa ({len(errors)})</h2>
-          <table><thead><tr><th>File</th><th>Loại</th><th>Đường dẫn</th><th>Lỗi</th></tr></thead><tbody>{rows}</tbody></table>
+          <table><thead><tr><th>Tệp</th><th>Loại</th><th>Đường dẫn</th><th>Lỗi</th></tr></thead><tbody>{rows}</tbody></table>
         </section>"""
 
     object_cards = "".join(
@@ -129,7 +129,7 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
 
     return f"""<!DOCTYPE html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Image Objects | Admin</title>
+<title>Object ảnh | Admin</title>
 <style>
   :root {{ color-scheme: dark; }}
   body {{ margin:0; font-family: 'Be Vietnam Pro', system-ui, sans-serif; background:#0f172a; color:#e2e8f0; }}
@@ -158,35 +158,35 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
   .src {{ font-size:0.72rem; color:#64748b; margin-bottom:10px; }}
 </style></head>
 <body>
-<header><h1>Image Object Types &amp; Check Engines</h1></header>
+<header><h1>Object ảnh &amp; Check Engine</h1></header>
 <main>
   {banner}
   {errors_html}
   <section class="panel">
     <h2>Tạo object mới</h2>
-    <div class="src">Objects: {_esc(paths['objects'])} · Engines: {_esc(paths['engines'])}</div>
+    <div class="src">Object: {_esc(paths['objects'])} · Engine: {_esc(paths['engines'])}</div>
     <form method="post" action="/admin/image-objects/new_object">
       <div class="grid">
         <label>ID (chữ thường, a-z0-9_)<input name="id" required pattern="[a-z0-9_]+"></label>
-        <label>Label<input name="label" required></label>
-        <label>Extractor<select name="extractor">{''.join(f'<option value="{_esc(v)}">{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
-        <label>Classify role<input name="classify_role" placeholder="app_income"></label>
+        <label>Nhãn<input name="label" required></label>
+        <label>Bộ trích xuất<select name="extractor">{''.join(f'<option value="{_esc(v)}">{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
+        <label>Vai trò phân loại<input name="classify_role" placeholder="app_income"></label>
       </div>
       <div class="actions"><button type="submit">Tạo object</button></div>
     </form>
   </section>
   <section class="panel">
-    <h2>Object types ({len(objects)})</h2>
+    <h2>Object ảnh ({len(objects)})</h2>
     {object_cards or '<div class="muted">Chưa có object nào.</div>'}
   </section>
   <section class="panel">
-    <h2>Check engines ({len(engines)})</h2>
+    <h2>Check engine ({len(engines)})</h2>
     {engine_cards or '<div class="muted">Chưa có engine nào.</div>'}
   </section>
   <section class="panel">
-    <h2>Engine inspector (built-in registry)</h2>
+    <h2>Danh sách engine tích hợp</h2>
     <table><thead><tr><th>Implementation</th><th>Mô tả</th></tr></thead><tbody>
-      {''.join(f"<tr><td class='mono'>{_esc(name)}</td><td>Built-in Python engine; JSON không thể chứa mã thực thi.</td></tr>" for name in sorted(ENGINE_IMPLEMENTATIONS))}
+      {''.join(f"<tr><td class='mono'>{_esc(name)}</td><td>Engine Python tích hợp; JSON không thể chứa mã thực thi.</td></tr>" for name in sorted(ENGINE_IMPLEMENTATIONS))}
     </tbody></table>
   </section>
 </main>

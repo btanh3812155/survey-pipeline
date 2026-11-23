@@ -392,7 +392,7 @@ Renders the client-facing responsive dynamic WebRTC HTML form.
 ### 3.5 `GET /admin/forms` & `GET /admin/forms/edit/{form_id}`
 Admin Web UI for creating, browsing, and configuring survey form schemas.
 - **Method:** `GET`
-- **Auth:** HTTP Basic Authentication (`admin` / `12345678`)
+- **Auth:** Browser session login at `/login` with the admin password. Unauthenticated browser requests redirect to `/login`; API clients may still use HTTP Basic Authentication.
 - **Response `200 OK`:** `text/html; charset=utf-8`
 
 ---
@@ -400,7 +400,7 @@ Admin Web UI for creating, browsing, and configuring survey form schemas.
 ### 3.6 `POST /api/v1/forms/upload-schema`
 Persists a new or updated FormSchema JSON configuration.
 - **Method:** `POST`
-- **Auth:** HTTP Basic Authentication (`admin` / `12345678`)
+- **Auth:** HTTP Basic Authentication (API) or an authenticated admin browser session.
 - **Request Body:** Full `FormSchema` JSON object.
 - **Response `200 OK`:**
   ```json
@@ -418,7 +418,7 @@ Persists a new or updated FormSchema JSON configuration.
 
 ### 3.7 `GET /api/v1/surveys/history` (Locked Down Endpoint)
 Queries previous attempts and rejection reasons for a driver.
-- **Security Control:** Strictly requires HTTP Basic Authentication. Unauthenticated public access receives `401 Unauthorized` to prevent competitive phone number scraping.
+- **Security Control:** Strictly requires HTTP Basic Authentication. Unauthenticated public access receives `401 Unauthorized` to prevent competitive phone number scraping. Admin browser pages use `/login`; this API intentionally stays on Basic Auth.
 - **Rate Limit:** 30 queries per minute per phone number via Redis.
 - **Sample Request:**
   ```bash
