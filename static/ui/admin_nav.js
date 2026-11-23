@@ -18,6 +18,7 @@
       ['/admin/exports', 'nav_exports'],
     ] : []),
     ['/admin/account', 'nav_account'],
+    ['/logout', 'nav_logout'],
     ...(superadmin ? [
       ['/admin/accounts', 'nav_accounts'],
       ['/admin/trash', 'nav_trash'],

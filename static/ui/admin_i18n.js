@@ -4,7 +4,7 @@
     vi: {
       nav_forms: 'Biểu mẫu', nav_submissions: 'Dữ liệu nộp', nav_audit: 'Audit',
       nav_media: 'Media', nav_ctvs: 'CTV', nav_image_objects: 'Ảnh/Object',
-      nav_modules: 'Module', nav_exports: 'Exports', nav_account: 'Tài khoản của tôi',
+      nav_modules: 'Module', nav_exports: 'Exports', nav_account: 'Tài khoản của tôi', nav_logout: 'Đăng xuất',
       nav_accounts: 'Quản lý tài khoản', nav_trash: 'Thùng rác', nav_recovery_email: 'Email khôi phục',
       accounts_title: 'Quản lý tài khoản quản trị', account_title: 'Tài khoản của tôi',
       logged_in: 'Đang đăng nhập:',
@@ -102,7 +102,7 @@
     en: {
       nav_forms: 'Forms', nav_submissions: 'Submissions', nav_audit: 'Audit',
       nav_media: 'Media', nav_ctvs: 'CTVs', nav_image_objects: 'Images/Objects',
-      nav_modules: 'Modules', nav_exports: 'Exports', nav_account: 'My account',
+      nav_modules: 'Modules', nav_exports: 'Exports', nav_account: 'My account', nav_logout: 'Sign out',
       nav_accounts: 'Manage accounts', nav_trash: 'Trash', nav_recovery_email: 'Recovery email',
       accounts_title: 'Admin account management', account_title: 'My account',
       logged_in: 'Signed in as:',

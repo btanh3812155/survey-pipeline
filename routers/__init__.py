@@ -4,6 +4,7 @@ Decoupled Domain Routers for Survey Pipeline.
 """
 
 from .system import router as system_router
+from .login import router as login_router
 from .admin_forms import router as admin_forms_router
 from .admin_data import router as admin_data_router
 from .admin_audit import router as admin_audit_router
@@ -20,6 +21,7 @@ from .survey import router as survey_router
 
 __all__ = [
     "system_router",
+    "login_router",
     "admin_forms_router",
     "admin_data_router",
     "admin_audit_router",

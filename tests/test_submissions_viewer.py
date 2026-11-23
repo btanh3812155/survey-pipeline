@@ -16,8 +16,9 @@ def auth_headers():
 @pytest.mark.parametrize("path", ["/admin/submissions", "/data"])
 def test_submissions_viewer_unauthorized(path):
     client = TestClient(app)
-    resp = client.get(path)
-    assert resp.status_code == 401
+    resp = client.get(path, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/login?next=")
 
 
 def test_submissions_viewer_authorized(auth_headers):

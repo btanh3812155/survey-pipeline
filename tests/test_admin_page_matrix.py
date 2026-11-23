@@ -83,7 +83,9 @@ def test_every_admin_page_requires_authentication():
     client = TestClient(_app(), raise_server_exceptions=False)
     for path in PROTECTED_PAGES:
         response = client.get(path, follow_redirects=False)
-        assert response.status_code in (401, 403), (path, response.status_code)
+        assert response.status_code in (303, 401, 403), (path, response.status_code)
+        if response.status_code == 303:
+            assert response.headers.get("location", "").startswith("/login?next=")
         if response.status_code == 401:
             assert response.headers.get("www-authenticate", "").lower().startswith("basic")
 

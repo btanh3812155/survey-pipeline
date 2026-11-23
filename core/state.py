@@ -21,9 +21,18 @@ from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config import settings
 from core.passwords import verify_password
+from core.admin_sessions import COOKIE_NAME, password_fingerprint, read as read_admin_session
 from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA
 
 logger = logging.getLogger("core.state")
+
+
+class LoginRequired(Exception):
+    """Browser request has no valid admin session; redirect to the login page."""
+
+    def __init__(self, next_url: str):
+        self.next_url = next_url
+        super().__init__("admin login required")
 
 # Shared runtime singletons
 db_pool: Optional[AsyncConnectionPool] = None
@@ -299,32 +308,95 @@ def _admin_roles_for_path(path: str, method: str) -> set[str]:
     return {"superadmin"}
 
 
-admin_security = HTTPBasic()
-async def verify_admin_auth(
-    request: Request,
-    credentials: HTTPBasicCredentials = Depends(admin_security),
-) -> str:
-    """Authenticate through the database and enforce route roles."""
-    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
-        require_admin_same_origin(request)
-    redis, account_bucket, ip_bucket = await _check_admin_auth_rate_limit(
-        request, credentials.username
-    )
-    account = await _load_admin_account(credentials.username)
+admin_security = HTTPBasic(auto_error=False)
+
+
+def _is_browser_request(request: Request) -> bool:
+    if request.url.path.startswith("/api/") or "/photos/" in request.url.path:
+        return False
+    accept = request.headers.get("accept", "").lower()
+    return "text/html" in accept or request.url.path.startswith("/admin") or request.url.path in {
+        "/submissions", "/data", "/audit"
+    }
+
+
+def _next_url(request: Request) -> str:
+    query = request.url.query
+    return request.url.path + (("?" + query) if query else "")
+
+
+def _apply_admin_state(request: Request, username: str, role: str, password_hash: str) -> None:
+    request.state.admin_user = username
+    request.state.admin_role = role
+    request.state.admin_password_hash = password_hash
+
+
+async def admin_from_session(request: Request) -> tuple[str, str, str] | None:
+    """Return (username, role, password_hash) for a valid signed cookie."""
+    session = read_admin_session(request.cookies.get(COOKIE_NAME))
+    if not session:
+        return None
+    username = str(session.get("u") or "")
+    account = await _load_admin_account(username)
     if account is None or not account.get("is_active") or account.get("deleted_at") is not None:
-        await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
-        raise _auth_error()
+        return None
     password_hash = str(account.get("password_hash") or "")
-    if not _verify_admin_password(credentials.password, password_hash):
-        await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
-        raise _auth_error()
+    if session.get("ph") != password_fingerprint(password_hash):
+        return None
+    return username, str(account.get("role") or "viewer"), password_hash
+
+
+async def _verify_admin_account(
+    request: Request, username: str, password: str | None = None
+) -> tuple[str, str, str] | None:
+    """Validate one account. Password None means cookie-authenticated."""
+    account = await _load_admin_account(username)
+    if account is None or not account.get("is_active") or account.get("deleted_at") is not None:
+        return None
+    password_hash = str(account.get("password_hash") or "")
+    if password is not None and not _verify_admin_password(password, password_hash):
+        return None
     role = str(account.get("role") or "viewer")
     if role not in _admin_roles_for_path(request.url.path, request.method):
         raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")
-    request.state.admin_user = credentials.username
-    request.state.admin_role = role
-    request.state.admin_password_hash = password_hash
-    return credentials.username
+    return username, role, password_hash
+
+
+async def verify_admin_auth(
+    request: Request,
+    credentials: Optional[HTTPBasicCredentials] = Depends(admin_security),
+) -> str:
+    """Authenticate cookies for browsers, with Basic Auth kept for API/CLI clients."""
+    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+        require_admin_same_origin(request)
+
+    session_admin = await admin_from_session(request)
+    if session_admin:
+        username, role, password_hash = session_admin
+        if role not in _admin_roles_for_path(request.url.path, request.method):
+            raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")
+        _apply_admin_state(request, username, role, password_hash)
+        return username
+
+    if credentials is not None:
+        redis, account_bucket, ip_bucket = await _check_admin_auth_rate_limit(
+            request, credentials.username
+        )
+        verified = await _verify_admin_account(request, credentials.username, credentials.password)
+        if not verified:
+            await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
+            raise _auth_error()
+        username, role, password_hash = verified
+        _apply_admin_state(request, username, role, password_hash)
+        return username
+
+    if _is_browser_request(request):
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            detail="Vui lòng đăng nhập quản trị.",
+            headers={"Location": "/login?next=" + _next_url(request), "Cache-Control": "no-store"},
+        )
+    raise _auth_error()
 
 
 def get_db_pool() -> Optional[AsyncConnectionPool]:

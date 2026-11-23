@@ -349,32 +349,37 @@ def test_html_escaping_in_form_manager_prevents_xss():
 
 def test_admin_root_redirect_and_sample_images_gallery():
     """Tests /admin redirect, auth gating, and test sample images gallery presence."""
-    import base64
+    from core.state import verify_admin_auth
     client = TestClient(app)
-    auth_header = {"Authorization": f"Basic {base64.b64encode(b'admin:12345678').decode('ascii')}"}
+    auth_header = {}
 
     # 1. Unauthenticated /admin must return 401
     resp_unauth = client.get("/admin", follow_redirects=False)
-    assert resp_unauth.status_code == 401
+    assert resp_unauth.status_code == 303
+    assert resp_unauth.headers["location"].startswith("/login?next=")
 
-    # 2. Authenticated /admin must redirect 302 to /admin/forms
-    resp_auth = client.get("/admin", headers=auth_header, follow_redirects=False)
-    assert resp_auth.status_code == 302
-    assert resp_auth.headers["location"] == "/admin/forms"
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        # 2. Authenticated /admin must redirect 302 to /admin/forms
+        resp_auth = client.get("/admin", headers=auth_header, follow_redirects=False)
+        assert resp_auth.status_code == 302
+        assert resp_auth.headers["location"] == "/admin/forms"
 
-    # 3. Authenticated /admin/samples must redirect to /admin/media
-    resp_samples = client.get("/admin/samples", headers=auth_header, follow_redirects=False)
-    assert resp_samples.status_code == 302
-    assert resp_samples.headers["location"] == "/admin/media"
+        # 3. Authenticated /admin/samples must redirect to /admin/media
+        resp_samples = client.get("/admin/samples", headers=auth_header, follow_redirects=False)
+        assert resp_samples.status_code == 302
+        assert resp_samples.headers["location"] == "/admin/media"
 
-    # 4. /admin/forms HTML is clean (samples retired to /admin/media)
-    resp_forms = client.get("/admin/forms", headers=auth_header)
-    assert resp_forms.status_code == 200
-    html_content = resp_forms.text
-    assert "test-samples-section" not in html_content
-    assert "btnAdminCreate" in html_content
+        # 4. /admin/forms HTML is clean (samples retired to /admin/media)
+        resp_forms = client.get("/admin/forms", headers=auth_header)
+        assert resp_forms.status_code == 200
+        html_content = resp_forms.text
+        assert "test-samples-section" not in html_content
+        assert "btnAdminCreate" in html_content
 
-    # 5. /admin/media contains the media manager
-    resp_media = client.get("/admin/media", headers=auth_header)
-    assert resp_media.status_code == 200
-    assert "Quản Lý Media" in resp_media.text
+        # 5. /admin/media contains the media manager
+        resp_media = client.get("/admin/media", headers=auth_header)
+        assert resp_media.status_code == 200
+        assert "Quản Lý Media" in resp_media.text
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)

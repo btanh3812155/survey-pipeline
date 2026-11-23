@@ -15,8 +15,9 @@ def auth_headers():
 
 def test_audit_viewer_unauthorized():
     client = TestClient(app)
-    resp = client.get("/admin/audit")
-    assert resp.status_code == 401
+    resp = client.get("/admin/audit", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/login?next=")
 
 
 def test_audit_viewer_authorized(auth_headers):

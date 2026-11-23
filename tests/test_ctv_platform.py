@@ -504,7 +504,7 @@ def test_admin_ctv_directory_page_requires_auth_and_shows_static_fallback():
     from core.state import verify_admin_auth
 
     client = TestClient(app)
-    assert client.get("/admin/ctvs").status_code == 401
+    assert client.get("/admin/ctvs", follow_redirects=False).status_code == 303
 
     app.dependency_overrides[verify_admin_auth] = lambda: "admin"
     try:

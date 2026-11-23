@@ -47,6 +47,7 @@ from core.repositories import (
 )
 from routers import (
     system_router,
+    login_router,
     admin_forms_router,
     admin_data_router,
     admin_audit_router,
@@ -333,6 +334,7 @@ if os.path.exists(MEDIA_STORAGE_DIR):
 
 # Include decoupled domain routers
 app.include_router(system_router)
+app.include_router(login_router)
 app.include_router(admin_forms_router)
 app.include_router(admin_data_router)
 app.include_router(admin_audit_router)

@@ -326,7 +326,7 @@ def test_public_routes_generic_with_no_secret_echo_and_strict_post_origin(monkey
     with TestClient(app, base_url="https://testserver") as client:
         base = "/admin/recovery"
         assert client.get(base).status_code == 200
-        assert client.get(base + "/email").status_code == 401
+        assert client.get(base + "/email", follow_redirects=False).status_code == 303
         assert client.post(base + "/request", data={"username": "owner"}).status_code == 403
         assert client.post(base + "/confirm", headers={"Origin": "https://other.test"}, data={"code": "12345678"}).status_code == 403
         disabled = client.post(base + "/request", headers=ORIGIN, data={"username": "owner"})

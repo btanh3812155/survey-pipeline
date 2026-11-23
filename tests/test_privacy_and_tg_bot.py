@@ -116,8 +116,19 @@ def test_survey_history_unauthorized_returns_401(monkeypatch, tmp_path):
     Access to /api/v1/surveys/history without valid credentials MUST return 401 Unauthorized.
     """
     from core.cache import BoundedTTLCache
+    from core.passwords import hash_password
+    import core.state as state
     from routers import survey as survey_router
 
+    encoded = hash_password("history_test_password", iterations=1_000)
+
+    async def load_admin(username):
+        if username == "history_test_admin":
+            return {"password_hash": encoded, "is_active": True, "role": "manager", "deleted_at": None}
+        return None
+
+    monkeypatch.setattr(state, "_load_admin_account", load_admin)
+    monkeypatch.setattr(state, "get_redis_client", lambda: None)
     storage = tmp_path / "dev_submissions.json"
     storage.write_text("[]", encoding="utf-8")
     monkeypatch.setattr(settings, "ADMIN_USERNAME", "history_test_admin")

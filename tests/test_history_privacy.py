@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from config import settings
 from core.cache import BoundedTTLCache
+from core.passwords import hash_password
+import core.state as state
 from main import app
 from routers import survey as survey_mod
 
@@ -56,6 +58,15 @@ class _FakePool:
 def history_env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ADMIN_USERNAME", ADMIN_USER)
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", ADMIN_PASSWORD)
+    encoded = hash_password(ADMIN_PASSWORD, iterations=1_000)
+
+    async def load_admin(username):
+        if username == ADMIN_USER:
+            return {"password_hash": encoded, "is_active": True, "role": "manager", "deleted_at": None}
+        return None
+
+    monkeypatch.setattr(state, "_load_admin_account", load_admin)
+    monkeypatch.setattr(state, "get_redis_client", lambda: None)
 
     history_file = tmp_path / "dev_history.json"
     history_file.write_text(
