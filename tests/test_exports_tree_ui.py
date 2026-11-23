@@ -1,5 +1,5 @@
 """Directory-tree export controls and explicit save confirmations."""
-from routers.admin_exports import _render_client, _render_form, _render_root
+from routers.admin_exports import _render_client, _render_client_exports, _render_form, _render_root
 
 CLIENT = {
     "slug": "acme",
@@ -34,12 +34,23 @@ SETTINGS = {
 }
 
 
-def test_root_renders_navigable_client_and_form_folders():
+def test_root_renders_drive_folder_browser():
     html = _render_root(SETTINGS, [CLIENT])
-    assert "Directory tree" in html
+    assert 'class="drive-top"' in html
+    assert "My Drive" in html
+    assert 'href="/admin/exports/client-exports"' in html
+    assert 'href="/admin/exports/internal-exports"' in html
+    assert "Client Exports" in html
+    assert "Internal Exports" in html
+
+
+def test_client_exports_folder_has_edit_clients_section():
+    html = _render_client_exports(SETTINGS, [CLIENT], "client")
+    assert "Edit clients" in html
+    assert 'id="newClientForm"' in html
     assert 'href="/admin/exports/acme"' in html
-    assert 'href="/admin/exports/acme/TB_GSM_2026_Nov_Test"' in html
-    assert "custom output" in html
+    assert "New client" in html
+    assert 'class="details"' in html
 
 
 def test_all_forms_client_still_shows_form_folders():
@@ -51,7 +62,7 @@ def test_all_forms_client_still_shows_form_folders():
 
 def test_client_page_edits_received_forms_and_confirms_save():
     html = _render_client(CLIENT)
-    assert "Forms this folder receives" in html
+    assert "Manage this client's forms" in html
     assert 'name="form_ids"' in html
     assert 'value="TB_GSM_2026_Nov_Test"' in html
     assert "return confirm('Save changes to acme?')" in html
@@ -61,7 +72,7 @@ def test_client_page_edits_received_forms_and_confirms_save():
 
 def test_form_page_edits_output_and_confirms_save_and_reset():
     html = _render_form(CLIENT, "TB_GSM_2026_Nov_Test")
-    assert "Output settings" in html
+    assert "What this client can access" in html
     assert 'name="fields"' in html
     assert 'name="statuses"' in html
     assert 'name="vehicle_types"' in html
