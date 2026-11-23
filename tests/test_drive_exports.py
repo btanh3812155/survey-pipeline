@@ -574,11 +574,11 @@ async def test_exports_page_renders(store, monkeypatch):
         client_exports = client.get("/admin/exports/client-exports")
         internal_exports = client.get("/admin/exports/internal-exports")
     assert response.status_code == 200
-    assert "My Drive" in response.text
+    assert "Drive của tôi" in response.text
     assert "/admin/exports/client-exports" in response.text
     assert "Images Master" in response.text
-    assert client_exports.status_code == 200 and "Edit clients" in client_exports.text
-    assert internal_exports.status_code == 200 and "Edit internal exports" in internal_exports.text
+    assert client_exports.status_code == 200 and "Sửa khách hàng" in client_exports.text
+    assert internal_exports.status_code == 200 and "Sửa cấu hình nội bộ" in internal_exports.text
 
 
 def test_form_date_modes_inherit_clear_and_custom():

@@ -160,13 +160,21 @@ def _crumbs(items: list[tuple[str, str | None]]) -> str:
     return '<nav class="crumbs">' + " <span>›</span> ".join(parts) + "</nav>"
 
 
-def _drive_card(href: str, name: str, meta: str, icon: str = "folder") -> str:
+def _drive_card(
+    href: str, name: str, meta: str, icon: str = "folder", *,
+    meta_key: str = "", meta_id: str = "", meta_count: int | None = None,
+) -> str:
     icon_svg = FORM_ICON if icon == "form" else FOLDER_ICON
+    attrs = ""
+    if meta_key:
+        attrs = f' data-i18n-template="{meta_key}" data-meta-id="{_esc(meta_id)}"'
+        if meta_count is not None:
+            attrs += f' data-meta-count="{int(meta_count)}"'
     return (
         f'<a class="drive-card" href="{_esc(href)}" data-drive-name="{_esc(name)} {_esc(meta)}">'
         f'<span class="drive-icon">{icon_svg}</span>'
         f'<span class="drive-name">{_esc(name)}</span>'
-        f'<span class="drive-meta">{_esc(meta)}</span></a>'
+        f'<span class="drive-meta"{attrs}>{_esc(meta)}</span></a>'
     )
 
 
@@ -177,13 +185,13 @@ def _kind_label(settings: dict[str, Any], kind: str) -> str:
 
 def _sidebar(active: str) -> str:
     items = [
-        ("drive", "/admin/exports", "My Drive", FOLDER_ICON),
-        ("client", "/admin/exports/client-exports", "Client Exports", FOLDER_ICON),
-        ("internal", "/admin/exports/internal-exports", "Internal Exports", FOLDER_ICON),
+        ("drive", "/admin/exports", "Drive của tôi", "drive_my", FOLDER_ICON),
+        ("client", "/admin/exports/client-exports", "Thư mục khách hàng", "drive_clients", FOLDER_ICON),
+        ("internal", "/admin/exports/internal-exports", "Thư mục nội bộ", "drive_internal", FOLDER_ICON),
     ]
     links = "".join(
-        f'<a href="{_esc(href)}" class="{"active" if active == key else ""}">{icon}{_esc(label)}</a>'
-        for key, href, label, icon in items
+        f'<a href="{_esc(href)}" class="{"active" if active == key else ""}">{icon}<span data-i18n="{key_name}">{_esc(label)}</span></a>'
+        for key, href, label, key_name, icon in items
     )
     return f'<aside class="drive-side">{links}</aside>'
 
@@ -200,18 +208,20 @@ def _drive_shell(
     message: str = "",
     error: str = "",
     toolbar_actions: str = "",
+    heading_key: str = "",
+    subtitle_key: str = "",
 ) -> str:
     body = f"""
 <header class="drive-top">
   <a class="drive-brand" href="/admin/exports">{DRIVE_LOGO}<span>Drive</span></a>
-  <div class="drive-search"><input type="search" id="driveSearch" placeholder="Tìm trong Drive" aria-label="Tìm trong Drive" oninput="filterDriveCards()"></div>
+  <div class="drive-search"><input type="search" id="driveSearch" placeholder="Tìm trong Drive" data-i18n-placeholder="drive_search" aria-label="Tìm trong Drive" oninput="filterDriveCards()"></div>
 </header>
 <div class="drive-shell">
   {_sidebar(active)}
   <main class="drive-main">
     <div class="drive-toolbar">{crumbs}<div class="actions">{toolbar_actions}</div></div>
-    <h1 class="drive-title">{_esc(heading)}</h1>
-    <p class="drive-sub">{_esc(subtitle)}</p>
+    <h1 class="drive-title"{f' data-i18n="{heading_key}"' if heading_key else ''}>{_esc(heading)}</h1>
+    <p class="drive-sub"{f' data-i18n="{subtitle_key}"' if subtitle_key else ''}>{_esc(subtitle)}</p>
     {_flash(message, error)}
     <div class="drive-layout">
       <section class="drive-content" id="driveFiles">{content or '<div class="drive-empty">Thư mục này trống.</div>'}</section>
@@ -240,28 +250,28 @@ def _client_form(
     action = "/admin/exports/clients" if create else f"/admin/exports/clients/{_esc(slug)}"
     forms = _available_forms(raw)
     label = slug or "new export configuration"
-    confirm = f"return confirm('Save changes to {_esc(label)}?')"
+    confirm = f"return confirm('Lưu thay đổi cho {_esc(label)}?')"
     return f"""
 <article class="card">
   <form method="post" action="{action}" onsubmit="{confirm}">
     <div class="grid">
-      <label>Slug<input name="slug" value="{_esc(slug)}" pattern="[a-z0-9][a-z0-9_-]{{0,63}}" maxlength="64" {'readonly' if slug else 'required'}></label>
-      <label>Display name<input name="display_name" value="{_esc(raw.get('display_name', ''))}" maxlength="100" required></label>
-      <label>Kind<select name="kind">
-        <option value="client"{' selected' if kind == 'client' else ''}>Client export</option>
-        <option value="internal"{' selected' if kind == 'internal' else ''}>Internal export</option>
+      <label><span data-i18n="slug">Slug</span><input name="slug" value="{_esc(slug)}" pattern="[a-z0-9][a-z0-9_-]{{0,63}}" maxlength="64" {'readonly' if slug else 'required'}></label>
+      <label><span data-i18n="display_name">Tên hiển thị</span><input name="display_name" value="{_esc(raw.get('display_name', ''))}" maxlength="100" required></label>
+      <label><span data-i18n="kind">Loại</span><select name="kind">
+        <option value="client"{' selected' if kind == 'client' else ''} data-i18n="client_export">Xuất khách hàng</option>
+        <option value="internal"{' selected' if kind == 'internal' else ''} data-i18n="internal_export">Xuất nội bộ</option>
       </select></label>
-      <label>Internal category<input name="category" value="{_esc(raw.get('category', ''))}" maxlength="100" placeholder="Required for internal"></label>
-      <label>Drive folder name<input name="folder_name" value="{_esc(raw.get('folder_name', ''))}" maxlength="100" placeholder="Defaults to display name"></label>
-      <label>Enabled<select name="enabled"><option value="on"{' selected' if bool(raw.get('enabled', True)) else ''}>Yes</option><option value="off"{' selected' if not bool(raw.get('enabled', True)) else ''}>No</option></select></label>
-      <label>From date<input type="date" name="date_from" value="{_esc(raw.get('date_from', ''))}"></label>
-      <label>To date<input type="date" name="date_to" value="{_esc(raw.get('date_to', ''))}"></label>
+      <label><span data-i18n="internal_category">Nhóm nội bộ</span><input name="category" value="{_esc(raw.get('category', ''))}" maxlength="100" placeholder="Bắt buộc cho xuất nội bộ" data-i18n-placeholder="required_internal"></label>
+      <label><span data-i18n="drive_folder_name">Tên thư mục Drive</span><input name="folder_name" value="{_esc(raw.get('folder_name', ''))}" maxlength="100" placeholder="Mặc định theo tên hiển thị" data-i18n-placeholder="defaults_display_name"></label>
+      <label><span data-i18n="enabled">Bật</span><select name="enabled"><option value="on"{' selected' if bool(raw.get('enabled', True)) else ''} data-i18n="yes">Có</option><option value="off"{' selected' if not bool(raw.get('enabled', True)) else ''} data-i18n="no">Không</option></select></label>
+      <label><span data-i18n="from_date">Từ ngày</span><input type="date" name="date_from" value="{_esc(raw.get('date_from', ''))}"></label>
+      <label><span data-i18n="to_date">Đến ngày</span><input type="date" name="date_to" value="{_esc(raw.get('date_to', ''))}"></label>
     </div>
-    <fieldset><legend>Forms this client receives</legend>
-      <p class="hint">No selection means every active form. Open a form folder to edit its output.</p>
+    <fieldset><legend data-i18n="forms_client_receives">Các form khách hàng nhận</legend>
+      <p class="hint" data-i18n="no_selection_hint">Không chọn nghĩa là nhận mọi form đang hoạt động. Mở thư mục form để sửa đầu ra.</p>
       {_checkbox_group('form_ids', [(fid, fid) for fid in forms], selected_forms)}
     </fieldset>
-    <div class="actions"><button type="submit">{'Create export' if create else 'Save client and form selection'}</button></div>
+    <div class="actions"><button type="submit" data-i18n="{'create_export' if create else 'save_client_forms'}">{'Tạo cấu hình' if create else 'Lưu khách hàng và form'}</button></div>
   </form>
 </article>"""
 
@@ -276,10 +286,11 @@ def _form_cards(client: dict[str, Any]) -> str:
     for form_id in form_ids:
         schema = FORM_REGISTRY.get(form_id)
         title = str(getattr(schema, "title", "") or form_id)
-        state = "custom output" if form_id in overrides else "client defaults"
+        state_key = "form_meta_custom" if form_id in overrides else "form_meta_default"
+        state = "đầu ra tùy chỉnh" if form_id in overrides else "mặc định khách hàng"
         cards.append(_drive_card(
             f"/admin/exports/{_esc(client['slug'])}/{_esc(form_id)}", title,
-            f"{form_id} · {state}", "form",
+            f"{form_id} · {state}", "form", meta_key=state_key, meta_id=form_id,
         ))
     return '<div class="file-grid">' + "".join(cards) + "</div>"
 
@@ -291,7 +302,10 @@ def _client_cards(clients: list[dict[str, Any]]) -> str:
         _drive_card(
             f"/admin/exports/{_esc(client['slug'])}",
             str(client.get("display_name") or client["slug"]),
-            f"{client['slug']} · {len(client.get('form_ids') or []) or 'all'} forms",
+            f"{client['slug']} · {len(client.get('form_ids') or []) or 'tất cả'} form",
+            meta_key="client_meta" if (client.get('form_ids') or []) else "client_meta_all",
+            meta_id=client["slug"],
+            meta_count=len(client.get('form_ids') or []),
         )
         for client in clients
     ) + "</div>"
@@ -305,27 +319,29 @@ def _date_mode(override: dict[str, Any], key: str) -> str:
 
 def _date_controls(override: dict[str, Any], key: str, label: str, client_value: str) -> str:
     mode = _date_mode(override, key)
-    inherited = _esc(client_value or "any")
-    return f"""<fieldset><legend>{label}</legend>
-<label class="check"><input type="radio" name="{key}_mode" value="inherit"{_checked(mode == 'inherit')}> Inherit client range ({inherited})</label>
-<label class="check"><input type="radio" name="{key}_mode" value="clear"{_checked(mode == 'clear')}> No {label.lower()} limit</label>
-<label class="check"><input type="radio" name="{key}_mode" value="custom"{_checked(mode == 'custom')}> Custom date</label>
-<label>Date<input type="date" name="{key}" value="{_esc(override.get(key) or '')}"></label>
+    inherited = _esc(client_value or "bất kỳ")
+    limit_key = "no_from_limit" if key == "date_from" else "no_to_limit"
+    limit_label = "Không giới hạn từ ngày" if key == "date_from" else "Không giới hạn đến ngày"
+    return f"""<fieldset><legend data-i18n="{key}_label">{label}</legend>
+<label class="check"><input type="radio" name="{key}_mode" value="inherit"{_checked(mode == 'inherit')}> <span data-i18n-template="inherit_client_range" data-inherited="{inherited}">Kế thừa khoảng của khách hàng ({inherited})</span></label>
+<label class="check"><input type="radio" name="{key}_mode" value="clear"{_checked(mode == 'clear')}> <span data-i18n="{limit_key}">{limit_label}</span></label>
+<label class="check"><input type="radio" name="{key}_mode" value="custom"{_checked(mode == 'custom')}> <span data-i18n="custom_date">Ngày tùy chỉnh</span></label>
+<label><span data-i18n="date">Ngày</span><input type="date" name="{key}" value="{_esc(override.get(key) or '')}"></label>
 </fieldset>"""
 
 
 def _settings_details(settings: dict[str, Any], report_text: str) -> str:
     return f"""
-<h2>Drive settings</h2>
-<details class="drive-settings" open><summary>Folder names</summary>
-<form method="post" action="/admin/exports/settings" onsubmit="return confirm('Save Drive folder names?')"><div class="grid">
-<label>Master export folder<input name="master_folder_name" value="{_esc(settings.get('master_folder_name', 'Master Export'))}" required></label>
-<label>Client exports folder<input name="client_folder_name" value="{_esc(settings.get('client_folder_name', 'Client Exports'))}" required></label>
-<label>Internal exports folder<input name="internal_folder_name" value="{_esc(settings.get('internal_folder_name', 'Internal Exports'))}" required></label>
-<label>Images master folder<input name="images_folder_name" value="{_esc(settings.get('images_folder_name', 'Images Master'))}" required></label>
-</div><div class="actions"><button type="submit">Save folder names</button></div></form>
+<h2 data-i18n="drive_settings">Cài đặt Drive</h2>
+<details class="drive-settings" open><summary data-i18n="folder_names">Tên thư mục</summary>
+<form method="post" action="/admin/exports/settings" onsubmit="return confirm('Lưu tên thư mục Drive?')"><div class="grid">
+<label><span data-i18n="master_folder">Thư mục xuất chính</span><input name="master_folder_name" value="{_esc(settings.get('master_folder_name', 'Master Export'))}" required></label>
+<label><span data-i18n="client_folder">Thư mục xuất khách hàng</span><input name="client_folder_name" value="{_esc(settings.get('client_folder_name', 'Client Exports'))}" required></label>
+<label><span data-i18n="internal_folder">Thư mục xuất nội bộ</span><input name="internal_folder_name" value="{_esc(settings.get('internal_folder_name', 'Internal Exports'))}" required></label>
+<label><span data-i18n="images_folder">Thư mục ảnh gốc</span><input name="images_folder_name" value="{_esc(settings.get('images_folder_name', 'Images Master'))}" required></label>
+</div><div class="actions"><button type="submit" data-i18n="save_folder_names">Lưu tên thư mục</button></div></form>
 </details>
-<details class="drive-settings"><summary>Last export report</summary><pre>{_esc(report_text)}</pre></details>"""
+<details class="drive-settings"><summary data-i18n="last_report">Báo cáo xuất gần nhất</summary><pre>{_esc(report_text)}</pre></details>"""
 
 
 def _render_root(
@@ -337,20 +353,21 @@ def _render_root(
             report = json.loads(report)
         except ValueError:
             report = None
-    report_text = json.dumps(report, ensure_ascii=False, indent=2) if report else "No export has run yet."
+    report_text = json.dumps(report, ensure_ascii=False, indent=2) if report else "Chưa chạy xuất lần nào."
     client_count = sum(1 for c in clients if str(c.get("kind")) == "client")
     internal_count = sum(1 for c in clients if str(c.get("kind")) == "internal")
     folders = "".join([
-        _drive_card("/admin/exports/client-exports", _kind_label(settings, "client"), f"{client_count} client folders"),
-        _drive_card("/admin/exports/internal-exports", _kind_label(settings, "internal"), f"{internal_count} internal folders"),
+        _drive_card("/admin/exports/client-exports", _kind_label(settings, "client"), f"{client_count} thư mục khách hàng", meta_key="client_folders_count", meta_count=client_count),
+        _drive_card("/admin/exports/internal-exports", _kind_label(settings, "internal"), f"{internal_count} thư mục nội bộ", meta_key="internal_folders_count", meta_count=internal_count),
     ])
-    run_form = '<form method="post" action="/admin/exports/run" onsubmit="return confirm(\'Run Google Drive export now?\')"><button type="submit">Run export</button></form>'
+    run_form = '<form method="post" action="/admin/exports/run" onsubmit="return confirm(\'Chạy xuất Google Drive ngay?\')"><button type="submit" data-i18n="run_export">Chạy xuất</button></form>'
     return _drive_shell(
-        "Drive Exports", _crumbs([("My Drive", None)]), "My Drive",
-        "Google Drive export folders and controls.",
+        "Drive Exports", _crumbs([("Drive của tôi", None)]), "Drive của tôi",
+        "Thư mục và điều khiển xuất Google Drive.",
         f'<div class="file-grid">{folders}</div>',
         _settings_details(settings, report_text),
         active="drive", message=message, error=error, toolbar_actions=run_form,
+        heading_key="drive_my", subtitle_key="drive_root_subtitle",
     )
 
 
@@ -360,24 +377,30 @@ def _render_client_exports(
 ) -> str:
     entries = [c for c in clients if str(c.get("kind")) == kind]
     label = _kind_label(settings, kind)
-    noun = "client" if kind == "client" else "internal export"
+    is_client = kind == "client"
+    edit_key = "edit_clients" if is_client else "edit_internal"
+    new_key = "new_client" if is_client else "new_internal"
+    edit_label = "Sửa khách hàng" if is_client else "Sửa cấu hình nội bộ"
+    new_label = "Khách hàng mới" if is_client else "Cấu hình nội bộ mới"
     links = "".join(
         f'<a href="/admin/exports/{_esc(client["slug"])}"><span>{_esc(client.get("display_name") or client["slug"])}</span><span class="muted">{_esc(client["slug"])}</span></a>'
         for client in entries
     )
     details = f"""
-<h2>Edit {noun}s</h2>
-<p class="hint">Chọn một thư mục để quản lý form, hoặc tạo cấu hình mới.</p>
-<div class="details-list">{links or '<span class="muted">Chưa có cấu hình.</span>'}</div>
-<details class="drive-settings" id="newClientForm" open><summary>New {noun}</summary>
+<h2 data-i18n="{edit_key}">{edit_label}</h2>
+<p class="hint" data-i18n="choose_folder_hint">Chọn một thư mục để quản lý form, hoặc tạo cấu hình mới.</p>
+<div class="details-list">{links or '<span class="muted" data-i18n="no_configs">Chưa có cấu hình.</span>'}</div>
+<details class="drive-settings" id="newClientForm" open><summary data-i18n="{new_key}">{new_label}</summary>
 {_client_form(create=True, default_kind=kind)}
 </details>"""
-    toolbar = f'<button type="button" onclick="document.getElementById(\'newClientForm\').open=true;document.getElementById(\'newClientForm\').scrollIntoView({{behavior:\'smooth\'}})">New {noun}</button>'
+    toolbar = f'<button type="button" data-i18n="{new_key}" onclick="document.getElementById(\'newClientForm\').open=true;document.getElementById(\'newClientForm\').scrollIntoView({{behavior:\'smooth\'}})">{new_label}</button>'
     return _drive_shell(
-        label, _crumbs([("My Drive", "/admin/exports"), (label, None)]), label,
-        f"Quản lý {noun} và các thư mục form của họ.",
+        label, _crumbs([("Drive của tôi", "/admin/exports"), (label, None)]), label,
+        "Quản lý cấu hình xuất và các thư mục form.",
         _client_cards(entries), details, active=kind, message=message, error=error,
         toolbar_actions=toolbar,
+        heading_key="drive_clients" if is_client else "drive_internal",
+        subtitle_key="client_exports_subtitle" if is_client else "internal_exports_subtitle",
     )
 
 
@@ -390,18 +413,19 @@ def _render_client(
     kind = str(client.get("kind") or "client")
     label = _kind_label(settings, kind)
     danger = f"""
-<form method="post" action="/admin/exports/clients/{_esc(slug)}/delete" onsubmit="return confirm('Delete {_esc(slug)}? Drive folders are kept.')">
-<button class="danger" type="submit">Delete configuration</button></form>"""
+<form method="post" action="/admin/exports/clients/{_esc(slug)}/delete" onsubmit="return confirm('Xóa {_esc(slug)}? Thư mục Drive vẫn được giữ.')">
+<button class="danger" type="submit" data-i18n="delete_config">Xóa cấu hình</button></form>"""
     details = f"""
-<h2>Manage this client's forms</h2>
-<p class="hint">Chọn các form khách hàng nhận và cấu hình mặc định của thư mục.</p>
+<h2 data-i18n="manage_forms">Quản lý form của khách hàng này</h2>
+<p class="hint" data-i18n="manage_forms_hint">Chọn các form khách hàng nhận và cấu hình mặc định của thư mục.</p>
 {_client_form(client)}
 <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:10px;">{danger}</div>"""
+    count = len(client.get('form_ids') or [])
     return _drive_shell(
         f"Export {slug}",
-        _crumbs([("My Drive", "/admin/exports"), (label, f"/admin/exports/{'client-exports' if kind == 'client' else 'internal-exports'}"), (str(client.get("display_name") or slug), None)]),
+        _crumbs([("Drive của tôi", "/admin/exports"), (label, f"/admin/exports/{'client-exports' if kind == 'client' else 'internal-exports'}"), (str(client.get("display_name") or slug), None)]),
         str(client.get("display_name") or slug),
-        f"{label} · {len(client.get('form_ids') or []) or 'all'} forms · {slug}",
+        f"{label} · {count or 'tất cả'} form · {slug}",
         _form_cards(client), details, active=kind, message=message, error=error,
     )
 
@@ -423,47 +447,47 @@ def _render_form(
     selected_forms = set(str(v) for v in (client.get("form_ids") or []))
     warning = ""
     if selected_forms and form_id not in selected_forms:
-        warning = '<div class="flash bad">This form is not selected for the client yet. Saving this form adds it to the client.</div>'
+        warning = '<div class="flash bad" data-i18n="warning_not_selected">Form này chưa được chọn cho khách hàng. Lưu form sẽ thêm vào danh sách.</div>'
     date_hint = (
-        f"Inherit uses the client range "
-        f"({_esc(client.get('date_from') or 'any')} to {_esc(client.get('date_to') or 'any')}); "
-        "Custom requires a date."
+        f"Kế thừa khoảng của khách hàng "
+        f"({_esc(client.get('date_from') or 'bất kỳ')} đến {_esc(client.get('date_to') or 'bất kỳ')}); "
+        "Ngày tùy chỉnh phải có giá trị."
     )
     reset = (
         f'<form method="post" action="/admin/exports/clients/{_esc(slug)}/forms/{_esc(form_id)}/delete" '
-        f'onsubmit="return confirm(\'Reset this form to client defaults?\')"><button class="danger" type="submit">Reset to client defaults</button></form>'
+        f'onsubmit="return confirm(\'Đặt lại form này về mặc định khách hàng?\')"><button class="danger" type="submit" data-i18n="reset_defaults">Đặt lại mặc định khách hàng</button></form>'
         if override else ""
     )
     panel = f"""
 <section class="form-panel">
-<h2>What this client can access</h2>
+<h2 data-i18n="what_access">Khách hàng này được truy cập gì</h2>
 <p class="hint">Các thiết lập này chỉ áp dụng cho <b>{_esc(client.get('display_name') or slug)}</b> / <code>{_esc(form_id)}</code>.</p>
 {_flash(message, error)}{warning}
-<form method="post" action="/admin/exports/clients/{_esc(slug)}/forms/{_esc(form_id)}" onsubmit="return confirm('Save output settings for {_esc(slug)} / {_esc(form_id)}?')">
+<form method="post" action="/admin/exports/clients/{_esc(slug)}/forms/{_esc(form_id)}" onsubmit="return confirm('Lưu thiết lập đầu ra cho {_esc(slug)} / {_esc(form_id)}?')">
   <div class="grid">
-    <fieldset><legend>Fields</legend><p class="hint">Unchecking everything falls back to the client field list.</p>{_checkbox_group('fields', list(EXPORT_FIELDS), list(effective.get('fields') or []))}</fieldset>
-    <fieldset><legend>Statuses</legend>{_checkbox_group('statuses', [(status, status) for status in EXPORT_STATUSES], list(effective.get('statuses') or []))}</fieldset>
-    <fieldset><legend>Vehicle kinds</legend><p class="hint">No selection means all vehicles.</p>{_checkbox_group('vehicle_types', [(kind, kind) for kind in VEHICLE_TYPES], list(effective.get('vehicle_types') or []))}</fieldset>
+    <fieldset><legend data-i18n="fields">Trường dữ liệu</legend><p class="hint" data-i18n="fields_hint">Bỏ chọn tất cả sẽ dùng danh sách trường mặc định của khách hàng.</p>{_checkbox_group('fields', list(EXPORT_FIELDS), list(effective.get('fields') or []))}</fieldset>
+    <fieldset><legend data-i18n="statuses">Trạng thái</legend>{_checkbox_group('statuses', [(status, status) for status in EXPORT_STATUSES], list(effective.get('statuses') or []))}</fieldset>
+    <fieldset><legend data-i18n="vehicle_kinds">Loại xe</legend><p class="hint" data-i18n="vehicles_hint">Không chọn nghĩa là mọi loại xe.</p>{_checkbox_group('vehicle_types', [(kind, kind) for kind in VEHICLE_TYPES], list(effective.get('vehicle_types') or []))}</fieldset>
   </div>
   <div class="grid">
-    {_date_controls(override, 'date_from', 'From date', str(client.get('date_from') or ''))}
-    {_date_controls(override, 'date_to', 'To date', str(client.get('date_to') or ''))}
+    {_date_controls(override, 'date_from', 'Từ ngày', str(client.get('date_from') or ''))}
+    {_date_controls(override, 'date_to', 'Đến ngày', str(client.get('date_to') or ''))}
   </div>
-  <p class="hint">{date_hint} Choose <b>No limit</b> to override a client date range with an unbounded form export.</p>
-  <label class="check"><input type="checkbox" name="include_images" value="on"{_checked(bool(effective.get('include_images', True)))}> Include submission images as shortcuts to the master image tree</label>
-  <div class="actions"><button type="submit">Save form output</button></div>
+  <p class="hint">{date_hint} Chọn <b>Không giới hạn</b> để bỏ khoảng ngày của khách hàng cho form này.</p>
+  <label class="check"><input type="checkbox" name="include_images" value="on"{_checked(bool(effective.get('include_images', True)))}> <span data-i18n="include_images">Kèm ảnh bài nộp dưới dạng lối tắt tới cây ảnh gốc</span></label>
+  <div class="actions"><button type="submit" data-i18n="save_form_output">Lưu đầu ra form</button></div>
 </form>
 </section>"""
     details = f"""
-<h2>Folder details</h2>
-<p><b>Client:</b> {_esc(client.get('display_name') or slug)}</p>
-<p><b>Form:</b> <code>{_esc(form_id)}</code></p>
-<p><b>Fields:</b> {len(effective.get('fields') or [])} · <b>Statuses:</b> {len(effective.get('statuses') or [])}</p>
-<p><b>Images:</b> {'yes' if effective.get('include_images') else 'no'}</p>
+<h2 data-i18n="folder_details">Chi tiết thư mục</h2>
+<p><b data-i18n="client">Khách hàng</b>: {_esc(client.get('display_name') or slug)}</p>
+<p><b data-i18n="form">Form</b>: <code>{_esc(form_id)}</code></p>
+<p><b data-i18n="fields">Trường dữ liệu</b>: {len(effective.get('fields') or [])} · <b data-i18n="statuses">Trạng thái</b>: {len(effective.get('statuses') or [])}</p>
+<p><b data-i18n="images">Ảnh</b>: <span data-i18n="{'yes' if effective.get('include_images') else 'no'}">{'có' if effective.get('include_images') else 'không'}</span></p>
 {reset}"""
     return _drive_shell(
         f"{slug} / {form_id}",
-        _crumbs([("My Drive", "/admin/exports"), (label, f"/admin/exports/{'client-exports' if kind == 'client' else 'internal-exports'}"), (str(client.get('display_name') or slug), f"/admin/exports/{slug}"), (form_id, None)]),
+        _crumbs([("Drive của tôi", "/admin/exports"), (label, f"/admin/exports/{'client-exports' if kind == 'client' else 'internal-exports'}"), (str(client.get('display_name') or slug), f"/admin/exports/{slug}"), (form_id, None)]),
         form_id,
         f"Quyền truy cập của {client.get('display_name') or slug} trong form này.",
         panel, details, active=kind, message=message, error=error,
