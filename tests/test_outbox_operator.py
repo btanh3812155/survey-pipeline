@@ -17,7 +17,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from config import settings
-from core import durable_work
+from core import durable_work, state as core_state
+from core.passwords import hash_password
 from core.schema_gate import MIGRATION_001_CHECKSUM
 from routers import actions
 from services import action_checklist
@@ -28,6 +29,19 @@ from tests.postgres_harness import apply_schema, resolve_test_database_url
 def operator_app(monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_USERNAME", "operator")
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", "operator-test-password")
+    password_hash = hash_password(settings.ADMIN_PASSWORD, iterations=1000)
+
+    async def fake_load_admin_account(username):
+        if username == settings.ADMIN_USERNAME:
+            return {
+                "password_hash": password_hash,
+                "is_active": True,
+                "role": "superadmin",
+                "deleted_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(core_state, "_load_admin_account", fake_load_admin_account)
     app = FastAPI()
     app.include_router(actions.router)
     return app

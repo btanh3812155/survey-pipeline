@@ -390,6 +390,17 @@ def test_admin_dev_history_normalizes_legacy_phone_forms(monkeypatch, tmp_path):
     monkeypatch.setattr(survey_runtime, "HISTORY_RATE_LIMITER", BoundedTTLCache(max_size=8, ttl_seconds=60))
     monkeypatch.setattr(settings, "ADMIN_USERNAME", "h1-admin")
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", "h1-password")
+    from core import state as core_state
+    from core.passwords import hash_password
+
+    password_hash = hash_password(settings.ADMIN_PASSWORD, iterations=1000)
+
+    async def fake_load_admin_account(username):
+        if username != settings.ADMIN_USERNAME:
+            return None
+        return {"password_hash": password_hash, "is_active": True, "role": "superadmin", "deleted_at": None}
+
+    monkeypatch.setattr(core_state, "_load_admin_account", fake_load_admin_account)
     response = TestClient(app).get(
         "/api/v1/surveys/history?phone=0932090967", auth=("h1-admin", "h1-password")
     )

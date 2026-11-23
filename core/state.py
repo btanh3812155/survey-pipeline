@@ -367,11 +367,10 @@ async def verify_admin_auth(
     credentials: Optional[HTTPBasicCredentials] = Depends(admin_security),
 ) -> str:
     """Authenticate cookies for browsers, with Basic Auth kept for API/CLI clients."""
-    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
-        require_admin_same_origin(request)
-
     session_admin = await admin_from_session(request)
     if session_admin:
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            require_admin_same_origin(request)
         username, role, password_hash = session_admin
         if role not in _admin_roles_for_path(request.url.path, request.method):
             raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")

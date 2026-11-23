@@ -393,6 +393,7 @@ Renders the client-facing responsive dynamic WebRTC HTML form.
 Admin Web UI for creating, browsing, and configuring survey form schemas.
 - **Method:** `GET`
 - **Auth:** Browser session login at `/login` with the admin password. Unauthenticated browser requests redirect to `/login`; API clients may still use HTTP Basic Authentication.
+- **CSRF:** Unsafe cookie-session writes require an exact same-origin `Origin` or `Referer`; Basic-authenticated API writes are not CSRF-checked because browsers do not attach Basic credentials automatically.
 - **Response `200 OK`:** `text/html; charset=utf-8`
 
 ---
