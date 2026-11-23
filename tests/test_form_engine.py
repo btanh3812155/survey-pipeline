@@ -11,6 +11,7 @@ from services.form_engine import (
     DEFAULT_TRUST_BRIDGE_SCHEMA,
     validate_submission_against_schema,
 )
+from services.form_modules import run_form_modules
 
 ORIGIN = {"Origin": "http://testserver"}
 
@@ -47,22 +48,30 @@ def test_default_schema_valid_submission():
     assert is_valid is True
     assert err is None
 
-def test_regex_constraint_invalid_phone():
+@pytest.mark.asyncio
+async def test_regex_constraint_invalid_phone():
     invalid_answers = {
         "driver_signature": "data:image/png;base64,mock",
         "consent_choice": "Tôi đồng ý",
-        "driver_phone": "12345", # Fails ^0[0-9]{9,10}$
+        "driver_phone": "12345",
         "driver_name": "Nguyễn Văn An",
         "license_plate": "29E-123.45",
         "vehicle_type": "Ô tô điện VinFast (GSM)",
         "car_model": "VF 5 Plus",
+        "gsm_duration": "Từ 6 – 12 tháng",
+        "gsm_contract_type": "Xe Taxi xanh GSM",
+        "daily_trips": "18",
+        "monthly_income_range": "12 – 20 triệu VNĐ",
+        "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
         "gross_revenue": "1250000",
         "odometer_km": "15200",
-        "camera_receipt": "mock_blob",
+        "camera_receipt": [f"mock_img_{i}.jpg" for i in range(7)],
     }
     is_valid, err = validate_submission_against_schema(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_answers)
-    assert is_valid is False
-    assert "Số điện thoại" in err
+    assert is_valid is True
+    result = await run_form_modules(DEFAULT_TRUST_BRIDGE_SCHEMA, invalid_answers)
+    assert result["failure"]["module_uid"] == "phone_format"
+    assert "Số điện thoại" in result["failure"]["message"]
 
 def test_conditional_question_branching():
     answers_car = {

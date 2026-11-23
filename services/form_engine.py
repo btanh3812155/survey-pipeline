@@ -68,6 +68,7 @@ def evaluate_condition(rule: ConditionalRule, answer: Any) -> bool:
     return not _is_blank(answer)
 
 class ValidationRule(BaseModel):
+    # Legacy compatibility only. New/default checks are engine form modules.
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     regex_pattern: Optional[str] = None
@@ -103,11 +104,19 @@ class FormQuestion(BaseModel):
     is_consent_gate: bool = False # every following question depends on this answer
     consent_accept_values: List[str] = Field(default_factory=list) # empty = any non-blank answer
     image_checks: Optional[ImageCheckConfig] = None
+    input_mode: Optional[str] = None  # text | numeric | tel (keyboard hint, not validation)
     allow_multiple_images: bool = False
     min_images: Optional[int] = None
     max_images: Optional[int] = None
     exact_image_count: Optional[int] = None
     image_slots: Optional[List[Dict[str, Any]]] = None  # e.g. [{"slot": 0, "title": "Đồng hồ km", "role": "odometer", "required": True}, ...]
+
+    @field_validator("input_mode")
+    @classmethod
+    def _known_input_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value in (None, "", "text", "numeric", "tel"):
+            return value or None
+        raise ValueError("input_mode must be text, numeric or tel")
 
     @model_validator(mode="after")
     def _normalize_condition_groups(self) -> "FormQuestion":
@@ -541,6 +550,41 @@ def get_effective_image_checks(
                 break
     return base
 
+def _default_validation_modules() -> list[FormModule]:
+    """Checks are modules, not per-question ValidationRule objects."""
+    phone_message = "Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số"
+    trips_message = "Số chuyến mỗi ngày phải từ 1 đến 200"
+    return [
+        FormModule(
+            uid="phone_format",
+            name="Định dạng số điện thoại",
+            kind="engine",
+            module_id="regex",
+            inputs=[
+                FormModuleInput(name="field", source="literal", literal="driver_phone"),
+                FormModuleInput(name="pattern", source="literal", literal=r"^0[0-9]{9,10}$"),
+                FormModuleInput(name="message", source="literal", literal=phone_message),
+            ],
+            reject_on_false=True,
+            reject_message=phone_message,
+        ),
+        FormModule(
+            uid="daily_trips_range",
+            name="Giới hạn số chuyến mỗi ngày",
+            kind="engine",
+            module_id="number_range",
+            inputs=[
+                FormModuleInput(name="field", source="literal", literal="daily_trips"),
+                FormModuleInput(name="min", source="literal", literal=1),
+                FormModuleInput(name="max", source="literal", literal=200),
+                FormModuleInput(name="message", source="literal", literal=trips_message),
+            ],
+            reject_on_false=True,
+            reject_message=trips_message,
+        ),
+    ]
+
+
 # Default Production Form Schema for Trust Bridge Fleet Survey
 DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
     form_id="income_survey",
@@ -564,6 +608,7 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             enable_ai_generated_check=True,
             enable_screen_photo_check=False,
         ),
+        modules=_default_validation_modules(),
     ),
     questions=[
         # Question 1: Signature
@@ -595,15 +640,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             required=False,
             description="Số điện thoại dùng để tra cứu lịch sử nộp và đối soát ca làm việc (có thể để trống)",
             sample_response="0988123456",
+            input_mode="tel",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
                 expected_value="Tôi đồng ý",
-            ),
-            validation=ValidationRule(
-                numbers_only=True,
-                regex_pattern=r"^0[0-9]{9,10}$",
-                regex_error_message="Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số",
             ),
         ),
         FormQuestion(
@@ -676,15 +717,11 @@ DEFAULT_TRUST_BRIDGE_SCHEMA = FormSchema(
             required=True,
             description="Số chuyến xe hoàn thành trung bình mỗi ngày",
             sample_response="18",
+            input_mode="numeric",
             conditional=ConditionalRule(
                 depends_on_question_id="consent_choice",
                 operator="equals",
                 expected_value="Tôi đồng ý",
-            ),
-            validation=ValidationRule(
-                numbers_only=True,
-                min_value=1,
-                max_value=200,
             ),
         ),
         FormQuestion(
