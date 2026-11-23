@@ -12,12 +12,18 @@ Mở miền quản trị đã được cấp, ví dụ:
 https://admin.trustbridgevn.com
 ```
 
-Hệ thống dùng HTTP Basic Auth. Trình duyệt sẽ hiện hộp thoại đăng nhập:
+Hệ thống dùng trang đăng nhập riêng, không còn hộp thoại Basic Auth của trình duyệt.
+
+![Đăng nhập quản trị](images/admin-tutorial/login.png)
+
+Nhập:
 
 - Tên đăng nhập: tài khoản quản trị đã được cấp
 - Mật khẩu: mật khẩu của tài khoản đó
 
-Tài khoản được xác thực từ cơ sở dữ liệu, không dùng mật khẩu môi trường. Tài khoản bị tắt, bị xóa hoặc không tồn tại sẽ không đăng nhập được.
+Phiên đăng nhập được giữ bằng cookie `HttpOnly`, có thời hạn 12 giờ. Tài khoản được xác thực từ cơ sở dữ liệu, không dùng mật khẩu môi trường. Tài khoản bị tắt, bị xóa, đổi mật khẩu hoặc không tồn tại sẽ không đăng nhập được.
+
+Bấm **Đăng xuất** trên thanh điều hướng để kết thúc phiên.
 
 ### Vai trò
 
