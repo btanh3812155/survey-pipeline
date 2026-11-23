@@ -393,7 +393,7 @@ Renders the client-facing responsive dynamic WebRTC HTML form.
 Admin Web UI for creating, browsing, and configuring survey form schemas.
 - **Method:** `GET`
 - **Auth:** Browser session login at `/login` with the admin password. Unauthenticated browser requests redirect to `/login`; API clients may still use HTTP Basic Authentication.
-- **CSRF:** Unsafe cookie-session writes require an exact same-origin `Origin` or `Referer`; Basic-authenticated API writes are not CSRF-checked because browsers do not attach Basic credentials automatically.
+- **CSRF:** Unsafe cookie-session writes require an exact same-origin `Origin` or `Referer`. Basic-authenticated API writes allow headerless CLI clients but reject browser cross-site `Sec-Fetch-Site` and any present mismatched `Origin`/`Referer`.
 - **Response `200 OK`:** `text/html; charset=utf-8`
 
 ---
@@ -419,11 +419,11 @@ Persists a new or updated FormSchema JSON configuration.
 
 ### 3.7 `GET /api/v1/surveys/history` (Locked Down Endpoint)
 Queries previous attempts and rejection reasons for a driver.
-- **Security Control:** Strictly requires HTTP Basic Authentication. Unauthenticated public access receives `401 Unauthorized` to prevent competitive phone number scraping. Admin browser pages use `/login`; this API intentionally stays on Basic Auth.
+- **Security Control:** Requires an authenticated admin via `verify_admin_auth`: an admin browser session or HTTP Basic Authentication. Unauthenticated public access receives `401 Unauthorized` to prevent competitive phone number scraping.
 - **Rate Limit:** 30 queries per minute per phone number via Redis.
 - **Sample Request:**
   ```bash
-  curl -u admin:12345678 "https://146.190.201.32.sslip.io/api/v1/surveys/history?phone=0988123456"
+  curl -u "$ADMIN_USERNAME:$ADMIN_PASSWORD" "https://<admin-host>/api/v1/surveys/history?phone=0988123456"
   ```
 - **Response `200 OK`:**
   ```json
@@ -479,7 +479,7 @@ Authenticated operator UI and API for database-backed image, logic, and engine m
 - `POST /admin/modules/{id}/run` executes an enabled logic module with JSON integer inputs.
 - `GET /api/v1/admin/modules` returns module records for automation.
 - Check engines are `engine` modules. File definitions under `data/check_engines` seed the registry once (migration 011); enabled engine modules become the runtime registry used by image objects and form engine modules. The image-object page shows engines read-only and links edits to `/admin/modules`.
-- Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; engine definitions reference only implementations compiled in `services/image_check_engines.py`. Stored JSON is never executed as Python. Destructive/enable actions require the same strict same-origin checks as other admin writes and are audited in `system_audit_log`.
+- Object definitions become database-authoritative after startup and drive image prompts/field checks. Logic definitions reference only implementations compiled in `services/logic_modules.py`; engine definitions reference only implementations compiled in `services/image_check_engines.py`. Stored JSON is never executed as Python. Destructive/enable actions use the same cookie-session same-origin checks and Basic cross-site rejection as other admin writes, and are audited in `system_audit_log`.
 
 ### 3.11 Admin Google Drive exports (`/admin/exports`)
 Authenticated operator UI for migration 009/010 export configuration.
@@ -492,7 +492,7 @@ Authenticated operator UI for migration 009/010 export configuration.
 - `POST /admin/exports/run` executes enabled configurations under a PostgreSQL advisory lock and stores the last report. Each form runs with its effective override; missing overrides inherit the client-wide fields, statuses, vehicle kinds, dates, and image flag. Each run also removes Drive folders for archived forms that are not active, deletes stale image files/shortcuts in a submission folder, and removes client/internal submission folders no longer selected by that configuration.
 - Deleting a form or submission writes a `trash_items` snapshot, records `trash_transactions` and `system_audit_log`, records Drive name/ID links, and moves the Drive folders to Drive trash. Archived-form purge during an export maintenance pass is still a separate permanent cleanup.
 - `GET /api/v1/admin/exports` returns settings and configurations for automation.
-- Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth and strict same-origin checks. Client and form saves require an explicit confirmation before submission and show a flash message after redirect.
+- Exports include a filtered native Google Sheet per form and an `Images` folder of shortcuts into `Images Master`; images are never duplicated per client. All writes require operator auth; cookie-session writes require exact same-origin, while Basic API writes reject browser cross-site headers. Client and form saves require an explicit confirmation before submission and show a flash message after redirect.
 
 ### 3.12 DB trash and Drive ledger (`/api/v1/admin/trash`)
 Migration 012 adds `trash_items`, `trash_transactions`, and `drive_name_ledger`. Explicit form/submission deletes snapshot the DB row, move local submission media under `data/trash`, move Drive folders to Drive trash, and store name/ID/parent/MIME/shortcut links in the ledger.

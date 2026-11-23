@@ -5,6 +5,7 @@ import html
 import json
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -103,18 +104,18 @@ function setModuleTemplate(kind) {{
 async def _modules() -> list[dict[str, Any]]:
     pool = get_db_pool()
     if not pool:
-        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.")
+        raise HTTPException(status_code=503, detail="Registry module không khả dụng; hãy áp dụng migration 008.")
     try:
         return await list_modules(pool)
     except Exception as exc:
         logger.warning("module registry query failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.") from exc
+        raise HTTPException(status_code=503, detail="Registry module không khả dụng; hãy áp dụng migration 008.") from exc
 
 
 def _pool_or_503():
     pool = get_db_pool()
     if not pool:
-        raise HTTPException(status_code=503, detail="Module registry unavailable; apply migration 008.")
+        raise HTTPException(status_code=503, detail="Registry module không khả dụng; hãy áp dụng migration 008.")
     return pool
 
 
@@ -148,8 +149,8 @@ async def create_module(request: Request, admin_user: str = Depends(verify_admin
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("module create failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=400, detail="Module could not be created.") from exc
-    return RedirectResponse("/admin/modules?message=Module+created", status_code=303)
+        raise HTTPException(status_code=400, detail="Không thể tạo module.") from exc
+    return RedirectResponse("/admin/modules?message=" + quote("Đã tạo module"), status_code=303)
 
 
 @router.post("/admin/modules/{module_id}")
@@ -157,7 +158,7 @@ async def update_module(module_id: str, request: Request, admin_user: str = Depe
     form = await request.form()
     current = next((item for item in await _modules() if item["module_id"] == module_id), None)
     if current is None:
-        raise HTTPException(status_code=404, detail="Module not found.")
+        raise HTTPException(status_code=404, detail="Không tìm thấy module.")
     try:
         definition = json.loads(str(form.get("definition") or "{}"))
         await save_module(
@@ -169,8 +170,8 @@ async def update_module(module_id: str, request: Request, admin_user: str = Depe
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("module save failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=400, detail="Module could not be saved.") from exc
-    return RedirectResponse("/admin/modules?message=Module+saved", status_code=303)
+        raise HTTPException(status_code=400, detail="Không thể lưu module.") from exc
+    return RedirectResponse("/admin/modules?message=" + quote("Đã lưu module"), status_code=303)
 
 
 @router.post("/admin/modules/{module_id}/enabled")
@@ -182,8 +183,8 @@ async def toggle_module(module_id: str, request: Request, admin_user: str = Depe
     except ModuleDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not changed:
-        raise HTTPException(status_code=404, detail="Module not found.")
-    return RedirectResponse("/admin/modules?message=Module+updated", status_code=303)
+        raise HTTPException(status_code=404, detail="Không tìm thấy module.")
+    return RedirectResponse("/admin/modules?message=" + quote("Đã cập nhật module"), status_code=303)
 
 
 @router.post("/admin/modules/{module_id}/delete")
@@ -193,8 +194,8 @@ async def remove_module(module_id: str, admin_user: str = Depends(verify_admin_a
     except ModuleDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
-        raise HTTPException(status_code=404, detail="Module not found.")
-    return RedirectResponse("/admin/modules?message=Module+deleted", status_code=303)
+        raise HTTPException(status_code=404, detail="Không tìm thấy module.")
+    return RedirectResponse("/admin/modules?message=" + quote("Đã xóa module"), status_code=303)
 
 
 @router.post("/admin/modules/{module_id}/run")
@@ -207,5 +208,5 @@ async def run_logic_module(module_id: str, request: Request, _admin: str = Depen
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("logic module execution rejected: %s", type(exc).__name__)
-        raise HTTPException(status_code=400, detail="Logic module could not run.") from exc
+        raise HTTPException(status_code=400, detail="Không thể chạy module logic.") from exc
     return HTMLResponse(_page(await _modules(), message=f"{module_id}: {_json_text(result)}"))

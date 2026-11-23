@@ -552,8 +552,8 @@
             <div class="filter-controls">
                 <select id="statusFilter" class="select-filter" onchange="applyClientFilter()">
                     <option value="all">Tất cả trạng thái</option>
-                    <option value="active">Chính thức (Active)</option>
-                    <option value="test">Thử nghiệm (Test)</option>
+                    <option value="active">Chính thức</option>
+                    <option value="test">Thử nghiệm</option>
                 </select>
                 <select id="sortFilter" class="select-filter" onchange="changeSortOrder(this.value)">
                     <option value="updated_desc">Sắp xếp: Mới sửa đổi</option>
@@ -581,17 +581,14 @@
         <!-- Pagination Controls Row with Page Size Selector -->
         <div class="pagination-row">
             <div class="pagination-controls">
-                <a href="/admin/forms?page={current_page - 1}&size=6" class="btn-page ">Trang trước</a>
+                <a href="{prev_page_href}" class="btn-page ">Trang trước</a>
                 <span class="page-indicator">Trang <span id="currentPageNum">1</span> / <span id="totalPagesNum">1</span> (Tổng <span id="totalFormsCount">0</span> biểu mẫu)</span>
-                <a href="/admin/forms?page={current_page + 1}&size=6" class="btn-page ">Trang sau</a>
+                <a href="{next_page_href}" class="btn-page ">Trang sau</a>
             </div>
             <div class="page-size-wrap">
                 <span>Số lượng hiển thị:</span>
                 <select id="pageSizeSelect" class="select-filter" onchange="changePageSize(this.value)">
-                    <option value="6" {'selected' if page_size == 6 else ''}>6 / trang</option>
-                    <option value="12" {'selected' if page_size == 12 else ''}>12 / trang</option>
-                    <option value="24" {'selected' if page_size == 24 else ''}>24 / trang</option>
-                    <option value="50" {'selected' if page_size == 50 else ''}>50 / trang</option>
+                    {page_size_options}
                 </select>
             </div>
         </div>
@@ -666,7 +663,7 @@
             const overwrite = confirm(
                 'Nếu mã biểu mẫu đã tồn tại, bạn có muốn ghi đè không?\n\n' +
                 'Bấm OK để ghi đè (schema cũ được sao lưu vào data/form_backups).\n' +
-                'Bấm Cancel để chỉ nhập các biểu mẫu mới.'
+                'Bấm Hủy để chỉ nhập các biểu mẫu mới.'
             );
             const button = document.getElementById('btnImportForms');
             if (button) { button.disabled = true; button.textContent = 'Đang nhập...'; }
@@ -868,18 +865,6 @@
             const sortSel = document.getElementById("sortFilter");
             if (sortSel) sortSel.value = urlParams.get("sort") || sortSel.dataset.activeSort || "updated_desc";
 
-            // Detect environment badge
-            const isDev = window.location.hostname.includes("dev") || window.location.hostname.includes("staging");
-            const badgeEl = document.getElementById("envBadge");
-            const subtextEl = document.getElementById("envSubtext");
-            if (badgeEl) {
-                badgeEl.innerHTML = isDev 
-                    ? `<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(245,158,11,0.18); color:#f59e0b; border:1px solid rgba(245,158,11,0.45); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">⚡ BẢN DEV (surveydb_dev)</span>`
-                    : `<span style="display:inline-flex; align-items:center; gap:5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:9999px; vertical-align:middle; margin-left:8px; text-transform:uppercase; letter-spacing:0.5px;">✓ CHÍNH THỨC</span>`;
-            }
-            if (subtextEl) {
-                subtextEl.textContent = isDev ? "Môi trường Thử Nghiệm / Staging độc lập" : "Hệ thống Cơ sở dữ liệu chính thức";
-            }
         }
         document.addEventListener("DOMContentLoaded", loadFormsList);
 

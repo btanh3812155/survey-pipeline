@@ -36,6 +36,21 @@ def _client():
     return TestClient(app, base_url="http://testserver")
 
 
+def _auth_app():
+    from fastapi import Depends, FastAPI
+    from core.state import verify_admin_auth
+    from routers import login as login_routes
+
+    app = FastAPI()
+    app.include_router(login_routes.router)
+
+    @app.post("/admin/forms")
+    async def write_form(admin_user: str = Depends(verify_admin_auth)):
+        return {"admin": admin_user}
+
+    return app
+
+
 def _login(client, password=PASSWORD, next_url="/admin/forms"):
     return client.post(
         "/login",
@@ -89,15 +104,48 @@ def test_invalid_login_does_not_prompt_basic_auth(fake_admin):
     assert not client.cookies.get(COOKIE_NAME)
 
 
-def test_logout_clears_cookie(fake_admin):
+def test_logout_requires_post_and_same_origin(fake_admin):
     client = _client()
     assert _login(client).status_code == 303
     assert client.get("/admin/forms").status_code == 200
-    response = client.get("/logout", follow_redirects=False)
+    assert client.get("/logout", follow_redirects=False).status_code == 405
+    assert client.post("/logout", follow_redirects=False).status_code == 403
+    response = client.post(
+        "/logout", headers={"Origin": "http://testserver"}, follow_redirects=False
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
     assert not client.cookies.get(COOKIE_NAME)
     assert client.get("/admin/forms", follow_redirects=False).status_code == 303
+
+
+def test_cookie_post_requires_same_origin(fake_admin):
+    client = TestClient(_auth_app(), base_url="http://testserver")
+    assert _login(client).status_code == 303
+    assert client.post("/admin/forms").status_code == 403
+    assert client.post("/admin/forms", headers={"Origin": "http://testserver"}).status_code == 200
+
+
+def test_basic_post_allows_headerless_cli_but_rejects_browser_cross_site(fake_admin):
+    client = TestClient(_auth_app(), base_url="http://testserver")
+    auth = ("owner", PASSWORD)
+    assert client.post("/admin/forms", auth=auth).status_code == 200
+    assert client.post(
+        "/admin/forms", auth=auth, headers={"Origin": "https://evil.test"}
+    ).status_code == 403
+    assert client.post(
+        "/admin/forms", auth=auth, headers={"Sec-Fetch-Site": "cross-site"}
+    ).status_code == 403
+
+
+def test_login_next_is_percent_encoded(fake_admin):
+    response = _client().get(
+        "/admin/forms?page=2&sort=name_asc", follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "/login?next=%2Fadmin%2Fforms%3Fpage%3D2%26sort%3Dname_asc"
+    )
 
 
 def test_tampered_cookie_is_rejected(fake_admin):

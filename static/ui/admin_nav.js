@@ -6,6 +6,7 @@
   const role = document.querySelector('meta[name="admin-role"]')?.content;
   const superadmin = role === 'superadmin';
   const operator = superadmin || role === 'manager';
+  const i18nEnabled = Boolean(document.querySelector('[data-i18n], [data-admin-i18n]'));
   const links = [
     ...(operator ? [['/admin/forms', 'nav_forms']] : []),
     ['/admin/submissions', 'nav_submissions'],
@@ -73,10 +74,10 @@
     + '<button type="button" aria-expanded="false" aria-controls="adminNavMenu"'
     + ' aria-label="Menu điều hướng quản trị"><span aria-hidden="true">&#9776;</span> Menu</button>'
     + '<span class="brand">Trust Bridge Admin</span>'
-    + '<button type="button" id="adminLangToggle" style="margin-left:auto;" aria-label="Đổi ngôn ngữ / Toggle language"><span id="adminLangCode">VI</span></button>'
+    + (i18nEnabled ? '<button type="button" id="adminLangToggle" style="margin-left:auto;" aria-label="Đổi ngôn ngữ / Toggle language"><span id="adminLangCode">VI</span></button>' : '')
     + '<div id="adminNavMenu" class="menu" hidden>'
     + links.map(([href, key]) =>
-      `<a href="${href}" data-i18n="${key}"${isActive(href) ? ' class="active" aria-current="page"' : ''}>${window.AdminI18n ? window.AdminI18n.t(key) : key}</a>`
+      `<a href="${href}" data-i18n="${key}"${href === '/logout' ? ' data-logout="1"' : ''}${isActive(href) ? ' class="active" aria-current="page"' : ''}>${window.AdminI18n ? window.AdminI18n.t(key, i18nEnabled ? undefined : 'vi') : key}</a>`
     ).join('')
     + '</div></div>';
   const button = nav.querySelector('button');
@@ -103,6 +104,15 @@
   }
   button.addEventListener('click', () => setOpen(menu.hidden));
   menu.addEventListener('click', (event) => {
+    if (event.target.closest('a[data-logout]')) {
+      event.preventDefault();
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/logout';
+      document.body.appendChild(form);
+      form.submit();
+      return;
+    }
     if (event.target.closest('a')) setOpen(false);
   });
   document.addEventListener('click', (event) => {

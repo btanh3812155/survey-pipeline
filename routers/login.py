@@ -4,7 +4,7 @@ from __future__ import annotations
 import html
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from config import settings
@@ -120,12 +120,13 @@ async def login_submit(
 
 
 @router.get("/logout")
-async def logout():
-    response = RedirectResponse(LOGIN_PATH, status_code=303)
-    response.delete_cookie(COOKIE_NAME, path="/")
-    return response
+async def logout_get():
+    raise HTTPException(status_code=405, detail="Dùng POST để đăng xuất")
 
 
 @router.post("/logout")
-async def logout_post():
-    return await logout()
+async def logout_post(request: Request):
+    require_admin_same_origin(request)
+    response = RedirectResponse(LOGIN_PATH, status_code=303)
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response

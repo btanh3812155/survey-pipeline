@@ -99,14 +99,14 @@ Cách thêm một kiểm tra:
 1. Bấm **+ Thêm Module**.
 2. Đặt tên module.
 3. Chọn **Loại module**:
-   - `Logic module`: chạy implementation logic đã đăng ký
-   - `Check engine`: chạy engine kiểm tra
-   - `Tổng hợp (all)`: gộp nhiều module phía trên
-   - `Distribution`: thống kê đáp án trên toàn bộ bài nộp
+   - `Module logic`: chạy implementation logic đã đăng ký
+   - `Engine kiểm tra`: chạy engine kiểm tra
+   - `Tổng hợp (tất cả)`: gộp nhiều module phía trên
+   - `Phân bố (thống kê đáp án)`: thống kê đáp án trên toàn bộ bài nộp
 4. Chọn engine hoặc module tương ứng.
-5. Chọn nguồn input:
+5. Chọn nguồn đầu vào:
    - Câu hỏi
-   - Output của module trước
+   - Đầu ra của module trước
    - Toàn bộ module trước
    - Giá trị cố định
 6. Bật **Từ chối bài gửi khi module không đạt** nếu đây là kiểm tra chặn.
@@ -129,9 +129,9 @@ Mở **Module**.
 
 Trang này là nguồn cấu hình chính cho:
 
-- **Object module**: định nghĩa object ảnh, prompt, trường cần trích xuất, engine binding.
-- **Logic module**: implementation logic an toàn đã biên dịch trong ứng dụng.
-- **Engine module**: các engine kiểm tra như `regex`, `number_range`, `required_fields`, `date_range`, `arithmetic`.
+- **Module object**: định nghĩa object ảnh, prompt, trường cần trích xuất, engine binding.
+- **Module logic**: implementation logic an toàn đã biên dịch trong ứng dụng.
+- **Module engine**: các engine kiểm tra như `regex`, `number_range`, `required_fields`, `date_range`, `arithmetic`.
 
 Có thể tìm kiếm, mở rộng từng module, bật/tắt, sửa hoặc xóa. Việc xóa engine đang được object đang bật sử dụng sẽ bị chặn.
 

@@ -383,3 +383,21 @@ def test_admin_root_redirect_and_sample_images_gallery():
         assert "Quản Lý Media" in resp_media.text
     finally:
         app.dependency_overrides.pop(verify_admin_auth, None)
+
+
+def test_form_manager_pagination_and_environment_badge_are_server_rendered():
+    forms = {
+        f"form_{i}": FormSchema(
+            form_id=f"form_{i}",
+            title=f"Form {i}",
+            description="",
+            questions=[],
+        )
+        for i in range(7)
+    }
+    rendered = render_forms_list_html(forms, page=2, page_size=6, environment="development")
+    assert "{current_page" not in rendered
+    assert "{'selected'" not in rendered
+    assert "page=1&amp;size=6" in rendered
+    assert 'value="6" selected' in rendered
+    assert "BẢN DEV (surveydb_dev)" in rendered

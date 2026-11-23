@@ -11,7 +11,7 @@ import json
 import logging
 import hashlib
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from typing import Any, Dict, Optional
 from psycopg_pool import AsyncConnectionPool
 import redis.asyncio as aioredis
@@ -26,13 +26,6 @@ from services.form_engine import FormSchema, DEFAULT_TRUST_BRIDGE_SCHEMA
 
 logger = logging.getLogger("core.state")
 
-
-class LoginRequired(Exception):
-    """Browser request has no valid admin session; redirect to the login page."""
-
-    def __init__(self, next_url: str):
-        self.next_url = next_url
-        super().__init__("admin login required")
 
 # Shared runtime singletons
 db_pool: Optional[AsyncConnectionPool] = None
@@ -116,14 +109,10 @@ def refresh_form_registry_from_disk(force: bool = False) -> bool:
 
 
 
-def require_admin_same_origin(request: Request) -> None:
-    """Reject unsafe browser requests without an exact same-origin source."""
-    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
-        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
-    source = request.headers.get("origin") or request.headers.get("referer")
+def _origin_matches_request(request: Request, source: str) -> bool:
     host = request.headers.get("host", "")
     if not source or not host:
-        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+        return False
     parsed = urlsplit(source)
     try:
         proxy_ip = ipaddress.ip_address(request.client.host) if request.client else None
@@ -144,13 +133,38 @@ def require_admin_same_origin(request: Request) -> None:
         allowed_schemes.add(forwarded_proto)
     if forwarded_host:
         allowed_hosts.add(forwarded_host)
-    if (
+    return not (
         parsed.username
         or parsed.password
         or parsed.scheme.lower() not in allowed_schemes
         or parsed.netloc.lower() not in allowed_hosts
-    ):
+    )
+
+
+def require_admin_same_origin(request: Request) -> None:
+    """Reject unsafe browser requests without an exact same-origin source."""
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
         raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not _origin_matches_request(request, source):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+
+
+def require_admin_basic_origin(request: Request) -> None:
+    """Allow headerless CLI/API writes but reject browser cross-site Basic writes."""
+    if request.headers.get("sec-fetch-site", "").lower() in {"cross-site", "same-site"}:
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if source and not _origin_matches_request(request, source):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+
+
+def require_admin_request_origin(request: Request) -> None:
+    """Apply the origin policy for the authentication method used by this request."""
+    if getattr(request.state, "admin_auth_method", None) == "basic":
+        require_admin_basic_origin(request)
+    else:
+        require_admin_same_origin(request)
 
 
 async def _check_admin_auth_rate_limit(request: Request, username: str) -> tuple[Any, str, str]:
@@ -371,6 +385,7 @@ async def verify_admin_auth(
     if session_admin:
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
             require_admin_same_origin(request)
+        request.state.admin_auth_method = "session"
         username, role, password_hash = session_admin
         if role not in _admin_roles_for_path(request.url.path, request.method):
             raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")
@@ -378,6 +393,8 @@ async def verify_admin_auth(
         return username
 
     if credentials is not None:
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            require_admin_basic_origin(request)
         redis, account_bucket, ip_bucket = await _check_admin_auth_rate_limit(
             request, credentials.username
         )
@@ -385,6 +402,7 @@ async def verify_admin_auth(
         if not verified:
             await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
             raise _auth_error()
+        request.state.admin_auth_method = "basic"
         username, role, password_hash = verified
         _apply_admin_state(request, username, role, password_hash)
         return username
@@ -393,7 +411,7 @@ async def verify_admin_auth(
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER,
             detail="Vui lòng đăng nhập quản trị.",
-            headers={"Location": "/login?next=" + _next_url(request), "Cache-Control": "no-store"},
+            headers={"Location": "/login?next=" + quote(_next_url(request), safe=""), "Cache-Control": "no-store"},
         )
     raise _auth_error()
 

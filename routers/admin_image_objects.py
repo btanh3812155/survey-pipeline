@@ -185,7 +185,7 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
   </section>
   <section class="panel">
     <h2>Danh sách engine tích hợp</h2>
-    <table><thead><tr><th>Implementation</th><th>Mô tả</th></tr></thead><tbody>
+    <table><thead><tr><th>Triển khai</th><th>Mô tả</th></tr></thead><tbody>
       {''.join(f"<tr><td class='mono'>{_esc(name)}</td><td>Engine Python tích hợp; JSON không thể chứa mã thực thi.</td></tr>" for name in sorted(ENGINE_IMPLEMENTATIONS))}
     </tbody></table>
   </section>
@@ -270,7 +270,7 @@ async def create_image_object(request: Request, admin_user: str = Depends(verify
     data = await _payload(request)
     object_id = str(data.get("id") or "").strip()
     if not object_id:
-        raise HTTPException(status_code=400, detail="id is required")
+        raise HTTPException(status_code=400, detail="Cần nhập id")
     payload = {
         "version": 1,
         "label": data.get("label") or object_id,
@@ -354,5 +354,5 @@ async def delete_image_object(object_id: str, admin_user: str = Depends(verify_a
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"object '{object_id}' not found")
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy object '{object_id}'")
     return {"status": "ok", "object_id": object_id, "deleted": True}

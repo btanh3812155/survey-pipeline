@@ -23,7 +23,7 @@ from core.admin_accounts import (
     update_admin_role,
 )
 from core.passwords import hash_password, verify_password
-from core.state import get_db_pool, require_admin_same_origin, verify_admin_auth
+from core.state import get_db_pool, require_admin_request_origin, verify_admin_auth
 
 router = APIRouter(tags=["Admin Accounts"])
 
@@ -324,7 +324,7 @@ async def change_admin_password(
     confirm_password: str = Form(...),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    require_admin_same_origin(request)
+    require_admin_request_origin(request)
     pool = await _accounts_pool()
     if not _valid_password(new_password):
         return _redirect(ACCOUNT_PATH, err="password_policy")
@@ -352,7 +352,7 @@ async def create_account(
     role: str = Form(...),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    require_admin_same_origin(request)
+    require_admin_request_origin(request)
     pool = await _accounts_pool()
     username = username.strip()
     if not USERNAME_RE.fullmatch(username):
@@ -377,7 +377,7 @@ async def change_account_role(
     role: str = Form(...),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    require_admin_same_origin(request)
+    require_admin_request_origin(request)
     pool = await _accounts_pool()
     username = username.strip()
     if role not in ADMIN_ROLES:
@@ -402,7 +402,7 @@ async def manage_account(
     role: str = Form(""),
     admin_user: str = Depends(verify_admin_auth),
 ):
-    require_admin_same_origin(request)
+    require_admin_request_origin(request)
     pool = await _accounts_pool()
     if operation == "role" and role not in ADMIN_ROLES:
         return _redirect(err="invalid_role")

@@ -203,9 +203,15 @@ async def test_staff_routes_require_superadmin_except_own_password(accounts_db):
 
         auth = ("viewer", TEST_PASSWORD)
         change = {"current_password": TEST_PASSWORD, "new_password": "x" * 1024, "confirm_password": "x" * 1024}
-        for headers in ({}, {"Origin": "http://admin.test"}, {"Origin": "https://other.test"}):
-            response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=change, headers=headers)
-            assert response.status_code == 403
+        csrf_change = dict(change, current_password="wrong-password")
+        for headers in ({}, {"Origin": "https://admin.test"}):
+            response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=csrf_change, headers=headers)
+            assert response.status_code == 303, (response.status_code, response.text[:300])
+        response = await client.post(
+            ACCOUNT_PASSWORD_PAGE, auth=auth, data=csrf_change,
+            headers={"Origin": "https://other.test"},
+        )
+        assert response.status_code == 403
         for length in (11, 1025):
             invalid = dict(change, new_password="x" * length, confirm_password="x" * length)
             response = await client.post(ACCOUNT_PASSWORD_PAGE, auth=auth, data=invalid, headers=SAME_ORIGIN)
@@ -239,7 +245,10 @@ async def test_staff_management_and_bin(accounts_db):
             invalid = dict(form, role="manager", password="x" * length, confirm_password="x" * length)
             assert (await post(data=invalid)).headers["location"].endswith("?err=password_policy")
         assert (await post(data=dict(form, role="admin"))).headers["location"].endswith("?err=invalid_role")
-        wrong_origin = await client.post(ACCOUNTS, auth=auth, data=dict(form, role="manager"))
+        wrong_origin = await client.post(
+            ACCOUNTS, auth=auth, data=dict(form, role="manager"),
+            headers={"Origin": "https://other.test"},
+        )
         assert wrong_origin.status_code == 403
         assert (await post(data=dict(form, role="manager"))).headers["location"].endswith("?msg=account_created")
         account = await get_admin_account(pool, "member")

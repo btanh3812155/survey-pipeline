@@ -395,7 +395,7 @@ def generate_driver_tag(phone: Optional[str]) -> str:
 - **Dissent Handling (Opt-Out):** If a driver selects *"Tôi không đồng ý"* regarding data processing consent, plain text phone numbers and names are set to `NULL` prior to SQL insertion.
 
 ### 8.4 Lockdown of Public History Endpoints
-Public unauthenticated endpoints exposing survey history were eliminated. Accessing `/api/v1/surveys/history` strictly requires HTTP Basic Authentication (`verify_admin_auth`). Unauthenticated attempts receive `401 Unauthorized`. Admin browser pages use the signed-cookie login page at `/login`; the history API intentionally remains on Basic Auth for automation.
+Public unauthenticated endpoints exposing survey history were eliminated. Accessing `/api/v1/surveys/history` requires an authenticated admin through `verify_admin_auth`: an admin browser session or HTTP Basic Authentication. Unauthenticated attempts receive `401 Unauthorized`. Admin browser pages use the signed-cookie login page at `/login`; automation can continue using Basic Auth.
 
 ---
 

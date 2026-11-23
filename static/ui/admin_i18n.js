@@ -199,7 +199,10 @@
     }
   };
   const getLang = () => localStorage.getItem('tb_lang') === 'en' ? 'en' : 'vi';
-  const t = (key) => (messages[getLang()] && messages[getLang()][key]) || messages.vi[key] || key;
+  const t = (key, lang) => {
+    const selected = lang === 'vi' || lang === 'en' ? lang : getLang();
+    return (messages[selected] && messages[selected][key]) || messages.vi[key] || key;
+  };
   function apply(root = document) {
     root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
     root.querySelectorAll('[data-role-label]').forEach(el => {

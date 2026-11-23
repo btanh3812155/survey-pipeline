@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core import admin_recovery as recovery
-from core.state import get_db_pool, require_admin_same_origin, verify_admin_auth
+from core.state import get_db_pool, require_admin_request_origin, verify_admin_auth
 
 router = APIRouter(prefix="/admin/recovery", include_in_schema=False)
 HEADERS = {
@@ -57,7 +57,7 @@ def _page(*, email: bool = False, message: str = "", challenge_id: str = "", sta
 
 
 async def _form(request: Request) -> dict[str, str]:
-    require_admin_same_origin(request)
+    require_admin_request_origin(request)
     if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
         raise HTTPException(415, "Unsupported form encoding", headers=HEADERS)
     body = bytearray()

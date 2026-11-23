@@ -16,4 +16,4 @@ When adding or changing UI text:
 
 ## Auth surfaces
 
-Admin browser pages use the `/login` signed-cookie session. API clients may still use HTTP Basic Authentication. Do not document browser pages as Basic Auth. Same-origin CSRF checks apply to cookie-session writes; Basic API writes are not CSRF-checked.
+Admin browser pages use the `/login` signed-cookie session. API clients may still use HTTP Basic Authentication. Do not document browser pages as Basic Auth. Cookie-session writes require exact same-origin Origin/Referer. Basic API writes allow headerless CLI clients but reject browser cross-site `Sec-Fetch-Site` and any present mismatched Origin/Referer. `/logout` is POST-only and same-origin protected.

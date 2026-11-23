@@ -829,8 +829,15 @@
         }
 
         async function init() {
-            // Environment badge detection
-            const isDev = window.location.hostname.includes("dev") || window.location.hostname.includes("staging");
+            // Environment badge detection: prefer the server runtime, fall back to hostname.
+            let isDev = window.location.hostname.includes("dev") || window.location.hostname.includes("staging");
+            try {
+                const health = await fetch('/health', {cache: 'no-store'});
+                if (health.ok) {
+                    const payload = await health.json();
+                    if (payload && payload.environment) isDev = payload.environment !== 'production';
+                }
+            } catch (_) {}
             const badgeEl = document.getElementById("envBadge");
             const subtextEl = document.getElementById("envSubtext");
             if (badgeEl) {

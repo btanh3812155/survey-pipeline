@@ -434,11 +434,14 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
             f"<tr><td><code>{html.escape(str(item['id']))}</code></td>"
             f"<td>{html.escape(str(item['entity_type']))}</td>"
             f"<td><code>{html.escape(str(item['entity_id']))}</code><br><span class=muted>{html.escape(str(item['label'] or ''))}</span></td>"
-            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{tier_labels.get(str(item['retention_tier']), str(item['retention_tier']))}</span></td>"
+            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(tier_labels.get(str(item['retention_tier']), str(item['retention_tier'])))}</span></td>"
             f"<td>{'media nội bộ' if media else 'không có media'}<br><span class=muted>{int(meta.get('drive_ledger_items') or 0)} liên kết Drive</span></td>"
             f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Khôi phục</button></td></tr>"
         )
-    policy = "".join(f"<li><b>{html.escape(k)}</b>: {html.escape(v)}</li>" for k, v in RETENTION_FREQUENCIES.items())
+    policy = "".join(
+        f"<li><b>{html.escape(tier_labels.get(k, k))}</b>: {html.escape(v)}</li>"
+        for k, v in RETENTION_FREQUENCIES.items()
+    )
     last_html = "Chưa chạy dọn lần nào."
     if last_run:
         last_html = (
@@ -517,7 +520,7 @@ async def run_trash_compaction(admin_user: str = Depends(verify_admin_auth)):
     from core.trash import run_compaction
     report = await run_compaction(get_db_pool(), actor=admin_user)
     if report.get("status") == "busy":
-        raise HTTPException(status_code=409, detail="Trash compaction is already running")
+        raise HTTPException(status_code=409, detail="Dọn thùng rác đang chạy.")
     return report
 
 
@@ -528,9 +531,9 @@ async def restore_deleted_item(trash_id: str, admin_user: str = Depends(verify_a
     pool = get_db_pool()
     item = await get_trash_item(pool, trash_id)
     if not item:
-        raise HTTPException(status_code=404, detail="Trash item not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy mục trong thùng rác.")
     if item.get("restored_at") or item.get("purged_at"):
-        raise HTTPException(status_code=409, detail="Trash item is already restored or purged")
+        raise HTTPException(status_code=409, detail="Mục đã được khôi phục hoặc đã bị xóa.")
     entity_type = str(item["entity_type"])
     entity_id = str(item["entity_id"])
     metadata = item.get("metadata") or {}
@@ -540,7 +543,7 @@ async def restore_deleted_item(trash_id: str, admin_user: str = Depends(verify_a
         try:
             schema = FormSchema.model_validate(snapshot)
         except ValidationError as exc:
-            raise HTTPException(status_code=400, detail={"message": "Trash schema is invalid", "errors": exc.errors()}) from exc
+            raise HTTPException(status_code=400, detail={"message": "Schema thùng rác không hợp lệ.", "errors": exc.errors()}) from exc
         refresh_form_registry_from_disk()
         schema_path = os.path.join(FORMS_STORAGE_DIR, f"{schema.form_id}.json")
         if schema.form_id in FORM_REGISTRY or os.path.exists(schema_path):
@@ -548,13 +551,13 @@ async def restore_deleted_item(trash_id: str, admin_user: str = Depends(verify_a
         result = await _persist_form_schema(schema, "", admin_user)
         drive = await restore_drive_ledger(pool, entity_type, entity_id, admin_user)
         if not await mark_restored(pool, trash_id, admin_user, {"drive": drive, "form_id": schema.form_id}):
-            raise HTTPException(status_code=409, detail="Trash item lost a concurrent restore race")
+            raise HTTPException(status_code=409, detail="Mục bị thay đổi bởi thao tác khác.")
         return {"status": "restored", "entity_type": entity_type, "entity_id": schema.form_id, "form": result, "drive": drive}
 
     if entity_type == "submission":
         snapshot = dict((item.get("snapshot") or {}).get("submission") or {})
         if not snapshot.get("submission_id"):
-            raise HTTPException(status_code=400, detail="Trash submission snapshot is invalid")
+            raise HTTPException(status_code=400, detail="Bản chụp submission trong thùng rác không hợp lệ.")
         submission_id = str(snapshot["submission_id"])
         snapshot["status"] = "MANUAL_REVIEW"
         snapshot["rejection_reason"] = "Khôi phục từ thùng rác; chờ duyệt lại."
@@ -576,7 +579,7 @@ async def restore_deleted_item(trash_id: str, admin_user: str = Depends(verify_a
         media = _restore_media(metadata)
         drive = await restore_drive_ledger(pool, entity_type, submission_id, admin_user)
         if not await mark_restored(pool, trash_id, admin_user, {"drive": drive, "media": media, "submission_id": submission_id}):
-            raise HTTPException(status_code=409, detail="Trash item lost a concurrent restore race")
+            raise HTTPException(status_code=409, detail="Mục bị thay đổi bởi thao tác khác.")
         return {"status": "restored", "entity_type": entity_type, "entity_id": submission_id, "submission_status": "MANUAL_REVIEW", "media": media, "drive": drive}
 
     raise HTTPException(status_code=400, detail="Unsupported trash entity type")

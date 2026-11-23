@@ -123,7 +123,7 @@ def test_private_media_manifest_and_legacy_fallback(tmp_path, monkeypatch):
         submission_media.private_submission_dir("../outside")
 
 
-def test_private_media_only_served_through_authenticated_admin_route(tmp_path, monkeypatch):
+def test_private_media_only_served_through_authenticated_admin_route(tmp_path, monkeypatch, admin_basic_auth):
     import base64
     from fastapi.testclient import TestClient
 

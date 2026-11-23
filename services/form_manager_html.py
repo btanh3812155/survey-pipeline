@@ -123,11 +123,27 @@ def render_forms_list_html(
         </div>
         """
 
+    prev_page_href = html.escape(
+        f"/admin/forms?page={max(1, current_page - 1)}&size={page_size}&sort={sort}", quote=True
+    )
+    next_page_href = html.escape(
+        f"/admin/forms?page={min(total_pages, current_page + 1)}&size={page_size}&sort={sort}", quote=True
+    )
+    page_size_options = "".join(
+        f'<option value="{size}"{" selected" if page_size == size else ""}>{size} / trang</option>'
+        for size in (6, 12, 24, 50)
+    )
+
     html_file = os.path.join(STATIC_DIR, "ui", "forms_manager.html")
     if os.path.exists(html_file):
         with open(html_file, "r", encoding="utf-8") as f:
             content = f.read()
         content = content.replace('{forms_cards_html}', forms_cards_html)
+        content = content.replace('{prev_page_href}', prev_page_href)
+        content = content.replace('{next_page_href}', next_page_href)
+        content = content.replace('{page_size_options}', page_size_options)
+        content = content.replace('<span id="envBadge"></span>', env_badge)
+        content = content.replace('<span id="envSubtext"></span>', html.escape(env_subtext))
         content = content.replace('id="sortFilter"', f'id="sortFilter" data-active-sort="{html.escape(sort)}"')
         content = content.replace('<span id="totalFormsCount">0</span>', f'<span id="totalFormsCount">{total_forms}</span>')
         content = content.replace('<span id="currentPageNum">1</span>', f'<span id="currentPageNum">{current_page}</span>')

@@ -140,7 +140,7 @@ class TestTeam3AdvancedSecurity:
 
     # --- 4. Schema Upload Resilience Probes ---
 
-    def test_schema_upload_form_id_regex_strict_enforcement(self, monkeypatch, tmp_path):
+    def test_schema_upload_form_id_regex_strict_enforcement(self, monkeypatch, tmp_path, admin_basic_auth):
         """Form ID regex ^[a-zA-Z0-9_-]{1,64}$ must strictly reject illegal characters."""
         client = TestClient(app, raise_server_exceptions=False)
         auth = (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD)

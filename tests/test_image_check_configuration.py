@@ -180,7 +180,7 @@ def test_submit_webrtc_with_enable_blur_check_false():
     assert "mờ hoặc rung tay" not in res_data.get("reason", "")
 
 
-def test_submit_webrtc_with_enable_ai_vision_false():
+def test_submit_webrtc_with_enable_ai_vision_false(admin_basic_auth):
     """
     Test /api/v1/survey/submit-webrtc with enable_ai_vision=False:
     assert it completes immediately with status APPROVED and skips AI call.
@@ -238,7 +238,7 @@ def test_submit_webrtc_with_enable_ai_vision_false():
     assert "Bỏ qua kiểm tra AI" in dev_rec["ai_result"].get("reason", "")
 
 
-def test_schema_upload_with_custom_global_and_question_image_checks():
+def test_schema_upload_with_custom_global_and_question_image_checks(admin_basic_auth):
     """Test schema upload via /api/v1/forms/upload-schema with custom global and question-level image_checks."""
     custom_schema_payload = {
         "form_id": "test_custom_checks_upload",

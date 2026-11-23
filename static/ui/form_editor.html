@@ -284,7 +284,7 @@
                 <div class="card">
                     <div class="row-2">
                         <div class="field-group">
-                            <label for="formId">Mã định danh (Form ID - viết liền không dấu) *</label>
+                            <label for="formId">Mã định danh (viết liền không dấu) *</label>
                             <input type="text" id="formId" value="" required>
                         </div>
                         <div class="field-group">
@@ -321,7 +321,7 @@
                             <label for="isTestMode">Chế độ vận hành</label>
                             <select id="isTestMode">
                                 <option value="false">Chính thức (Lưu PostgreSQL SSOT)</option>
-                                <option value="true">Thử nghiệm (Lưu Dev Storage tạm)</option>
+                                <option value="true">Thử nghiệm (Lưu nháp tạm)</option>
                             </select>
                         </div>
                         <div class="field-group">
@@ -340,9 +340,9 @@
                     </div>
 
                     <div class="field-group" style="margin-top: 10px;">
-                        <label for="formTags">Nhãn biểu mẫu (tags, phân tách bằng dấu phẩy)</label>
+                        <label for="formTags">Nhãn biểu mẫu (phân tách bằng dấu phẩy)</label>
                         <input type="text" id="formTags" value="" placeholder="Ví dụ: income, gsm, hcm">
-                        <span style="display:block; color:#94a3b8; font-size:0.75rem; margin-top:4px;">Dùng cho phạm vi mục tiêu CTV theo nhãn (tag quota).</span>
+                        <span style="display:block; color:#94a3b8; font-size:0.75rem; margin-top:4px;">Dùng cho phạm vi mục tiêu CTV theo nhãn (hạn mức theo nhãn).</span>
                     </div>
 
                     <div class="row-2" style="margin-top: 10px;">
@@ -361,7 +361,7 @@
                     </div>
 
                     <div style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
-                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục (Global Image Checks)</h3>
+                        <h3 style="font-size: 0.95rem; font-weight: 700; color: #60a5fa; margin-bottom: 10px;">Cấu hình kiểm tra ảnh toàn cục</h3>
                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
                             <label class="toggle-switch">
                                 <input type="checkbox" id="globalEnableBlurCheck">
@@ -859,7 +859,7 @@
                 <div style="background:rgba(15, 23, 42, 0.85); border:1.5px solid ${enabled ? '#f59e0b' : '#334155'}; border-radius:8px; padding:12px; margin-top:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                         <div>
-                            <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi đồng ý (consent gate)</span>
+                            <span style="font-size:0.86rem; font-weight:800; color:#f59e0b;">Câu hỏi đồng ý</span>
                             <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">${isSignature ? 'Khi bật: mọi câu sau chỉ hiển thị sau khi tài xế ký.' : 'Mọi câu hỏi phía sau chỉ hiển thị khi câu này được trả lời hợp lệ. Trả lời không hợp lệ sẽ bị từ chối khi nộp.'}</div>
                         </div>
                         <label class="toggle-switch">
@@ -1545,7 +1545,7 @@
                 const known = choices.some(q => String(q.id || '') === selected);
                 return `<div class="row-2" style="align-items:end;">
                     <div class="field-group">
-                        <label>Câu hỏi single/multi choice</label>
+                        <label>Câu hỏi chọn một/nhiều</label>
                         <select onchange="setDistributionQuestion(${midx}, ${iidx}, this.value)">
                             <option value="">-- Chọn câu hỏi --</option>
                             ${choices.map(q => `<option value="${escapeHtml(q.id || '')}" ${String(q.id || '') === selected ? 'selected' : ''}>${escapeHtml((q.title || q.id) + ' (' + q.id + ')')}</option>`).join('')}
@@ -1558,7 +1558,7 @@
                 </div>`;
             }).join('');
             if (!choices.length) {
-                return `<div style="font-size:0.78rem; color:#fbbf24;">Form chưa có câu hỏi single choice, multiple choice hoặc dropdown.</div>`;
+                return `<div style="font-size:0.78rem; color:#fbbf24;">Form chưa có câu hỏi chọn một, chọn nhiều hoặc menu thả xuống.</div>`;
             }
             return rows + `<button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="addDistributionInput(${midx})">+ Thêm câu hỏi phân bố</button>`;
         }
@@ -1568,7 +1568,7 @@
             const used = new Set((module.inputs || []).map(input => String(input.question_id || '')));
             const question = distributionQuestions().find(q => !used.has(String(q.id || '')));
             if (!question) {
-                alert('Không còn câu hỏi choice nào để thêm, hoặc đã chọn hết.');
+                alert('Không còn câu hỏi lựa chọn nào để thêm, hoặc đã chọn hết.');
                 return;
             }
             if (!Array.isArray(module.inputs)) module.inputs = [];
@@ -1857,14 +1857,14 @@
             } else if (module.kind === 'logic') {
                 const known = logicModules.some(item => item.module_id === module.module_id);
                 moduleSelect = `<select onchange="setModuleChoice(${midx}, this.value)">
-                    <option value="">-- Chọn logic module --</option>
+                    <option value="">-- Chọn module logic --</option>
                     ${logicModules.map(item => `<option value="${escapeHtml(item.module_id)}" ${item.module_id === module.module_id ? 'selected' : ''}>${escapeHtml(item.display_name + ' (' + item.module_id + ')')}</option>`).join('')}
                     ${module.module_id && !known ? `<option value="${escapeHtml(module.module_id)}" selected>${escapeHtml(module.module_id + ' (không tìm thấy / bị tắt)')}</option>` : ''}
                 </select>`;
             } else {
                 const known = engineList().some(item => engineId(item) === module.module_id);
                 moduleSelect = `<select onchange="setModuleChoice(${midx}, this.value)">
-                    <option value="">-- Chọn check engine --</option>
+                    <option value="">-- Chọn engine kiểm tra --</option>
                     ${engineList().map(item => {
                         const id = engineId(item);
                         return `<option value="${escapeHtml(id)}" ${id === module.module_id ? 'selected' : ''}>${escapeHtml(String(item.label || id) + ' (' + id + ')')}</option>`;
@@ -2267,7 +2267,7 @@
             return `<details style="background:rgba(15,23,42,0.55); border:1px solid ${hasOptions ? '#38bdf8' : 'var(--border)'}; border-radius:8px; padding:8px 12px; margin-top:8px;" ${hasOptions ? 'open' : ''}>
                 <summary style="font-size:0.82rem; font-weight:800; color:#7dd3fc; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     <span>Tùy chọn câu hỏi</span>
-                    <span style="font-size:0.7rem; color:#94a3b8; font-weight:600;">(module: ${scopedCount}, điều kiện: ${conditionCount}${q.is_consent_gate ? ', consent gate' : ''})</span>
+                    <span style="font-size:0.7rem; color:#94a3b8; font-weight:600;">(module: ${scopedCount}, điều kiện: ${conditionCount}${q.is_consent_gate ? ', cổng đồng ý' : ''})</span>
                 </summary>
                 <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
                     ${renderScopedModulesSection('question', q.id, null, 'Module kiểm tra cho câu này', 'Module cấp câu hỏi chạy theo thứ tự module toàn biểu mẫu; lỗi được gắn với câu hỏi này.')}
@@ -2299,20 +2299,20 @@
                         <div class="field-group">
                             <label>Loại câu hỏi</label>
                             <select onchange="setQuestionType(${idx}, this.value)">
-                                <option value="text" ${q.type==='text'?'selected':''}>Văn bản (Text)</option>
-                                <option value="number" ${q.type==='number'?'selected':''}>Số (Number)</option>
-                                <option value="single_choice" ${q.type==='single_choice'?'selected':''}>Chọn một (Single Choice)</option>
-                                <option value="multiple_choice" ${q.type==='multiple_choice'?'selected':''}>Chọn nhiều (Multiple Choice)</option>
-                                <option value="dropdown" ${q.type==='dropdown'?'selected':''}>Menu thả xuống (Dropdown)</option>
-                                <option value="camera_webrtc" ${q.type==='camera_webrtc'?'selected':''}>Chụp ảnh trực tiếp (Camera WebRTC)</option>
-                                <option value="signature" ${q.type==='signature'?'selected':''}>Chữ ký điện tử (Signature)</option>
+                                <option value="text" ${q.type==='text'?'selected':''}>Văn bản</option>
+                                <option value="number" ${q.type==='number'?'selected':''}>Số</option>
+                                <option value="single_choice" ${q.type==='single_choice'?'selected':''}>Chọn một</option>
+                                <option value="multiple_choice" ${q.type==='multiple_choice'?'selected':''}>Chọn nhiều</option>
+                                <option value="dropdown" ${q.type==='dropdown'?'selected':''}>Menu thả xuống</option>
+                                <option value="camera_webrtc" ${q.type==='camera_webrtc'?'selected':''}>Chụp ảnh trực tiếp</option>
+                                <option value="signature" ${q.type==='signature'?'selected':''}>Chữ ký điện tử</option>
                             </select>
                         </div>
                     </div>
                     <div class="row-2" style="margin-top:6px;">
                         <div class="field-group">
                             <label style="display:flex; justify-content:space-between; align-items:center;">
-                                <span>Mã Question ID (Tự động tạo)</span>
+                                <span>Mã câu hỏi (Tự động tạo)</span>
                                 <span style="font-size:0.7rem; color:#94a3b8; font-weight:normal;">Định danh duy nhất</span>
                             </label>
                             <input type="text" id="qid_${idx}" value="${escapeHtml(q.id || '')}" placeholder="vd: driver_phone, camera_receipt..." oninput="updateQuestionId(${idx}, this.value)">
@@ -2331,7 +2331,7 @@
                     </div>
                     ${q.type === 'camera_webrtc' ? `
                         <div class="field-group" style="margin-top:6px; background:rgba(30, 41, 59, 0.4); border:1px dashed #475569; border-radius:6px; padding:8px 10px;">
-                            <label style="color:#fde047; font-size:0.75rem; font-weight:700;">AI Detection Prompt (Mô tả riêng cho AI - Ẩn khỏi giao diện khảo sát):</label>
+                            <label style="color:#fde047; font-size:0.75rem; font-weight:700;">Mô tả nhận diện AI (ẩn khỏi giao diện khảo sát):</label>
                             <textarea rows="4" style="width:100%; background:#0f172a; border:1px solid #334155; color:#e2e8f0; font-size:0.78rem; border-radius:4px; padding:6px; font-family:monospace; resize:vertical;" placeholder="Mô tả cho AI biết cần nhận diện đối tượng gì, chữ số nào, điều kiện duyệt..." oninput="questions[${idx}].ai_detection_prompt = this.value">${escapeHtml(q.ai_detection_prompt || '')}</textarea>
                         </div>
                     ` : ''}
@@ -2352,7 +2352,7 @@
                     ${q.type === 'camera_webrtc' ? `
                         <div style="background:rgba(15, 23, 42, 0.75); border:1px solid #334155; border-radius:8px; padding:12px; margin-top:8px;">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng (Image Slots & Object Roles)</span>
+                                <span style="font-size:0.86rem; font-weight:800; color:#38bdf8;">Cấu hình các Slot Ảnh & Loại Đối Tượng</span>
                                 <button type="button" class="btn-action view" style="padding:4px 10px; font-size:0.75rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="addImageSlot(${idx})">+ Thêm Slot Ảnh</button>
                             </div>
                             ${renderImageObjectsWarning()}
@@ -2483,14 +2483,14 @@
             const formId = document.getElementById('formId').value.trim();
             const formTitle = document.getElementById('formTitle').value.trim();
             if (!formId || !formTitle) {
-                alert("Vui lòng nhập Mã Form ID và Tên biểu mẫu!");
+                alert("Vui lòng nhập Mã biểu mẫu và Tên biểu mẫu!");
                 switchTab('common');
                 return;
             }
             const ids = questions.map(q => (q.id || '').trim());
             const emptyIdIdx = ids.findIndex(id => !id);
             if (emptyIdIdx !== -1) {
-                alert(`Câu hỏi số ${emptyIdIdx + 1} chưa có Mã Question ID. Vui lòng nhập mã trước khi lưu.`);
+                alert(`Câu hỏi số ${emptyIdIdx + 1} chưa có Mã câu hỏi. Vui lòng nhập mã trước khi lưu.`);
                 switchTab('questions');
                 return;
             }
