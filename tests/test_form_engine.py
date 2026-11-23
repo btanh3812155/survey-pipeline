@@ -12,6 +12,7 @@ from services.form_engine import (
     validate_submission_against_schema,
 )
 from services.form_modules import run_form_modules
+from pathlib import Path
 
 ORIGIN = {"Origin": "http://testserver"}
 
@@ -797,3 +798,16 @@ def test_form_id_rename_migrates_registry_and_file(monkeypatch):
             path = os.path.join(FORMS_STORAGE_DIR, f"{fid}.json")
             if os.path.exists(path):
                 os.remove(path)
+
+
+@pytest.mark.asyncio
+async def test_nov_form_phone_and_daily_trips_are_modules():
+    path = Path(__file__).resolve().parents[1] / "data" / "forms" / "TB_GSM_2026_Nov_Test.json"
+    schema = FormSchema.model_validate_json(path.read_text(encoding="utf-8"))
+    assert {m.uid for m in schema.settings.modules} == {"phone_format", "daily_trips_range"}
+    assert (await run_form_modules(schema, {"driver_phone": "0988123456", "cau_12": "18"}))["failure"] is None
+    assert (await run_form_modules(schema, {"driver_phone": "+84988123456", "cau_12": "18"}))["failure"] is None
+    bad_phone = await run_form_modules(schema, {"driver_phone": "12345", "cau_12": "18"})
+    assert bad_phone["failure"]["module_uid"] == "phone_format"
+    bad_trips = await run_form_modules(schema, {"driver_phone": "0988123456", "cau_12": "201"})
+    assert bad_trips["failure"]["module_uid"] == "daily_trips_range"

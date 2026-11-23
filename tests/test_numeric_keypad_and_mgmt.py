@@ -86,9 +86,11 @@ async def test_default_schema_driver_phone_uses_regex_module():
     }
     failed = await run_form_modules(DEFAULT_TRUST_BRIDGE_SCHEMA, sub)
     assert failed["failure"]["module_uid"] == "phone_format"
-    assert "bắt đầu bằng số 0" in failed["failure"]["message"]
+    assert "0 + 9 chữ số" in failed["failure"]["message"]
     valid = await run_form_modules(DEFAULT_TRUST_BRIDGE_SCHEMA, {**sub, "driver_phone": "0988123456"})
     assert valid["failure"] is None
+    plus84 = await run_form_modules(DEFAULT_TRUST_BRIDGE_SCHEMA, {**sub, "driver_phone": "+84988123456"})
+    assert plus84["failure"] is None
 
 
 def test_dynamic_form_html_renders_numeric_keypad_attributes():

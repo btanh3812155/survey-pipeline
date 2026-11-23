@@ -26,7 +26,95 @@
       "require_unique": true,
       "enable_ai_generated_check": true,
       "enable_screen_photo_check": false
-    }
+    },
+    "modules": [
+      {
+        "uid": "phone_format",
+        "name": "Định dạng số điện thoại",
+        "kind": "engine",
+        "module_id": "regex",
+        "enabled": true,
+        "scope": "form",
+        "question_id": null,
+        "slot_index": null,
+        "inputs": [
+          {
+            "name": "field",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": "driver_phone"
+          },
+          {
+            "name": "pattern",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": "^(?:0[0-9]{9}|[+]84[0-9]{9})$"
+          },
+          {
+            "name": "message",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": "Số điện thoại phải là 0 + 9 chữ số hoặc +84 + 9 chữ số"
+          }
+        ],
+        "outputs": [],
+        "reject_on_false": true,
+        "reject_message": "Số điện thoại phải là 0 + 9 chữ số hoặc +84 + 9 chữ số"
+      },
+      {
+        "uid": "daily_trips_range",
+        "name": "Giới hạn số chuyến mỗi ngày",
+        "kind": "engine",
+        "module_id": "number_range",
+        "enabled": true,
+        "scope": "form",
+        "question_id": null,
+        "slot_index": null,
+        "inputs": [
+          {
+            "name": "field",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": "cau_12"
+          },
+          {
+            "name": "min",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": 1
+          },
+          {
+            "name": "max",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": 200
+          },
+          {
+            "name": "message",
+            "source": "literal",
+            "question_id": null,
+            "module_uid": null,
+            "output_key": null,
+            "literal": "Số chuyến mỗi ngày phải từ 1 đến 200"
+          }
+        ],
+        "outputs": [],
+        "reject_on_false": true,
+        "reject_message": "Số chuyến mỗi ngày phải từ 1 đến 200"
+      }
+    ]
   },
   "questions": [
     {
@@ -47,6 +135,7 @@
       "is_consent_gate": true,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -76,6 +165,7 @@
         "Đúng - Xác nhận và tiếp tục"
       ],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -118,6 +208,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -157,6 +248,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -197,6 +289,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -236,6 +329,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -273,6 +367,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -312,6 +407,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -358,6 +454,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -397,6 +494,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -436,6 +534,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -483,6 +582,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": "numeric",
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -542,6 +642,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -614,6 +715,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -671,6 +773,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -744,6 +847,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,
@@ -786,6 +890,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": true,
       "min_images": 2,
       "max_images": 2,
@@ -880,6 +985,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": true,
       "min_images": 2,
       "max_images": 2,
@@ -982,6 +1088,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": null,
       "allow_multiple_images": true,
       "min_images": 5,
       "max_images": 5,
@@ -1127,7 +1234,7 @@
     {
       "id": "cau_20",
       "title": "Câu 20: Nhập số điện thoại / Zalo của tài xế",
-      "type": "number",
+      "type": "text",
       "required": false,
       "description": "CTV nhập chính xác số điện thoại / zalo tài xế dùng để kết nối cho những lần khảo sát tiếp theo có thưởng",
       "tooltip": "",
@@ -1177,6 +1284,7 @@
       "is_consent_gate": false,
       "consent_accept_values": [],
       "image_checks": null,
+      "input_mode": "tel",
       "allow_multiple_images": false,
       "min_images": null,
       "max_images": null,

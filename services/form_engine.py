@@ -552,7 +552,7 @@ def get_effective_image_checks(
 
 def _default_validation_modules() -> list[FormModule]:
     """Checks are modules, not per-question ValidationRule objects."""
-    phone_message = "Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số"
+    phone_message = "Số điện thoại phải là 0 + 9 chữ số hoặc +84 + 9 chữ số"
     trips_message = "Số chuyến mỗi ngày phải từ 1 đến 200"
     return [
         FormModule(
@@ -562,7 +562,7 @@ def _default_validation_modules() -> list[FormModule]:
             module_id="regex",
             inputs=[
                 FormModuleInput(name="field", source="literal", literal="driver_phone"),
-                FormModuleInput(name="pattern", source="literal", literal=r"^0[0-9]{9,10}$"),
+                FormModuleInput(name="pattern", source="literal", literal=r"^(?:0[0-9]{9}|\+84[0-9]{9})$"),
                 FormModuleInput(name="message", source="literal", literal=phone_message),
             ],
             reject_on_false=True,
