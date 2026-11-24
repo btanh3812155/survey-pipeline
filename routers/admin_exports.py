@@ -5,6 +5,7 @@ import asyncio
 import html
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -45,11 +46,48 @@ _EXPORT_PROGRESS: dict[str, Any] = {
     "error": None,
 }
 _EXPORT_TASK: asyncio.Task | None = None
+_EXPORT_PROGRESS_FILE = os.path.join(os.getcwd(), "data", "export_progress.json")
+
+
+def _write_export_progress(payload: dict[str, Any]) -> None:
+    """Write progress atomically so both uvicorn workers see the same state."""
+    try:
+        os.makedirs(os.path.dirname(_EXPORT_PROGRESS_FILE), exist_ok=True)
+        temporary = f"{_EXPORT_PROGRESS_FILE}.{os.getpid()}.tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, _EXPORT_PROGRESS_FILE)
+    except OSError:
+        pass
+
+
+def _read_export_progress() -> dict[str, Any]:
+    try:
+        with open(_EXPORT_PROGRESS_FILE, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+    except (OSError, ValueError, TypeError):
+        pass
+    return dict(_EXPORT_PROGRESS)
+
+
+def _progress_is_fresh(payload: dict[str, Any], seconds: int = 1800) -> bool:
+    if payload.get("status") != "running":
+        return False
+    try:
+        updated = datetime.fromisoformat(str(payload.get("updated_at") or ""))
+        return (datetime.now(timezone.utc) - updated).total_seconds() < seconds
+    except (TypeError, ValueError):
+        return False
 
 
 def _set_export_progress(**updates: Any) -> None:
     _EXPORT_PROGRESS.update(updates)
     _EXPORT_PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_export_progress(_EXPORT_PROGRESS)
 
 
 async def _run_export_job(pool) -> None:
@@ -812,14 +850,16 @@ async def remove_export_client(slug: str, admin_user: str = Depends(verify_admin
 
 @router.get("/api/v1/admin/exports/progress")
 async def export_progress(_admin: str = Depends(verify_admin_auth)):
-    return {**_EXPORT_PROGRESS, "server_time": datetime.now(timezone.utc).isoformat()}
+    payload = _read_export_progress()
+    return {**payload, "server_time": datetime.now(timezone.utc).isoformat()}
 
 
 @router.post("/admin/exports/run")
 async def run_exports(admin_user: str = Depends(verify_admin_auth)):
     global _EXPORT_TASK
     pool = _pool()
-    if _EXPORT_TASK is not None and not _EXPORT_TASK.done():
+    shared = _read_export_progress()
+    if _progress_is_fresh(shared) or (_EXPORT_TASK is not None and not _EXPORT_TASK.done()):
         return RedirectResponse(
             f"/admin/exports?error={quote('Xuất đang chạy', safe='')}",
             status_code=303,

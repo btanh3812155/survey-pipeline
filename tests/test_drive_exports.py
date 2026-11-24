@@ -652,9 +652,10 @@ async def test_client_and_internal_trees_export_their_own_status_sets(store, mon
 
 
 @pytest.mark.asyncio
-async def test_manual_export_runs_in_background_and_exposes_progress(monkeypatch):
+async def test_manual_export_runs_in_background_and_exposes_progress(monkeypatch, tmp_path):
     from routers import admin_exports
 
+    monkeypatch.setattr(admin_exports, "_EXPORT_PROGRESS_FILE", str(tmp_path / "export_progress.json"))
     admin_exports._EXPORT_TASK = None
     admin_exports._set_export_progress(status="idle", report={}, started_at=None, finished_at=None, error=None)
     gate = asyncio.Event()
