@@ -1,10 +1,12 @@
 """Admin Google Drive export configuration and manual execution."""
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -33,6 +35,51 @@ from core.state import FORM_REGISTRY, get_db_pool, verify_admin_auth
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Drive Exports"])
 _FORM_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+_EXPORT_PROGRESS: dict[str, Any] = {
+    "status": "idle",
+    "report": {},
+    "started_at": None,
+    "updated_at": None,
+    "finished_at": None,
+    "error": None,
+}
+_EXPORT_TASK: asyncio.Task | None = None
+
+
+def _set_export_progress(**updates: Any) -> None:
+    _EXPORT_PROGRESS.update(updates)
+    _EXPORT_PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def _run_export_job(pool) -> None:
+    _set_export_progress(
+        status="running", report={}, started_at=datetime.now(timezone.utc).isoformat(),
+        finished_at=None, error=None,
+    )
+
+    def progress(report: dict[str, Any]) -> None:
+        _set_export_progress(status=str(report.get("status") or "running"), report=report)
+
+    try:
+        report = await run_drive_exports(pool, progress=progress)
+        _set_export_progress(
+            status=str(report.get("status") or "unknown"),
+            report=report,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except asyncio.CancelledError:
+        _set_export_progress(
+            status="cancelled", error="cancelled",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        raise
+    except Exception as exc:
+        logger.warning("background drive export failed: %s", type(exc).__name__)
+        _set_export_progress(
+            status="failed", error=type(exc).__name__,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 STYLE = """
 :root { --drive-bg:#f8fafd; --surface:#fff; --line:#dadce0; --text:#1f1f1f; --muted:#5f6368; --blue:#0b57d0; --blue-soft:#e8f0fe; --hover:#f1f3f4; }
@@ -68,6 +115,15 @@ a { color:var(--blue); text-decoration:none; }
 .drive-empty { padding:28px; background:#fff; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:13px; }
 .details { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; position:sticky; top:80px; max-height:calc(100vh - 96px); overflow:auto; }
 .details h2 { font-size:15px; margin:0 0 8px; font-weight:600; }
+.export-progress { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:0 0 16px; }
+.export-progress[hidden] { display:none; }
+.export-progress-head { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap; }
+.export-progress-head h2 { font-size:15px; margin:0; font-weight:600; }
+#exportProgressStatus { color:var(--blue); font-weight:600; font-size:13px; }
+.export-progress-bar { height:8px; background:#e8f0fe; border-radius:999px; overflow:hidden; margin:12px 0 8px; }
+.export-progress-bar span { display:block; height:100%; width:0; background:var(--blue); border-radius:999px; transition:width .35s ease; }
+.export-progress-meta { color:var(--muted); font-size:12px; }
+.export-progress pre { margin-top:10px; max-height:180px; }
 .details h3 { font-size:13px; margin:14px 0 6px; color:#3c4043; }
 .details .hint,.details .muted { color:var(--muted); font-size:12px; }
 .details-list { display:flex; flex-direction:column; gap:6px; margin:8px 0 14px; }
@@ -344,6 +400,73 @@ def _settings_details(settings: dict[str, Any], report_text: str) -> str:
 <details class="drive-settings"><summary data-i18n="last_report">Báo cáo xuất gần nhất</summary><pre>{_esc(report_text)}</pre></details>"""
 
 
+progress_html = """
+<section class="export-progress" id="exportProgress" hidden>
+  <div class="export-progress-head">
+    <h2 data-i18n="export_progress_heading">Tiến trình xuất Drive</h2>
+    <span id="exportProgressStatus"></span>
+  </div>
+  <div class="export-progress-bar"><span id="exportProgressBar"></span></div>
+  <div class="export-progress-meta" id="exportProgressMeta"></div>
+  <pre id="exportProgressReport" hidden></pre>
+</section>
+<script>
+(() => {
+  const card = document.getElementById('exportProgress');
+  if (!card) return;
+  const t = (key, fallback) => window.AdminI18n ? window.AdminI18n.t(key) : fallback;
+  const statusEl = document.getElementById('exportProgressStatus');
+  const bar = document.getElementById('exportProgressBar');
+  const metaEl = document.getElementById('exportProgressMeta');
+  const reportEl = document.getElementById('exportProgressReport');
+  let timer = null;
+  let reloaded = false;
+  const labels = {
+    idle: t('export_progress_idle', 'Chưa chạy'),
+    running: t('export_progress_running', 'Đang xuất...'),
+    ok: t('export_progress_done', 'Hoàn tất'),
+    completed_with_errors: t('export_progress_done_errors', 'Hoàn tất có lỗi'),
+    busy: t('export_progress_busy', 'Đang bận'),
+    failed: t('export_progress_failed', 'Thất bại'),
+    unavailable: t('export_progress_unavailable', 'Không khả dụng'),
+    no_credentials: t('export_progress_no_credentials', 'Thiếu thông tin đăng nhập Drive'),
+    no_root: t('export_progress_no_root', 'Thiếu thư mục gốc Drive'),
+    cancelled: t('export_progress_cancelled', 'Đã hủy'),
+  };
+  async function poll() {
+    try {
+      const response = await fetch('/api/v1/admin/exports/progress', {credentials: 'include', cache: 'no-store'});
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === 'idle') { card.hidden = true; return; }
+      card.hidden = false;
+      const report = data.report || {};
+      statusEl.textContent = labels[data.status] || data.status;
+      metaEl.textContent = [
+        `${t('export_progress_clients', 'khách hàng')}: ${report.clients || 0}`,
+        `${t('export_progress_forms', 'form')}: ${report.forms || 0}`,
+        `${t('export_progress_rows', 'dòng')}: ${report.rows || 0}`,
+        `${t('export_progress_sheets', 'sheet')}: ${report.sheets_created || 0}`,
+        `${t('export_progress_images', 'ảnh')}: ${report.images_uploaded || 0}`,
+      ].join(' · ');
+      const running = data.status === 'running';
+      bar.style.width = running ? '45%' : '100%';
+      if (!running) {
+        reportEl.hidden = false;
+        reportEl.textContent = JSON.stringify(report, null, 2);
+        if (timer) { clearInterval(timer); timer = null; }
+        if (!reloaded && (data.status === 'ok' || data.status === 'completed_with_errors')) {
+          reloaded = true;
+          setTimeout(() => location.reload(), 1200);
+        }
+      }
+    } catch (_) {}
+  }
+  poll();
+  timer = setInterval(poll, 1500);
+})();
+</script>"""
+
 def _render_root(
     settings: dict[str, Any], clients: list[dict[str, Any]], *, message: str = "", error: str = ""
 ) -> str:
@@ -364,7 +487,7 @@ def _render_root(
     return _drive_shell(
         "Drive Exports", _crumbs([("Drive của tôi", None)]), "Drive của tôi",
         "Thư mục và điều khiển xuất Google Drive.",
-        f'<div class="file-grid">{folders}</div>',
+        progress_html + f'<div class="file-grid">{folders}</div>',
         _settings_details(settings, report_text),
         active="drive", message=message, error=error, toolbar_actions=run_form,
         heading_key="drive_my", subtitle_key="drive_root_subtitle",
@@ -687,13 +810,22 @@ async def remove_export_client(slug: str, admin_user: str = Depends(verify_admin
     return RedirectResponse("/admin/exports?message=Export+configuration+deleted", status_code=303)
 
 
+@router.get("/api/v1/admin/exports/progress")
+async def export_progress(_admin: str = Depends(verify_admin_auth)):
+    return {**_EXPORT_PROGRESS, "server_time": datetime.now(timezone.utc).isoformat()}
+
+
 @router.post("/admin/exports/run")
 async def run_exports(admin_user: str = Depends(verify_admin_auth)):
+    global _EXPORT_TASK
     pool = _pool()
-    try:
-        report = await run_drive_exports(pool)
-    except Exception as exc:
-        logger.warning("manual drive export failed: %s", type(exc).__name__)
-        return RedirectResponse("/admin/exports?error=Export+run+failed", status_code=303)
-    status = report.get("status", "unknown")
-    return RedirectResponse(f"/admin/exports?message={quote('Export finished: ' + status, safe='')}", status_code=303)
+    if _EXPORT_TASK is not None and not _EXPORT_TASK.done():
+        return RedirectResponse(
+            f"/admin/exports?error={quote('Xuất đang chạy', safe='')}",
+            status_code=303,
+        )
+    _EXPORT_TASK = asyncio.create_task(_run_export_job(pool))
+    return RedirectResponse(
+        f"/admin/exports?message={quote('Đã bắt đầu xuất', safe='')}",
+        status_code=303,
+    )

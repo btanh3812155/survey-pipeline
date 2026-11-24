@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from datetime import date, datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import httpx
 from psycopg.rows import dict_row
@@ -603,6 +603,7 @@ async def run_drive_exports(
     http_client: Any = None,
     token: str | None = None,
     root_folder_id: str | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Manually execute configured exports. Synchronous by design for an admin action."""
     if not pool:
@@ -625,6 +626,14 @@ async def run_drive_exports(
         "shortcuts_present": 0,
         "errors": [],
     }
+    def emit() -> None:
+        if progress is None:
+            return
+        try:
+            progress({**report, "errors": list(report["errors"])})
+        except Exception:
+            pass
+
     lock_conn = None
     try:
         async with pool.connection() as lock_conn:
@@ -695,6 +704,7 @@ async def run_drive_exports(
                 master_images_cache: dict[tuple[str, str, str], str] = {}
                 for config in clients:
                     report["clients"] += 1
+                    emit()
                     overrides = config.get("form_settings") or {}
                     selected_forms = set(config.get("form_ids") or [])
                     target_forms = selected_forms or (set(overrides) | active_forms)
@@ -738,6 +748,7 @@ async def run_drive_exports(
                     for form_id, (form_rows, effective) in sorted(by_form.items()):
                         report["forms"] += 1
                         report["rows"] += len(form_rows)
+                        emit()
                         folder_mime = "application/vnd.google-apps.folder"
                         form_folder = await drive.get_or_create_folder(http, access_token, form_id, tier3_id)
                         if not form_folder:
@@ -873,6 +884,7 @@ async def run_drive_exports(
         return report
     finally:
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
+        emit()
         try:
             if report.get("status") != "busy":
                 async with pool.connection() as conn:

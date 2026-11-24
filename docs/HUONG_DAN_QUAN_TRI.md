@@ -218,7 +218,7 @@ Trong folder form:
 
 ### 5.5 Chạy xuất
 
-Từ màn hình gốc của Exports, bấm **Chạy xuất**. Hệ thống dùng khóa tư vấn trong cơ sở dữ liệu để tránh hai lần xuất chạy chồng nhau. Xem kết quả ở **Báo cáo xuất gần nhất**.
+Từ màn hình gốc của Exports, bấm **Chạy xuất**. Yêu cầu trả về ngay và tiến trình chạy nền. Thẻ **Tiến trình xuất Drive** hiển thị trạng thái, số khách hàng, form, dòng, sheet và ảnh đang xử lý; trang tự làm mới khi xong. Hệ thống dùng khóa tư vấn trong cơ sở dữ liệu để tránh hai lần xuất chạy chồng nhau. Xem kết quả cuối ở **Báo cáo xuất gần nhất**.
 
 ## 6. Tài khoản và phân quyền
 

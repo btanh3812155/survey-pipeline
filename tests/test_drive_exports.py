@@ -649,3 +649,42 @@ async def test_client_and_internal_trees_export_their_own_status_sets(store, mon
     assert not any("VN-INTERNAL-ONLY" in target for target in customer_targets)
     assert any("VN-CLIENT-ONLY" in target for target in internal_targets)
     assert any("VN-INTERNAL-ONLY" in target for target in internal_targets)
+
+
+@pytest.mark.asyncio
+async def test_manual_export_runs_in_background_and_exposes_progress(monkeypatch):
+    from routers import admin_exports
+
+    admin_exports._EXPORT_TASK = None
+    admin_exports._set_export_progress(status="idle", report={}, started_at=None, finished_at=None, error=None)
+    gate = asyncio.Event()
+    final_report = {
+        "status": "ok", "clients": 1, "forms": 2, "rows": 3,
+        "sheets_created": 1, "images_uploaded": 4, "errors": [],
+    }
+
+    async def slow_export(_pool, *, progress=None):
+        progress({
+            "status": "running", "clients": 1, "forms": 2, "rows": 3,
+            "sheets_created": 1, "images_uploaded": 4, "errors": [],
+        })
+        await gate.wait()
+        return final_report
+
+    monkeypatch.setattr(admin_exports, "run_drive_exports", slow_export)
+    monkeypatch.setattr(admin_exports, "_pool", lambda: object())
+
+    response = await admin_exports.run_exports(admin_user="tester")
+    assert response.status_code == 303
+    await asyncio.sleep(0.05)
+
+    snapshot = await admin_exports.export_progress("tester")
+    assert snapshot["status"] == "running"
+    assert snapshot["report"]["forms"] == 2
+
+    gate.set()
+    await admin_exports._EXPORT_TASK
+    final = await admin_exports.export_progress("tester")
+    assert final["status"] == "ok"
+    assert final["report"]["images_uploaded"] == 4
+    admin_exports._EXPORT_TASK = None
