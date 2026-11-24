@@ -11,7 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from config import settings
 from core import outbox_delivery as queue
-from core.durable_work import enqueue_submission_work
+from core.durable_work import enqueue_submission_work, transition_submission
 from core.phone_links import PHONE_LINK_TABLE_STATEMENTS
 from services import submission_media, telegram_polling as telegram
 from tests.test_outbox_delivery import database
@@ -314,3 +314,21 @@ async def test_stats_uses_database_even_when_zero_and_fails_closed(moderation, m
         assert re.findall(r"</b> (\d+)", runner.send_message.await_args.args[1])[0] == str(total)
     await runner.handle_command(ADMIN_GROUP, "/stats", from_user_id=ADMIN)
     assert not re.findall(r"</b> (\d+)", runner.send_message.await_args.args[1])
+
+
+async def test_marked_test_data_transition_enqueues_no_provider_events(moderation):
+    dsn, conn, make, _ = moderation
+    sid, _, _ = make(status="MANUAL_REVIEW")
+    conn.execute(
+        "UPDATE survey_submissions SET form_data = form_data || %s::jsonb WHERE submission_id=%s",
+        (Jsonb({"_test_data": True, "is_test_mode": True}), sid),
+    )
+    async with AsyncConnectionPool(dsn, open=False, min_size=1, max_size=2) as pool:
+        async with pool.connection() as tx:
+            changed, status = await transition_submission(
+                tx, sid, "APPROVED", "test decision", actor="test",
+            )
+            await tx.commit()
+    assert changed is True and status == "APPROVED"
+    assert decision(conn, sid) == ("APPROVED", 1)
+    assert events(conn, sid) == []

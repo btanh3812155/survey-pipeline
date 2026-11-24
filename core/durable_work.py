@@ -188,6 +188,8 @@ async def enqueue_submission_work(conn, submission_id, transition="SUBMITTED", *
         answers["_delivery_policy"] = policy
     await conn.execute("UPDATE survey_submissions SET work_owner='outbox_v2',form_data=%s::jsonb WHERE submission_id=%s", (_json(answers), row["submission_id"]))
     row["work_owner"], row["form_data"] = "outbox_v2", answers
+    if answers.get("_test_data") is True or answers.get("is_test_mode") is True:
+        return []
     base = {"decision_version": row["decision_version"], "media_version": row["media_version"],
             "media_manifest": row.get("media_manifest") or [], "policy": {"enabled": True, "version": policy["version"]}}
     sid, status = row["submission_id"], row["status"]
