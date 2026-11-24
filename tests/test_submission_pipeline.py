@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import threading
 from contextlib import asynccontextmanager
@@ -267,7 +268,9 @@ async def test_duplicate_and_embedding_jobs_run_off_loop_with_private_pil_copies
 
     vision_roles = SimpleNamespace(
         classify_image_role=AsyncMock(return_value="app_income"),
+        ocr_driver_app_profile=AsyncMock(return_value={}),
         ocr_driver_app_income=AsyncMock(return_value={"gross_revenue": 10, "period": "Tuần 1"}),
+        extract_facts=AsyncMock(return_value={}),
     )
     camera = FormQuestion(id="camera", title="Ảnh", type="camera_webrtc", image_slots=[
         {"title": "Thu nhập", "role": "app_income", "object_type": "gsm_app_income"},
@@ -282,11 +285,14 @@ async def test_duplicate_and_embedding_jobs_run_off_loop_with_private_pil_copies
     monkeypatch.setattr(pipeline, "_audit_camera_question", AsyncMock(return_value=audit))
     enqueue, _ = _durable_enqueue(monkeypatch)
     original = Image.new("RGB", (16, 16))
+    buffer = io.BytesIO()
+    original.save(buffer, format="JPEG")
+    valid_bytes = buffer.getvalue()
     calls = []
     event_loop_thread = threading.get_ident()
 
-    def intra(raw_bytes, question, income, *, income_indices, pil_cache):
-        assert raw_bytes == (b"raw",)
+    def intra(raw_bytes, question, income, *, income_indices, pil_cache, **kwargs):
+        assert raw_bytes == (valid_bytes,)
         assert threading.get_ident() != event_loop_thread and pil_cache[0] is not original
         assert question is not camera
         pil_cache[0].putpixel((0, 0), (255, 255, 255))
@@ -305,13 +311,64 @@ async def test_duplicate_and_embedding_jobs_run_off_loop_with_private_pil_copies
     monkeypatch.setattr(pipeline, "check_inter_submission_duplicates", inter)
     deps = replace(dependencies, durable_enabled=True, vision=vision_roles, normalize_image=lambda *_a, **_kw: (b"norm", original))
     request = pipeline.SubmissionInput(
-        form_id="form", schema=schema, uploads=(pipeline.SubmissionUpload("camera", 0, "a", b"raw"),),
+        form_id="form", schema=schema, uploads=(pipeline.SubmissionUpload("camera", 0, "a", valid_bytes),),
     )
     async with embedding_executor_lifespan():
         result = await pipeline.process_submission(request, deps)
     assert result.status == "MANUAL_REVIEW"
     assert calls == ["intra", "embed"]  # inter check and persistence share the embedding
     assert inter.await_args.args[2] == [1.0] and enqueue.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_undecodable_upload_is_stored_as_bin_without_duplicate_hooks(
+    dependencies, monkeypatch, tmp_path,
+):
+    from services.form_engine import FormQuestion, FormSchema, FormSettings, ImageCheckConfig
+
+    vision_roles = SimpleNamespace(
+        classify_image_role=AsyncMock(return_value="app_income"),
+        ocr_driver_app_profile=AsyncMock(return_value={}),
+        ocr_driver_app_income=AsyncMock(return_value={"gross_revenue": 10, "period": "Tuần 1"}),
+        extract_facts=AsyncMock(return_value={}),
+    )
+    camera = FormQuestion(id="camera", title="Ảnh", type="camera_webrtc", image_slots=[
+        {"title": "Thu nhập", "role": "app_income", "object_type": "gsm_app_income"},
+    ])
+    schema = FormSchema(form_id="form", title="Form", questions=[camera], settings=FormSettings(
+        decree13_required=False, image_checks=ImageCheckConfig(enable_blur_check=False, enable_vehicle_match=False),
+    ))
+    audit = {
+        "image_object_results": [], "income_pairs": [(0, {"gross_revenue": 10})],
+        "income_required": 1, "violation": None, "profile_object": None, "role_0": "app_income",
+    }
+    monkeypatch.setattr(pipeline, "_audit_camera_question", AsyncMock(return_value=audit))
+    calls = []
+
+    def intra(*_args, **_kwargs):
+        calls.append("intra")
+        return False, None
+
+    def embed(_image):
+        calls.append("embed")
+        return [1.0]
+
+    monkeypatch.setattr(pipeline, "check_intra_submission_duplicates", intra)
+    monkeypatch.setattr(pipeline, "compute_dinov2_embedding", embed)
+    _durable_enqueue(monkeypatch)
+    deps = replace(
+        dependencies, durable_enabled=True, vision=vision_roles,
+        normalize_image=lambda *_args, **_kwargs: (None, None),
+    )
+    request = pipeline.SubmissionInput(
+        form_id="form", schema=schema, uploads=(pipeline.SubmissionUpload("camera", 0, "a", b"raw"),),
+    )
+    async with embedding_executor_lifespan():
+        result = await pipeline.process_submission(request, deps)
+
+    assert result.status == "REJECTED"
+    assert calls == []
+    assert any(path.suffix == ".bin" for path in tmp_path.rglob("*"))
 
 
 @pytest.mark.asyncio
