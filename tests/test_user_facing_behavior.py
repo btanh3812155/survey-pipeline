@@ -1470,3 +1470,30 @@ def test_retry_link_keeps_original_ctv_ref_for_driver_recipient():
     # CTV recipients keep using the collaborator when no explicit ref is supplied.
     ctv_link = _build_retry_form_link("TB_GSM_2026_Nov_Test", None, "DUNG_NV_HCM_002", "ctv")
     assert "DUNG_NV_HCM_002" in ctv_link.upper()
+
+
+def test_simulated_user_submission_reaches_provider_dispatch():
+    """A real multipart user submission must hand off to the provider boundary once."""
+    from unittest.mock import AsyncMock
+    from main import FORM_REGISTRY
+
+    db = _FakeSubmissionDB()
+    form_id = "SIM-PROVIDER-DISPATCH"
+    data, files = _register_persist_probe_form(form_id)
+    dispatch = AsyncMock()
+    try:
+        with patch.dict(os.environ, {"MOCK_AI": "1"}), \
+             patch("routers.survey.get_db_pool", return_value=db), \
+             patch("routers.survey.dispatch_action_checklist", new=dispatch):
+            with _submission_test_client() as client:
+                response = client.post("/api/v1/survey/submit-webrtc", data=data, files=files)
+
+        assert response.status_code == 200
+        body = response.json()
+        dispatch.assert_awaited_once()
+        kwargs = dispatch.await_args.kwargs
+        assert kwargs["submission_id"] == body["submission_id"]
+        assert kwargs["is_test_mode"] is False
+        assert kwargs["form_id"] == form_id
+    finally:
+        FORM_REGISTRY.pop(form_id, None)
