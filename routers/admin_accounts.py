@@ -117,6 +117,20 @@ def _action_form(
     )
 
 
+_ACCOUNT_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+    "Referrer-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; "
+        "img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+}
+
+
 def _render(
     title: str, admin_user: str, content: str, msg: str = "", err: str = "",
     title_key: str = "",
@@ -166,6 +180,14 @@ tr:last-child td {{ border-bottom:none; }}
 .manage-body {{ margin-top:10px; padding:12px; border:1px solid var(--border); border-radius:10px; background:#0b1220; min-width:260px; }}
 .manage-body form {{ margin-bottom:10px; }}
 .muted {{ color:var(--muted); font-size:.78rem; }}
+.meta-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }}
+.meta-item {{ background:#0b1220; border:1px solid var(--border); border-radius:10px; padding:10px 12px; min-width:0; }}
+.meta-key {{ color:var(--muted); font-size:.74rem; font-weight:600; margin-bottom:4px; }}
+.meta-value {{ font-weight:700; overflow-wrap:anywhere; }}
+.recovery-card {{ border-color:rgba(245,158,11,.45); }}
+.security-note {{ color:var(--muted); font-size:.8rem; line-height:1.5; margin:0 0 12px; }}
+.recovery-actions {{ margin-top:12px; }}
+.button-link {{ display:inline-flex; align-items:center; justify-content:center; padding:8px 12px; border-radius:8px; background:var(--accent); color:#fff; font-weight:700; text-decoration:none; }}
 .notice {{ padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:.85rem; }}
 .notice.ok {{ background:rgba(16,185,129,.15); color:#a7f3d0; }}
 .notice.bad {{ background:rgba(239,68,68,.15); color:#fecaca; }}
@@ -278,12 +300,55 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
 
 
 def _render_own_account(admin_user: str, account, msg: str = "", err: str = "") -> str:
+    role = str(account.get("role") or "")
+    active = bool(account.get("is_active"))
+    status_key = "status_on" if active else "status_off"
+    status_text = "Hoạt động" if active else "Đã tắt"
+    recovery_block = ""
+    if role == "superadmin":
+        recovery_email = str(account.get("recovery_email") or "").strip()
+        recovery_value = (
+            f"<code>{html.escape(recovery_email)}</code>"
+            if recovery_email
+            else '<span class="muted" data-i18n="recovery_email_unset">Chưa cấu hình</span>'
+        )
+        recovery_block = f"""
+<section class="card recovery-card">
+  <h2 data-i18n="recovery_email_heading">Email khôi phục</h2>
+  <p class="security-note" data-i18n="recovery_email_security">Chỉ superadmin thấy mục này. Thay đổi email cần xác nhận từ hộp thư hiện tại và hộp thư mới.</p>
+  <div class="meta-grid">
+    <div class="meta-item">
+      <div class="meta-key" data-i18n="recovery_email_label">Email khôi phục hiện tại</div>
+      <div class="meta-value">{recovery_value}</div>
+    </div>
+  </div>
+  <div class="recovery-actions">
+    <a class="button-link" href="/admin/recovery/email" data-i18n="change_recovery_email">Đổi email khôi phục</a>
+  </div>
+</section>"""
     content = f"""
 <section class="card">
   <h2 data-i18n="account_self_heading">Tài khoản của tôi</h2>
-  <p><b><span data-i18n="username">Tên đăng nhập</span>:</b> <code>{html.escape(admin_user)}</code></p>
-  <p><b><span data-i18n="role">Vai trò</span>:</b> <span data-role-label="{html.escape(str(account.get("role") or ""))}">{html.escape(_role_label(str(account.get("role") or "")))}</span></p>
+  <div class="meta-grid">
+    <div class="meta-item">
+      <div class="meta-key" data-i18n="username">Tên đăng nhập</div>
+      <div class="meta-value"><code>{html.escape(admin_user)}</code></div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-key" data-i18n="role">Vai trò</div>
+      <div class="meta-value"><span data-role-label="{html.escape(role)}">{html.escape(_role_label(role))}</span></div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-key" data-i18n="account_status">Trạng thái</div>
+      <div class="meta-value"><span class="badge {'on' if active else 'off'}" data-i18n="{status_key}">{status_text}</span></div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-key" data-i18n="account_updated">Cập nhật</div>
+      <div class="meta-value">{_date(account.get("updated_at"))}</div>
+    </div>
+  </div>
 </section>
+{recovery_block}
 <section class="card">
   <h2 data-i18n="change_password_heading">Đổi mật khẩu</h2>
   {_password_form(ACCOUNT_PASSWORD_PATH)}
@@ -296,7 +361,7 @@ async def admin_accounts_page(msg: str = "", err: str = "", admin_user: str = De
     pool = await _accounts_pool()
     accounts = await list_admin_accounts(pool)
     deleted = await list_deleted_admin_accounts(pool)
-    return HTMLResponse(_render_accounts(admin_user, accounts, deleted, msg, err))
+    return HTMLResponse(_render_accounts(admin_user, accounts, deleted, msg, err), headers=_ACCOUNT_HEADERS)
 
 
 @router.get(ACCOUNT_PATH, response_class=HTMLResponse)
@@ -307,7 +372,7 @@ async def admin_own_account_page(
     account = await get_admin_account(pool, admin_user)
     if not account:
         raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
-    return HTMLResponse(_render_own_account(admin_user, account, msg=msg, err=err))
+    return HTMLResponse(_render_own_account(admin_user, account, msg=msg, err=err), headers=_ACCOUNT_HEADERS)
 
 
 @router.get(PASSWORD_PATH)
@@ -340,7 +405,7 @@ async def change_admin_password(
     await _audit(pool, "ADMIN_PASSWORD_CHANGED", admin_user, admin_user)
     # Basic auth may still send the old password on this response.
     account = await get_admin_account(pool, admin_user)
-    return HTMLResponse(_render_own_account(admin_user, account or {}, msg="password_changed"))
+    return HTMLResponse(_render_own_account(admin_user, account or {}, msg="password_changed"), headers=_ACCOUNT_HEADERS)
 
 
 @router.post(ACCOUNTS_PATH)

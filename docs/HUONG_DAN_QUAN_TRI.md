@@ -48,7 +48,7 @@ Menu trên cùng bên trái gồm:
 - **Ảnh/Object**: định nghĩa object ảnh và engine đang có
 - **Module**: logic, object và engine module trong cơ sở dữ liệu
 - **Exports**: cấu hình xuất Google Drive
-- **Tài khoản của tôi**: đổi mật khẩu và xem vai trò
+- **Tài khoản của tôi**: xem vai trò, trạng thái, email khôi phục (superadmin) và đổi mật khẩu
 - **Quản lý tài khoản**: chỉ superadmin
 - **Thùng rác**: khôi phục biểu mẫu và bài nộp đã xóa
 - **Email khôi phục**: chỉ superadmin
@@ -232,7 +232,12 @@ Trang này hiển thị:
 
 - Tên đăng nhập
 - Vai trò hiện tại
+- Trạng thái tài khoản
+- Thời điểm cập nhật
+- Email khôi phục, chỉ với superadmin
 - Form đổi mật khẩu
+
+Superadmin thấy thêm khối **Email khôi phục** và nút **Đổi email khôi phục**. Việc đổi email đi qua trang xác nhận riêng, cần truy cập cả hộp thư hiện tại và hộp thư mới. Các vai trò khác không thấy email này trong HTML.
 
 Đổi mật khẩu cần nhập mật khẩu hiện tại, mật khẩu mới và xác nhận. Mật khẩu mới phải dài 12 đến 1024 ký tự ASCII in được.
 

@@ -229,6 +229,34 @@ async def test_staff_routes_require_superadmin_except_own_password(accounts_db):
 
 @postgres
 @async_test
+async def test_own_account_recovery_block_is_superadmin_only_and_hardened(accounts_db):
+    pool = accounts_db
+    assert await create_admin_account(pool, "owner", _fixture_hash(), "superadmin")
+    assert await create_admin_account(pool, "manager", _fixture_hash(), "manager")
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE admin_accounts SET recovery_email=%s WHERE username='owner'",
+            ("owner@example.test",),
+        )
+        await conn.commit()
+
+    async with _client() as client:
+        owner = await client.get(ACCOUNT_PAGE, auth=("owner", TEST_PASSWORD))
+        assert owner.status_code == 200
+        assert "owner@example.test" in owner.text
+        assert "/admin/recovery/email" in owner.text
+        assert owner.headers["cache-control"] == "no-store"
+        assert owner.headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in owner.headers["content-security-policy"]
+
+        manager = await client.get(ACCOUNT_PAGE, auth=("manager", TEST_PASSWORD))
+        assert manager.status_code == 200
+        assert "owner@example.test" not in manager.text
+        assert "/admin/recovery/email" not in manager.text
+
+
+@postgres
+@async_test
 async def test_staff_management_and_bin(accounts_db):
     pool = accounts_db
     assert await create_admin_account(pool, "owner", _fixture_hash(), "superadmin")
