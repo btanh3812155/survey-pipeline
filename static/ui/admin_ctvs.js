@@ -2,12 +2,49 @@
 (() => {
   'use strict';
   const byId = (id) => document.getElementById(id);
+  function setRowEditing(row, scope) {
+    const active = Boolean(scope);
+    row.classList.toggle('is-editing', active);
+    if (active) row.dataset.editScope = scope;
+    else delete row.dataset.editScope;
+    const desktopInputs = row.querySelectorAll('.ctv-desktop .ctv-edit, .ctv-desktop .ctv-edit input, .ctv-inline-meta .ctv-edit');
+    const mobileInputs = row.querySelectorAll('.ctv-expanded .ctv-edit, .ctv-expanded .ctv-edit input');
+    const toggleInputs = (nodes, enabled) => nodes.forEach((el) => {
+      if (el.tagName !== 'INPUT') return;
+      el.disabled = !enabled;
+      if (!active) {
+        if (el.type === 'checkbox') el.checked = el.defaultChecked;
+        else el.value = el.defaultValue;
+      }
+    });
+    toggleInputs(desktopInputs, scope === 'desktop');
+    toggleInputs(mobileInputs, scope === 'mobile');
+    row.querySelectorAll('[data-edit-ctv]').forEach((btn) => {
+      btn.hidden = active && btn.dataset.editCtv === scope;
+    });
+    row.querySelectorAll('[data-confirm-ctv]').forEach((btn) => {
+      const btnScope = btn.closest('.ctv-expanded') ? 'mobile' : 'desktop';
+      btn.hidden = !(active && btnScope === scope);
+    });
+    if (active) {
+      const first = row.querySelector(scope === 'mobile'
+        ? '.ctv-expanded input.ctv-edit:not(:disabled)'
+        : '.ctv-inline-meta input.ctv-edit:not(:disabled), .ctv-desktop input.ctv-edit:not(:disabled)');
+      first?.focus();
+    }
+  }
   document.querySelectorAll('[data-edit-ctv]').forEach((button) => {
     button.addEventListener('click', () => {
-      const details = byId(button.dataset.editCtv);
-      details.open = true;
-      details.querySelector('.row-edit').open = true;
-      details.querySelector('input').focus();
+      const row = button.closest('[data-ctv-row]');
+      if (!row) return;
+      setRowEditing(row, button.dataset.editCtv);
+    });
+  });
+  document.querySelectorAll('[data-ctv-row]').forEach((row) => {
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && row.classList.contains('is-editing')) {
+        setRowEditing(row, null);
+      }
     });
   });
   document.querySelectorAll('[data-delete-code]').forEach((form) => {

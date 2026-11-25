@@ -45,6 +45,7 @@ def test_directory_uses_single_edit_delete_forms_and_svg_actions():
     assert sum(attrs.get("action") == "/admin/ctvs/ACTIVE/delete" for attrs in forms) == 1
     assert not any("/toggle" in attrs.get("action", "") for attrs in forms)
     assert '<th>Thông tin</th>' not in text
+    assert 'class="row-edit"' not in text
     assert '<details class="ctv-details"' in text
     assert '<summary><code>ACTIVE</code></summary>' in text
     assert '<dt>Telegram</dt><dd>1234</dd>' in text
@@ -53,7 +54,11 @@ def test_directory_uses_single_edit_delete_forms_and_svg_actions():
     assert '&lt;script&gt;' in text and '&quot;quoted&quot;' in text
     assert any(tag == "svg" and attrs.get("aria-hidden") == "true" for tag, attrs in page.tags)
     assert any(tag == "button" and attrs.get("aria-label") == "Xóa CTV ACTIVE" for tag, attrs in page.tags)
-    assert any(tag == "input" and attrs.get("name") == "is_active" for tag, attrs in page.tags)
+    assert any(tag == "button" and attrs.get("data-edit-ctv") == "desktop" for tag, attrs in page.tags)
+    assert any(tag == "button" and "data-confirm-ctv" in attrs and attrs.get("form") == "ctv-edit-0"
+               and attrs.get("type") == "submit" for tag, attrs in page.tags)
+    assert any(tag == "input" and attrs.get("name") == "is_active" and attrs.get("form") == "ctv-edit-0"
+               for tag, attrs in page.tags)
 
 
 def test_generator_only_offers_confirmed_active_directory_entries():

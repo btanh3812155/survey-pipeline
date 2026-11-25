@@ -134,27 +134,10 @@ def _page_flash(message: str = "", error: str = "") -> str:
 def _icon(name: str) -> str:
     paths = {
         "edit": '<path d="m16 3 5 5-12 12H4v-5L16 3Z"/><path d="m14 5 5 5"/>',
+        "confirm": '<path d="M5 13l4 4L19 7"/>',
         "delete": '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
     }
     return f'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">{paths[name]}</svg>'
-
-
-def _row_edit_form(row: Dict[str, Any], code: str, name: str, phone: str, notes: str) -> str:
-    active_checked = "checked" if row.get("is_active", True) else ""
-    return f"""
-    <details class="row-edit">
-      <summary class="icon-button" aria-label="Sửa thông tin CTV {code}" title="Sửa thông tin CTV">{_icon("edit")}</summary>
-      <form method="post" action="/admin/ctvs/{code}">
-        <label>Tên hiển thị<input name="display_name" value="{name}" maxlength="120" placeholder="Tên CTV"></label>
-        <label>Số điện thoại<input name="phone" value="{phone}" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx"></label>
-        <label class="wide">Ghi chú<input name="notes" value="{notes}" maxlength="500" placeholder="Ghi chú nội bộ"></label>
-        <label class="wide"><span><input type="checkbox" name="is_active" value="1" {active_checked}> Đang hoạt động</span></label>
-        <div class="actions">
-          <button type="submit">Lưu thay đổi</button>
-        </div>
-      </form>
-    </details>
-    """
 
 
 def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "", forms=None) -> str:
@@ -184,38 +167,56 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
         last_seen_text = last_seen.strftime("%d/%m/%Y %H:%M") if hasattr(last_seen, "strftime") else "—"
         quota_html = row.get("quota_summary") or ""
         search = html.escape(f"{code_raw} {name_raw} {phone_raw} {notes_raw}".lower(), quote=True)
+        phone_val = html.escape(phone_raw, quote=True)
+        name_val = html.escape(name_raw, quote=True)
+        notes_val = html.escape(notes_raw, quote=True)
+        active_checked = "checked" if active else ""
+        form_id = f"ctv-edit-{index}"
         body_rows.append(
             f"""
             <tr data-ctv-row data-search="{search}" data-active="{'1' if active else '0'}">
               <td>
+                <form id="{form_id}" method="post" action="/admin/ctvs/{code_path}"></form>
+                <form id="ctv-delete-{index}" method="post" action="/admin/ctvs/{code_path}/delete" data-delete-code="{code}"></form>
                 <details class="ctv-details" id="ctv-details-{index}">
                   <summary><code>{code}</code></summary>
                   <div class="ctv-expanded">
                     <dl>
-                      <dt>Tên hiển thị</dt><dd>{name or '—'}</dd>
-                      <dt>Ghi chú</dt><dd>{notes or '—'}</dd>
-                      <dt>Liên hệ</dt><dd>{phone}</dd>
+                      <dt>Tên hiển thị</dt><dd><span class="ctv-view">{name or '—'}</span><input class="ctv-edit" form="{form_id}" name="display_name" value="{name_val}" maxlength="120" placeholder="Tên CTV" disabled></dd>
+                      <dt>Ghi chú</dt><dd><span class="ctv-view">{notes or '—'}</span><input class="ctv-edit" form="{form_id}" name="notes" value="{notes_val}" maxlength="500" placeholder="Ghi chú nội bộ" disabled></dd>
+                      <dt>Liên hệ</dt><dd><span class="ctv-view">{phone}</span><input class="ctv-edit" form="{form_id}" name="phone" value="{phone_val}" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx" disabled></dd>
                       <dt>Telegram</dt><dd>{tg_id}</dd>
-                      <dt>Trạng thái</dt><dd>{_status_badge(active)}</dd>
+                      <dt>Trạng thái</dt><dd><span class="ctv-view">{_status_badge(active)}</span><label class="ctv-edit inline-active"><input form="{form_id}" type="checkbox" name="is_active" value="1" {active_checked} disabled> Hoạt động</label></dd>
                       <dt>Bài nộp</dt><dd>{count} · {last_seen_text}</dd>
                       <dt>Mục tiêu</dt><dd>{quota_html}</dd>
                     </dl>
                     <div class="row-actions">
-                      {_row_edit_form(row, code_path, name, html.escape(phone_raw, quote=True), notes)}
-                      <form id="ctv-delete-{index}" method="post" action="/admin/ctvs/{code_path}/delete" data-delete-code="{code}">
-                        <button type="submit" class="danger icon-button" aria-label="Xóa CTV {code}" title="Xóa CTV">{_icon('delete')}</button>
-                      </form>
+                      <button type="button" class="secondary icon-button" data-edit-ctv="mobile" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
+                      <button type="submit" form="{form_id}" class="confirm icon-button" data-confirm-ctv aria-label="Lưu CTV {code}" title="Lưu thay đổi" hidden>{_icon('confirm')}</button>
+                      <button type="submit" form="ctv-delete-{index}" class="danger icon-button" aria-label="Xóa CTV {code}" title="Xóa CTV">{_icon('delete')}</button>
                     </div>
                   </div>
                 </details>
+                <div class="ctv-inline-meta">
+                  <input class="ctv-edit" form="{form_id}" name="display_name" value="{name_val}" maxlength="120" placeholder="Tên hiển thị" aria-label="Tên hiển thị CTV {code}" disabled>
+                  <input class="ctv-edit" form="{form_id}" name="notes" value="{notes_val}" maxlength="500" placeholder="Ghi chú" aria-label="Ghi chú CTV {code}" disabled>
+                </div>
               </td>
-              <td class="ctv-desktop"><div>{phone}</div><div class="muted">Telegram: {tg_id}</div></td>
-              <td class="ctv-desktop">{_status_badge(active)}</td>
+              <td class="ctv-desktop">
+                <div class="ctv-view">{phone}</div>
+                <input class="ctv-edit" form="{form_id}" name="phone" value="{phone_val}" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx" aria-label="Số điện thoại CTV {code}" disabled>
+                <div class="muted">Telegram: {tg_id}</div>
+              </td>
+              <td class="ctv-desktop">
+                <span class="ctv-view">{_status_badge(active)}</span>
+                <label class="ctv-edit inline-active"><input form="{form_id}" type="checkbox" name="is_active" value="1" {active_checked} disabled> Hoạt động</label>
+              </td>
               <td class="ctv-desktop"><strong>{count}</strong><div class="muted">{last_seen_text}</div></td>
               <td class="ctv-desktop ctv-quota">{quota_html}</td>
               <td class="ctv-desktop">
                 <div class="row-actions">
-                  <button type="button" class="secondary icon-button" data-edit-ctv="ctv-details-{index}" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
+                  <button type="button" class="secondary icon-button" data-edit-ctv="desktop" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
+                  <button type="submit" form="{form_id}" class="confirm icon-button" data-confirm-ctv aria-label="Lưu CTV {code}" title="Lưu thay đổi" hidden>{_icon('confirm')}</button>
                   <button type="submit" form="ctv-delete-{index}" class="danger icon-button" aria-label="Xóa CTV {code}" title="Xóa CTV">{_icon('delete')}</button>
                 </div>
               </td>
