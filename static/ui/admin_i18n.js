@@ -386,6 +386,11 @@
   const origTitle = new WeakMap();
   const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
   let applying = false;
+  let observer = null;
+
+  const setText = (el, next) => {
+    if (el.textContent !== next) el.textContent = next;
+  };
 
   const translateDom = (root, lang) => {
     if (!root) return;
@@ -402,13 +407,14 @@
         origText.set(node, raw);
       }
       const saved = origText.get(node);
-      if (lang === 'en') {
-        const match = saved.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        const translated = phraseMap[match[2]];
-        if (translated) node.nodeValue = match[1] + translated + match[3];
-      } else {
-        node.nodeValue = saved;
-      }
+      const next = lang === 'en'
+        ? (() => {
+            const match = saved.match(/^(\s*)([\s\S]*?)(\s*)$/);
+            const translated = phraseMap[match[2]];
+            return translated ? match[1] + translated + match[3] : saved;
+          })()
+        : saved;
+      if (node.nodeValue !== next) node.nodeValue = next;
     }
     const targets = root.querySelectorAll ? root.querySelectorAll('input[placeholder], textarea[placeholder], [title]') : [];
     targets.forEach((el) => {
@@ -417,14 +423,16 @@
         if (!origPlaceholder.has(el) && (el.placeholder.trim() in phraseMap)) origPlaceholder.set(el, el.placeholder);
         if (origPlaceholder.has(el)) {
           const saved = origPlaceholder.get(el);
-          el.placeholder = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          const next = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          if (el.placeholder !== next) el.placeholder = next;
         }
       }
       if (el.title) {
         if (!origTitle.has(el) && (el.title.trim() in phraseMap)) origTitle.set(el, el.title);
         if (origTitle.has(el)) {
           const saved = origTitle.get(el);
-          el.title = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          const next = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          if (el.title !== next) el.title = next;
         }
       }
     });
@@ -439,15 +447,15 @@
     if (applying) return;
     applying = true;
     try {
-      root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+      root.querySelectorAll('[data-i18n]').forEach(el => { setText(el, t(el.dataset.i18n)); });
       root.querySelectorAll('[data-role-label]').forEach(el => {
         const role = el.dataset.roleLabel || '';
-        el.textContent = t('role_' + role);
+        setText(el, t('role_' + role));
       });
       root.querySelectorAll('[data-account-option]').forEach(el => {
         const username = el.dataset.accountUsername || '';
         const role = el.dataset.accountRole || '';
-        el.textContent = username + ' (' + t('role_' + role) + ')';
+        setText(el, username + ' (' + t('role_' + role) + ')');
       });
       root.querySelectorAll('[data-i18n-template]').forEach(el => {
         const values = {
@@ -455,13 +463,15 @@
           count: el.dataset.metaCount || '',
           inherited: el.dataset.inherited || ''
         };
-        el.textContent = t(el.dataset.i18nTemplate).replace(/\{(\w+)\}/g, (_m, name) => values[name] || '');
+        setText(el, t(el.dataset.i18nTemplate).replace(/\{(\w+)\}/g, (_m, name) => values[name] || ''));
       });
       root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-        el.placeholder = t(el.dataset.i18nPlaceholder);
+        const next = t(el.dataset.i18nPlaceholder);
+        if (el.placeholder !== next) el.placeholder = next;
       });
       translateDom(root === document ? document.body : root, getLang());
     } finally {
+      if (observer) observer.takeRecords();
       applying = false;
     }
   }
@@ -479,9 +489,10 @@
     document.documentElement.lang = getLang();
     apply();
     if (document.body && typeof MutationObserver !== 'undefined') {
-      new MutationObserver(() => {
+      observer = new MutationObserver(() => {
         if (!applying && getLang() === 'en') apply(document.body);
-      }).observe(document.body, { childList: true, subtree: true });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
     }
   });
 })();
