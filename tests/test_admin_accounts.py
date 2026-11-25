@@ -358,9 +358,15 @@ def test_admin_language_toggle_assets_are_wired():
     static_dir = Path(__file__).resolve().parents[1] / "static" / "ui"
     nav = (static_dir / "admin_nav.js").read_text(encoding="utf-8")
     i18n = (static_dir / "admin_i18n.js").read_text(encoding="utf-8")
+    theme = (static_dir / "admin_theme.css").read_text(encoding="utf-8")
+    assert "adminThemeToggle" in nav
+    assert "tb_theme" in nav
     assert "adminLangToggle" in nav
+    assert "i18nEnabled" not in nav
     assert "AdminI18n.toggle" in nav
     assert "localStorage.getItem('tb_lang')" in i18n
+    assert "color-scheme: dark;" in theme
+    assert ':root[data-theme="light"]' in theme
     assert "accounts_title" in i18n and "Admin account management" in i18n
     assert "role_superadmin" in i18n and "Quản trị" in i18n
     assert "Quản trị tối cao" not in i18n

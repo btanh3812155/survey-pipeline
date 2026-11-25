@@ -3,10 +3,17 @@
   const path = (location.pathname.replace(/\/+$/, '') || '/');
   // Recovery is public; don't show a signed-in menu on its public pages.
   if (path.startsWith('/admin/recovery') && path !== '/admin/recovery/email') return;
+  const getTheme = () => (localStorage.getItem('tb_theme') === 'light' ? 'light' : 'dark');
+  const applyTheme = (theme) => {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('tb_theme', next); } catch (_) { /* ignore storage errors */ }
+    return next;
+  };
+  applyTheme(getTheme());
   const role = document.querySelector('meta[name="admin-role"]')?.content;
   const superadmin = role === 'superadmin';
   const operator = superadmin || role === 'manager';
-  const i18nEnabled = Boolean(document.querySelector('[data-i18n], [data-admin-i18n]'));
   const links = [
     ...(operator ? [['/admin/forms', 'nav_forms']] : []),
     ['/admin/submissions', 'nav_submissions'],
@@ -61,12 +68,17 @@
     #adminTopBar a:focus-visible, #adminTopBar button:focus-visible {
       outline: 2px solid #60a5fa; outline-offset: 2px; }
     #adminTopBar a.active { background: #2563eb; color: #fff; }
+    #adminTopBar .bar-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+    #adminTopBar .icon-toggle { padding: 7px 10px; min-height: 34px; }
+    #adminTopBar .icon-toggle svg { display: block; }
     @media (max-width: 640px) { #adminTopBar .inner { padding: 6px 10px; }
       #adminTopBar .brand { display: none; }
       body > .container { padding: 16px 12px !important; }
       #adminTopBar .menu { left: 10px; width: min(320px, calc(100vw - 20px)); } }
   `;
   document.head.appendChild(style);
+  const sunIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>';
+  const moonIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
   const nav = document.createElement('nav');
   nav.id = 'adminTopBar';
   nav.setAttribute('aria-label', 'Điều hướng quản trị');
@@ -74,10 +86,13 @@
     + '<button type="button" aria-expanded="false" aria-controls="adminNavMenu"'
     + ' aria-label="Menu điều hướng quản trị"><span aria-hidden="true">&#9776;</span> Menu</button>'
     + '<span class="brand">Trust Bridge Admin</span>'
-    + (i18nEnabled ? '<button type="button" id="adminLangToggle" style="margin-left:auto;" aria-label="Đổi ngôn ngữ / Toggle language"><span id="adminLangCode">VI</span></button>' : '')
+    + '<div class="bar-right">'
+    + '<button type="button" id="adminThemeToggle" class="icon-toggle" aria-label="Chuyển giao diện sáng / tối" title="Sáng / Tối"></button>'
+    + '<button type="button" id="adminLangToggle" class="icon-toggle" aria-label="Đổi ngôn ngữ / Toggle language" title="VI / EN"><span id="adminLangCode">VI</span></button>'
+    + '</div>'
     + '<div id="adminNavMenu" class="menu" hidden>'
     + links.map(([href, key]) =>
-      `<a href="${href}" data-i18n="${key}"${href === '/logout' ? ' data-logout="1"' : ''}${isActive(href) ? ' class="active" aria-current="page"' : ''}>${window.AdminI18n ? window.AdminI18n.t(key, i18nEnabled ? undefined : 'vi') : key}</a>`
+      `<a href="${href}" data-i18n="${key}"${href === '/logout' ? ' data-logout="1"' : ''}${isActive(href) ? ' class="active" aria-current="page"' : ''}>${window.AdminI18n ? window.AdminI18n.t(key) : key}</a>`
     ).join('')
     + '</div></div>';
   const button = nav.querySelector('button');
@@ -86,6 +101,18 @@
     button.setAttribute('aria-expanded', String(open));
     menu.hidden = !open;
   };
+  const themeButton = nav.querySelector('#adminThemeToggle');
+  const syncThemeButton = () => {
+    const isLight = getTheme() === 'light';
+    themeButton.innerHTML = isLight ? moonIcon : sunIcon;
+    themeButton.setAttribute('aria-pressed', String(!isLight));
+    themeButton.title = isLight ? 'Chuyển sang giao diện tối' : 'Chuyển sang giao diện sáng';
+  };
+  syncThemeButton();
+  themeButton.addEventListener('click', () => {
+    applyTheme(getTheme() === 'light' ? 'dark' : 'light');
+    syncThemeButton();
+  });
   const langButton = nav.querySelector('#adminLangToggle');
   const langCode = nav.querySelector('#adminLangCode');
   const updateLangCode = () => {
