@@ -20,6 +20,7 @@ import os
 import re
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Iterable
+from urllib.parse import quote
 
 import httpx
 from psycopg.rows import dict_row
@@ -42,6 +43,8 @@ from services.submission_media import manifest_paths
 logger = logging.getLogger("core.drive_exports")
 
 EXPORT_FIELDS = (
+    ("ctv_code", "CTV code"),
+    ("driver_phone", "Phone"),
     ("submission_id", "Submission ID"),
     ("form_id", "Form"),
     ("status", "Status"),
@@ -49,9 +52,7 @@ EXPORT_FIELDS = (
     ("vehicle_type", "Vehicle type"),
     ("car_model", "Car model"),
     ("membership_type", "Membership"),
-    ("ctv_code", "CTV code"),
     ("driver_name", "Driver name"),
-    ("driver_phone", "Driver phone"),
     ("total_gross_revenue", "Gross revenue"),
     ("total_net_income", "Net income"),
     ("total_trips", "Trips"),
@@ -68,10 +69,12 @@ VEHICLE_TYPES = ("CAR", "BIKE")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 DEFAULT_SETTINGS = {
     "master_folder_name": "Master Export",
-    "client_folder_name": "Client Exports",
-    "internal_folder_name": "Internal Exports",
-    "images_folder_name": "Images Master",
+    "client_folder_name": "clients",
+    "internal_folder_name": "internal",
+    "images_folder_name": "master images",
 }
+MASTER_DELIVERABLES_NAME = "Master_Survey_Deliverables"
+SHEET_MIME = "application/vnd.google-apps.spreadsheet"
 DRIVE_EXPORT_LOCK_KEY = 764539268
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,99}$")
@@ -564,23 +567,316 @@ async def _sync_sheet(
     client: Any, http_client: Any, token: str, name: str, folder_id: str,
     rows: list[dict[str, Any]], fields: list[str], report: dict[str, Any],
 ) -> str | None:
-    sheet_id = await client.find_file_or_folder(
-        http_client, token, name, folder_id, "application/vnd.google-apps.spreadsheet"
+    existing = await client.find_file_or_folder(
+        http_client, token, name, folder_id, SHEET_MIME
+    )
+    matrix = export_matrix(rows, fields)
+    sheet_id = await ensure_workbook(
+        client, http_client, token, name, folder_id, [(name, matrix)]
     )
     if sheet_id:
-        if await client.update_sheet_values(http_client, token, sheet_id, export_matrix(rows, fields)):
-            report["sheets_updated"] += 1
-            return sheet_id
-        report["errors"].append(f"sheet update failed: {name}")
+        report["sheets_updated" if existing else "sheets_created"] += 1
         return sheet_id
-    created = await client.import_csv_as_sheet(
-        http_client, token, name, build_export_csv(rows, fields), folder_id
-    )
-    if created:
-        report["sheets_created"] += 1
-        return created
     report["errors"].append(f"sheet create failed: {name}")
     return None
+
+
+async def _sheets_request(http, token: str, method: str, path: str, **kwargs):
+    return await http.request(
+        method,
+        f"https://sheets.googleapis.com/v4/spreadsheets{path}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        **kwargs,
+    )
+
+
+def _json(response) -> dict[str, Any]:
+    try:
+        value = response.json()
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+async def _spreadsheet_meta(http, token: str, spreadsheet_id: str) -> dict[str, Any]:
+    response = await _sheets_request(
+        http, token, "GET", f"/{spreadsheet_id}",
+        params={"fields": "sheets(properties(sheetId,title,gridProperties),bandedRanges)"},
+    )
+    return response.json() if response.status_code == 200 else {}
+
+
+async def _ensure_spreadsheet(drive: Any, http, token: str, title: str, parent_id: str) -> str | None:
+    existing = await drive.find_file_or_folder(http, token, title, parent_id, SHEET_MIME)
+    if existing:
+        return existing
+    response = await http.post(
+        "https://www.googleapis.com/drive/v3/files",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"fields": "id,name,mimeType,parents"},
+        json={"name": title, "mimeType": SHEET_MIME, "parents": [parent_id]},
+    )
+    if response.status_code not in {200, 201}:
+        logger.warning("Could not create spreadsheet %s: %s", title, response.status_code)
+        return None
+    return _json(response).get("id")
+
+
+async def _ensure_tab(http, token: str, spreadsheet_id: str, title: str, meta: dict[str, Any]) -> int | None:
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties") or {}
+        if props.get("title") == title:
+            return props.get("sheetId")
+    response = await _sheets_request(
+        http, token, "POST", f"/{spreadsheet_id}:batchUpdate",
+        json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+    )
+    if response.status_code == 200:
+        replies = _json(response).get("replies") or []
+        return ((replies[0] if replies else {}).get("addSheet") or {}).get("properties", {}).get("sheetId")
+    logger.warning("Could not add sheet tab %s: %s", title, response.status_code)
+    return None
+
+
+async def _write_tab(http, token: str, spreadsheet_id: str, title: str, rows: list[list[Any]]) -> bool:
+    encoded = quote(f"{title}!A1:ZZZ", safe="")
+    await _sheets_request(http, token, "POST", f"/{spreadsheet_id}/values/{encoded}:clear")
+    encoded_start = quote(f"{title}!A1", safe="")
+    response = await _sheets_request(
+        http, token, "PUT", f"/{spreadsheet_id}/values/{encoded_start}",
+        params={"valueInputOption": "RAW"}, json={"values": rows},
+    )
+    return response.status_code == 200
+
+
+async def _format_tab(http, token: str, spreadsheet_id: str, title: str, row_count: int, column_count: int) -> None:
+    meta = await _spreadsheet_meta(http, token, spreadsheet_id)
+    sheet = next(
+        (item for item in meta.get("sheets", []) if (item.get("properties") or {}).get("title") == title),
+        None,
+    )
+    if not sheet:
+        return
+    sheet_id = (sheet.get("properties") or {}).get("sheetId")
+    if sheet_id is None:
+        return
+    grid = (sheet.get("properties") or {}).get("gridProperties") or {}
+    requests: list[dict[str, Any]] = []
+    for band in sheet.get("bandedRanges") or []:
+        if band.get("bandedRangeId") is not None:
+            requests.append({"deleteBanding": {"bandedRangeId": band["bandedRangeId"]}})
+    requests.append({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet_id,
+                "gridProperties": {
+                    "rowCount": max(int(grid.get("rowCount") or 0), row_count + 20),
+                    "columnCount": max(int(grid.get("columnCount") or 0), column_count),
+                    "frozenRowCount": 1,
+                },
+            },
+            "fields": "gridProperties.rowCount,gridProperties.columnCount,gridProperties.frozenRowCount",
+        }
+    })
+    if row_count > 1:
+        requests.append({
+            "addBanding": {
+                "bandedRange": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": row_count,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": max(column_count, 1),
+                    },
+                    "rowProperties": {
+                        "firstBandColor": {"red": 0.94, "green": 0.96, "blue": 0.99},
+                        "secondBandColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                    },
+                }
+            }
+        })
+    await _sheets_request(http, token, "POST", f"/{spreadsheet_id}:batchUpdate", json={"requests": requests})
+
+
+async def ensure_workbook(
+    drive: Any, http, token: str, title: str, parent_id: str,
+    tabs: list[tuple[str, list[list[Any]]]],
+) -> str | None:
+    spreadsheet_id = await _ensure_spreadsheet(drive, http, token, title, parent_id)
+    if not spreadsheet_id or not tabs:
+        return spreadsheet_id
+    meta = await _spreadsheet_meta(http, token, spreadsheet_id)
+    for tab_title, rows in tabs:
+        if not await _ensure_tab(http, token, spreadsheet_id, tab_title, meta):
+            continue
+        await _write_tab(http, token, spreadsheet_id, tab_title, rows)
+        await _format_tab(http, token, spreadsheet_id, tab_title, len(rows), len(rows[0]) if rows else 1)
+        meta = await _spreadsheet_meta(http, token, spreadsheet_id)
+    desired = {tab_title for tab_title, _rows in tabs}
+    requests = []
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties") or {}
+        if props.get("title") not in desired and props.get("sheetId") is not None:
+            requests.append({"deleteSheet": {"sheetId": props["sheetId"]}})
+    if requests:
+        await _sheets_request(http, token, "POST", f"/{spreadsheet_id}:batchUpdate", json={"requests": requests})
+    return spreadsheet_id
+
+
+async def _internal_form_ids(pool, drive: Any, http, token: str, internal_id: str) -> list[str]:
+    forms: set[str] = set()
+    if pool:
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT DISTINCT form_id FROM survey_submissions")
+                    forms.update(str(row[0]) for row in await cur.fetchall() if row[0])
+        except Exception as exc:
+            logger.warning("Could not list internal forms: %s", type(exc).__name__)
+    for child in await drive.list_children(http, token, internal_id):
+        if child.get("mimeType") == "application/vnd.google-apps.folder":
+            name = str(child.get("name") or "")
+            if name and name not in {"submissions", "_legacy_unknown"}:
+                forms.add(name)
+    return sorted(forms)
+
+
+async def sync_internal_sheets(
+    pool, drive: Any, http, token: str, root_id: str,
+    form_ids: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Create/update internal per-form sheets and the master workbook tabs."""
+    settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
+    internal_id = await drive.get_or_create_folder(
+        http, token, settings["internal_folder_name"], root_id
+    )
+    if not internal_id:
+        return {"status": "folder_error"}
+    forms = sorted(set(form_ids or await _internal_form_ids(pool, drive, http, token, internal_id)))
+    tabs: list[tuple[str, list[list[Any]]]] = []
+    created: list[str] = []
+    for form_id in forms:
+        rows: list[dict[str, Any]] = []
+        if pool:
+            try:
+                rows = await select_rows(
+                    pool, {"statuses": list(EXPORT_STATUSES), "form_ids": [form_id]}
+                )
+            except Exception as exc:
+                logger.warning("Internal sheet query failed for %s: %s", form_id, type(exc).__name__)
+        folder = await drive.get_or_create_folder(http, token, form_id, internal_id)
+        if not folder:
+            continue
+        sheet_id = await ensure_workbook(
+            drive, http, token, form_id, folder,
+            [(form_id, export_matrix(rows, list(FIELD_KEYS)))],
+        )
+        if sheet_id:
+            created.append(sheet_id)
+        tabs.append((form_id, export_matrix(rows, list(FIELD_KEYS))))
+    master_id = None
+    if tabs:
+        master_id = await ensure_workbook(
+            drive, http, token, MASTER_DELIVERABLES_NAME, internal_id, tabs
+        )
+    return {"status": "ok", "forms": forms, "form_sheets": created, "master_id": master_id}
+
+
+async def refresh_ctv_sheet(pool, drive: Any, http, token: str, internal_id: str) -> str | None:
+    sheet_id = await drive.find_file_or_folder(http, token, "CTV_Info", internal_id, SHEET_MIME)
+    if not sheet_id:
+        return None
+    response = await _sheets_request(
+        http, token, "GET", f"/{sheet_id}/values/A1:E200",
+        params={"valueRenderOption": "FORMULA"},
+    )
+    values = _json(response).get("values") or []
+    if not values:
+        return sheet_id
+    form_title = str((values[0] or [""])[0] or "CTV_Info")
+    entries: list[tuple[str, str, str]] = []
+    for row in values[2:]:
+        row = list(row or [])
+        first = str(row[0] or "") if row else ""
+        if first.startswith("=IMAGE(") or first.startswith("http"):
+            qr = first
+            url = str(row[1] or "") if len(row) > 1 else ""
+            code = str(row[3] or "") if len(row) > 3 else ""
+        else:
+            code = first
+            url = str(row[3] or "") if len(row) > 3 else ""
+            qr = str(row[2] or "") if len(row) > 2 else ""
+        if qr.startswith('=IMAGE("') and qr.endswith('")'):
+            qr = qr[8:-2]
+        if not code and "ref=" in url:
+            code = url.split("ref=", 1)[1].split("&", 1)[0]
+        if qr and code:
+            entries.append((code, url, qr))
+    phones: dict[str, str] = {}
+    if pool and entries:
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT code,phone FROM ctv_directory WHERE code = ANY(%s)",
+                        ([code for code, _url, _qr in entries],),
+                    )
+                    phones = {str(code): str(phone or "") for code, phone in await cur.fetchall()}
+        except Exception as exc:
+            logger.warning("Could not read CTV phones: %s", type(exc).__name__)
+    rows: list[list[Any]] = [[form_title, "", "", ""], ["CTV Code", "Phone", "QR", "URL"]]
+    rows.extend([
+        [code, phones.get(code, ""), f'=IMAGE("{qr}")', url]
+        for code, url, qr in entries
+    ])
+    encoded = quote("A1:E200", safe="")
+    await _sheets_request(http, token, "POST", f"/{sheet_id}/values/{encoded}:clear")
+    await _sheets_request(
+        http, token, "PUT", f"/{sheet_id}/values/A1",
+        params={"valueInputOption": "USER_ENTERED"}, json={"values": rows},
+    )
+    meta = await _spreadsheet_meta(http, token, sheet_id)
+    sheet_props = (meta.get("sheets") or [{}])[0].get("properties") or {}
+    tab_id = sheet_props.get("sheetId")
+    requests: list[dict[str, Any]] = []
+    if entries and tab_id is not None:
+        requests.extend([
+            {
+                "updateCells": {
+                    "range": {
+                        "sheetId": tab_id,
+                        "startRowIndex": 2,
+                        "endRowIndex": 2 + len(entries),
+                        "startColumnIndex": 2,
+                        "endColumnIndex": 3,
+                    },
+                    "rows": [
+                        {"values": [{"note": qr}]} for _code, _url, qr in entries
+                    ],
+                    "fields": "note",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": tab_id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3},
+                    "properties": {"pixelSize": 170}, "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": tab_id, "dimension": "ROWS",
+                        "startIndex": 2, "endIndex": 2 + len(entries),
+                    },
+                    "properties": {"pixelSize": 170}, "fields": "pixelSize",
+                }
+            },
+        ])
+    if requests:
+        await _sheets_request(http, token, "POST", f"/{sheet_id}:batchUpdate", json={"requests": requests})
+    await _format_tab(http, token, sheet_id, sheet_props.get("title") or "CTV_Info", len(rows), 4)
+    return sheet_id
 
 
 async def _record_export_ledger(pool, slug: str, form_id: str, entries: list[dict[str, Any]]) -> None:
@@ -660,13 +956,12 @@ async def run_drive_exports(
                     report["status"] = "no_root"
                     report["errors"].append("GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured")
                     return report
-                master_id = await drive.get_or_create_folder(http, access_token, settings["master_folder_name"], root)
-                client_root = await drive.get_or_create_folder(http, access_token, settings["client_folder_name"], master_id)
-                internal_root = await drive.get_or_create_folder(http, access_token, settings["internal_folder_name"], master_id)
-                images_root = await drive.get_or_create_folder(http, access_token, settings["images_folder_name"], master_id)
-                if not all((master_id, client_root, internal_root, images_root)):
+                client_root = await drive.get_or_create_folder(http, access_token, settings["client_folder_name"], root)
+                internal_root = await drive.get_or_create_folder(http, access_token, settings["internal_folder_name"], root)
+                images_root = await drive.get_or_create_folder(http, access_token, settings["images_folder_name"], root)
+                if not all((client_root, internal_root, images_root)):
                     report["status"] = "folder_error"
-                    report["errors"].append("could not create the master export folder tree")
+                    report["errors"].append("could not create the clients/internal/master images folder tree")
                     return report
                 archived_forms: set[str] = set()
                 active_forms: set[str] = set()
@@ -872,6 +1167,20 @@ async def run_drive_exports(
                                     f"{config['slug']}/{form_id}: stale-submission cleanup failed ({type(exc).__name__})"
                                 )
                         await _record_export_ledger(pool, config["slug"], form_id, ledger)
+                try:
+                    sheet_report = await sync_internal_sheets(
+                        pool, drive, http, access_token, root
+                    )
+                    report["internal_sheets"] = sheet_report
+                    from services.ctv_matrix import sync_internal_ctv_matrix
+
+                    await sync_internal_ctv_matrix(
+                        drive, http, access_token, root, pool
+                    )
+                except Exception as exc:
+                    report["errors"].append(
+                        f"internal sheet sync failed ({type(exc).__name__})"
+                    )
             finally:
                 if own_http:
                     await http.aclose()

@@ -185,11 +185,11 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
 
     rows, value_input = drive.values_updates[0]
     assert value_input == "USER_ENTERED"
-    assert rows[0][-2:] == ["Phone", "CTV Code"]
-    assert rows[2][-2:] == ["0901", "CTV-A"]
-    assert rows[2][0] == current_image_url
-    assert rows[2][1] == url_a1
-    assert rows[2][2] == form_two_image_url
+    assert rows[0][:2] == ["CTV Code", "Phone"]
+    assert rows[2][:2] == ["CTV-A", "0901"]
+    assert rows[2][2] == f'=IMAGE("{current_image_url}")'
+    assert rows[2][3] == url_a1
+    assert rows[2][4] == f'=IMAGE("{form_two_image_url}")'
     assert drive.clears == ["A1:F50"]
 
     unmerge_ranges = [r["unmergeCells"]["range"] for r in _unmerge_requests(drive)]
@@ -199,7 +199,7 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
 
     merge_ranges = [r["mergeCells"]["range"] for r in _merge_requests(drive)]
     assert len(merge_ranges) == 2
-    assert [(r["startColumnIndex"], r["endColumnIndex"]) for r in merge_ranges] == [(0, 2), (2, 4)]
+    assert [(r["startColumnIndex"], r["endColumnIndex"]) for r in merge_ranges] == [(2, 4), (4, 6)]
     assert all(r["startRowIndex"] == 0 and r["endRowIndex"] == 1 for r in merge_ranges)
 
 
@@ -235,7 +235,7 @@ async def test_matrix_clears_previous_width_when_forms_shrink(monkeypatch, tmp_p
     assert len(rows[0]) == 4
     merge_ranges = [r["mergeCells"]["range"] for r in _merge_requests(drive)]
     assert len(merge_ranges) == 1
-    assert (merge_ranges[0]["startColumnIndex"], merge_ranges[0]["endColumnIndex"]) == (0, 2)
+    assert (merge_ranges[0]["startColumnIndex"], merge_ranges[0]["endColumnIndex"]) == (2, 4)
 
 
 @pytest.mark.asyncio
@@ -251,9 +251,9 @@ async def test_matrix_merges_two_columns_per_form_beyond_26_columns():
 
     assert len(values[0]) == len(forms) * 2 + 2
     assert len(merge_ranges) == len(forms)
-    assert merge_ranges[-1] == (26, 28)
-    assert values[0][-2:] == ["Phone", "CTV Code"]
-    assert values[1][-2:] == ["", ""]
+    assert merge_ranges[-1] == (28, 30)
+    assert values[0][:2] == ["CTV Code", "Phone"]
+    assert values[1][:2] == ["", ""]
 
 
 @pytest.mark.asyncio
@@ -279,10 +279,10 @@ async def test_matrix_creates_sheet_when_missing(monkeypatch, tmp_path):
 
     drive = FakeDriveClient(existing_sheet=None)
     assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", object()) is True
-    assert drive.created_sheets == [("CTV_Info", "internal_folder")]
+    assert drive.created_sheets == [("CTV_Info", "folder_internal")]
 
     rows, _ = drive.values_updates[0]
-    assert rows[2][-2:] == ["0901", "CTV-A"]
+    assert rows[2][:2] == ["CTV-A", "0901"]
     assert (tmp_path / "qr" / cm.qr_file_name("CTV-A", "form_one")).read_bytes() == b"png-bytes"
 
 

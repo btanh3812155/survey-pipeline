@@ -12,10 +12,9 @@ logger = logging.getLogger("ctv_matrix")
 
 FORM_BASE_URL = "https://survey.trustbridgevn.com/forms"
 QR_API_URL = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={data}"
-INTERNAL_FOLDER_NAME = "Internal"
+INTERNAL_FOLDER_NAME = "internal"
 CTV_SHEET_NAME = "CTV_Info"
-# Workspace Sheets blocks external IMAGE() fetches, so QR PNGs are served by our app
-# and the QR column contains a plain (auto-hyperlinked) URL to the hosted PNG.
+# QR PNGs are served by our app so Sheets can render them directly with IMAGE().
 APP_QR_DIR = os.environ.get("CTV_QR_MEDIA_DIR") or os.path.join(
     os.getcwd(), "data", "media", "forms", "qr"
 )
@@ -99,17 +98,13 @@ def qr_record_is_current(record: Dict[str, Any], link_url: str) -> bool:
 
 
 def qr_cell_value(link: Dict[str, Any]) -> str:
-    """
-    Plain URL text for the app-hosted QR PNG.
-
-    Google Sheets in this Workspace rejects every external IMAGE() with
-    "#REF! (Please use a desktop web browser ...)", so a plain URL is used;
-    Sheets auto-hyperlinks it and clicking opens the QR image.
-    """
+    """Formula that renders the hosted QR PNG directly in the cell."""
     record = parse_qr_record(link.get("qr"))
     image_url = record.get("image_url") or ""
     target = record.get("target") or link.get("url") or ""
-    return image_url or target
+    if image_url:
+        return f'=IMAGE("{image_url}")'
+    return target
 
 
 def qr_file_name(ctv_code: str, form_id: str) -> str:
@@ -263,32 +258,29 @@ def build_matrix_payload(
     """
     Builds sheet values and merged header ranges.
 
-    Layout: [form1 QR | form1 URL | form2 QR | form2 URL | ... | Phone | CTV Code].
+    Layout: [CTV Code | Phone | form1 QR | form1 URL | form2 QR | form2 URL | ...].
     Row 1 is the form header (two columns merged per form), row 2 holds QR/URL labels,
-    and every following row is one active CTV (phone immediately left of the code).
+    and every following row is one active CTV (code leftmost, phone immediately right).
     """
-    header: List[Any] = []
-    subheader: List[Any] = []
+    header: List[Any] = ["CTV Code", "Phone"]
+    subheader: List[Any] = ["", ""]
     for form_id in forms:
         header.extend([form_id, ""])
         subheader.extend(["QR", "URL"])
-    header.extend(["Phone", "CTV Code"])
-    subheader.extend(["", ""])
 
     values: List[List[Any]] = [header, subheader]
     for ctv in ctvs:
         code = str(ctv.get("code") or "")
         phone = "" if ctv.get("phone") is None else str(ctv.get("phone"))
-        row: List[Any] = []
+        row: List[Any] = [code, phone]
         for form_id in forms:
             link = links.get((code, form_id)) or {}
             url = link.get("url") or ""
             row.append(qr_cell_value(link))
             row.append(url)
-        row.extend([phone, code])
         values.append(row)
 
-    merge_ranges = [(index * 2, index * 2 + 2) for index in range(len(forms))]
+    merge_ranges = [(2 + index * 2, 2 + index * 2 + 2) for index in range(len(forms))]
     return values, merge_ranges
 
 
@@ -308,6 +300,36 @@ def build_merge_requests(sheet_id: int, merge_ranges: List[Tuple[int, int]]) -> 
         }
         for start, end in merge_ranges
     ]
+
+
+def build_qr_note_requests(
+    sheet_id: int,
+    ctvs: List[Dict[str, Any]],
+    forms: List[str],
+    links: Dict[Tuple[str, str], Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    requests: List[Dict[str, Any]] = []
+    for row_index, ctv in enumerate(ctvs, start=2):
+        code = str(ctv.get("code") or "")
+        for form_index, form_id in enumerate(forms):
+            record = parse_qr_record((links.get((code, form_id)) or {}).get("qr"))
+            image_url = record.get("image_url") or ""
+            if not image_url:
+                continue
+            requests.append({
+                "updateCells": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row_index,
+                        "endRowIndex": row_index + 1,
+                        "startColumnIndex": 2 + form_index * 2,
+                        "endColumnIndex": 3 + form_index * 2,
+                    },
+                    "rows": [{"values": [{"note": image_url}]}],
+                    "fields": "note",
+                }
+            })
+    return requests
 
 
 async def sync_internal_ctv_matrix(
@@ -439,8 +461,48 @@ async def sync_internal_ctv_matrix(
     if not merged:
         logger.warning("[CTV MATRIX] Header merge batchUpdate failed.")
 
+    note_requests = build_qr_note_requests(numeric_sheet_id, ctvs, forms, links)
+    for form_index in range(len(forms)):
+        note_requests.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": numeric_sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 2 + form_index * 2,
+                    "endIndex": 3 + form_index * 2,
+                },
+                "properties": {"pixelSize": 170},
+                "fields": "pixelSize",
+            }
+        })
+    if ctvs:
+        note_requests.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": numeric_sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": 2,
+                    "endIndex": 2 + len(ctvs),
+                },
+                "properties": {"pixelSize": 170},
+                "fields": "pixelSize",
+            }
+        })
+    if note_requests:
+        await drive_client.batch_update_spreadsheet(http_client, token, sheet_id, note_requests)
+    try:
+        from core.drive_exports import _format_tab
+
+        await _format_tab(
+            http_client, token, sheet_id,
+            metadata.get("title") or CTV_SHEET_NAME,
+            len(values), len(values[0]) if values else 1,
+        )
+    except Exception as exc:
+        logger.warning("[CTV MATRIX] Row formatting failed: %s", type(exc).__name__)
+
     logger.info(
         f"[CTV MATRIX] Synced {len(ctvs)} active CTVs × {len(forms)} forms "
-        f"({len(changed)} links generated/updated) into Internal/{CTV_SHEET_NAME}."
+        f"({len(changed)} links generated/updated) into internal/{CTV_SHEET_NAME}."
     )
     return True

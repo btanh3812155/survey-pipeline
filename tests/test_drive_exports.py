@@ -71,10 +71,10 @@ def _insert(conn, submission_id, *, form_id="TB_TEST", status="APPROVED", vehicl
 async def test_settings_and_client_configuration(store):
     pool, _conn = store
     settings = await drive_exports.save_settings(
-        pool, "tester", master_folder_name="Master Export", client_folder_name="Client Exports",
-        internal_folder_name="Internal Exports", images_folder_name="Images Master",
+        pool, "tester", master_folder_name="Master Export", client_folder_name="clients",
+        internal_folder_name="internal", images_folder_name="master images",
     )
-    assert settings["master_folder_name"] == "Master Export"
+    assert settings["client_folder_name"] == "clients"
     client = await drive_exports.save_client(pool, {
         "slug": "acme",
         "display_name": "ACME Client",
@@ -388,8 +388,8 @@ async def test_export_uploads_images_once_and_shortcuts_each_client(store, monke
             "statuses": ["APPROVED"], "vehicle_types": ["CAR"], "include_images": True,
         }, "tester")
     fake = FakeDrive()
-    master_sub = f"folder:folder:folder:folder:root/Master Export/Images Master/TB_TEST/{sid}"
-    client_a_images = "folder:folder:folder:folder:folder:root/Master Export/Client Exports/Client A/TB_TEST/Images"
+    master_sub = f"folder:folder:folder:root/master images/TB_TEST/{sid}"
+    client_a_images = "folder:folder:folder:folder:root/clients/Client A/TB_TEST/Images"
     client_a_sub = f"folder:{client_a_images}/{sid}"
     fake.files[(master_sub, "slot_1_oldversion.webp")] = "stale-master"
     fake.files[(client_a_sub, "slot_1_oldversion.webp")] = "stale-client"
@@ -430,15 +430,14 @@ async def test_trash_form_folders_moves_current_and_legacy_layouts():
     fake = FakeDrive()
     settings = {
         "master_folder_name": "Master Export",
-        "client_folder_name": "Client Exports",
-        "internal_folder_name": "Internal Exports",
-        "images_folder_name": "Images Master",
+        "client_folder_name": "clients",
+        "internal_folder_name": "internal",
+        "images_folder_name": "master images",
     }
     fake.folders.update({
-        ("root", "Master Export"): "master",
-        ("master", "Client Exports"): "clients",
-        ("master", "Internal Exports"): "internals",
-        ("master", "Images Master"): "images",
+        ("root", "clients"): "clients",
+        ("root", "internal"): "internals",
+        ("root", "master images"): "images",
         ("clients", "Client A"): "client-a",
         ("client-a", "KEEP_FORM"): "keep-form",
         ("client-a", "OLD_FORM"): "old-client-form",
@@ -449,8 +448,6 @@ async def test_trash_form_folders_moves_current_and_legacy_layouts():
         ("images", "OLD_FORM"): "old-master-form",
         ("old-master-form", "SUB"): "old-master-sub",
         ("root", "OLD_FORM"): "old-legacy-form",
-        ("root", "Internal"): "legacy-internal",
-        ("legacy-internal", "OLD_FORM"): "old-legacy-internal-form",
     })
     fake.files[("old-client-sub", "photo.webp")] = "old-client-file"
     fake.files[("old-master-sub", "photo.webp")] = "old-master-file"
@@ -462,12 +459,13 @@ async def test_trash_form_folders_moves_current_and_legacy_layouts():
     assert trashed >= 1
     assert {
         "old-client-form", "old-internal-form", "old-master-form",
-        "old-legacy-form", "old-legacy-internal-form",
+        "old-legacy-form",
     }.issubset(set(fake.deleted_files))
     assert {"old-client-file", "old-master-file"}.issubset({item["id"] for item in ledger})
     assert "keep-form" not in fake.deleted_files
     assert "client-a" not in fake.deleted_files
-    assert "master" not in fake.deleted_files
+    assert "clients" not in fake.deleted_files
+    assert "internal" not in fake.deleted_files
 
 
 class _Resp:
@@ -576,7 +574,7 @@ async def test_exports_page_renders(store, monkeypatch):
     assert response.status_code == 200
     assert "Drive của tôi" in response.text
     assert "/admin/exports/client-exports" in response.text
-    assert "Images Master" in response.text
+    assert "master images" in response.text
     assert client_exports.status_code == 200 and "Sửa khách hàng" in client_exports.text
     assert internal_exports.status_code == 200 and "Sửa cấu hình nội bộ" in internal_exports.text
 
@@ -639,12 +637,12 @@ async def test_client_and_internal_trees_export_their_own_status_sets(store, mon
         pool, client=fake, http_client=object(), token="token", root_folder_id="root"
     )
     assert report["status"] == "ok", report
-    customer = next(item for item in fake.sheets if "Client Exports/Customer/" in item[1])
-    internal = next(item for item in fake.sheets if "Internal Exports/OPS/" in item[1])
+    customer = next(item for item in fake.sheets if "clients/Customer/" in item[1])
+    internal = next(item for item in fake.sheets if "internal/OPS/" in item[1])
     assert b"VN-CLIENT-ONLY" in customer[2] and b"VN-INTERNAL-ONLY" not in customer[2]
     assert b"VN-CLIENT-ONLY" in internal[2] and b"VN-INTERNAL-ONLY" in internal[2]
-    customer_targets = [target for _name, target, parent in fake.shortcuts if "Client Exports/Customer/" in parent]
-    internal_targets = [target for _name, target, parent in fake.shortcuts if "Internal Exports/OPS/" in parent]
+    customer_targets = [target for _name, target, parent in fake.shortcuts if "clients/Customer/" in parent]
+    internal_targets = [target for _name, target, parent in fake.shortcuts if "internal/OPS/" in parent]
     assert any("VN-CLIENT-ONLY" in target for target in customer_targets)
     assert not any("VN-INTERNAL-ONLY" in target for target in customer_targets)
     assert any("VN-CLIENT-ONLY" in target for target in internal_targets)

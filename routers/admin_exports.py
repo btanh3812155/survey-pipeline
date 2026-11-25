@@ -284,7 +284,7 @@ def _drive_card(
 
 def _kind_label(settings: dict[str, Any], kind: str) -> str:
     key = "internal_folder_name" if kind == "internal" else "client_folder_name"
-    return str(settings.get(key) or ("Internal Exports" if kind == "internal" else "Client Exports"))
+    return str(settings.get(key) or ("internal" if kind == "internal" else "clients"))
 
 
 def _sidebar(active: str) -> str:
@@ -440,9 +440,9 @@ def _settings_details(settings: dict[str, Any], report_text: str) -> str:
 <details class="drive-settings" open><summary data-i18n="folder_names">Tên thư mục</summary>
 <form method="post" action="/admin/exports/settings" onsubmit="return confirm('Lưu tên thư mục Drive?')"><div class="grid">
 <label><span data-i18n="master_folder">Thư mục xuất chính</span><input name="master_folder_name" value="{_esc(settings.get('master_folder_name', 'Master Export'))}" required></label>
-<label><span data-i18n="client_folder">Thư mục xuất khách hàng</span><input name="client_folder_name" value="{_esc(settings.get('client_folder_name', 'Client Exports'))}" required></label>
-<label><span data-i18n="internal_folder">Thư mục xuất nội bộ</span><input name="internal_folder_name" value="{_esc(settings.get('internal_folder_name', 'Internal Exports'))}" required></label>
-<label><span data-i18n="images_folder">Thư mục ảnh gốc</span><input name="images_folder_name" value="{_esc(settings.get('images_folder_name', 'Images Master'))}" required></label>
+<label><span data-i18n="client_folder">Thư mục xuất khách hàng</span><input name="client_folder_name" value="{_esc(settings.get('client_folder_name', 'clients'))}" required></label>
+<label><span data-i18n="internal_folder">Thư mục xuất nội bộ</span><input name="internal_folder_name" value="{_esc(settings.get('internal_folder_name', 'internal'))}" required></label>
+<label><span data-i18n="images_folder">Thư mục ảnh gốc</span><input name="images_folder_name" value="{_esc(settings.get('images_folder_name', 'master images'))}" required></label>
 </div><div class="actions"><button type="submit" data-i18n="save_folder_names">Lưu tên thư mục</button></div></form>
 </details>
 <details class="drive-settings"><summary data-i18n="last_report">Báo cáo xuất gần nhất</summary><pre>{_esc(report_text)}</pre></details>"""

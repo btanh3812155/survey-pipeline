@@ -1197,7 +1197,7 @@ class GoogleDriveClient:
                         folders_by_name.setdefault(str(entry.get("name") or ""), []).append(entry)
                 allowed_duplicates = {
                     str(name) for name in (duplicate_names or protected)
-                } | {"Internal", "Images", "_legacy_unknown"}
+                } | {"internal", "Images", "_legacy_unknown"}
                 for name, entries in folders_by_name.items():
                     if not name or len(entries) < 2:
                         continue
@@ -1957,9 +1957,9 @@ async def sync_internal_status_mirror(
 ) -> Optional[Dict[str, Any]]:
     """Mirrors every real submission status under the internal Drive folder.
 
-    Layout: ``Internal/<form_id>/submissions/<STATUS>/<submission_id>/`` for
+    Layout: ``internal/<form_id>/submissions/<STATUS>/<submission_id>/`` for
     APPROVED, REJECTED, APPEAL_PENDING and MANUAL_REVIEW. TEST_ submissions are
-    excluded (they live under ``Internal/TEST_DATA``) and the customer side is
+    excluded (they live under ``internal/TEST_DATA``) and the customer side is
     not touched.
     """
     if db_pool is None:
@@ -1987,8 +1987,14 @@ async def sync_internal_status_mirror(
         skip_empty=False,
         photo_store_dir=SUBMISSION_PHOTOS_DIR,
     )
+    try:
+        from core.drive_exports import sync_internal_sheets
+
+        await sync_internal_sheets(db_pool, client, http_client, token, root_id)
+    except Exception as exc:
+        logger.warning("Internal sheet sync failed: %s", type(exc).__name__)
     logger.info(
-        "🗂️ [INTERNAL MIRROR] %s submissions under Internal/<form>/submissions/<STATUS>/ "
+        "🗂️ [INTERNAL MIRROR] %s submissions under internal/<form>/submissions/<STATUS>/ "
         "(uploaded %s images, %s already present, %s failed)",
         report.get("submissions"),
         report.get("uploaded_files"),
@@ -2158,17 +2164,7 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
         except Exception as e:
             logger.warning(f"[AUTO DRIVE SYNC] unknown_form quarantine failed: {e}")
 
-        # 1. Upload Master Sheet (global, kept at root for backwards compatibility)
-        if os.path.exists(MASTER_CSV_FILE):
-            try:
-                with open(MASTER_CSV_FILE, "rb") as f:
-                    content = f.read()
-                file_id = await client.upload_file(
-                    http_client, token, "Master_Survey_Deliverables.csv", content, "text/csv; charset=UTF-8", root_id
-                )
-                logger.info(f"📊 [AUTO DRIVE SYNC] Uploaded Master CSV to Drive. File ID: {file_id}")
-            except Exception as e:
-                logger.error(f"[AUTO DRIVE SYNC] Failed to upload Master CSV: {e}")
+        # Master deliverables are maintained as tabs under internal/Master_Survey_Deliverables.
 
         # 1b. Migrate legacy local dirs into Images/<form_id>/submissions/<submission_id>/
         try:
@@ -2237,10 +2233,13 @@ async def _sync_all_approved_to_drive_unlocked(db_pool: Optional[Any] = None) ->
             # unknown_form is a legacy fallback bucket: known submissions are migrated to
             # their real form, and the remainder must not be uploaded as a duplicate form.
             form_ids.discard("unknown_form")
+            legacy_internal_id = await client.get_or_create_folder(
+                http_client, token, "internal", root_id
+            )
 
             for form_id in sorted(form_ids):
                 form_folder_id = await client.get_or_create_folder(
-                    http_client, token, form_id, root_id
+                    http_client, token, form_id, legacy_internal_id or root_id
                 )
                 if not form_folder_id:
                     continue

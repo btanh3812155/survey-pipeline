@@ -115,12 +115,9 @@ async def _trash_named_folder(
 async def _tier_folders(
     drive: GoogleDriveClient, http: httpx.AsyncClient, token: str, root_id: str, settings: dict[str, Any]
 ) -> list[str]:
-    master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
-    if not master_id:
-        return []
     folders: list[str] = []
     for key in ("client_folder_name", "internal_folder_name"):
-        tier_id = await _find_folder(drive, http, token, master_id, settings[key])
+        tier_id = await _find_folder(drive, http, token, root_id, settings[key])
         if not tier_id:
             continue
         for child in await drive.list_children(http, token, tier_id):
@@ -173,24 +170,22 @@ async def cleanup_form_drive(form_id: str, pool=None) -> dict[str, Any]:
         if not token or not drive.root_folder_id:
             return {"status": "unavailable", "deleted": 0, "ledger": []}
         settings = await get_settings(pool) if pool else dict(DEFAULT_SETTINGS)
+        root_id = drive.root_folder_id
         deleted = 0
         ledger: list[dict[str, Any]] = []
         for tier_id in await _tier_folders(drive, http, token, drive.root_folder_id, settings):
             count, entries = await _trash_named_folder(drive, http, token, tier_id, form_id)
             deleted += count
             ledger.extend(entries)
-        root_id = drive.root_folder_id
-        master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
-        if master_id:
-            images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
-            if images_id:
-                count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
-                deleted += count
-                ledger.extend(entries)
+        images_id = await _find_folder(drive, http, token, root_id, settings["images_folder_name"])
+        if images_id:
+            count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
+            deleted += count
+            ledger.extend(entries)
         count, entries = await _trash_named_folder(drive, http, token, root_id, form_id)
         deleted += count
         ledger.extend(entries)
-        internal = await _find_folder(drive, http, token, root_id, "Internal")
+        internal = await _find_folder(drive, http, token, root_id, settings["internal_folder_name"])
         if internal:
             count, entries = await _trash_named_folder(drive, http, token, internal, form_id)
             deleted += count
@@ -216,17 +211,15 @@ async def cleanup_submission_drive(form_id: str, submission_id: str, pool=None) 
         root_id = drive.root_folder_id
         deleted = 0
         ledger: list[dict[str, Any]] = []
-        master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
-        if master_id:
-            images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
-            if images_id:
-                form_folder = await _find_folder(drive, http, token, images_id, form_id)
-                if form_folder:
-                    count, entries = await _trash_named_folder(
-                        drive, http, token, form_folder, submission_id
-                    )
-                    deleted += count
-                    ledger.extend(entries)
+        images_id = await _find_folder(drive, http, token, root_id, settings["images_folder_name"])
+        if images_id:
+            form_folder = await _find_folder(drive, http, token, images_id, form_id)
+            if form_folder:
+                count, entries = await _trash_named_folder(
+                    drive, http, token, form_folder, submission_id
+                )
+                deleted += count
+                ledger.extend(entries)
         for tier_id in await _tier_folders(drive, http, token, root_id, settings):
             form_folder = await _find_folder(drive, http, token, tier_id, form_id)
             if form_folder:
@@ -276,17 +269,15 @@ async def trash_form_folders(
         count, entries = await _trash_named_folder(drive, http, token, tier_id, form_id)
         trashed += count
         ledger.extend(entries)
-    master_id = await _find_folder(drive, http, token, root_id, settings["master_folder_name"])
-    if master_id:
-        images_id = await _find_folder(drive, http, token, master_id, settings["images_folder_name"])
-        if images_id:
-            count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
-            trashed += count
-            ledger.extend(entries)
+    images_id = await _find_folder(drive, http, token, root_id, settings["images_folder_name"])
+    if images_id:
+        count, entries = await _trash_named_folder(drive, http, token, images_id, form_id)
+        trashed += count
+        ledger.extend(entries)
     count, entries = await _trash_named_folder(drive, http, token, root_id, form_id)
     trashed += count
     ledger.extend(entries)
-    internal = await _find_folder(drive, http, token, root_id, "Internal")
+    internal = await _find_folder(drive, http, token, root_id, settings["internal_folder_name"])
     if internal:
         count, entries = await _trash_named_folder(drive, http, token, internal, form_id)
         trashed += count

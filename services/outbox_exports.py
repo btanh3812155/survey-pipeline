@@ -445,6 +445,10 @@ async def _execute_drive(event: dict, submission: dict | None, sid: str, files: 
             receipts = []
             folders = []
             if root:
+                if not payload.get("folder_id"):
+                    folder, root_receipt = await _drive_folder(client, token, root, "internal", guard)
+                    folders.append(root_receipt)
+                    await _progress(guard, {"folders": list(folders)})
                 form = _safe_drive_segment(payload.get("form_id") or submission.get("form_id"), "unknown_form")
                 for segment in (form, "submissions", sid):
                     folder, receipt = await _drive_folder(client, token, folder, segment, guard)
@@ -530,6 +534,8 @@ async def _execute_drive_sync(event: dict, conn_str: str, guard) -> Outcome:
             token = await _drive_token(client, guard)
             if not token:
                 return _outcome("POLICY_SKIPPED", "DRIVE_NOT_CONFIGURED")
+            if not payload.get("folder_id"):
+                root, _root_receipt = await _drive_folder(client, token, root, "internal", guard)
             files_receipt, verified, form_folders = [], [], {}
             async with _drive_lock(conn_str) as conn:
                 if conn is None:

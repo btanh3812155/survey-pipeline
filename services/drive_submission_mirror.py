@@ -6,12 +6,12 @@ Two destinations share one form-agnostic planner:
 * Customer side: only statuses in ``customer_statuses`` (APPROVED by default),
   mirrored under ``<root>/<form_id>/submissions/<submission_id>/``.
 * Internal side: every status, mirrored under
-  ``<root>/Internal/<prefix>/<form_id>/submissions/<STATUS>/<submission_id>/``.
+  ``<root>/internal/<prefix>/<form_id>/submissions/<STATUS>/<submission_id>/``.
 
 The production sync uses ``internal_root_segments=()`` and
 ``exclude_test=True`` so real submissions land at
-``Internal/<form_id>/submissions/<STATUS>/<id>/`` while TEST_ rows stay in
-``Internal/TEST_DATA``. TEST_DATA delivery reuses the same code with
+``internal/<form_id>/submissions/<STATUS>/<id>/`` while TEST_ rows stay in
+``internal/TEST_DATA``. TEST_DATA delivery reuses the same code with
 ``internal_root_segments=("TEST_DATA",)`` and ``require_test=True``.
 """
 import csv
@@ -39,7 +39,7 @@ from services.google_drive_delivery import (
 
 logger = logging.getLogger("drive_submission_mirror")
 
-DEFAULT_INTERNAL_FOLDER = "Internal"
+DEFAULT_INTERNAL_FOLDER = "internal"
 MANIFEST_NAME = "TEST_manifest.csv"
 README_NAME = "README.txt"
 STATUS_ORDER = ("APPROVED", "REJECTED", "APPEAL_PENDING", "MANUAL_REVIEW", "UNKNOWN")

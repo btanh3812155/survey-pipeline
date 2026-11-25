@@ -27,9 +27,9 @@ CLIENT = {
 }
 SETTINGS = {
     "master_folder_name": "Master Export",
-    "client_folder_name": "Client Exports",
-    "internal_folder_name": "Internal Exports",
-    "images_folder_name": "Images Master",
+    "client_folder_name": "clients",
+    "internal_folder_name": "internal",
+    "images_folder_name": "master images",
     "last_report": None,
 }
 
@@ -40,8 +40,8 @@ def test_root_renders_drive_folder_browser():
     assert "Drive của tôi" in html
     assert 'href="/admin/exports/client-exports"' in html
     assert 'href="/admin/exports/internal-exports"' in html
-    assert "Client Exports" in html
-    assert "Internal Exports" in html
+    assert "clients" in html
+    assert "internal" in html
 
 
 def test_client_exports_folder_has_edit_clients_section():

@@ -137,7 +137,7 @@ async def test_test_data_mirror_uses_prefix_and_stays_out_of_normal_tree(tmp_pat
         require_test=True,
         skip_empty=True,
     )
-    assert report["internal_root_folder_id"] == "ROOT/Internal/TEST_DATA"
+    assert report["internal_root_folder_id"] == "ROOT/internal/TEST_DATA"
     assert list(report["forms"]) == ["form_alpha"]
     assert list(report["forms"]["form_alpha"]["customer"]) == ["TEST_APPROVED"]
     assert not any("VN-REAL" in folder for folder in client.folders)
@@ -276,7 +276,7 @@ async def test_production_sync_mirrors_all_statuses_internally_only(tmp_path, mo
     assert form["internal"]["REJECTED"]["VN-EMPTY"]["files"] == []
     assert not any("TEST_SHOULD_STAY_OUT" in folder for folder in client.folders)
     assert not any("/form_alpha/submissions/VN-" in folder for folder in client.folders)
-    internal_base = "ROOT/Internal/form_alpha/submissions"
+    internal_base = "ROOT/internal/form_alpha/submissions"
     assert all(
         folder == internal_base or folder.startswith(internal_base + "/")
         for folder in client.folders
