@@ -533,16 +533,47 @@ CREATE TABLE IF NOT EXISTS ctv_directory (
     phone TEXT,
     telegram_user_id BIGINT,
     is_active BOOLEAN DEFAULT TRUE,
+    auth_revision UUID NOT NULL DEFAULT gen_random_uuid(),
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE ctv_directory ADD COLUMN IF NOT EXISTS auth_revision UUID NOT NULL DEFAULT gen_random_uuid();
+
+CREATE OR REPLACE FUNCTION rotate_ctv_auth_revision() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.code, NEW.phone, NEW.telegram_user_id, NEW.is_active)
+        IS DISTINCT FROM ROW(OLD.code, OLD.phone, OLD.telegram_user_id, OLD.is_active) THEN
+        NEW.auth_revision := gen_random_uuid();
+    ELSE
+        NEW.auth_revision := OLD.auth_revision;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER ctv_directory_auth_revision
+BEFORE UPDATE ON ctv_directory
+FOR EACH ROW EXECUTE FUNCTION rotate_ctv_auth_revision();
 
 CREATE INDEX IF NOT EXISTS idx_ctv_directory_telegram
 ON ctv_directory (telegram_user_id);
 
 CREATE INDEX IF NOT EXISTS idx_ctv_directory_phone
 ON ctv_directory (phone);
+
+-- Stable opaque invitations; pending /start intent grants no CTV identity.
+ALTER TABLE ctv_directory ADD COLUMN IF NOT EXISTS bot_invite_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ctv_bot_invite_token ON ctv_directory (bot_invite_token);
+
+CREATE TABLE IF NOT EXISTS ctv_bot_pending (
+    telegram_user_id BIGINT PRIMARY KEY,
+    ctv_code TEXT NOT NULL REFERENCES ctv_directory(code) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS form_tags (
     form_id TEXT NOT NULL,

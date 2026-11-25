@@ -21,7 +21,7 @@ Nhập:
 - Tên đăng nhập: tài khoản quản trị đã được cấp
 - Mật khẩu: mật khẩu của tài khoản đó
 
-Phiên đăng nhập được giữ bằng cookie `HttpOnly`, có thời hạn 12 giờ. Tài khoản được xác thực từ cơ sở dữ liệu, không dùng mật khẩu môi trường. Tài khoản bị tắt, bị xóa, đổi mật khẩu hoặc không tồn tại sẽ không đăng nhập được.
+Phiên đăng nhập được giữ bằng cookie `HttpOnly` trong 30 ngày, kể cả khi đóng và mở lại trình duyệt. Tài khoản được xác thực từ cơ sở dữ liệu, không dùng mật khẩu môi trường. Tài khoản bị tắt, bị xóa, đổi mật khẩu hoặc không tồn tại sẽ không đăng nhập được. Hãy đăng xuất trên thiết bị dùng chung.
 
 Bấm **Đăng xuất** trên thanh điều hướng để kết thúc phiên.
 
@@ -44,7 +44,7 @@ Menu trên cùng bên trái gồm:
 - **Dữ liệu nộp**: xem, lọc và xuất dữ liệu bài nộp
 - **Audit**: nhật ký kiểm toán
 - **Media**: quản lý ảnh và tệp tĩnh
-- **CTV**: danh bạ cộng tác viên, thêm/sửa/tạm tắt/xóa, bài nộp và quota
+- **CTV**: danh bạ cộng tác viên, thêm/sửa/xóa, bài nộp, mục tiêu và tạo liên kết/QR theo biểu mẫu.
 - **Ảnh/Object**: định nghĩa object ảnh và engine đang có
 - **Module**: logic, object và engine module trong cơ sở dữ liệu
 - **Exports**: cấu hình xuất Google Drive
@@ -220,6 +220,41 @@ Trong folder form:
 
 Từ màn hình gốc của Exports, bấm **Chạy xuất**. Yêu cầu trả về ngay và tiến trình chạy nền. Thẻ **Tiến trình xuất Drive** hiển thị trạng thái, số khách hàng, form, dòng, sheet và ảnh đang xử lý; trang tự làm mới khi xong. Hệ thống dùng khóa tư vấn trong cơ sở dữ liệu để tránh hai lần xuất chạy chồng nhau. Xem kết quả cuối ở **Báo cáo xuất gần nhất**.
 
+### 5.6 Liên kết Telegram cho cộng tác viên
+
+1. Vào **Exports** và bấm **Chạy xuất**. Khi xuất hoàn tất, mở bảng **CTV_Info** trong thư mục **internal** trên Google Drive.
+2. Cột thứ ba, **Telegram Bot**, chứa liên kết mời riêng của từng mã CTV. Quản trị viên gửi đúng liên kết này cho CTV qua tin nhắn riêng.
+3. CTV mở liên kết, bấm **Start**, rồi bấm **📱 Xác Thực Số Điện Thoại** trong cuộc trò chuyện riêng với bot để chia sẻ **danh bạ của chính mình**.
+4. Chỉ sau khi xác thực danh bạ thành công, hệ thống mới liên kết tài khoản Telegram vào đúng mã CTV. Nếu danh bạ CTV chưa có số đăng ký, lần liên kết đầu tiên lưu số đã xác thực; nếu đã có số, phải xác thực đúng số đó. Chỉ bấm **Start**, nhập số bằng chữ, gửi danh bạ của người khác hoặc thao tác trong nhóm không cấp quyền CTV.
+
+**Đổi tài khoản Telegram, giữ nguyên số:** CTV mở bot bằng tài khoản mới và bấm **📱 Xác Thực Số Điện Thoại**, chia sẻ danh bạ của chính tài khoản mới với **đúng số đã đăng ký**. Không cần truy cập tài khoản Telegram cũ và không bắt buộc dùng lại link mời. Hệ thống chỉ chấp nhận một CTV đang hoạt động, không trùng số với CTV khác (kể cả bản ghi bị tắt), không có tranh chấp liên kết số. Link mời vẫn có thể dùng để bắt đầu nhưng không thay thế bằng chứng số điện thoại.
+
+Sau khi đổi thành công, tài khoản cũ mất quyền CTV; phiên trình duyệt và OTP cũ hết hiệu lực. Thông báo CTV mới gửi đến tài khoản mới; thông báo đang chờ gửi đến tài khoản cũ bị chặn, không gửi lại lịch sử tài xế trước thời điểm xác minh mới. Mã CTV, số đăng ký, bài nộp, quota, chủ sở hữu khoản thanh toán và các khoản đã quyết toán không bị chuyển đổi. Khoản còn chờ của tài khoản cũ chỉ giữ điều kiện thanh toán qua chuỗi đổi Telegram cùng CTV đã được audit, khi CTV và tài khoản nhận hiện tại vẫn hoạt động; vô hiệu hóa hoặc sửa danh tính qua quản trị làm chuỗi này mất hiệu lực. Hội thoại hỗ trợ thông thường gắn với tài khoản Telegram đã mở, không tự chuyển sang tài khoản mới.
+
+**Đổi số điện thoại:** CTV phải liên hệ quản trị viên sửa danh bạ trên website; bot không thay số đã đăng ký. PostgreSQL là nguồn dữ liệu chính; **CTV_Info** trên Google Sheets là đầu ra xuất từ PostgreSQL, không phải nơi sửa danh tính. Nhật ký **Audit** có sự kiện `CTV_TELEGRAM_REPLACED` cho lần đổi thành công; lỗi audit làm toàn bộ lần đổi bị hủy.
+
+**Bảo mật:** Liên kết chứa mã mời bí mật; không đăng công khai hoặc chuyển cho người không phụ trách mã CTV đó. Liên kết cũ chỉ chứa mã CTV (dạng `?start=ctv_<mã_ctv>`) không còn hợp lệ. CTV bị vô hiệu hóa hoặc đã xóa sẽ bị từ chối, kể cả khi đã bấm **Start** trước đó.
+
+### 5.7 Cổng cộng tác viên và OTP đăng nhập
+
+1. Mở miền khảo sát, ví dụ `https://survey.trustbridgevn.com`. Khi chưa đăng nhập, hệ thống mở trang đăng nhập CTV.
+2. Chọn mã CTV trong danh sách hoặc nhập số điện thoại đã xác minh. **Cả hai cách đều cần OTP**, không thể đăng nhập chỉ bằng mã CTV công khai.
+3. Bot Telegram dành cho CTV gửi mã gồm 6 chữ số vào tài khoản đã liên kết. Nhập mã trên chính trình duyệt đã yêu cầu; mã hết hạn sau 5 phút, dùng một lần và có tối đa 5 lần thử. Nếu chưa nhận được mã, kiểm tra đã hoàn tất bước xác minh danh bạ ở mục 5.6 và chưa chặn bot.
+4. Sau khi đăng nhập, CTV xem thông tin cá nhân, mục tiêu/quota cùng tiến độ và các khảo sát công khai đang mở. Bấm **Mở khảo sát** để mở liên kết trên cùng miền. Biểu mẫu bật theo dõi CTV có sẵn mã CTV; biểu mẫu tắt theo dõi được ghi chú rõ và không tính vào tiến độ CTV.
+
+Mục tiêu là chỉ tiêu theo dõi, không chặn nộp phiếu khi đã đạt. Mục tiêu cuốn chiếu và toàn thời gian được hiển thị riêng. Khảo sát riêng tư, lưu trữ hoặc đã đủ giới hạn phản hồi không xuất hiện trong danh sách.
+
+Phiên CTV được giữ trong 30 ngày trên thiết bị này. Bấm **Đăng xuất** để kết thúc; thao tác này không đăng xuất tài khoản quản trị riêng. Tắt/xóa CTV hoặc thay đổi mã/số điện thoại/Telegram làm phiên và OTP cũ không còn hợp lệ, kể cả khi bật lại hoặc khôi phục thông tin cũ. Sửa tên hoặc ghi chú không làm mất phiên. Số chưa xác minh, số bị tranh chấp hoặc số không thuộc CTV không được đăng nhập. Lỗi cơ sở dữ liệu, Redis hay Telegram không được thay thế bằng số liệu giả hoặc bỏ qua OTP.
+
+### 5.8 Quản lý CTV và tạo liên kết/QR
+
+- Trên máy tính, nút sửa (biểu tượng bút) và xóa (biểu tượng thùng rác) nằm ngang. Không còn nút tắt nhanh hay cột **Thông tin** riêng; tên và ghi chú vẫn có trong phần chi tiết/chỉnh sửa.
+- Trên điện thoại, mỗi dòng chỉ hiện mã CTV và tam giác xổ xuống. Chạm mã để mở toàn bộ thông tin, số điện thoại, Telegram, trạng thái, bài nộp, mục tiêu và các nút thao tác.
+- Trong phần tạo liên kết/QR, chọn CTV và biểu mẫu rồi bấm **Tạo**. Chỉ CTV đang hoạt động và biểu mẫu công khai, đang mở, có theo dõi CTV được dùng để tạo liên kết có ghi nhận mã.
+- Liên kết có nút **Sao chép** và **Chia sẻ**. QR có **Sao chép ảnh**, **Chia sẻ ảnh** và **Tải PNG**. QR và liên kết cùng trỏ đến biểu mẫu/mã CTV đã chọn trên chính miền hiện tại. Đổi lựa chọn sẽ xóa kết quả cũ để tránh chia sẻ nhầm.
+- Sao chép ảnh và chia sẻ tùy khả năng/quyền của trình duyệt, thường cần HTTPS. Nếu không được hỗ trợ, dùng tải PNG hoặc sao chép liên kết; thông báo lỗi không có nghĩa là đã sao chép/chia sẻ thành công.
+
+
 ## 6. Tài khoản và phân quyền
 
 ### 6.1 Tài khoản của tôi
@@ -262,7 +297,7 @@ Quy tắc an toàn:
 - **Dữ liệu nộp**: xem và lọc bài nộp, xuất CSV/JSON. Không chia sẻ ảnh chụp màn hình có số điện thoại hoặc thông tin tài xế.
 - **Audit**: nhật ký kiểm toán, phục vụ truy vết thay đổi.
 - **Media**: quản lý tệp tĩnh và ảnh minh họa.
-- **CTV**: danh bạ cộng tác viên, thêm/sửa/tạm tắt/xóa, bài nộp và quota.
+- **CTV**: danh bạ cộng tác viên, thêm/sửa/xóa, bài nộp, mục tiêu và tạo liên kết/QR theo biểu mẫu.
 - **Thùng rác**: khôi phục biểu mẫu hoặc bài nộp đã xóa. Không xóa vĩnh viễn nếu chưa có phê duyệt.
 
 ## 8. Checklist nhanh sau khi cấu hình

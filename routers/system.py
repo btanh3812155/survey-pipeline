@@ -218,7 +218,7 @@ async def get_sample_image(filename: str):
 
 @router.get("/", include_in_schema=False)
 async def root_redirect(request: Request):
-    """Auto-redirects root URL to /forms/income_survey or matches form from subdomain."""
+    """Route operator subdomains to admin and the survey root to the CTV portal."""
     refresh_form_registry_from_disk()
     host = (request.headers.get("host") or "").lower()
     if any(host.startswith(p) for p in ("audit.", "logs.", "dev-audit.", "audit-dev.", "audit.dev.")):
@@ -239,11 +239,4 @@ async def root_redirect(request: Request):
             schema = FORM_REGISTRY[parts[0]]
             return HTMLResponse(content=render_dynamic_form_html(schema), status_code=200)
 
-    preferred_form_id = (
-        "TB_GSM_2026_Nov_Test"
-        if "TB_GSM_2026_Nov_Test" in FORM_REGISTRY
-        else next(iter(FORM_REGISTRY), "income_survey")
-    )
-    query_str = str(request.url.query)
-    target = f"/forms/{preferred_form_id}" + (f"?{query_str}" if query_str else "")
-    return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(url="/ctv", status_code=status.HTTP_302_FOUND)

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.state import verify_admin_auth, get_db_pool
+from core.state import FORM_REGISTRY, refresh_form_registry_from_disk
 from core.ctv import (
     STATIC_CTV_NAMES,
     CTV_CODES,
@@ -130,11 +131,19 @@ def _page_flash(message: str = "", error: str = "") -> str:
     return ""
 
 
+def _icon(name: str) -> str:
+    paths = {
+        "edit": '<path d="m16 3 5 5-12 12H4v-5L16 3Z"/><path d="m14 5 5 5"/>',
+        "delete": '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+    }
+    return f'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">{paths[name]}</svg>'
+
+
 def _row_edit_form(row: Dict[str, Any], code: str, name: str, phone: str, notes: str) -> str:
     active_checked = "checked" if row.get("is_active", True) else ""
     return f"""
     <details class="row-edit">
-      <summary>Sửa thông tin</summary>
+      <summary class="icon-button" aria-label="Sửa thông tin CTV {code}" title="Sửa thông tin CTV">{_icon("edit")}</summary>
       <form method="post" action="/admin/ctvs/{code}">
         <label>Tên hiển thị<input name="display_name" value="{name}" maxlength="120" placeholder="Tên CTV"></label>
         <label>Số điện thoại<input name="phone" value="{phone}" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx"></label>
@@ -148,7 +157,7 @@ def _row_edit_form(row: Dict[str, Any], code: str, name: str, phone: str, notes:
     """
 
 
-def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "") -> str:
+def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "", forms=None) -> str:
     active_rows = [row for row in rows if row.get("is_active", True)]
     total_submissions = sum(int(row.get("submission_count") or 0) for row in rows)
     latest = max(
@@ -158,7 +167,7 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
     latest_text = latest.strftime("%d/%m/%Y") if hasattr(latest, "strftime") else "—"
 
     body_rows = []
-    for row in rows:
+    for index, row in enumerate(rows):
         code_raw = str(row.get("code") or "")
         code = html.escape(code_raw)
         code_path = html.escape(quote(code_raw, safe=""))
@@ -178,36 +187,50 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
         body_rows.append(
             f"""
             <tr data-ctv-row data-search="{search}" data-active="{'1' if active else '0'}">
-              <td><code>{code}</code></td>
               <td>
-                <strong>{name or "—"}</strong>
-                <div class="muted">{notes or "&nbsp;"}</div>
+                <details class="ctv-details" id="ctv-details-{index}">
+                  <summary><code>{code}</code></summary>
+                  <div class="ctv-expanded">
+                    <dl>
+                      <dt>Tên hiển thị</dt><dd>{name or '—'}</dd>
+                      <dt>Ghi chú</dt><dd>{notes or '—'}</dd>
+                      <dt>Liên hệ</dt><dd>{phone}</dd>
+                      <dt>Telegram</dt><dd>{tg_id}</dd>
+                      <dt>Trạng thái</dt><dd>{_status_badge(active)}</dd>
+                      <dt>Bài nộp</dt><dd>{count} · {last_seen_text}</dd>
+                      <dt>Mục tiêu</dt><dd>{quota_html}</dd>
+                    </dl>
+                    <div class="row-actions">
+                      {_row_edit_form(row, code_path, name, html.escape(phone_raw, quote=True), notes)}
+                      <form id="ctv-delete-{index}" method="post" action="/admin/ctvs/{code_path}/delete" data-delete-code="{code}">
+                        <button type="submit" class="danger icon-button" aria-label="Xóa CTV {code}" title="Xóa CTV">{_icon('delete')}</button>
+                      </form>
+                    </div>
+                  </div>
+                </details>
               </td>
-              <td>
-                <div>{phone}</div>
-                <div class="muted">Telegram: {tg_id}</div>
-              </td>
-              <td>{_status_badge(active)}</td>
-              <td><strong>{count}</strong><div class="muted">{last_seen_text}</div></td>
-              <td class="ctv-quota">{quota_html}</td>
-              <td>
+              <td class="ctv-desktop"><div>{phone}</div><div class="muted">Telegram: {tg_id}</div></td>
+              <td class="ctv-desktop">{_status_badge(active)}</td>
+              <td class="ctv-desktop"><strong>{count}</strong><div class="muted">{last_seen_text}</div></td>
+              <td class="ctv-desktop ctv-quota">{quota_html}</td>
+              <td class="ctv-desktop">
                 <div class="row-actions">
-                  <form method="post" action="/admin/ctvs/{code_path}/toggle">
-                    <input type="hidden" name="display_name" value="{name}">
-                    <input type="hidden" name="phone" value="{phone_raw}">
-                    <input type="hidden" name="notes" value="{notes_raw}">
-                    <button type="submit" class="secondary">{"Tắt" if active else "Bật"}</button>
-                  </form>
-                  <form method="post" action="/admin/ctvs/{code_path}/delete"
-                        onsubmit="return confirm('Xóa CTV {code}? Dữ liệu bài nộp cũ vẫn được giữ.');">
-                    <button type="submit" class="danger">Xóa</button>
-                  </form>
+                  <button type="button" class="secondary icon-button" data-edit-ctv="ctv-details-{index}" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
+                  <button type="submit" form="ctv-delete-{index}" class="danger icon-button" aria-label="Xóa CTV {code}" title="Xóa CTV">{_icon('delete')}</button>
                 </div>
-                {_row_edit_form(row, code_path, name, html.escape(phone_raw, quote=True), html.escape(notes_raw, quote=True))}
               </td>
             </tr>
             """
         )
+
+    ctv_options = ''.join(
+        f'<option value="{html.escape(str(row["code"]), quote=True)}">{html.escape(str(row["code"]))}</option>'
+        for row in active_rows if row.get("source") == "db"
+    )
+    form_options = ''.join(
+        f'<option value="{html.escape(str(form_id), quote=True)}">{html.escape(str(title))}</option>'
+        for form_id, title in (forms or [])
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="vi">
@@ -215,6 +238,9 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quản Lý CTV - Trust Bridge</title>
+<link rel="stylesheet" href="/static/ui/admin_ctvs.css">
+<script src="/static/qrcode.min.js" defer></script>
+<script src="/static/ui/admin_ctvs.js" defer></script>
 </head>
 <body>
 <main>
@@ -251,6 +277,22 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
   </section>
 
   <div class="admin-layout">
+    <section class="card ctv-generator" aria-labelledby="ctv-link-title">
+      <h2 id="ctv-link-title">Tạo liên kết và mã QR CTV</h2>
+      <form id="ctv-link-form">
+        <label>CTV đang hoạt động<select id="ctv-link-code" required><option value="">Chọn CTV</option>{ctv_options}</select></label>
+        <label>Biểu mẫu công khai đang mở<select id="ctv-link-form-id" required><option value="">Chọn biểu mẫu</option>{form_options}</select></label>
+        <button type="submit">Tạo liên kết / QR</button>
+      </form>
+      <p class="muted">Chỉ liệt kê CTV đang hoạt động được xác nhận từ cơ sở dữ liệu và biểu mẫu công khai, còn nhận phản hồi, bật ghi nhận CTV. Tải lại trang để cập nhật danh sách.</p>
+      <div id="ctv-link-output" hidden>
+        <label>Liên kết<input id="ctv-generated-link" readonly></label>
+        <div class="row-actions"><button type="button" id="ctv-copy-link" disabled>Sao chép liên kết</button><button type="button" id="ctv-share-link" disabled>Chia sẻ liên kết</button></div>
+        <div id="ctv-qr-preview"></div>
+        <div class="row-actions"><button type="button" id="ctv-copy-image" disabled>Sao chép ảnh QR</button><button type="button" id="ctv-share-image" disabled>Chia sẻ ảnh QR</button><button type="button" id="ctv-download-image" disabled>Tải PNG</button></div>
+      </div>
+      <p id="ctv-link-status" role="status" aria-live="polite"></p>
+    </section>
     <div class="admin-stack">
       <form class="admin-toolbar" method="get" action="/admin/ctvs" onsubmit="return false;">
         <label class="search" aria-label="Tìm CTV">
@@ -268,7 +310,6 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
           <thead>
             <tr>
               <th>Mã CTV</th>
-              <th>Thông tin</th>
               <th>Liên hệ</th>
               <th>Trạng thái</th>
               <th>Bài nộp</th>
@@ -277,7 +318,7 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "")
             </tr>
           </thead>
           <tbody>
-            {''.join(body_rows) or '<tr><td colspan="7" class="empty">Chưa có CTV nào trong danh bạ.</td></tr>'}
+            {''.join(body_rows) or '<tr><td colspan="6" class="empty">Chưa có CTV nào trong danh bạ.</td></tr>'}
           </tbody>
         </table>
       </section>
@@ -346,7 +387,15 @@ async def admin_ctv_directory(
         except Exception as e:
             logger.warning(f"Quota summary failed for {row.get('code')}: {e}")
             row["quota_summary"] = '<span class="muted">—</span>'
-    return HTMLResponse(content=_render_page(rows, message=msg, error=err), status_code=200)
+    refresh_form_registry_from_disk()
+    forms = [
+        (form_id, schema.title)
+        for form_id, schema in sorted(FORM_REGISTRY.items())
+        if schema.settings.access_control == "public"
+        and schema.settings.ctv_ref_enabled
+        and not (schema.settings.response_limit and schema.settings.current_responses >= schema.settings.response_limit)
+    ]
+    return HTMLResponse(content=_render_page(rows, message=msg, error=err, forms=forms), status_code=200)
 
 
 @router.post("/admin/ctvs")

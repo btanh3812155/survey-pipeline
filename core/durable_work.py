@@ -102,7 +102,7 @@ async def _recipient(conn, row, policy):
             (phone, CONFLICTED_PHONE_LINK_SOURCE, row["created_at"]),
         )
     else:
-        ref = row.get("collaborator_id") or row.get("ctv_code")
+        ref = row.get("ctv_code") or row.get("collaborator_id")
         if not ref:
             return None, "UNLINKED_RECIPIENT"
         if str(ref).isdigit():
@@ -149,11 +149,12 @@ async def _billing_collaborator(conn, row):
             ident = (next(iter(found.values())) if isinstance(found, dict) else found[0]) if found else None
     if ident is None:
         return None
-    cur = await conn.execute("SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id=%s AND is_active AND role='COLLABORATOR'", (ident,))
-    found = await cur.fetchone()
-    if not found:
+    from core.ctv_onboarding import billing_collaborator_is_eligible
+
+    if not await billing_collaborator_is_eligible(
+        conn, ident, ctv_code=row.get("ctv_code"), submitted_at=row.get("created_at"),
+    ):
         return None
-    ident = next(iter(found.values())) if isinstance(found, dict) else found[0]
     await conn.execute("UPDATE survey_submissions SET collaborator_id=%s WHERE submission_id=%s", (ident, row["submission_id"]))
     return ident
 

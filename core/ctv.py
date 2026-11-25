@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.state import FORM_REGISTRY
 from services.form_engine import FormSchema
+from core.ctv_onboarding import CTV_ONBOARDING_STATEMENTS
 
 logger = logging.getLogger("core.ctv")
 
@@ -66,10 +67,31 @@ CTV_TABLE_STATEMENTS: Tuple[str, ...] = (
         phone TEXT,
         telegram_user_id BIGINT,
         is_active BOOLEAN DEFAULT TRUE,
+        auth_revision UUID NOT NULL DEFAULT gen_random_uuid(),
         notes TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    """,
+    "ALTER TABLE ctv_directory ADD COLUMN IF NOT EXISTS auth_revision UUID NOT NULL DEFAULT gen_random_uuid();",
+    """
+    CREATE OR REPLACE FUNCTION rotate_ctv_auth_revision() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+        IF ROW(NEW.code, NEW.phone, NEW.telegram_user_id, NEW.is_active)
+            IS DISTINCT FROM ROW(OLD.code, OLD.phone, OLD.telegram_user_id, OLD.is_active) THEN
+            NEW.auth_revision := gen_random_uuid();
+        ELSE
+            NEW.auth_revision := OLD.auth_revision;
+        END IF;
+        RETURN NEW;
+    END;
+    $$;
+    """,
+    """
+    CREATE OR REPLACE TRIGGER ctv_directory_auth_revision
+    BEFORE UPDATE ON ctv_directory
+    FOR EACH ROW EXECUTE FUNCTION rotate_ctv_auth_revision();
     """,
     """
     CREATE TABLE IF NOT EXISTS form_tags (
@@ -104,7 +126,7 @@ CTV_TABLE_STATEMENTS: Tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_ctv_directory_phone ON ctv_directory (phone);",
     "CREATE INDEX IF NOT EXISTS idx_form_tags_tag ON form_tags (tag);",
     "CREATE INDEX IF NOT EXISTS idx_ctv_quotas_code ON ctv_quotas (ctv_code, active);",
-)
+) + CTV_ONBOARDING_STATEMENTS
 
 # Process-local caches: code -> directory row, (ctv_code, form_id) -> link row.
 _CTV_DIRECTORY: Dict[str, Dict[str, Any]] = {}

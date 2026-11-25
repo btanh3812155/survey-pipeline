@@ -71,6 +71,8 @@ Concurrent outbox workers return a claim and record its attempt only when the co
 
 Run the test target with `make test` (uses `.venv/bin/python -m pytest tests -q`).
 
+Start the web service with `.venv/bin/python -m core.server` (`WEB_CONCURRENCY` controls Uvicorn workers). This resolves exact `FORWARDED_ALLOW_IPS` addresses or Docker DNS peers before listening, then delegates forwarded-client handling to Uvicorn. Local defaults trust only loopback; the container/Compose defaults also resolve the `caddy` service. An unresolved configured peer or wildcard/network trust fails startup. Do not bypass this entrypoint with the old raw Uvicorn command when using DNS peer names.
+
 Wave 3 local acceptance: `make test-postgres` uses an owned disposable PostgreSQL/pgvector container and includes the submit-worker SIGKILL/retry regression. `node tests/test_wave3_browser.cjs` exercises real Chromium attempt/retry and encoder-race behavior with provider requests stubbed or blocked; it requires Node.js with `fs.globSync`, the Playwright package, and an installed Chromium build. These checks do not authorize staging/production access or activation.
 
 The checked-in `docker-compose.yml` is not a self-contained stack: `app-dev` and the opt-in `outbox-v2` profile use a prebuilt image and external `survey-pipeline_default` network. It does not create PostgreSQL or Redis. The outbox profile shares the private data volume, disables claims and periodic Drive sync by default, and supplies a separate schema healthcheck. Configure dependencies explicitly; do not treat development fallback behavior as production persistence.
@@ -79,10 +81,27 @@ Copy `.env.example` only as a local-development starting point. Production must 
 
 ## HTTP entry points
 
+- `GET /`: survey/default host entry redirects to `/ctv`, then `/ctv/login` when signed out; operator subdomain routing and direct `/forms/{form_id}?ref=...` links remain available.
+- `GET /ctv/login`, `POST /ctv/login/request`, `POST /ctv/login/verify`, `POST /ctv/logout`: CTV Telegram OTP login and logout.
+- `GET /ctv`: authenticated personal information, quota-goal progress and currently open public surveys; referral-enabled forms receive the signed-in CTV's code, while non-attributed forms are explicitly marked.
 - `POST /webhook/lark-survey`: Lark webhook ingress.
 - `POST /webhook/telegram` and `/webhook/telegram/driver`: Telegram webhook handlers.
 - `POST /api/v1/survey/submit-webrtc`: dynamic survey submission endpoint.
 - `GET /health`: liveness-style response; it does not establish database readiness.
+
+### CTV and persistent browser login
+
+CTV login accepts either an active directory code from the dropdown or a normalized Vietnamese phone number. Both require a six-digit Telegram OTP; public referral codes never authenticate by themselves. The directory phone and positive Telegram user ID must match a standalone `verified_contact` or `admin_verified` binding. Unverified/conflicted mappings, non-CTV numbers and ambiguous directory identities cannot sign in. Existing private bot invitations and self-contact verification establish that binding first.
+
+OTP challenges expire after five minutes, allow at most five attempts, are browser-bound and atomically single-use in Redis. Sending and verification are rate-limited. Delivery uses `TELEGRAM_DRIVER_BOT_TOKEN` and requires Telegram's successful response; no admin-bot fallback, fabricated OTP or process-local authentication fallback is used. PostgreSQL, Redis or Telegram outages fail closed.
+
+Admin and CTV sessions use separate signed, host-only `HttpOnly`, `SameSite=Lax` cookies, `Secure` in production, retained for 30 days across browser restarts. Logout clears the corresponding cookie. Admin password changes/deactivation/deletion invalidate admin sessions. CTV sessions and pending OTPs bind to a durable directory `auth_revision` plus the verified phone binding; a database trigger rotates that revision on code, phone, Telegram ID or active-state changes, so disable/re-enable and identity-away/back cannot revive old credentials. Harmless name/notes edits preserve sessions. CTV authentication grants no admin or driver-history access. Personalized pages are not cached.
+
+The dashboard reuses existing quota calculations, including mixed all-time/rolling goals. Quotas remain progress goals, not submission caps. It excludes private, archived and response-limit-closed forms; survey links stay on the current host. Forms disabling CTV referrals remain available without `ref`, with a visible warning that they do not count toward CTV progress. Migration `015_ctv_auth_revision.sql` adds the durable revision and security-change trigger; runtime CTV schema setup and `schema.sql` mirror it. Apply through the approved migration/release process before exposing the updated login. Source changes are not deployment evidence.
+
+The admin CTV page uses horizontal SVG edit/delete actions with no quick-disable button or separate information column. Mobile rows expand from code-only summaries into full details and actions. Its CTV/form generator accepts active CTVs and open public forms with CTV tracking enabled, producing a same-origin link and PNG QR with a quiet zone. Link copy/share and QR image copy/share/download use native browser capabilities; unsupported or rejected clipboard/share operations report failure rather than success.
+
+Local verification for these corrections: **193 focused pytest checks passed**, including actual disposable PostgreSQL/Redis revision lifecycle, OTP and guarded release/migration coverage. Actual Chromium desktop/mobile checks exercised row disclosures, edit/delete confirmation, link clipboard, PNG clipboard pixels, downloaded QR decoding/quiet zone, selection invalidation and updated CTV login. Native share API payloads/cancellation were intercepted for repeatable checking; an operating-system share sheet was not exercised. Shell syntax checks passed for release, smoke and migration helpers. No live providers or staging/production deployments were used.
 
 ## Operational notes
 

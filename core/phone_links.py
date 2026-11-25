@@ -206,6 +206,51 @@ async def get_verified_phone_binding_for_telegram_user(
     return None
 
 
+async def store_phone_telegram_link(cur, normalized: str, telegram_user_id: int, source: str) -> bool:
+    """Write a normalized binding inside the caller's transaction."""
+    await cur.execute(
+        """
+        INSERT INTO phone_telegram_links
+            (phone_normalized, telegram_user_id, source)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (phone_normalized) DO UPDATE SET
+            telegram_user_id = EXCLUDED.telegram_user_id,
+            source = EXCLUDED.source,
+            updated_at = CASE
+                WHEN phone_telegram_links.source IN (%s, %s)
+                THEN phone_telegram_links.updated_at
+                ELSE NOW()
+            END
+        WHERE COALESCE(phone_telegram_links.source, '') <> %s
+          AND (phone_telegram_links.source IS NULL
+               OR phone_telegram_links.source NOT IN (%s, %s)
+               OR (EXCLUDED.source IN (%s, %s)
+                   AND phone_telegram_links.telegram_user_id = EXCLUDED.telegram_user_id))
+        RETURNING phone_normalized;
+        """,
+        (
+            normalized,
+            telegram_user_id,
+            str(source or "unknown"),
+            *VERIFIED_PHONE_LINK_SOURCES,
+            CONFLICTED_PHONE_LINK_SOURCE,
+            *VERIFIED_PHONE_LINK_SOURCES,
+            *VERIFIED_PHONE_LINK_SOURCES,
+        ),
+    )
+    row = await cur.fetchone()
+    if not row and source in VERIFIED_PHONE_LINK_SOURCES:
+        # Only a proved conflicting claim pauses a disputed number.
+        # Unverified command/seed writes cannot suspend its owner.
+        await cur.execute(
+            "UPDATE phone_telegram_links SET source = %s "
+            "WHERE phone_normalized = %s AND telegram_user_id <> %s "
+            "AND source IN (%s, %s);",
+            (CONFLICTED_PHONE_LINK_SOURCE, normalized, telegram_user_id, *VERIFIED_PHONE_LINK_SOURCES),
+        )
+    return bool(row)
+
+
 async def upsert_phone_telegram_link(
     phone,
     telegram_user_id,
@@ -226,53 +271,14 @@ async def upsert_phone_telegram_link(
     try:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO phone_telegram_links
-                        (phone_normalized, telegram_user_id, source)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (phone_normalized) DO UPDATE SET
-                        telegram_user_id = EXCLUDED.telegram_user_id,
-                        source = EXCLUDED.source,
-                        updated_at = CASE
-                            WHEN phone_telegram_links.source IN (%s, %s)
-                            THEN phone_telegram_links.updated_at
-                            ELSE NOW()
-                        END
-                    WHERE COALESCE(phone_telegram_links.source, '') <> %s
-                      AND (phone_telegram_links.source IS NULL
-                           OR phone_telegram_links.source NOT IN (%s, %s)
-                           OR (EXCLUDED.source IN (%s, %s)
-                               AND phone_telegram_links.telegram_user_id = EXCLUDED.telegram_user_id))
-                    RETURNING phone_normalized;
-                    """,
-                    (
-                        normalized,
-                        telegram_user_id,
-                        str(source or "unknown"),
-                        *VERIFIED_PHONE_LINK_SOURCES,
-                        CONFLICTED_PHONE_LINK_SOURCE,
-                        *VERIFIED_PHONE_LINK_SOURCES,
-                        *VERIFIED_PHONE_LINK_SOURCES,
-                    ),
-                )
-                row = await cur.fetchone()
-                if not row and source in VERIFIED_PHONE_LINK_SOURCES:
-                    # Only a proved conflicting claim pauses a disputed number.
-                    # Unverified command/seed writes cannot suspend its owner.
-                    await cur.execute(
-                        "UPDATE phone_telegram_links SET source = %s "
-                        "WHERE phone_normalized = %s AND telegram_user_id <> %s "
-                        "AND source IN (%s, %s);",
-                        (CONFLICTED_PHONE_LINK_SOURCE, normalized, telegram_user_id, *VERIFIED_PHONE_LINK_SOURCES),
-                    )
+                stored = await store_phone_telegram_link(cur, normalized, telegram_user_id, source)
             await conn.commit()
-        if not row and source in VERIFIED_PHONE_LINK_SOURCES:
+        if not stored and source in VERIFIED_PHONE_LINK_SOURCES:
             logger.warning(
                 "Verified phone ownership conflict refused; the disputed binding is paused. "
                 "Administrator revocation and re-verification are required; no owner was reassigned."
             )
-        return bool(row)
+        return stored
     except Exception as e:
         logger.warning("phone_telegram_links upsert failed (%s)", type(e).__name__)
         return False

@@ -1012,14 +1012,11 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                     )
                     row = await cur.fetchone()
                     if row:
-                        phone, cached_tg_id = row[1], row[0]
+                        phone, linked_tg_id = row[1], row[0]
+                        if linked_tg_id:
+                            return int(linked_tg_id)
                         if phone:
-                            tg_id = await lookup_telegram_user_by_phone(str(phone))
-                            if tg_id:
-                                return tg_id
-                        # Internally populated cache/fallback only; never admin input.
-                        if cached_tg_id:
-                            return int(cached_tg_id)
+                            return await lookup_telegram_user_by_phone(str(phone))
         except Exception as e:
             logger.debug(f"ctv_directory lookup failed for collaborator {collab_str}: {e}")
 
@@ -1251,7 +1248,7 @@ async def dispatch_submission_telegram_notifications(
     else:
         collab_tg_id = await _lookup_collab(collaborator_id)
         if not collab_tg_id:
-            logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (start the CTV bot with ctv_<code>).")
+            logger.info(f"Collaborator '{collaborator_id}' not linked to Telegram (open the CTV_Info Telegram Bot invitation and verify own contact).")
             return
         recipient_verified = True
 

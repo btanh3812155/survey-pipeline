@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Internal CTV matrix sheet generation."""
 import types
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,9 +12,10 @@ class FakeCursor:
     def __init__(self, rows, columns):
         self._rows = rows
         self.description = [types.SimpleNamespace(name=name) for name in columns]
+        self.executed = []
 
     async def execute(self, sql, params=None):
-        return None
+        self.executed.append(sql)
 
     async def fetchall(self):
         return self._rows
@@ -157,6 +159,12 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
         upserts.extend(links)
 
     qr_calls = []
+    bot_links = {
+        "CTV-B": "https://t.me/survey_bot?start=ctv_token_b",
+        "CTV-A": "https://t.me/survey_bot?start=ctv_token_a",
+    }
+    ensure_bot_links = AsyncMock(return_value=bot_links)
+    monkeypatch.setattr(cm, "ensure_ctv_bot_links", ensure_bot_links)
     monkeypatch.setattr(cm, "ensure_ctv_tables", _noop)
     monkeypatch.setattr(cm, "fetch_active_ctvs", fake_active)
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
@@ -165,7 +173,9 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
     _patch_qr(monkeypatch, tmp_path, qr_calls)
 
     drive = FakeDriveClient(existing_sheet="sheet_123")
-    assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", object()) is True
+    pool = object()
+    assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", pool) is True
+    ensure_bot_links.assert_awaited_once_with(pool)
 
     upserted = {(code, form): (url, qr) for code, form, url, qr in upserts}
     assert set(upserted) == {
@@ -185,11 +195,12 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
 
     rows, value_input = drive.values_updates[0]
     assert value_input == "USER_ENTERED"
-    assert rows[0][:2] == ["CTV Code", "Phone"]
-    assert rows[2][:2] == ["CTV-A", "0901"]
-    assert rows[2][2] == f'=IMAGE("{current_image_url}")'
-    assert rows[2][3] == url_a1
-    assert rows[2][4] == f'=IMAGE("{form_two_image_url}")'
+    assert rows[0][:3] == ["CTV Code", "Phone", "Telegram Bot"]
+    assert rows[2][:3] == ["CTV-A", "0901", bot_links["CTV-A"]]
+    assert rows[3][:3] == ["CTV-B", "0902", bot_links["CTV-B"]]
+    assert rows[2][3] == f'=IMAGE("{current_image_url}")'
+    assert rows[2][4] == url_a1
+    assert rows[2][5] == f'=IMAGE("{form_two_image_url}")'
     assert drive.clears == ["A1:F50"]
 
     unmerge_ranges = [r["unmergeCells"]["range"] for r in _unmerge_requests(drive)]
@@ -199,8 +210,29 @@ async def test_matrix_generates_missing_and_regenerates_outdated_links(monkeypat
 
     merge_ranges = [r["mergeCells"]["range"] for r in _merge_requests(drive)]
     assert len(merge_ranges) == 2
-    assert [(r["startColumnIndex"], r["endColumnIndex"]) for r in merge_ranges] == [(2, 4), (4, 6)]
+    assert [(r["startColumnIndex"], r["endColumnIndex"]) for r in merge_ranges] == [(3, 5), (5, 7)]
     assert all(r["startRowIndex"] == 0 and r["endRowIndex"] == 1 for r in merge_ranges)
+
+    notes = [
+        request["updateCells"]
+        for batch in drive.batch_requests
+        for request in batch
+        if "updateCells" in request
+    ]
+    assert [(note["range"]["startColumnIndex"], note["range"]["endColumnIndex"]) for note in notes] == [
+        (3, 4), (5, 6), (3, 4), (5, 6),
+    ]
+    assert notes[0]["rows"][0]["values"][0]["note"] == current_image_url
+    qr_widths = [
+        request["updateDimensionProperties"]
+        for batch in drive.batch_requests
+        for request in batch
+        if request.get("updateDimensionProperties", {}).get("range", {}).get("dimension") == "COLUMNS"
+    ]
+    assert [(width["range"]["startIndex"], width["range"]["endIndex"]) for width in qr_widths] == [
+        (3, 4), (5, 6),
+    ]
+    assert all(width["properties"]["pixelSize"] == 170 for width in qr_widths)
 
 
 @pytest.mark.asyncio
@@ -218,24 +250,25 @@ async def test_matrix_clears_previous_width_when_forms_shrink(monkeypatch, tmp_p
         return None
 
     monkeypatch.setattr(cm, "ensure_ctv_tables", _noop)
+    monkeypatch.setattr(cm, "ensure_ctv_bot_links", AsyncMock(return_value={}))
     monkeypatch.setattr(cm, "fetch_active_ctvs", fake_active)
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
     monkeypatch.setattr(cm, "fetch_links", fake_links)
     monkeypatch.setattr(cm, "upsert_links", fake_upsert)
     _patch_qr(monkeypatch, tmp_path)
 
-    # Previous sheet had 2 forms (6 columns); new matrix has 1 form (4 columns).
-    drive = FakeDriveClient(existing_sheet="sheet_123", column_count=6, row_count=50)
+    # Previous sheet had 2 forms (7 columns); new matrix has 1 form (5 columns).
+    drive = FakeDriveClient(existing_sheet="sheet_123", column_count=7, row_count=50)
     assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", object()) is True
 
-    assert drive.clears == ["A1:F50"]
+    assert drive.clears == ["A1:G50"]
     unmerge_ranges = [r["unmergeCells"]["range"] for r in _unmerge_requests(drive)]
-    assert unmerge_ranges[0]["endColumnIndex"] == 6
+    assert unmerge_ranges[0]["endColumnIndex"] == 7
     rows, _ = drive.values_updates[0]
-    assert len(rows[0]) == 4
+    assert len(rows[0]) == 5
     merge_ranges = [r["mergeCells"]["range"] for r in _merge_requests(drive)]
     assert len(merge_ranges) == 1
-    assert (merge_ranges[0]["startColumnIndex"], merge_ranges[0]["endColumnIndex"]) == (2, 4)
+    assert (merge_ranges[0]["startColumnIndex"], merge_ranges[0]["endColumnIndex"]) == (3, 5)
 
 
 @pytest.mark.asyncio
@@ -249,11 +282,12 @@ async def test_matrix_merges_two_columns_per_form_beyond_26_columns():
     }
     values, merge_ranges = cm.build_matrix_payload(ctvs, forms, links)
 
-    assert len(values[0]) == len(forms) * 2 + 2
+    assert len(values[0]) == len(forms) * 2 + 3
     assert len(merge_ranges) == len(forms)
-    assert merge_ranges[-1] == (28, 30)
-    assert values[0][:2] == ["CTV Code", "Phone"]
-    assert values[1][:2] == ["", ""]
+    assert merge_ranges[-1] == (29, 31)
+    assert values[0][:3] == ["CTV Code", "Phone", "Telegram Bot"]
+    assert values[1][:3] == ["", "", ""]
+    assert values[2][:3] == ["CTV-A", "0901", ""]
 
 
 @pytest.mark.asyncio
@@ -271,6 +305,7 @@ async def test_matrix_creates_sheet_when_missing(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(cm, "ensure_ctv_tables", _noop)
+    monkeypatch.setattr(cm, "ensure_ctv_bot_links", AsyncMock(return_value={}))
     monkeypatch.setattr(cm, "fetch_active_ctvs", fake_active)
     monkeypatch.setattr(cm, "fetch_forms", fake_forms)
     monkeypatch.setattr(cm, "fetch_links", fake_links)
@@ -284,6 +319,57 @@ async def test_matrix_creates_sheet_when_missing(monkeypatch, tmp_path):
     rows, _ = drive.values_updates[0]
     assert rows[2][:2] == ["CTV-A", "0901"]
     assert (tmp_path / "qr" / cm.qr_file_name("CTV-A", "form_one")).read_bytes() == b"png-bytes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_sheet", [None, "sheet_123"])
+async def test_matrix_syncs_bot_invitations_without_forms(monkeypatch, existing_sheet):
+    ctvs = [
+        {"code": "CTV-A", "phone": "0901", "is_active": True},
+        {"code": "CTV-B", "phone": None, "is_active": True},
+    ]
+    bot_links = {
+        "CTV-B": "https://t.me/survey_bot?start=ctv_token_b",
+        "CTV-A": "https://t.me/survey_bot?start=ctv_token_a",
+    }
+    ensure_bot_links = AsyncMock(return_value=bot_links)
+    generate_qr = AsyncMock()
+    upsert = AsyncMock()
+    format_tab = AsyncMock()
+    monkeypatch.setattr(cm, "ensure_ctv_tables", _noop)
+    monkeypatch.setattr(cm, "fetch_active_ctvs", AsyncMock(return_value=ctvs))
+    monkeypatch.setattr(cm, "fetch_forms", AsyncMock(return_value=[]))
+    monkeypatch.setattr(cm, "fetch_links", AsyncMock(return_value={}))
+    monkeypatch.setattr(cm, "ensure_ctv_bot_links", ensure_bot_links)
+    monkeypatch.setattr(cm, "generate_qr_png", generate_qr)
+    monkeypatch.setattr(cm, "upsert_links", upsert)
+    monkeypatch.setattr("core.drive_exports._format_tab", format_tab)
+
+    drive = FakeDriveClient(existing_sheet=existing_sheet, column_count=31)
+    pool = object()
+    assert await cm.sync_internal_ctv_matrix(drive, None, "token", "root", pool) is True
+
+    ensure_bot_links.assert_awaited_once_with(pool)
+    generate_qr.assert_not_awaited()
+    upsert.assert_awaited_once_with(pool, [])
+    assert drive.created_sheets == ([] if existing_sheet else [("CTV_Info", "folder_internal")])
+    assert drive.values_updates == [([
+        ["CTV Code", "Phone", "Telegram Bot"],
+        ["", "", ""],
+        ["CTV-A", "0901", bot_links["CTV-A"]],
+        ["CTV-B", "", bot_links["CTV-B"]],
+    ], "USER_ENTERED")]
+    assert drive.clears == ["A1:AE50"]
+    assert _unmerge_requests(drive)[0]["unmergeCells"]["range"]["endColumnIndex"] == 31
+    assert not _merge_requests(drive)
+    assert all(drive.batch_requests)
+    assert not any(
+        "updateCells" in request
+        or request.get("updateDimensionProperties", {}).get("range", {}).get("dimension") == "COLUMNS"
+        for batch in drive.batch_requests
+        for request in batch
+    )
+    format_tab.assert_awaited_once_with(None, "token", "sheet_123", cm.CTV_SHEET_NAME, 4, 3)
 
 
 async def _noop(*args, **kwargs):

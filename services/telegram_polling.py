@@ -1371,7 +1371,7 @@ class TelegramPollingRunner:
 
         driver_phone = dossier.get("driver_phone")
         driver_name = dossier.get("driver_name")
-        collab_id = dossier.get("collaborator_id") or dossier.get("ctv_code")
+        collab_id = dossier.get("ctv_code") or dossier.get("collaborator_id")
         gross_rev = dossier.get("gross_income") or 0
         effective_reason = reason or dossier.get("rejection_reason") or ""
         form_id = dossier.get("form_id")
@@ -1772,40 +1772,6 @@ class DriverBotRunner(TelegramPollingRunner):
         return await get_verified_phone_for_telegram_user(telegram_user_id, db_pool=self.db_pool)
 
 
-    async def bind_collaborator(self, telegram_user_id: int, username: str, full_name: str, ctv_code: str) -> None:
-        """Links a Telegram account to a collaborator (CTV) code."""
-        if not self.db_pool:
-            return
-        try:
-            async with self.db_pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO authorized_users (telegram_user_id, username, full_name, role, is_active)
-                        VALUES (%s, %s, %s, 'COLLABORATOR', TRUE)
-                        ON CONFLICT (telegram_user_id) DO UPDATE SET
-                            username = EXCLUDED.username,
-                            full_name = EXCLUDED.full_name,
-                            role = 'COLLABORATOR';
-                        """,
-                        (telegram_user_id, ctv_code, full_name),
-                    )
-                    await cur.execute(
-                        "UPDATE ctv_directory SET telegram_user_id = %s, updated_at = NOW() "
-                        "WHERE code = %s;",
-                        (telegram_user_id, ctv_code),
-                    )
-                await conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to bind collaborator {ctv_code}: {e}")
-            return
-        try:
-            from core.ctv import refresh_ctv_directory_cache
-
-            await refresh_ctv_directory_cache(self.db_pool)
-        except Exception as e:
-            logger.debug(f"CTV cache refresh after bind failed: {e}")
-
     async def download_telegram_photo(self, file_id: str) -> bytes:
         """Downloads high-res photo bytes from Telegram Bot API."""
         client = await self.get_client()
@@ -1818,11 +1784,11 @@ class DriverBotRunner(TelegramPollingRunner):
         return photo_resp.content
 
     async def handle_contact_sharing(self, chat_id: int, user_id: int, contact: dict, from_user: dict) -> None:
-        """Verify a self-contact before storing a standalone delivery binding."""
+        """Verify a private own-contact, then enroll or replace its registered CTV account."""
         sender_id = from_user.get("id")
         contact_id = contact.get("user_id")
         if (
-            type(sender_id) is not int or type(contact_id) is not int
+            chat_id != user_id or type(sender_id) is not int or type(contact_id) is not int
             or sender_id <= 0 or sender_id != user_id or contact_id != sender_id
         ):
             await self.send_message(
@@ -1839,7 +1805,24 @@ class DriverBotRunner(TelegramPollingRunner):
         if not phone:
             await self.send_message(chat_id, "⚠️ Số điện thoại không hợp lệ; chưa xác thực liên kết.")
             return
-        stored = await upsert_phone_telegram_link(
+        from core.ctv_onboarding import complete_ctv_onboarding
+
+        name = " ".join(str(contact.get(part) or from_user.get(part) or "") for part in ("first_name", "last_name")).strip() or "Thành viên"
+        try:
+            ctv_code = await complete_ctv_onboarding(self.db_pool, sender_id, phone, name)
+        except ValueError:
+            await self.send_message(
+                chat_id,
+                "⚠️ Chưa thể liên kết CTV. Cần xác thực đúng số đã đăng ký, CTV còn hoạt động và không bị trùng số. "
+                "Đổi số điện thoại hoặc giải quyết tranh chấp cần quản trị viên hỗ trợ; chưa thay đổi danh bạ CTV.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
+        except Exception as exc:
+            logger.warning("CTV contact verification failed (%s)", type(exc).__name__)
+            await self.send_message(chat_id, "⚠️ Chưa thể lưu xác thực. Vui lòng thử lại sau.")
+            return
+        stored = bool(ctv_code) or await upsert_phone_telegram_link(
             phone, sender_id, source="verified_contact", db_pool=self.db_pool
         )
         if not stored:
@@ -1851,9 +1834,15 @@ class DriverBotRunner(TelegramPollingRunner):
             )
             return
 
-        name = str(contact.get("first_name") or from_user.get("first_name") or "Thành viên")
-        if contact.get("last_name"):
-            name += " " + str(contact["last_name"])
+        if ctv_code:
+            await self.send_message(
+                chat_id,
+                f"✅ <b>Đã xác thực và liên kết CTV <code>{html.escape(ctv_code)}</code>.</b>\n\n"
+                f"• <b>Số điện thoại:</b> <code>{phone[:3]}****{phone[-3:]}</code>\n"
+                "Kết quả duyệt / từ chối phiếu do bạn giới thiệu sẽ được thông báo tại đây.",
+                reply_markup=self.get_driver_reply_keyboard(),
+            )
+            return
         masked_phone = phone[:3] + "****" + phone[-3:]
         welcome_text = (
             "✅ <b>Xác thực số điện thoại thành công!</b>\n\n"
@@ -2544,17 +2533,29 @@ class DriverBotRunner(TelegramPollingRunner):
         if cmd == "/start" or clean == "Bắt đầu":
             parts = clean.split(" ", 1)
             payload = parts[1].strip() if len(parts) > 1 else ""
-            from core.ctv import normalize_ctv_code, is_known_ctv_code
+            if payload and not payload.startswith(("support", "fix_")):
+                if chat_id != user_id or from_user.get("id") != user_id:
+                    return
+                from core.ctv_onboarding import begin_ctv_onboarding
 
-            ctv_payload = normalize_ctv_code(re.sub(r"^ctv[_-]?", "", payload, flags=re.IGNORECASE))
-            if payload and (payload.lower().startswith("ctv") or is_known_ctv_code(ctv_payload)):
-                ctv_code = ctv_payload or "UNKNOWN"
-                display = ((from_user.get("first_name") or "") + " " + (from_user.get("last_name") or "")).strip()
-                await self.bind_collaborator(user_id, from_user.get("username"), display or f"CTV {user_id}", ctv_code)
+                try:
+                    ctv_code = await begin_ctv_onboarding(self.db_pool, user_id, payload)
+                except ValueError:
+                    await self.send_message(
+                        chat_id,
+                        "⚠️ Link mời CTV không hợp lệ, tài khoản đã thuộc CTV khác hoặc CTV đã ngừng hoạt động. "
+                        "Vui lòng xin quản trị viên link trong cột Telegram Bot của CTV_Info.",
+                    )
+                    return
+                except Exception as exc:
+                    logger.warning("CTV invitation lookup failed (%s)", type(exc).__name__)
+                    await self.send_message(chat_id, "⚠️ Chưa thể kiểm tra link mời. Vui lòng thử lại sau.")
+                    return
                 await self.send_message(
                     chat_id,
-                    f"✅ <b>Đã liên kết Cộng tác viên <code>{ctv_code}</code> với tài khoản Telegram này.</b>\n\n"
-                    "Từ giờ mọi kết quả duyệt / từ chối phiếu do bạn giới thiệu sẽ được thông báo tại đây.",
+                    f"📱 <b>Xác thực số điện thoại cho CTV <code>{html.escape(ctv_code)}</code></b>\n\n"
+                    "Bấm <b>[📱 Xác Thực Số Điện Thoại]</b> bên dưới và chia sẻ số của chính tài khoản Telegram này. "
+                    "CTV đã có số đăng ký phải xác thực đúng số đó; muốn đổi số cần quản trị viên hỗ trợ.",
                     reply_markup=self.get_driver_reply_keyboard(),
                 )
                 return
@@ -2594,7 +2595,8 @@ class DriverBotRunner(TelegramPollingRunner):
                 "• Bổ sung ảnh chưa đạt trực tiếp trong chat để kiểm tra lại\n"
                 "• Tra cứu phiếu và gửi phúc khảo bằng <code>/appeal &lt;mã_phiếu&gt;</code>\n"
                 "• Kết nối trực tiếp với Ban Quản Trị\n\n"
-                "👉 <i>Nếu chưa liên kết, hãy mở link mời CTV (dạng <code>...?start=ctv_&lt;mã_ctv&gt;</code>) hoặc bấm nút <b>[📱 Xác Thực Số Điện Thoại]</b> bên dưới.</i>"
+                "👉 <i>Hãy mở link mời riêng do quản trị viên gửi từ cột Telegram Bot của CTV_Info, "
+                "sau đó bấm <b>[📱 Xác Thực Số Điện Thoại]</b> để hoàn tất liên kết CTV.</i>"
             )
             await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
@@ -2655,7 +2657,8 @@ class DriverBotRunner(TelegramPollingRunner):
         elif cmd in ("/help", "/trogiup") or clean == "❓ Trợ Giúp":
             help_text = (
                 "❓ <b>Hướng Dẫn Sử Dụng (Dành Cho Cộng Tác Viên):</b>\n\n"
-                "1. <b>Liên kết CTV:</b> mở link mời <code>...?start=ctv_&lt;mã_ctv&gt;</code> để nhận thông báo phiếu bạn giới thiệu.\n"
+                "1. <b>Liên kết CTV:</b> mở link mời riêng do quản trị viên gửi từ cột Telegram Bot của CTV_Info, "
+                "rồi bấm [📱 Xác Thực Số Điện Thoại] và chia sẻ số của chính bạn. Đổi Telegram: xác thực lại đúng số đã đăng ký từ tài khoản mới, không cần tài khoản cũ. Đổi số: liên hệ quản trị viên.\n"
                 "2. <b>Xem phiếu đã nộp:</b> Bấm [📋 Khảo Sát Của Tôi] hoặc gõ <code>/surveys</code>.\n"
                 "• <code>/forms</code> - Xem biểu mẫu đang mở gần đây.\n"
                 "3. <b>Xem mục tiêu:</b> Gõ <code>/quota</code> để xem mục tiêu nộp phiếu của bạn.\n"

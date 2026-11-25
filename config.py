@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    FORWARDED_ALLOW_IPS: str = "127.0.0.1,::1"
     # admin credentials
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "12345678"

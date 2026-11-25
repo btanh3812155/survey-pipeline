@@ -428,19 +428,19 @@ def test_quota_computation_form_tag_global_with_window():
 
 
 @pytest.mark.asyncio
-async def test_lookup_telegram_user_for_collaborator_uses_directory_phone():
+async def test_lookup_telegram_user_for_collaborator_prefers_live_directory_account():
     from routers import survey as survey_router
 
-    # Directory phone wins even when an internally cached tg id is present.
+    # A verified replacement in the directory wins over stale legacy phone mappings.
     pool = FakePool(directory_rows=[(555, "0901 111 111")])
     phone_lookup = AsyncMock(return_value=777)
     with patch.object(survey_router, "get_db_pool", return_value=pool), patch.object(
         survey_router, "lookup_telegram_user_by_phone", phone_lookup
     ):
-        assert await survey_router.lookup_telegram_user_for_collaborator("tuan_lm_hcm_001") == 777
-    phone_lookup.assert_awaited_once_with("0901 111 111")
+        assert await survey_router.lookup_telegram_user_for_collaborator("tuan_lm_hcm_001") == 555
+    phone_lookup.assert_not_awaited()
 
-    # Cached telegram_user_id is only a fallback when phone lookup finds nothing.
+    # Directory Telegram id works without a legacy authorized_users phone mapping.
     pool = FakePool(directory_rows=[(555, None)])
     with patch.object(survey_router, "get_db_pool", return_value=pool):
         assert await survey_router.lookup_telegram_user_for_collaborator("TUAN_LM_HCM_001") == 555

@@ -8,6 +8,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+from core.ctv_onboarding import CTV_ONBOARDING_STATEMENTS, ensure_ctv_bot_links
+
 logger = logging.getLogger("ctv_matrix")
 
 FORM_BASE_URL = "https://survey.trustbridgevn.com/forms"
@@ -154,7 +156,7 @@ async def ensure_ctv_tables(db_pool: Any) -> None:
     """Defensively creates the CTV tables (idempotent)."""
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
-            for statement in CTV_DDL:
+            for statement in (*CTV_DDL, *CTV_ONBOARDING_STATEMENTS):
                 await cur.execute(statement)
 
 
@@ -254,16 +256,18 @@ def build_matrix_payload(
     ctvs: List[Dict[str, Any]],
     forms: List[str],
     links: Dict[Tuple[str, str], Dict[str, Any]],
+    bot_links: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[List[Any]], List[Tuple[int, int]]]:
     """
     Builds sheet values and merged header ranges.
 
-    Layout: [CTV Code | Phone | form1 QR | form1 URL | form2 QR | form2 URL | ...].
+    Layout: [CTV Code | Phone | Telegram Bot | form1 QR | form1 URL | ...].
     Row 1 is the form header (two columns merged per form), row 2 holds QR/URL labels,
     and every following row is one active CTV (code leftmost, phone immediately right).
     """
-    header: List[Any] = ["CTV Code", "Phone"]
-    subheader: List[Any] = ["", ""]
+    bot_links = bot_links or {}
+    header: List[Any] = ["CTV Code", "Phone", "Telegram Bot"]
+    subheader: List[Any] = ["", "", ""]
     for form_id in forms:
         header.extend([form_id, ""])
         subheader.extend(["QR", "URL"])
@@ -272,7 +276,7 @@ def build_matrix_payload(
     for ctv in ctvs:
         code = str(ctv.get("code") or "")
         phone = "" if ctv.get("phone") is None else str(ctv.get("phone"))
-        row: List[Any] = [code, phone]
+        row: List[Any] = [code, phone, bot_links.get(code, "")]
         for form_id in forms:
             link = links.get((code, form_id)) or {}
             url = link.get("url") or ""
@@ -280,7 +284,7 @@ def build_matrix_payload(
             row.append(url)
         values.append(row)
 
-    merge_ranges = [(2 + index * 2, 2 + index * 2 + 2) for index in range(len(forms))]
+    merge_ranges = [(3 + index * 2, 3 + index * 2 + 2) for index in range(len(forms))]
     return values, merge_ranges
 
 
@@ -322,8 +326,8 @@ def build_qr_note_requests(
                         "sheetId": sheet_id,
                         "startRowIndex": row_index,
                         "endRowIndex": row_index + 1,
-                        "startColumnIndex": 2 + form_index * 2,
-                        "endColumnIndex": 3 + form_index * 2,
+                        "startColumnIndex": 3 + form_index * 2,
+                        "endColumnIndex": 4 + form_index * 2,
                     },
                     "rows": [{"values": [{"note": image_url}]}],
                     "fields": "note",
@@ -347,9 +351,11 @@ async def sync_internal_ctv_matrix(
     await ensure_ctv_tables(db_pool)
     ctvs = await fetch_active_ctvs(db_pool)
     forms = await fetch_forms(db_pool)
-    if not ctvs or not forms:
+    if not ctvs:
         logger.info(f"[CTV MATRIX] Skipped: {len(ctvs)} active CTVs, {len(forms)} forms.")
         return True
+
+    bot_links = await ensure_ctv_bot_links(db_pool)
 
     internal_folder_id = await drive_client.get_or_create_folder(
         http_client, token, INTERNAL_FOLDER_NAME, root_id
@@ -397,7 +403,7 @@ async def sync_internal_ctv_matrix(
             links[(code, form_id)] = {"url": url, "qr": record}
     await upsert_links(db_pool, changed)
 
-    values, merge_ranges = build_matrix_payload(ctvs, forms, links)
+    values, merge_ranges = build_matrix_payload(ctvs, forms, links, bot_links)
 
     sheet_id = await drive_client.find_file_or_folder(
         http_client, token, CTV_SHEET_NAME, internal_folder_id
@@ -465,11 +471,12 @@ async def sync_internal_ctv_matrix(
         logger.error("[CTV MATRIX] values.update failed for CTV_Info.")
         return False
 
-    merged = await drive_client.batch_update_spreadsheet(
-        http_client, token, sheet_id, build_merge_requests(numeric_sheet_id, merge_ranges)
-    )
-    if not merged:
-        logger.warning("[CTV MATRIX] Header merge batchUpdate failed.")
+    if merge_ranges:
+        merged = await drive_client.batch_update_spreadsheet(
+            http_client, token, sheet_id, build_merge_requests(numeric_sheet_id, merge_ranges)
+        )
+        if not merged:
+            logger.warning("[CTV MATRIX] Header merge batchUpdate failed.")
 
     note_requests = build_qr_note_requests(numeric_sheet_id, ctvs, forms, links)
     for form_index in range(len(forms)):
@@ -478,8 +485,8 @@ async def sync_internal_ctv_matrix(
                 "range": {
                     "sheetId": numeric_sheet_id,
                     "dimension": "COLUMNS",
-                    "startIndex": 2 + form_index * 2,
-                    "endIndex": 3 + form_index * 2,
+                    "startIndex": 3 + form_index * 2,
+                    "endIndex": 4 + form_index * 2,
                 },
                 "properties": {"pixelSize": 170},
                 "fields": "pixelSize",

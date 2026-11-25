@@ -62,6 +62,8 @@ from routers import (
     webhooks_router,
     survey_router,
 )
+from routers.ctv_login import router as ctv_login_router
+from routers.ctv_portal import router as ctv_portal_router
 from routers.admin_media import scan_media_storage_files, seed_media_storage
 from services.google_drive_delivery import has_google_credentials, sync_all_approved_to_drive
 vision_client = state.vision_client
@@ -289,7 +291,8 @@ async def inject_admin_nav(request, call_next):
     """Add the shared admin top bar and the authenticated account role."""
     response = await call_next(request)
     admin_page = request.url.path.startswith(("/admin", "/audit", "/data", "/submissions"))
-    if admin_page or getattr(request.state, "admin_user", None):
+    ctv_page = request.url.path == "/ctv" or request.url.path.startswith("/ctv/")
+    if admin_page or ctv_page or getattr(request.state, "admin_user", None):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -339,6 +342,8 @@ if os.path.exists(MEDIA_STORAGE_DIR):
 # Include decoupled domain routers
 app.include_router(system_router)
 app.include_router(login_router)
+app.include_router(ctv_login_router)
+app.include_router(ctv_portal_router)
 app.include_router(admin_forms_router)
 app.include_router(admin_data_router)
 app.include_router(admin_audit_router)
@@ -354,5 +359,5 @@ app.include_router(webhooks_router)
 app.include_router(survey_router)
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, workers=1)
+    from core.server import run_server
+    run_server()

@@ -182,3 +182,21 @@ def test_login_next_rejects_external_redirect(fake_admin):
     response = _login(client, next_url="https://evil.example/steal")
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/forms"
+
+
+def test_session_survives_browser_restart_and_expires_after_thirty_days(fake_admin, monkeypatch):
+    import core.admin_sessions as sessions
+
+    now = 1_800_000_000
+    monkeypatch.setattr(sessions.time, "time", lambda: now)
+    client = _client()
+    response = _login(client)
+    assert "Max-Age=2592000" in response.headers["set-cookie"]
+    token = client.cookies.get(COOKIE_NAME)
+
+    restarted = _client()
+    restarted.cookies.set(COOKIE_NAME, token)
+    now += 29 * 24 * 60 * 60
+    assert restarted.get("/admin/forms").status_code == 200
+    now += 24 * 60 * 60
+    assert restarted.get("/admin/forms", follow_redirects=False).status_code == 303

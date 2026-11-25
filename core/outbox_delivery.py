@@ -304,8 +304,11 @@ async def _billing(conn_str, event):
         collaborator = submission.get("collaborator_id")
         if not collaborator or collaborator != payload.get("collaborator_id"):
             return Outcome("TERMINAL", "COLLABORATOR_NOT_MAPPED")
-        cur = await conn.execute("SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id=%s AND is_active AND role='COLLABORATOR'", (collaborator,))
-        if not await cur.fetchone():
+        from core.ctv_onboarding import billing_collaborator_is_eligible
+
+        if not await billing_collaborator_is_eligible(
+            conn, collaborator, ctv_code=submission.get("ctv_code"), submitted_at=submission.get("created_at"),
+        ):
             return Outcome("TERMINAL", "COLLABORATOR_INACTIVE")
         await conn.execute(
             "INSERT INTO collaborator_billing_ledger(collaborator_id,submission_id,payout_amount_vnd,payout_status) "
@@ -333,7 +336,31 @@ async def _local_failure(conn_str, event, reason):
 async def _binding_valid(conn_str, event):
     binding = event["payload"].get("recipient_binding")
     if binding is None:
-        return True
+        message_class = event["payload"].get("message_class", "")
+        if message_class != "PARTY_VERDICT" and not message_class.endswith("_PARTY"):
+            return True
+        async with await _connect(conn_str) as conn:
+            cur = await conn.execute(
+                "SELECT ctv_code, collaborator_id, form_data #>> '{_delivery_policy,source}' AS source "
+                "FROM survey_submissions WHERE submission_id = %s",
+                (event["aggregate_id"],),
+            )
+            submission = await cur.fetchone()
+            if not submission or submission["source"] == "question":
+                return False
+            if submission["ctv_code"]:
+                cur = await conn.execute(
+                    "SELECT 1 FROM ctv_directory WHERE UPPER(code) = UPPER(%s) "
+                    "AND telegram_user_id = %s AND is_active = TRUE",
+                    (submission["ctv_code"], event["payload"].get("chat_id")),
+                )
+            else:
+                cur = await conn.execute(
+                    "SELECT 1 FROM authorized_users WHERE telegram_user_id = %s "
+                    "AND telegram_user_id = %s AND is_active AND role = 'COLLABORATOR'",
+                    (submission["collaborator_id"], event["payload"].get("chat_id")),
+                )
+            return bool(await cur.fetchone())
     if not isinstance(binding, dict) or binding.get("telegram_user_id") != event["payload"].get("chat_id"):
         return False
     try:

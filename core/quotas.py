@@ -192,8 +192,12 @@ def format_quota_report(
     return "\n".join(lines)
 
 
-async def fetch_active_quotas(db_pool, ctv_code: str) -> List[Dict[str, Any]]:
+async def fetch_active_quotas(
+    db_pool, ctv_code: str, *, strict: bool = False
+) -> List[Dict[str, Any]]:
     if not db_pool:
+        if strict:
+            raise RuntimeError("Quota database unavailable")
         return []
     try:
         async with db_pool.connection() as conn:
@@ -208,6 +212,8 @@ async def fetch_active_quotas(db_pool, ctv_code: str) -> List[Dict[str, Any]]:
                 rows = await cur.fetchall()
     except Exception as e:
         logger.warning(f"Quota query failed for {ctv_code}: {e}")
+        if strict:
+            raise
         return []
     return [
         {
@@ -224,9 +230,11 @@ async def fetch_active_quotas(db_pool, ctv_code: str) -> List[Dict[str, Any]]:
 
 
 async def fetch_ctv_submission_rows(
-    db_pool, ctv_code: str, since: Optional[datetime] = None
+    db_pool, ctv_code: str, since: Optional[datetime] = None, *, strict: bool = False
 ) -> List[Dict[str, Any]]:
     if not db_pool:
+        if strict:
+            raise RuntimeError("Quota database unavailable")
         return []
     query = (
         "SELECT form_id, created_at FROM survey_submissions "
@@ -243,14 +251,18 @@ async def fetch_ctv_submission_rows(
                 rows = await cur.fetchall()
     except Exception as e:
         logger.warning(f"Quota usage query failed for {ctv_code}: {e}")
+        if strict:
+            raise
         return []
     return [{"form_id": row[0], "created_at": row[1]} for row in rows]
 
 
 async def fetch_form_tags_map(
-    db_pool, form_ids: Optional[Iterable[str]] = None
+    db_pool, form_ids: Optional[Iterable[str]] = None, *, strict: bool = False
 ) -> Dict[str, Set[str]]:
     if not db_pool:
+        if strict:
+            raise RuntimeError("Quota database unavailable")
         return {}
     query = "SELECT form_id, tag FROM form_tags"
     params: Tuple[Any, ...] = ()
@@ -267,6 +279,8 @@ async def fetch_form_tags_map(
                 rows = await cur.fetchall()
     except Exception as e:
         logger.warning(f"form_tags query failed: {e}")
+        if strict:
+            raise
         return {}
     result: Dict[str, Set[str]] = {}
     for form_id, tag in rows:
@@ -275,9 +289,9 @@ async def fetch_form_tags_map(
 
 
 async def get_ctv_quota_evaluations(
-    db_pool, ctv_code: str, now: Optional[datetime] = None
+    db_pool, ctv_code: str, now: Optional[datetime] = None, *, strict: bool = False
 ) -> List[Dict[str, Any]]:
-    quotas = await fetch_active_quotas(db_pool, ctv_code)
+    quotas = await fetch_active_quotas(db_pool, ctv_code, strict=strict)
     if not quotas:
         return []
     current = _as_datetime(now) or datetime.now(timezone.utc)
@@ -286,8 +300,12 @@ async def get_ctv_quota_evaluations(
         for q in quotas
         if q.get("period_days") is not None
     ]
-    since = quota_window_start(max(periods), current) if periods else None
-    submissions = await fetch_ctv_submission_rows(db_pool, ctv_code, since)
+    since = (
+        quota_window_start(max(periods), current)
+        if periods and all(q.get("period_days") and int(q["period_days"]) > 0 for q in quotas)
+        else None
+    )
+    submissions = await fetch_ctv_submission_rows(db_pool, ctv_code, since, strict=strict)
     form_ids = [
         str(q.get("scope_value"))
         for q in quotas
@@ -296,7 +314,9 @@ async def get_ctv_quota_evaluations(
     has_tag_scope = any(
         str(q.get("scope_type") or "").lower() == "tag" for q in quotas
     )
-    tags_map = await fetch_form_tags_map(db_pool, None if has_tag_scope else (form_ids or None))
+    tags_map = await fetch_form_tags_map(
+        db_pool, None if has_tag_scope else (form_ids or None), strict=strict
+    )
     return [evaluate_quota(q, submissions, tags_map, current) for q in quotas]
 
 
@@ -358,7 +378,7 @@ async def resolve_ctv_code_from_ref(db_pool, ref: str) -> Optional[str]:
 
 
 async def resolve_ctv_code_for_telegram(db_pool, telegram_user_id: int) -> Optional[str]:
-    """Resolves a Telegram account to its CTV code (directory, phone, username)."""
+    """Resolve CTV authority only from the live PostgreSQL directory binding."""
     if not telegram_user_id:
         return None
     tg_id = int(telegram_user_id)
@@ -375,37 +395,6 @@ async def resolve_ctv_code_for_telegram(db_pool, telegram_user_id: int) -> Optio
                     if row and row[0]:
                         return str(row[0]).strip()
 
-                    await cur.execute(
-                        "SELECT driver_phone, username FROM authorized_users "
-                        "WHERE telegram_user_id = %s LIMIT 1;",
-                        (tg_id,),
-                    )
-                    row = await cur.fetchone()
-                    phone = str(row[0]).strip() if row and row[0] else None
-                    username = str(row[1]).strip() if row and row[1] else None
-
-                    if phone:
-                        await cur.execute(
-                            "SELECT code FROM ctv_directory WHERE is_active = TRUE "
-                            "AND REPLACE(REPLACE(phone, ' ', ''), '-', '') = "
-                            "REPLACE(REPLACE(%s, ' ', ''), '-', '') LIMIT 1;",
-                            (phone,),
-                        )
-                        row = await cur.fetchone()
-                        if row and row[0]:
-                            return str(row[0]).strip()
-                    if username:
-                        entry = get_ctv_entry(username)
-                        if entry:
-                            return str(entry["code"])
-                        code = normalize_ctv_code(username)
-                        if code:
-                            return code
         except Exception as e:
-            logger.debug(f"CTV telegram resolution failed for {tg_id}: {e}")
-
-    # In-memory fallback (cache may be loaded even if this DB call failed).
-    for code, entry in get_ctv_directory().items():
-        if entry.get("telegram_user_id") and int(entry["telegram_user_id"]) == tg_id:
-            return code
+            logger.debug("CTV telegram resolution failed for %s (%s)", tg_id, type(e).__name__)
     return None

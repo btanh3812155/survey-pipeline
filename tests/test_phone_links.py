@@ -187,9 +187,10 @@ async def test_contact_share_trusts_only_matching_user_identity():
     upsert = AsyncMock(return_value=True)
 
     with patch.object(runner, "send_message", AsyncMock()) as send_message, \
+         patch("core.ctv_onboarding.complete_ctv_onboarding", AsyncMock(return_value=None)), \
          patch("core.phone_links.upsert_phone_telegram_link", upsert):
         await runner.handle_contact_sharing(
-            chat_id=1,
+            chat_id=9241303232,
             user_id=9241303232,
             contact={"phone_number": "+84 932 090 967", "first_name": "Jerry", "user_id": 9241303232},
             from_user={"first_name": "Jerry", "id": 9241303232},

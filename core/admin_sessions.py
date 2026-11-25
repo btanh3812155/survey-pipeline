@@ -11,7 +11,7 @@ from typing import Any, Optional
 from config import settings
 
 COOKIE_NAME = "tb_admin_session"
-SESSION_TTL_SECONDS = 12 * 60 * 60
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 def password_fingerprint(encoded_hash: object) -> str:

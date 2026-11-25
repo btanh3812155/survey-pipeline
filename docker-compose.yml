@@ -7,9 +7,10 @@ services:
     image: survey-pipeline-app-dev:latest
     working_dir: /app
     restart: unless-stopped
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+    command: python -m core.server
     environment:
       - ENVIRONMENT=development
+      - WEB_CONCURRENCY=1
       - APP_BUILD_ID=${APP_BUILD_ID:?set APP_BUILD_ID to the release build id}
       - DURABLE_WEBRTC_ENABLED=${DURABLE_WEBRTC_ENABLED:-false}
       - DURABLE_LARK_ENABLED=${DURABLE_LARK_ENABLED:-false}
@@ -26,7 +27,7 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-admin@trustbridgevn.com}
-      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,caddy}
       - DATABASE_URL=postgresql://postgres:secret_password@postgres:5432/surveydb_dev
       - REDIS_URL=redis://redis:6379/1
       - GEMINI_API_KEY=${GEMINI_API_KEY}

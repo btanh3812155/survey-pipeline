@@ -50,7 +50,7 @@ def test_submissions_subdomain_retired():
         resp = client.get("/", headers={"Host": host}, follow_redirects=False)
         assert resp.status_code == 302
         assert resp.headers.get("location") != "/admin/submissions"
-        assert resp.headers.get("location", "").startswith("/forms/")
+        assert resp.headers.get("location") == "/ctv"
 
 
 def test_admin_subdomain_routing_defaults_to_forms():

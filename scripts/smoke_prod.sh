@@ -37,7 +37,7 @@ bundle_base() {
   mkdir -p "$1/migrations"
   cp -- "$REPO_ROOT/scripts/smoke_prod.sh" "$1/smoke.sh"
   local name path
-  for name in 001_submission_attempts 002_outbox_delivery 003_outbox_operations 004_image_dinov2_exceptions 005_image_dhash_exceptions 006_admin_accounts 007_admin_account_bin 008_admin_module_registry 009_drive_exports 010_drive_export_form_settings 011_engine_modules 012_db_trash 013_trash_retention_policy 014_trash_compaction_runs; do
+  for name in 001_submission_attempts 002_outbox_delivery 003_outbox_operations 004_image_dinov2_exceptions 005_image_dhash_exceptions 006_admin_accounts 007_admin_account_bin 008_admin_module_registry 009_drive_exports 010_drive_export_form_settings 011_engine_modules 012_db_trash 013_trash_retention_policy 014_trash_compaction_runs 015_ctv_auth_revision; do
     path="$REPO_ROOT/scripts/migrations/$name.sql"
     [[ -f "$path" && $(realpath -e -- "$path") == "$path" ]] || die "missing or unsafe migration: $name"
     cp -- "$path" "$1/migrations/"
