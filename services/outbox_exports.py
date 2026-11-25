@@ -222,12 +222,12 @@ async def _drive_folder(client, token, parent_id, name, guard):
 
 
 async def _drive_token(client: httpx.AsyncClient, guard) -> str | None:
-    token = settings.GOOGLE_DRIVE_ACCESS_TOKEN
-    if token:
-        return token
     oauth = (settings.GOOGLE_DRIVE_REFRESH_TOKEN, settings.GOOGLE_DRIVE_CLIENT_ID, settings.GOOGLE_DRIVE_CLIENT_SECRET)
     if not all(oauth):
-        return None
+        return settings.GOOGLE_DRIVE_ACCESS_TOKEN or None
+    # A static access token is short-lived. Prefer the refresh token whenever
+    # OAuth credentials are configured, otherwise an expired static token makes
+    # every Drive export fail as an unknown operation.
     try:
         response = await _drive_request(client, guard, "POST", "https://oauth2.googleapis.com/token",
                                         data={"grant_type": "refresh_token", "refresh_token": oauth[0], "client_id": oauth[1], "client_secret": oauth[2]})

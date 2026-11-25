@@ -243,6 +243,9 @@ async def _token():
 def drive_wire(monkeypatch):
     real_client = httpx.AsyncClient
     monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_ACCESS_TOKEN", "offline-token")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_REFRESH_TOKEN", "")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_CLIENT_ID", "")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_CLIENT_SECRET", "")
 
     def install(respond):
         calls = []
@@ -361,6 +364,19 @@ async def test_bulk_tables_preserve_master_and_per_form_rows(monkeypatch):
     assert csvs[("folder-b", "b.csv")][1][-1] == "VN-B"
     assert set(sheets) == {("root", "Master_Survey_Deliverables"), ("folder-a", "_a"), ("folder-b", "b")}
     assert len(result) == 6 and all(row["file_id"] for row in result)
+
+
+@pytest.mark.asyncio
+async def test_drive_token_prefers_refresh_over_stale_static_token(monkeypatch):
+    class Client:
+        async def request(self, method, url, **kwargs):
+            return httpx.Response(200, json={"access_token": "fresh-token"}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_ACCESS_TOKEN", "stale-token")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_REFRESH_TOKEN", "refresh")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_CLIENT_ID", "client")
+    monkeypatch.setattr(outbox_exports.settings, "GOOGLE_DRIVE_CLIENT_SECRET", "secret")
+    assert await outbox_exports._drive_token(Client(), yes_guard) == "fresh-token"
 
 
 @pytest.mark.asyncio
