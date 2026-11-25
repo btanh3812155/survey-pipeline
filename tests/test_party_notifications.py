@@ -38,6 +38,8 @@ async def test_dispatch_notifications_goes_to_collaborator_only(monkeypatch):
         assert "REJECTED" in call.kwargs["text"]
         # rejection carries a return-to-form link with the CTV ref
         assert "/forms/TB_GSM_2026_Nov_Test?ref=CTV001" in call.kwargs["text"]
+        copy_button = call.kwargs["reply_markup"]["inline_keyboard"][0][0]
+        assert copy_button == {"text": "Sao chép mã phiếu", "copy_text": {"text": "VN-TEST99"}}
 
 
 @pytest.mark.asyncio
