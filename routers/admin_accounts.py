@@ -55,7 +55,7 @@ ERRORS = {
     "account_exists": "Tên đăng nhập đã tồn tại.",
     "invalid_username": "Tên đăng nhập phải dài 3-32 ký tự, chỉ gồm chữ, số, dấu chấm, gạch dưới, gạch ngang.",
     "invalid_role": "Vai trò không hợp lệ.",
-    "last_admin": "Phải giữ ít nhất một superadmin đang hoạt động.",
+    "last_admin": "Phải giữ ít nhất một tài khoản quản trị đang hoạt động.",
     "self_change": "Không thể tự tắt, xóa hoặc hạ vai trò của mình.",
     "not_found": "Không tìm thấy tài khoản.",
     "db_unavailable": "Cơ sở dữ liệu không khả dụng.",
@@ -85,7 +85,7 @@ def _redirect(path: str = ACCOUNTS_PATH, **params: str) -> RedirectResponse:
 
 
 ROLE_LABELS = {
-    "superadmin": "Quản trị tối cao",
+    "superadmin": "Quản trị",
     "manager": "Quản lý",
     "reviewer": "Kiểm duyệt",
     "viewer": "Chỉ xem",
@@ -278,7 +278,7 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
 </section>
 <section class="card">
   <h2 data-i18n="role_section_heading">Phân quyền tài khoản</h2>
-  <p class="muted" data-i18n="role_section_hint">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa superadmin cuối cùng.</p>
+  <p class="muted" data-i18n="role_section_hint">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa quản trị cuối cùng.</p>
   <form method="post" action="{ACCOUNTS_PATH}/role" class="inline-form">
     <label><span data-i18n="account">Tài khoản</span><select name="username" required>{role_accounts}</select></label>
     <label><span data-i18n="new_role">Vai trò mới</span><select name="role" required><option value="" disabled selected data-i18n="choose_role">Chọn vai trò</option>{_role_options()}</select></label>
@@ -315,7 +315,7 @@ def _render_own_account(admin_user: str, account, msg: str = "", err: str = "") 
         recovery_block = f"""
 <section class="card recovery-card">
   <h2 data-i18n="recovery_email_heading">Email khôi phục</h2>
-  <p class="security-note" data-i18n="recovery_email_security">Chỉ superadmin thấy mục này. Thay đổi email cần xác nhận từ hộp thư hiện tại và hộp thư mới.</p>
+  <p class="security-note" data-i18n="recovery_email_security">Chỉ quản trị thấy mục này. Thay đổi email cần xác nhận từ hộp thư hiện tại và hộp thư mới.</p>
   <div class="meta-grid">
     <div class="meta-item">
       <div class="meta-key" data-i18n="recovery_email_label">Email khôi phục hiện tại</div>

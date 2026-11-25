@@ -288,12 +288,13 @@ app = FastAPI(title="Survey Verification Pipeline", lifespan=lifespan)
 async def inject_admin_nav(request, call_next):
     """Add the shared admin top bar and the authenticated account role."""
     response = await call_next(request)
-    if request.url.path.startswith("/admin") or getattr(request.state, "admin_user", None):
+    admin_page = request.url.path.startswith(("/admin", "/audit", "/data", "/submissions"))
+    if admin_page or getattr(request.state, "admin_user", None):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
-    if request.url.path.startswith("/admin") and response.headers.get(
+    if admin_page and response.headers.get(
         "content-type", ""
     ).startswith("text/html"):
         if hasattr(response, "body_iterator"):

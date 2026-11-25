@@ -29,7 +29,7 @@ Bấm **Đăng xuất** trên thanh điều hướng để kết thúc phiên.
 
 | Vai trò | Quyền chính |
 |---|---|
-| `superadmin` | Toàn bộ quản trị, gồm quản lý tài khoản, phân quyền, thùng rác, email khôi phục |
+| `superadmin` (**Quản trị**) | Toàn bộ quản trị, gồm quản lý tài khoản, phân quyền, thùng rác, email khôi phục |
 | `manager` | Biểu mẫu, dữ liệu nộp, audit, media, CTV, ảnh/object, module, exports |
 | `reviewer` | Dữ liệu nộp và các màn hình được phép xem |
 | `viewer` | Chỉ xem các màn hình được phép |

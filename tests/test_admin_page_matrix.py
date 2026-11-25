@@ -112,3 +112,19 @@ def test_authenticated_admin_page_matrix_is_accounted_for(monkeypatch):
             assert response.text.strip(), path
         if expected == 302:
             assert response.headers["location"], path
+
+
+def test_admin_aliases_receive_shared_theme_and_nav():
+    from main import app
+    from core.state import verify_admin_auth
+
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        client = TestClient(app)
+        for path in ("/audit", "/data", "/submissions"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "admin_theme.css" in response.text, path
+            assert "admin_nav.js" in response.text, path
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)
