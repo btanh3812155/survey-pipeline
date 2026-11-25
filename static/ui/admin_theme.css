@@ -1,0 +1,802 @@
+:root {
+  --bg: #f8fafd;
+  --card: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #f1f3f4;
+  --surface-active: #e8f0fe;
+  --border: #dadce0;
+  --line: #dadce0;
+  --text: #1f1f1f;
+  --fg: #1f1f1f;
+  --panel: #ffffff;
+  --muted: #5f6368;
+  --text-muted: #5f6368;
+  --accent: #0b57d0;
+  --accent-hover: #0842a0;
+  --accent-soft: #e8f0fe;
+  --primary: #0b57d0;
+  --primary-hover: #0842a0;
+  --info: #0b57d0;
+  --info-bg: #e8f0fe;
+  --success: #188038;
+  --success-bg: #e6f4ea;
+  --warning: #b06000;
+  --warning-bg: #fef7e0;
+  --danger: #c5221f;
+  --danger-bg: #fce8e6;
+  --ok: #188038;
+  --card-radius: 12px;
+  --admin-max: 1680px;
+  --admin-row: 58px;
+  --drive-bg: #f8fafd;
+  --blue: #0b57d0;
+  --blue-soft: #e8f0fe;
+  --hover: #f1f3f4;
+  --surface-hover: #f1f3f4;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: "Google Sans", Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif !important;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+body > .container,
+body > main,
+body > .admin-main,
+.container,
+main {
+  width: 100%;
+  max-width: var(--admin-max) !important;
+  margin-inline: auto !important;
+  padding: 22px 28px 48px !important;
+}
+
+body > header,
+.container > header,
+main > header,
+.admin-hero {
+  background: transparent !important;
+  color: var(--text) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 4px 0 16px !important;
+  margin: 0 0 8px !important;
+}
+
+header h1,
+.header-brand h1,
+.admin-hero h1,
+main > h1 {
+  color: var(--text) !important;
+  font-size: 1.45rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px !important;
+}
+
+header p,
+.header-brand p,
+.admin-hero p,
+p.sub {
+  color: var(--muted) !important;
+  font-size: .88rem !important;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+.card,
+.form-panel,
+.details,
+.stat-card,
+.controls-card,
+.table-wrap,
+.table-card,
+.upload-panel,
+.storage-status-card,
+.breadcrumb-bar,
+.export-progress,
+.file-card,
+.media-card,
+.photo-card,
+.modal-content,
+.drawer,
+.panel,
+details.card,
+section.card,
+.meta-item,
+.manage-body,
+.manage summary {
+  background: var(--card) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--card-radius) !important;
+  box-shadow: none !important;
+}
+
+.card h2,
+.form-panel h2,
+.details h2,
+.stat-title,
+th {
+  color: var(--muted) !important;
+}
+
+.card h2,
+.form-panel h2,
+.details h2 {
+  font-size: .95rem !important;
+  font-weight: 600 !important;
+}
+
+.stat-card {
+  padding: 16px 18px !important;
+  border-left: 3px solid var(--accent) !important;
+  min-height: 92px;
+}
+
+.stat-card.approved { border-left-color: var(--success) !important; }
+.stat-card.review { border-left-color: var(--warning) !important; }
+.stat-card.rejected { border-left-color: var(--danger) !important; }
+.stat-value { color: var(--text) !important; }
+
+table {
+  width: 100%;
+  border-collapse: separate !important;
+  border-spacing: 0;
+  background: var(--card) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+th,
+td {
+  padding: 14px 16px !important;
+  min-height: var(--admin-row);
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  vertical-align: middle !important;
+  font-size: .86rem;
+}
+
+th {
+  background: #f1f3f4 !important;
+  font-size: .72rem !important;
+  font-weight: 700 !important;
+  letter-spacing: .06em !important;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+tbody tr {
+  min-height: var(--admin-row);
+  transition: background .12s ease;
+}
+
+tbody tr:hover {
+  background: #f8fafd;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0 !important;
+}
+
+td code,
+code {
+  background: #f1f3f4 !important;
+  color: #3c4043 !important;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: .82em;
+}
+
+input,
+select,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  background: #fff !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  padding: 9px 11px !important;
+  font: inherit !important;
+  min-height: 38px;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #a8c7fa;
+  outline-offset: 1px;
+}
+
+label {
+  display: block;
+  color: var(--muted) !important;
+  font-size: .8rem !important;
+  margin: 9px 0;
+}
+
+label input[type="checkbox"],
+label input[type="radio"] {
+  display: inline-block;
+  width: auto;
+  min-height: 0;
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+button,
+.button,
+.btn,
+.nav-btn,
+button[type="submit"],
+input[type="submit"] {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-weight: 600;
+  font-size: .82rem;
+  cursor: pointer;
+  min-height: 38px;
+}
+
+button:hover,
+.button:hover,
+.btn:hover,
+.nav-btn:hover {
+  background: var(--accent-hover);
+}
+
+button.danger,
+.button.danger,
+.btn.danger,
+.nav-btn.danger {
+  background: #fff;
+  border-color: #f2b8b5;
+  color: var(--danger);
+}
+
+.button.secondary,
+button.secondary,
+.nav-btn.secondary {
+  background: #fff;
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+/* Inline icon buttons in the static Drive managers should remain quiet. */
+.drive-sidebar button,
+.sidebar button,
+.tree-root button,
+.toolbar-controls button:not(.primary),
+.icon-button,
+.close-btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+  min-height: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.actions,
+.header-actions,
+.toolbar-controls,
+.hero-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.badge,
+.status-pill,
+.status,
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px !important;
+  padding: 4px 9px !important;
+  font-size: .72rem !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+
+.badge.on,
+.status-pill.ok,
+.status.approved {
+  background: var(--success-bg) !important;
+  color: var(--success) !important;
+}
+
+.badge.off,
+.status-pill.bad,
+.status.rejected {
+  background: var(--danger-bg) !important;
+  color: var(--danger) !important;
+}
+
+.status.review,
+.status-pill.warn {
+  background: var(--warning-bg) !important;
+  color: var(--warning) !important;
+}
+
+.notice,
+.flash {
+  border-radius: 10px !important;
+  border: 1px solid transparent;
+  padding: 11px 14px !important;
+  font-size: .86rem;
+}
+
+.notice.ok,
+.flash.ok {
+  background: var(--success-bg) !important;
+  color: var(--success) !important;
+  border-color: #b7dfc2 !important;
+}
+
+.notice.bad,
+.flash.bad {
+  background: var(--danger-bg) !important;
+  color: var(--danger) !important;
+  border-color: #f2b8b5 !important;
+}
+
+.muted,
+.hint,
+.sub,
+.help {
+  color: var(--muted) !important;
+}
+
+/* The large static managers use a dark Drive-like shell. Keep their layout,
+   but lift it into the same light surface system as exports. */
+.drive-sidebar,
+.drive-side,
+.sidebar {
+  background: #fff !important;
+  border-right: 1px solid var(--border) !important;
+  color: var(--text) !important;
+}
+
+.drive-main,
+.main-content,
+.content {
+  background: transparent !important;
+  color: var(--text) !important;
+}
+
+.tree-item,
+.tree-row,
+.sidebar-item,
+.folder-row {
+  color: var(--text) !important;
+}
+
+.tree-item:hover,
+.tree-row:hover,
+.sidebar-item:hover,
+.folder-row:hover {
+  background: var(--surface-hover) !important;
+}
+
+.tree-item.active,
+.tree-row.active,
+.sidebar-item.active,
+.folder-row.active {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+
+.dropzone-inline,
+.upload-dropzone,
+.dropzone {
+  background: #f8fafd !important;
+  border: 1px dashed #a8c7fa !important;
+  color: var(--muted) !important;
+}
+
+.table-scroll,
+.table-container {
+  background: transparent !important;
+}
+
+.empty-state,
+.empty {
+  background: #fff !important;
+  color: var(--muted) !important;
+  border: 1px dashed var(--border) !important;
+  border-radius: 12px !important;
+}
+
+.modal,
+.modal-backdrop {
+  color: var(--text);
+}
+
+.modal-content,
+.drawer {
+  background: #fff !important;
+}
+
+/* Admin top bar: use the light Drive accent system instead of the old dark bar. */
+#adminTopBar {
+  background: #fff !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text) !important;
+}
+
+#adminTopBar .inner {
+  max-width: var(--admin-max) !important;
+  padding: 8px 24px !important;
+}
+#adminTopBar .brand {
+  color: #3c4043 !important;
+  font-weight: 700 !important;
+}
+
+#adminTopBar button {
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  color: #3c4043 !important;
+  border-radius: 999px !important;
+}
+
+#adminTopBar button:hover,
+#adminTopBar a:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text) !important;
+}
+
+#adminTopBar .menu {
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 4px 18px rgba(60, 64, 67, .18) !important;
+}
+
+#adminTopBar a {
+  color: #3c4043 !important;
+}
+
+#adminTopBar a.active {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+
+/* Reusable admin primitives for the rewritten CTV screen. */
+.admin-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.admin-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+
+.admin-toolbar .search {
+  position: relative;
+  flex: 1 1 320px;
+  max-width: 560px;
+}
+
+.admin-toolbar .search input {
+  padding-left: 38px !important;
+  margin: 0 !important;
+}
+
+.admin-toolbar .search::before {
+  content: "⌕";
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 18px;
+  pointer-events: none;
+}
+
+.filter-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-pills a,
+.filter-pills button {
+  background: #fff !important;
+  color: var(--muted) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  padding: 7px 12px !important;
+  min-height: 0 !important;
+  font-size: .78rem !important;
+}
+
+.filter-pills a.active,
+.filter-pills button.active {
+  background: var(--accent-soft) !important;
+  border-color: #a8c7fa !important;
+  color: var(--accent) !important;
+}
+
+.table-card {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.table-card table {
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.row-actions form {
+  display: inline;
+  margin: 0;
+}
+
+.row-actions button {
+  min-height: 30px !important;
+  padding: 5px 10px !important;
+  font-size: .74rem !important;
+}
+
+.row-edit {
+  margin-top: 6px;
+}
+
+.row-edit summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 700;
+  list-style: none;
+}
+
+.row-edit summary::-webkit-details-marker {
+  display: none;
+}
+
+.row-edit form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  background: #f8fafd;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.row-edit form label {
+  margin: 0;
+}
+
+.row-edit form .wide {
+  grid-column: 1 / -1;
+}
+
+.row-edit form .actions {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-title h2 {
+  margin: 0;
+}
+
+.panel-title .muted {
+  font-size: .76rem;
+}
+
+.qr-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #f8fafd;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+@media (max-width: 1100px) {
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  body > .container,
+  body > main,
+  .container,
+  main {
+    padding: 16px 14px 36px !important;
+  }
+
+  #adminTopBar .inner {
+    padding: 6px 12px !important;
+  }
+
+  th,
+  td {
+    padding: 12px 10px !important;
+  }
+
+  .row-edit form {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Page-specific dark remnants in the large static managers. */
+.brand-banner {
+  background: #fff !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+
+.brand-banner h1,
+.brand-banner-title h1,
+.form-item-card h3 {
+  color: var(--text) !important;
+}
+
+.brand-banner p,
+.brand-banner-title p,
+.form-item-card .form-item-meta,
+.form-item-card .form-item-meta * {
+  color: var(--muted) !important;
+}
+
+.form-item-card {
+  background: #fff !important;
+  border-color: var(--border) !important;
+}
+
+.form-item-card .form-item-meta {
+  background: #f8fafd !important;
+}
+
+.form-item-card .btn-action {
+  background: #fff !important;
+  border-color: var(--border) !important;
+  color: var(--accent) !important;
+}
+
+.form-item-card .btn-action:hover {
+  background: var(--accent-soft) !important;
+}
+
+.upload-controls label,
+.upload-controls .folder-select {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.empty-state h3,
+.empty-state h4,
+.empty-state p,
+.empty-state strong {
+  color: var(--text) !important;
+}
+
+.empty-state svg {
+  fill: var(--muted) !important;
+}
+
+.modal-box,
+.modal-content,
+.modal-overlay .modal-box {
+  background: #fff !important;
+  color: var(--text) !important;
+}
+
+.modal-box h3,
+.modal-box h2,
+.modal-box p,
+.modal-box label {
+  color: var(--text) !important;
+}
+
+
+.mono,
+code.mono {
+  color: var(--accent) !important;
+}
+
+.enabled {
+  color: var(--success) !important;
+}
+
+.disabled,
+.err {
+  color: var(--danger) !important;
+}

@@ -451,11 +451,12 @@ async def update_ctv_directory_entry(
     display_name: Optional[str] = None,
     phone: Optional[str] = None,
     is_active: bool = True,
+    notes: Optional[str] = None,
 ) -> bool:
     """Updates one directory row and refreshes the process cache.
 
-    `telegram_user_id` is intentionally not editable here; it is populated
-    internally when a CTV binds the Telegram bot and used only as a fallback.
+    `telegram_user_id` is populated internally when a CTV binds the Telegram bot.
+    `notes` is only changed when supplied (empty string clears it).
     """
     normalized = normalize_ctv_code(code)
     if not db_pool or not normalized:
@@ -465,22 +466,42 @@ async def update_ctv_directory_entry(
     try:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE ctv_directory SET
-                        display_name = %s,
-                        phone = %s,
-                        is_active = %s,
-                        updated_at = NOW()
-                    WHERE code = %s;
-                    """,
-                    (
-                        str(display_name).strip() or None if display_name is not None else None,
-                        _clean_phone(phone) if phone else None,
-                        bool(is_active),
-                        stored_code,
-                    ),
-                )
+                if notes is None:
+                    await cur.execute(
+                        """
+                        UPDATE ctv_directory SET
+                            display_name = %s,
+                            phone = %s,
+                            is_active = %s,
+                            updated_at = NOW()
+                        WHERE code = %s;
+                        """,
+                        (
+                            str(display_name).strip() or None if display_name is not None else None,
+                            _clean_phone(phone) if phone else None,
+                            bool(is_active),
+                            stored_code,
+                        ),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        UPDATE ctv_directory SET
+                            display_name = %s,
+                            phone = %s,
+                            notes = %s,
+                            is_active = %s,
+                            updated_at = NOW()
+                        WHERE code = %s;
+                        """,
+                        (
+                            str(display_name).strip() or None if display_name is not None else None,
+                            _clean_phone(phone) if phone else None,
+                            str(notes).strip() or None,
+                            bool(is_active),
+                            stored_code,
+                        ),
+                    )
                 updated = int(getattr(cur, "rowcount", 1) or 0) > 0
             await conn.commit()
     except Exception as e:
@@ -489,6 +510,72 @@ async def update_ctv_directory_entry(
     if updated:
         await refresh_ctv_directory_cache(db_pool)
     return updated
+
+
+async def create_ctv_directory_entry(
+    db_pool,
+    code: str,
+    display_name: Optional[str] = None,
+    phone: Optional[str] = None,
+    telegram_user_id: Optional[int] = None,
+    notes: Optional[str] = None,
+    is_active: bool = True,
+) -> bool:
+    """Creates one CTV directory row. Returns False when the code exists."""
+    normalized = normalize_ctv_code(code)
+    if not db_pool or not normalized:
+        return False
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO ctv_directory
+                        (code, display_name, phone, telegram_user_id, is_active, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (code) DO NOTHING
+                    RETURNING code;
+                    """,
+                    (
+                        normalized,
+                        str(display_name).strip() or None if display_name is not None else None,
+                        _clean_phone(phone) if phone else None,
+                        int(telegram_user_id) if telegram_user_id not in (None, "") else None,
+                        bool(is_active),
+                        str(notes).strip() or None if notes is not None else None,
+                    ),
+                )
+                created = await cur.fetchone() is not None
+            await conn.commit()
+    except Exception as e:
+        logger.warning(f"CTV directory create failed for {code}: {e}")
+        return False
+    if created:
+        await refresh_ctv_directory_cache(db_pool)
+    return created
+
+
+async def delete_ctv_directory_entry(db_pool, code: str) -> bool:
+    """Removes a CTV and its form links/quotas. Historical submissions stay intact."""
+    normalized = normalize_ctv_code(code)
+    if not db_pool or not normalized:
+        return False
+    entry = get_ctv_entry(code)
+    stored_code = entry["code"] if entry else str(code).strip()
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM ctv_quotas WHERE ctv_code = %s", (stored_code,))
+                await cur.execute("DELETE FROM ctv_form_links WHERE ctv_code = %s", (stored_code,))
+                await cur.execute("DELETE FROM ctv_directory WHERE code = %s RETURNING code", (stored_code,))
+                deleted = await cur.fetchone() is not None
+            await conn.commit()
+    except Exception as e:
+        logger.warning(f"CTV directory delete failed for {code}: {e}")
+        return False
+    if deleted:
+        await refresh_ctv_directory_cache(db_pool)
+    return deleted
 
 
 async def ensure_ctv_platform_schema(db_pool=None) -> bool:

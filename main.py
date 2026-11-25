@@ -304,8 +304,11 @@ async def inject_admin_nav(request, call_next):
         if role not in {"superadmin", "manager", "reviewer", "viewer"}:
             role = "viewer"
         meta = f'<meta name="admin-role" content="{role}">'.encode()
+        theme = (
+            f'<link rel="stylesheet" href="/static/ui/admin_theme.css?v={quote(settings.APP_BUILD_ID, safe="")}">'
+        ).encode()
         if b"</head>" in body:
-            body = body.replace(b"</head>", meta + b"</head>", 1)
+            body = body.replace(b"</head>", theme + meta + b"</head>", 1)
         if b"</body>" in body:
             nav_script = (
                 f'<script src="/static/ui/admin_i18n.js?v={quote(settings.APP_BUILD_ID, safe="")}" defer></script>'

@@ -51,7 +51,7 @@ allow_code() {
   case "$1" in
     *credential*|*secret*|*service_account*|*private_key*|*devfile*|*backup*|*token*) return 1 ;;
   esac
-  [[ $1 =~ ^(main\.py|config\.py|(core|routers|services|workers)/[a-z_][a-z0-9_]*\.py|static/(ui/[a-z_][a-z0-9_]*\.html|ui/(admin_nav|admin_i18n)\.js|qrcode\.min\.js)|scripts/migrations/(001_submission_attempts|002_outbox_delivery|003_outbox_operations|007_admin_account_bin|008_admin_module_registry|009_drive_exports|010_drive_export_form_settings|011_engine_modules|012_db_trash|013_trash_retention_policy|014_trash_compaction_runs)\.sql)$ ]]
+  [[ $1 =~ ^(main\.py|config\.py|(core|routers|services|workers)/[a-z_][a-z0-9_]*\.py|static/(ui/[a-z_][a-z0-9_]*\.(html|css)|ui/(admin_nav|admin_i18n)\.js|qrcode\.min\.js)|scripts/migrations/(001_submission_attempts|002_outbox_delivery|003_outbox_operations|007_admin_account_bin|008_admin_module_registry|009_drive_exports|010_drive_export_form_settings|011_engine_modules|012_db_trash|013_trash_retention_policy|014_trash_compaction_runs)\.sql)$ ]]
 }
 
 if [[ -n "$ROLLBACK" ]]; then

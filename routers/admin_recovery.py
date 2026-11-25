@@ -14,7 +14,7 @@ HEADERS = {
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 }
 UNAVAILABLE = "Dịch vụ khôi phục hiện không khả dụng. Hãy liên hệ quản trị hệ thống."
 INVALID_CODE = "Không xác nhận được mã. Kiểm tra lại mã hoặc yêu cầu mã mới."

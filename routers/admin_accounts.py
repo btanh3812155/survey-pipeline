@@ -125,7 +125,7 @@ _ACCOUNT_HEADERS = {
     "X-Frame-Options": "DENY",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; "
+        "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
         "img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     ),
 }

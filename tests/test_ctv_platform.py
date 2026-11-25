@@ -87,27 +87,42 @@ class FakeCursor:
                     updated_rows.append(row)
             if self.rowcount:
                 self.pool.directory_rows = updated_rows
+        elif normalized.startswith("INSERT INTO ctv_directory"):
+            code = str(params[0]) if params else ""
+            if any(str(row[0]) == code for row in self.pool.directory_rows):
+                self.rowcount = 0
+            else:
+                self.pool.directory_rows.append(
+                    (code, params[1], params[2], params[3], params[4], params[5])
+                )
+                self._rows = [(code,)]
+                self.rowcount = 1
         elif normalized.startswith("DELETE FROM ctv_form_links"):
-            legacy = set(params[0]) if params else set()
+            raw = params[0] if params else None
+            legacy = {raw} if isinstance(raw, str) else set(raw or ())
             before = len(self.pool.link_rows)
             self.pool.link_rows = [
                 row for row in self.pool.link_rows if str(row[0]) not in legacy
             ]
             self.rowcount = before - len(self.pool.link_rows)
         elif normalized.startswith("DELETE FROM ctv_quotas"):
-            legacy = set(params[0]) if params else set()
+            raw = params[0] if params else None
+            legacy = {raw} if isinstance(raw, str) else set(raw or ())
             before = len(self.pool.quota_rows)
             self.pool.quota_rows = [
                 row for row in self.pool.quota_rows if str(row[0]) not in legacy
             ]
             self.rowcount = before - len(self.pool.quota_rows)
         elif normalized.startswith("DELETE FROM ctv_directory"):
-            legacy = set(params[0]) if params else set()
+            raw = params[0] if params else None
+            legacy = {raw} if isinstance(raw, str) else set(raw or ())
             before = len(self.pool.directory_rows)
             self.pool.directory_rows = [
                 row for row in self.pool.directory_rows if str(row[0]) not in legacy
             ]
             self.rowcount = before - len(self.pool.directory_rows)
+            if self.rowcount:
+                self._rows = [(raw,)]
         elif "FROM authorized_users" in normalized:
             self._rows = list(self.pool.authorized_rows)
         elif "FROM ctv_form_links" in normalized:
@@ -586,3 +601,39 @@ async def test_phone_shaped_collaborator_never_becomes_a_chat_id():
     pool = FakePool(authorized_rows=[(9241303232,)])
     with patch.object(survey_router, "get_db_pool", return_value=pool):
         assert await survey_router.lookup_telegram_user_for_collaborator("9241303232") == 9241303232
+
+
+@pytest.mark.asyncio
+async def test_create_and_delete_ctv_directory_entries():
+    from core.ctv import create_ctv_directory_entry, delete_ctv_directory_entry
+
+    pool = FakePool(directory_rows=[("OLD_001", "Old", None, None, True, None)])
+    assert await create_ctv_directory_entry(
+        pool, "new ctv", display_name="New CTV", phone="0909 111 222",
+        notes="created from admin", is_active=True,
+    ) is True
+    assert get_ctv_entry("NEW_CTV")["display_name"] == "New CTV"
+    assert get_ctv_entry("NEW_CTV")["phone"] == "0909111222"
+    assert await create_ctv_directory_entry(pool, "NEW_CTV") is False
+    assert await delete_ctv_directory_entry(pool, "NEW_CTV") is True
+    assert get_ctv_entry("NEW_CTV") is None
+    assert get_ctv_entry("OLD_001")["code"] == "OLD_001"
+
+
+def test_admin_ctv_page_has_theme_add_and_delete_actions():
+    from fastapi.testclient import TestClient
+    from main import app
+    from core.state import verify_admin_auth
+
+    client = TestClient(app)
+    app.dependency_overrides[verify_admin_auth] = lambda: "admin"
+    try:
+        response = client.get("/admin/ctvs")
+    finally:
+        app.dependency_overrides.pop(verify_admin_auth, None)
+
+    assert response.status_code == 200
+    assert "admin_theme.css" in response.text
+    assert 'action="/admin/ctvs"' in response.text
+    assert "Thêm CTV" in response.text
+    assert "/delete" in response.text
