@@ -365,6 +365,8 @@ def test_admin_language_toggle_assets_are_wired():
     assert "i18nEnabled" not in nav
     assert "AdminI18n.toggle" in nav
     assert "localStorage.getItem('tb_lang')" in i18n
+    assert "translateDom" in i18n
+    assert "Quản Lý CTV" in i18n and "CTV Management" in i18n
     assert "color-scheme: dark;" in theme
     assert ':root[data-theme="light"]' in theme
     assert "accounts_title" in i18n and "Admin account management" in i18n

@@ -232,33 +232,238 @@
       client_meta_all: '{id} · all forms'
     }
   };
+  const phraseMap = {
+    'Quản Lý CTV': 'CTV Management',
+    'Tổng CTV': 'Total CTVs',
+    'Đang hoạt động': 'Active',
+    'Bài nộp liên kết': 'Linked Submissions',
+    'Hoạt động gần nhất': 'Latest Activity',
+    '+ Thêm CTV': '+ Add CTV',
+    'Thêm CTV': 'Add CTV',
+    'Tạo danh bạ mới': 'Create directory entry',
+    'Tạo liên kết và mã QR CTV': 'Generate CTV Link & QR Code',
+    'CTV đang hoạt động': 'Active CTV',
+    'Biểu mẫu công khai đang mở': 'Open public form',
+    'Chọn CTV': 'Select CTV',
+    'Chọn biểu mẫu': 'Select form',
+    'Tạo liên kết / QR': 'Generate Link / QR',
+    'Liên kết': 'Link',
+    'Sao chép liên kết': 'Copy Link',
+    'Chia sẻ liên kết': 'Share Link',
+    'Sao chép ảnh QR': 'Copy QR Image',
+    'Chia sẻ ảnh QR': 'Share QR Image',
+    'Tải PNG': 'Download PNG',
+    'Tất cả': 'All',
+    'Hoạt động': 'Active',
+    'Đã tắt': 'Inactive',
+    '● Hoạt động': '● Active',
+    '● Đã tắt': '● Inactive',
+    'Mã CTV': 'CTV Code',
+    'Liên hệ': 'Contact',
+    'Trạng thái': 'Status',
+    'Trạng Thái': 'Status',
+    'Bài nộp': 'Submissions',
+    'Mục tiêu': 'Goals',
+    'Thao tác': 'Actions',
+    'Thao Tác': 'Actions',
+    'Tên hiển thị': 'Display Name',
+    'Số điện thoại': 'Phone Number',
+    'Số Điện Thoại': 'Phone Number',
+    'Ghi chú': 'Notes',
+    'Kích hoạt ngay': 'Activate immediately',
+    'Quy ước': 'Conventions',
+    'Chưa cấu hình': 'Not configured',
+    'Chưa có CTV nào trong danh bạ.': 'No CTVs in directory yet.',
+    'Tìm theo mã, tên, số điện thoại hoặc ghi chú...': 'Search by code, name, phone, or notes...',
+    'Danh bạ cộng tác viên, liên hệ, Telegram, mục tiêu và số bài nộp. Thêm, sửa, tạm tắt hoặc xóa CTV ngay tại đây.': 'Collaborator directory, contacts, Telegram, goals, and submissions. Add, edit, disable, or delete CTVs here.',
+    'Chỉ liệt kê CTV đang hoạt động được xác nhận từ cơ sở dữ liệu và biểu mẫu công khai, còn nhận phản hồi, bật ghi nhận CTV. Tải lại trang để cập nhật danh sách.': 'Only lists active CTVs confirmed from the database and open public forms with CTV tracking enabled. Reload to refresh.',
+    'Sửa CTV': 'Edit CTV',
+    'Lưu thay đổi': 'Save changes',
+    'Xóa CTV': 'Delete CTV',
+    'Chính thức': 'Production',
+    'Thử nghiệm': 'Test Mode',
+    'Tất cả trạng thái': 'All statuses',
+    'Không gắn CTV': 'No CTV attached',
+    'GẮN MÃ CTV (TÙY CHỌN)': 'ATTACH CTV CODE (OPTIONAL)',
+    'ĐƯỜNG DẪN BIỂU MẪU CHÍNH THỨC': 'PRODUCTION FORM LINK',
+    'Sắp xếp: Mặc định': 'Sort: Default',
+    'Sắp xếp: Mới sửa đổi': 'Sort: Recently modified',
+    'Tên (A → Z)': 'Name (A → Z)',
+    'Tên (Z → A)': 'Name (Z → A)',
+    'Số câu hỏi (Nhiều nhất)': 'Questions (Most)',
+    'Trang trước': 'Previous',
+    'Trang sau': 'Next',
+    'Mã Hồ Sơ': 'Submission ID',
+    'Thời Gian Nộp': 'Submitted At',
+    'Tài Xế': 'Driver',
+    'Biển Số Xe': 'License Plate',
+    'Biển Số Phát Hiện': 'Detected Plate',
+    'Nguồn Dữ Liệu': 'Data Source',
+    'Tất cả nguồn lưu': 'All sources',
+    'Tất cả CTV / Giới thiệu': 'All CTVs / Referrals',
+    'Đã Duyệt (APPROVED)': 'Approved (APPROVED)',
+    'Chờ Duyệt (MANUAL_REVIEW)': 'Pending Review (MANUAL_REVIEW)',
+    'Bị Từ Chối (REJECTED)': 'Rejected (REJECTED)',
+    'Khiếu Nại (APPEAL_PENDING)': 'Appeal Pending (APPEAL_PENDING)',
+    'PostgreSQL (Chính thức)': 'PostgreSQL (Production)',
+    'Thử nghiệm (Dev Test)': 'Test (Dev Test)',
+    'Chi Tiết Hồ Sơ Khảo Sát': 'Submission Details',
+    'Câu Trả Lời Biểu Mẫu': 'Form Answers',
+    'Hình Ảnh Upload': 'Uploaded Images',
+    'Kết Quả Kiểm Toán AI': 'AI Audit Result',
+    'Dữ Liệu Gốc (JSON)': 'Raw Data (JSON)',
+    'Loại Trùng Lặp': 'Duplicate Type',
+    'Trùng Lặp (Duplicate)': 'Duplicate',
+    'Độ Mờ (Blur Score)': 'Blur Score',
+    'Mô Hình Phân Tích': 'Analysis Model',
+    'Mã Hash Dữ Liệu': 'Data Hash',
+    'Không tìm thấy bản ghi nào phù hợp bộ lọc': 'No records match the current filters',
+    '↺ Đặt lại lọc': '↺ Reset filters',
+    '↺ Thử lại tác vụ': '↺ Retry job',
+    '« Đầu': '« First',
+    '‹ Trước': '‹ Prev',
+    'Sau ›': 'Next ›',
+    'Cuối »': 'Last »',
+    'Xóa': 'Delete',
+    'Thời Gian': 'Time',
+    'Thời Gian Ghi Nhận': 'Recorded At',
+    'Chặng & Thành Phần': 'Stage & Component',
+    'Chặng Kiểm Toán': 'Audit Stage',
+    'Hành Động': 'Action',
+    'Đối Tượng': 'Entity',
+    'Đối Tượng Ảnh Hưởng': 'Affected Entity',
+    'Tác Nhân': 'Actor',
+    'Tác Nhân Thực Hiện': 'Actor',
+    'Địa Chỉ IP': 'IP Address',
+    'Chi Tiết': 'Details',
+    'Chi Tiết Sự Kiện Kiểm Toán': 'Audit Event Details',
+    'Tất cả thành phần (Components)': 'All components',
+    'Tất cả loại đối tượng (Entities)': 'All entity types',
+    'Chưa có sự kiện kiểm toán nào phù hợp bộ lọc': 'No audit events match the current filters',
+    'Thư mục tải:': 'Upload folder:',
+    'Thông Tin Tệp': 'File Info',
+    'Tên Tệp (Có Thể Chỉnh Sửa)': 'File Name (Editable)',
+    'Đường Dẫn URL Trực Tiếp': 'Direct URL',
+    'Cú Pháp Markdown Mô Tả Form': 'Form Description Markdown',
+    'Kích Thước & Dung Lượng': 'Dimensions & Size',
+    'Thư Mục Lưu Trữ (Dropdown Di Chuyển)': 'Storage Folder (Move)',
+    'Thùng rác': 'Trash',
+    'Dọn ngay': 'Compact now',
+    'Khôi phục': 'Restore',
+    'Thực thể': 'Entity',
+    'Loại': 'Type',
+    'Đã xóa': 'Deleted',
+    'Tệp lưu': 'Stored file',
+    'Tạo module': 'Create module',
+    'Lưu định nghĩa': 'Save definition',
+    'Chạy an toàn': 'Safe run',
+    'Object ảnh': 'Image Objects',
+    'Object ảnh & Check Engine': 'Image Objects & Check Engines',
+    'Danh sách engine tích hợp': 'Built-in Check Engines',
+    'Tạo object': 'Create object',
+    'Tạo object mới': 'Create new object',
+    'Lưu object': 'Save object',
+    'Xóa object': 'Delete object',
+    'Mô tả': 'Description',
+    'Triển khai': 'Implementation',
+    'Đường dẫn': 'Path',
+    'Tệp': 'File',
+    'Lỗi': 'Error',
+    '1. Thông tin chung': '1. General Info',
+    '2. Tùy chọn & Cài đặt': '2. Options & Settings',
+    '3. Danh sách câu hỏi': '3. Questions',
+    '+ Thêm Câu Hỏi Mới': '+ Add Question',
+    '+ Thêm Module': '+ Add Module',
+    '+ Thêm Slot Ảnh': '+ Add Image Slot',
+    '+ Thêm lựa chọn': '+ Add Option',
+    '+ Thêm điều kiện (AND)': '+ Add Condition (AND)',
+    '+ Thêm nhóm (OR)': '+ Add Group (OR)',
+    'Chế độ vận hành': 'Operating Mode',
+    'Câu hỏi': 'Question'
+  };
+  const origText = new WeakMap();
+  const origPlaceholder = new WeakMap();
+  const origTitle = new WeakMap();
+  const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
+  let applying = false;
+
+  const translateDom = (root, lang) => {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent || skipTags.has(parent.tagName)) continue;
+      if (parent.closest('[data-i18n], [data-role-label], [data-account-option], [data-i18n-template], #adminLangCode')) continue;
+      if (!origText.has(node)) {
+        const raw = node.nodeValue || '';
+        const trimmed = raw.trim();
+        if (!trimmed || !(trimmed in phraseMap)) continue;
+        origText.set(node, raw);
+      }
+      const saved = origText.get(node);
+      if (lang === 'en') {
+        const match = saved.match(/^(\s*)([\s\S]*?)(\s*)$/);
+        const translated = phraseMap[match[2]];
+        if (translated) node.nodeValue = match[1] + translated + match[3];
+      } else {
+        node.nodeValue = saved;
+      }
+    }
+    const targets = root.querySelectorAll ? root.querySelectorAll('input[placeholder], textarea[placeholder], [title]') : [];
+    targets.forEach((el) => {
+      if (el.hasAttribute('data-i18n-placeholder')) return;
+      if (el.placeholder) {
+        if (!origPlaceholder.has(el) && (el.placeholder.trim() in phraseMap)) origPlaceholder.set(el, el.placeholder);
+        if (origPlaceholder.has(el)) {
+          const saved = origPlaceholder.get(el);
+          el.placeholder = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+        }
+      }
+      if (el.title) {
+        if (!origTitle.has(el) && (el.title.trim() in phraseMap)) origTitle.set(el, el.title);
+        if (origTitle.has(el)) {
+          const saved = origTitle.get(el);
+          el.title = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+        }
+      }
+    });
+  };
+
   const getLang = () => localStorage.getItem('tb_lang') === 'en' ? 'en' : 'vi';
   const t = (key, lang) => {
     const selected = lang === 'vi' || lang === 'en' ? lang : getLang();
     return (messages[selected] && messages[selected][key]) || messages.vi[key] || key;
   };
   function apply(root = document) {
-    root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
-    root.querySelectorAll('[data-role-label]').forEach(el => {
-      const role = el.dataset.roleLabel || '';
-      el.textContent = t('role_' + role);
-    });
-    root.querySelectorAll('[data-account-option]').forEach(el => {
-      const username = el.dataset.accountUsername || '';
-      const role = el.dataset.accountRole || '';
-      el.textContent = username + ' (' + t('role_' + role) + ')';
-    });
-    root.querySelectorAll('[data-i18n-template]').forEach(el => {
-      const values = {
-        id: el.dataset.metaId || '',
-        count: el.dataset.metaCount || '',
-        inherited: el.dataset.inherited || ''
-      };
-      el.textContent = t(el.dataset.i18nTemplate).replace(/\{(\w+)\}/g, (_m, name) => values[name] || '');
-    });
-    root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-      el.placeholder = t(el.dataset.i18nPlaceholder);
-    });
+    if (applying) return;
+    applying = true;
+    try {
+      root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+      root.querySelectorAll('[data-role-label]').forEach(el => {
+        const role = el.dataset.roleLabel || '';
+        el.textContent = t('role_' + role);
+      });
+      root.querySelectorAll('[data-account-option]').forEach(el => {
+        const username = el.dataset.accountUsername || '';
+        const role = el.dataset.accountRole || '';
+        el.textContent = username + ' (' + t('role_' + role) + ')';
+      });
+      root.querySelectorAll('[data-i18n-template]').forEach(el => {
+        const values = {
+          id: el.dataset.metaId || '',
+          count: el.dataset.metaCount || '',
+          inherited: el.dataset.inherited || ''
+        };
+        el.textContent = t(el.dataset.i18nTemplate).replace(/\{(\w+)\}/g, (_m, name) => values[name] || '');
+      });
+      root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = t(el.dataset.i18nPlaceholder);
+      });
+      translateDom(root === document ? document.body : root, getLang());
+    } finally {
+      applying = false;
+    }
   }
   function setLang(next) {
     localStorage.setItem('tb_lang', next === 'en' ? 'en' : 'vi');
@@ -273,5 +478,10 @@
   document.addEventListener('DOMContentLoaded', () => {
     document.documentElement.lang = getLang();
     apply();
+    if (document.body && typeof MutationObserver !== 'undefined') {
+      new MutationObserver(() => {
+        if (!applying && getLang() === 'en') apply(document.body);
+      }).observe(document.body, { childList: true, subtree: true });
+    }
   });
 })();
