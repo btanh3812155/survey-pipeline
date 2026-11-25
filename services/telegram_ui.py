@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-COPY_SURVEY_ID_LABEL = "📋 Sao chép mã phiếu"
+COPY_SURVEY_ID_LABEL = "Sao chép mã phiếu"
 
 
 def survey_copy_button(submission_id: Any) -> dict[str, Any]:

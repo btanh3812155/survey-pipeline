@@ -160,6 +160,8 @@ a { color:var(--blue); text-decoration:none; }
 #exportProgressStatus { color:var(--blue); font-weight:600; font-size:13px; }
 .export-progress-bar { height:8px; background:#e8f0fe; border-radius:999px; overflow:hidden; margin:12px 0 8px; }
 .export-progress-bar span { display:block; height:100%; width:0; background:var(--blue); border-radius:999px; transition:width .35s ease; }
+.export-progress-bar span.running { width:30% !important; animation: exportProgressSlide 1.15s ease-in-out infinite; }
+@keyframes exportProgressSlide { from { margin-left:-30%; } to { margin-left:100%; } }
 .export-progress-meta { color:var(--muted); font-size:12px; }
 .export-progress pre { margin-top:10px; max-height:180px; }
 .details h3 { font-size:13px; margin:14px 0 6px; color:#3c4043; }
@@ -192,6 +194,14 @@ def _esc(value: Any) -> str:
 
 def _checked(condition: bool) -> str:
     return " checked" if condition else ""
+
+
+_EXPORT_PAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
 
 
 def _pool():
@@ -460,7 +470,6 @@ progress_html = """
   const runForm = document.getElementById('runExportForm');
   const runButton = document.getElementById('runExportButton');
   let timer = null;
-  let reloaded = false;
   const setRunning = (running) => {
     if (runButton) {
       runButton.disabled = running;
@@ -497,25 +506,22 @@ progress_html = """
       ].join(' · ');
       const running = data.status === 'running';
       setRunning(running);
-      bar.style.width = running ? '45%' : '100%';
+      bar.classList.toggle('running', running);
+      bar.style.width = running ? '30%' : '100%';
       if (!running) {
         reportEl.hidden = false;
         reportEl.textContent = JSON.stringify(report, null, 2);
         if (timer) { clearInterval(timer); timer = null; }
-        if (!reloaded && (data.status === 'ok' || data.status === 'completed_with_errors')) {
-          reloaded = true;
-          setTimeout(() => location.reload(), 1200);
-        }
       }
     } catch (_) {}
   }
-  if (runForm) {
-    runForm.addEventListener('submit', async (event) => {
+  if (runButton && runForm) {
+    runButton.addEventListener('click', async (event) => {
       event.preventDefault();
       if (!confirm('Chạy xuất Google Drive ngay?')) return;
       setRunning(true);
-      const original = runButton ? runButton.textContent : '';
-      if (runButton) runButton.textContent = t('export_progress_starting', 'Đang bắt đầu...');
+      const original = runButton.textContent;
+      runButton.textContent = t('export_progress_starting', 'Đang bắt đầu...');
       try {
         const response = await fetch(runForm.action, {
           method: 'POST',
@@ -532,7 +538,7 @@ progress_html = """
         await poll();
       } catch (error) {
         setRunning(false);
-        if (runButton) runButton.textContent = original;
+        runButton.textContent = original;
         alert(error instanceof Error ? error.message : 'Không bắt đầu được xuất');
       }
     });
@@ -558,7 +564,7 @@ def _render_root(
         _drive_card("/admin/exports/client-exports", _kind_label(settings, "client"), f"{client_count} thư mục khách hàng", meta_key="client_folders_count", meta_count=client_count),
         _drive_card("/admin/exports/internal-exports", _kind_label(settings, "internal"), f"{internal_count} thư mục nội bộ", meta_key="internal_folders_count", meta_count=internal_count),
     ])
-    run_form = '<form method="post" action="/admin/exports/run" id="runExportForm"><button type="submit" id="runExportButton" data-i18n="run_export">Chạy xuất</button></form>'
+    run_form = '<form method="post" action="/admin/exports/run" id="runExportForm"><button type="button" id="runExportButton" data-i18n="run_export">Chạy xuất</button></form>'
     return _drive_shell(
         "Drive Exports", _crumbs([("Drive của tôi", None)]), "Drive của tôi",
         "Thư mục và điều khiển xuất Google Drive.",
@@ -730,7 +736,7 @@ async def exports_page(
     except Exception as exc:
         logger.warning("drive export page query failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Drive export database unavailable.") from exc
-    return HTMLResponse(_render_root(settings, clients, message=message, error=error))
+    return HTMLResponse(_render_root(settings, clients, message=message, error=error), headers=_EXPORT_PAGE_HEADERS)
 
 
 @router.get("/admin/exports/client-exports", response_class=HTMLResponse)
@@ -744,7 +750,7 @@ async def client_exports_page(
     except Exception as exc:
         logger.warning("client exports page query failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Drive export database unavailable.") from exc
-    return HTMLResponse(_render_client_exports(settings, clients, "client", message=message, error=error))
+    return HTMLResponse(_render_client_exports(settings, clients, "client", message=message, error=error), headers=_EXPORT_PAGE_HEADERS)
 
 
 @router.get("/admin/exports/internal-exports", response_class=HTMLResponse)
@@ -758,7 +764,7 @@ async def internal_exports_page(
     except Exception as exc:
         logger.warning("internal exports page query failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Drive export database unavailable.") from exc
-    return HTMLResponse(_render_client_exports(settings, clients, "internal", message=message, error=error))
+    return HTMLResponse(_render_client_exports(settings, clients, "internal", message=message, error=error), headers=_EXPORT_PAGE_HEADERS)
 
 
 @router.get("/admin/exports/{slug}", response_class=HTMLResponse)
@@ -767,7 +773,7 @@ async def export_client_page(
 ):
     client = await _client_or_404(slug)
     settings = await get_settings(_pool())
-    return HTMLResponse(_render_client(client, message=message, error=error, settings=settings))
+    return HTMLResponse(_render_client(client, message=message, error=error, settings=settings), headers=_EXPORT_PAGE_HEADERS)
 
 
 @router.get("/admin/exports/{slug}/{form_id}", response_class=HTMLResponse)
@@ -785,7 +791,7 @@ async def export_client_form_page(
     if form_id not in available:
         raise HTTPException(status_code=404, detail="Form not found")
     settings = await get_settings(_pool())
-    return HTMLResponse(_render_form(client, form_id, message=message, error=error, settings=settings))
+    return HTMLResponse(_render_form(client, form_id, message=message, error=error, settings=settings), headers=_EXPORT_PAGE_HEADERS)
 
 
 @router.get("/api/v1/admin/exports")

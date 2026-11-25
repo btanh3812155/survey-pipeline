@@ -1280,6 +1280,8 @@ async def dispatch_submission_telegram_notifications(
             "Nếu đây là số của bạn và bạn muốn xem hoặc quản lý phiếu, hãy xác thực bằng nút bên dưới."
         )
         reply_markup = _verification_reply_markup()
+    if reply_markup is None:
+        reply_markup = with_survey_copy(None, submission_id)
     sent = await _send_direct(
         bot_token=driver_bot_token,
         chat_id=collab_tg_id,

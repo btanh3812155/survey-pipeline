@@ -2130,7 +2130,7 @@ class DriverBotRunner(TelegramPollingRunner):
                     {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:flat_0"},
                 ])
             buttons.append([
-                {"text": f"📋 Sao chép #{sub_id}", "copy_text": {"text": sub_id}},
+                {"text": f"Sao chép #{sub_id}", "copy_text": {"text": sub_id}},
             ])
 
         inline_markup = {"inline_keyboard": buttons} if buttons else None

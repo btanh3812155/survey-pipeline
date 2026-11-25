@@ -1508,7 +1508,7 @@ def test_survey_copy_button_is_added_once_and_preserves_reply_keyboards():
     twice = with_survey_copy(once, "VN-1")
     copy_rows = [
         row for row in twice["inline_keyboard"]
-        if row == [{"text": "📋 Sao chép mã phiếu", "copy_text": {"text": "VN-1"}}]
+        if row == [{"text": "Sao chép mã phiếu", "copy_text": {"text": "VN-1"}}]
     ]
     assert len(copy_rows) == 1
 
