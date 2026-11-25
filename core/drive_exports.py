@@ -61,8 +61,9 @@ EXPORT_FIELDS = (
 )
 FIELD_KEYS = tuple(key for key, _label in EXPORT_FIELDS)
 DEFAULT_FIELDS = (
-    "submission_id", "form_id", "status", "created_at", "vehicle_type",
-    "total_gross_revenue", "total_net_income", "total_trips",
+    "ctv_code", "driver_phone", "submission_id", "form_id", "status",
+    "created_at", "vehicle_type", "total_gross_revenue", "total_net_income",
+    "total_trips",
 )
 EXPORT_STATUSES = ("APPROVED", "REJECTED", "MANUAL_REVIEW", "APPEAL_PENDING")
 VEHICLE_TYPES = ("CAR", "BIKE")
@@ -109,7 +110,12 @@ def _selected_fields(fields: Iterable[str]) -> list[str]:
     for key in fields:
         if key in FIELD_KEYS and key not in selected:
             selected.append(key)
-    return selected or list(DEFAULT_FIELDS)
+    if not selected:
+        selected = list(DEFAULT_FIELDS)
+    priority = ("ctv_code", "driver_phone")
+    return [key for key in priority if key in selected] + [
+        key for key in selected if key not in priority
+    ]
 
 
 def build_export_csv(rows: Iterable[dict[str, Any]], fields: Iterable[str]) -> bytes:
