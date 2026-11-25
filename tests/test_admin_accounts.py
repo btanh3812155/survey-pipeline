@@ -366,8 +366,13 @@ def test_admin_language_toggle_assets_are_wired():
     assert "AdminI18n.toggle" in nav
     assert "localStorage.getItem('tb_lang')" in i18n
     assert "translateDom" in i18n
+    assert "patternMap" in i18n
+    assert "translateText" in i18n
+    assert "data-lang-toggle" in i18n
     assert "observer.takeRecords()" in i18n
     assert "Quản Lý CTV" in i18n and "CTV Management" in i18n
+    assert "Đăng nhập CTV" in i18n and "CTV Login" in i18n
+    assert "Cổng cộng tác viên" in i18n and "Collaborator Portal" in i18n
     assert "color-scheme: dark;" in theme
     assert ':root[data-theme="light"]' in theme
     assert "accounts_title" in i18n and "Admin account management" in i18n

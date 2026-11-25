@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const byId = (id) => document.getElementById(id);
+  const tr = (text) => (window.AdminI18n?.translateText ? window.AdminI18n.translateText(text) : text);
   function setRowEditing(row, scope) {
     const active = Boolean(scope);
     row.classList.toggle('is-editing', active);
@@ -49,7 +50,7 @@
   });
   document.querySelectorAll('[data-delete-code]').forEach((form) => {
     form.addEventListener('submit', (event) => {
-      if (!window.confirm(`Xóa CTV ${form.dataset.deleteCode}? Dữ liệu bài nộp cũ vẫn được giữ.`)) event.preventDefault();
+      if (!window.confirm(tr(`Xóa CTV ${form.dataset.deleteCode}? Dữ liệu bài nộp cũ vẫn được giữ.`))) event.preventDefault();
     });
   });
 
@@ -89,7 +90,7 @@
     const link = url.href;
     output.hidden = false;
     linkInput.value = link;
-    status.textContent = 'Đang chuẩn bị ảnh QR…';
+    status.textContent = tr('Đang chuẩn bị ảnh QR…');
     try {
       if (typeof QRCode === 'undefined') throw new Error('QR unavailable');
       const source = document.createElement('div');
@@ -107,12 +108,12 @@
       context.fillRect(0, 0, 384, 384);
       context.drawImage(qrCanvas, 64, 64, 256, 256);
       canvas.setAttribute('role', 'img');
-      canvas.setAttribute('aria-label', `Mã QR liên kết khảo sát cho CTV ${code}`);
+      canvas.setAttribute('aria-label', tr(`Mã QR liên kết khảo sát cho CTV ${code}`));
       preview.replaceChildren(canvas);
       canvas.toBlob((blob) => {
         if (version !== generation) return;
         if (!blob) {
-          status.textContent = 'Không tạo được ảnh PNG. Vui lòng thử lại.';
+          status.textContent = tr('Không tạo được ảnh PNG. Vui lòng thử lại.');
           return;
         }
         const file = new File([blob], 'ctv-qr.png', {type: 'image/png'});
@@ -130,11 +131,11 @@
         if (!supportsImageCopy) unavailable.push('sao chép ảnh');
         if (!navigator.share) unavailable.push('chia sẻ liên kết');
         if (!supportsImageShare) unavailable.push('chia sẻ ảnh');
-        status.textContent = 'Liên kết và ảnh PNG đã sẵn sàng.' + (unavailable.length
-          ? ` Trình duyệt không hỗ trợ ${unavailable.join(', ')}; bạn có thể sao chép liên kết hoặc tải PNG.` : '');
+        status.textContent = tr('Liên kết và ảnh PNG đã sẵn sàng.' + (unavailable.length
+          ? ` Trình duyệt không hỗ trợ ${unavailable.join(', ')}; bạn có thể sao chép liên kết hoặc tải PNG.` : ''));
       }, 'image/png');
     } catch (_) {
-      status.textContent = 'Không tạo được mã QR. Vui lòng tải lại trang và thử lại.';
+      status.textContent = tr('Không tạo được mã QR. Vui lòng tải lại trang và thử lại.');
     }
   });
 
@@ -143,11 +144,11 @@
     if (!selected) return;
     try {
       await action(selected);
-      if (current === selected) status.textContent = success;
+      if (current === selected) status.textContent = tr(success);
     } catch (error) {
-      if (current === selected) status.textContent = error.name === 'AbortError'
+      if (current === selected) status.textContent = tr(error.name === 'AbortError'
         ? 'Đã hủy chia sẻ; chưa gửi nội dung.'
-        : 'Thao tác không thành công. Bạn có thể chọn liên kết để sao chép thủ công hoặc tải PNG.';
+        : 'Thao tác không thành công. Bạn có thể chọn liên kết để sao chép thủ công hoặc tải PNG.');
     }
   }
   copyLink.addEventListener('click', () => perform((selected) => {
@@ -169,6 +170,6 @@
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
-    status.textContent = 'Đã yêu cầu tải ảnh PNG.';
+    status.textContent = tr('Đã yêu cầu tải ảnh PNG.');
   });
 })();

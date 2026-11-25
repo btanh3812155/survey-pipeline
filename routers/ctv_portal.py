@@ -18,7 +18,7 @@ _HEADERS = {
     "Cache-Control": "no-store",
     "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 }
 
 
@@ -35,7 +35,7 @@ def _page(content: str) -> str:
 :root{color-scheme:dark;--bg:#090d16;--panel:#111a2b;--line:#24324a;--fg:#e8eef8;--muted:#a7b5ca;--blue:#93c5fd}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#172554 0,var(--bg) 50%);color:var(--fg);font:16px system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.55}
 main{max-width:960px;margin:auto;padding:24px 16px 48px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}.brand{font-weight:800;color:var(--blue)}h1{font-size:1.6rem;margin:4px 0}h2{font-size:1.2rem;margin:0 0 12px}h3{font-size:1rem;margin:0 0 8px}p{margin:8px 0;color:var(--muted)}section{margin-top:24px}.card{padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px}dl{display:grid;grid-template-columns:minmax(100px,1fr) 2fr;gap:10px 16px;margin:0}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}ul{list-style:none;padding:0;margin:0}a{color:var(--blue)}button,.action{display:inline-block;min-height:44px;padding:10px 16px;border:1px solid #44618c;border-radius:8px;background:#172554;color:var(--fg);font:inherit;text-decoration:none;cursor:pointer}button:hover,.action:hover{background:#1e3a8a}a:focus-visible,button:focus-visible{outline:3px solid #bfdbfe;outline-offset:4px}.skip{position:absolute;left:16px;top:-80px;background:var(--panel);padding:12px}.skip:focus{top:12px}progress{display:block;width:100%;height:14px;margin-top:12px;accent-color:#60a5fa}.badge{display:inline-block;border:1px solid #9a803d;color:#fde68a;border-radius:6px;padding:2px 8px;font-size:.8rem;margin-bottom:8px}.note{font-size:.9rem}.count{color:var(--fg);font-weight:700}.error{border-color:#b45353}footer{margin-top:24px;color:var(--muted);font-size:.85rem}@media(max-width:480px){main{padding-top:16px}.card{padding:16px}dl{grid-template-columns:1fr;gap:4px}dd{margin-bottom:12px}}
-</style></head><body><a class="skip" href="#content">Đến nội dung chính</a>
+</style><script src="/static/ui/admin_i18n.js" defer></script></head><body><a class="skip" href="#content">Đến nội dung chính</a>
 <main id="content">""" + content + "</main></body></html>"
 
 
@@ -125,7 +125,7 @@ async def ctv_dashboard(request: Request):
     )
     verification = "Đã xác minh qua Telegram" if profile.get("telegram_user_id") else "Chưa liên kết Telegram"
     content = f"""<header><div><div class="brand">Trust Bridge · Cộng tác viên</div>
-<h1>Cổng cộng tác viên</h1></div><form method="post" action="/ctv/logout"><button type="submit">Đăng xuất</button></form></header>
+<h1>Cổng cộng tác viên</h1></div><div style="display:flex;gap:8px;align-items:center;"><button type="button" data-lang-toggle aria-label="Đổi ngôn ngữ / Toggle language">VI</button><form method="post" action="/ctv/logout"><button type="submit">Đăng xuất</button></form></div></header>
 <section class="card" aria-labelledby="profile"><h2 id="profile">Thông tin của bạn</h2><dl>
 <dt>Mã CTV</dt><dd>{_escape(profile['code'])}</dd>
 <dt>Họ và tên</dt><dd>{_escape(profile.get('display_name') or 'Chưa cập nhật')}</dd>

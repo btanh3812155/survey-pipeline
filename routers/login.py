@@ -19,7 +19,7 @@ _LOGIN_HEADERS = {
     "Cache-Control": "no-store",
     "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 }
 
 
@@ -45,6 +45,8 @@ body {{ margin:0; min-height:100vh; display:grid; place-items:center; background
 .card {{ width:min(420px,calc(100vw - 32px)); background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:28px; box-shadow:0 24px 60px rgba(0,0,0,.35); }}
 .brand {{ display:flex; align-items:center; gap:10px; margin-bottom:8px; color:#93c5fd; font-weight:800; font-size:1.05rem; }}
 .brand-mark {{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; background:#1d4ed8; color:white; font-weight:900; }}
+.lang-toggle {{ margin-left:auto; width:auto; margin-top:0; padding:5px 10px; border:1px solid var(--line); border-radius:999px; background:#0a1220; color:var(--fg); font-size:.78rem; font-weight:700; cursor:pointer; }}
+.lang-toggle:hover {{ background:#1b2842; }}
 h1 {{ font-size:1.35rem; margin:12px 0 6px; }}
 p {{ color:var(--muted); font-size:.86rem; line-height:1.5; margin:0 0 18px; }}
 label {{ display:block; color:var(--muted); font-size:.8rem; margin:12px 0; }}
@@ -54,10 +56,11 @@ button:hover {{ background:#1d4ed8; }}
 .error {{ background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.45); color:#fecaca; border-radius:8px; padding:9px 11px; font-size:.83rem; margin:8px 0 4px; }}
 .foot {{ color:var(--muted); font-size:.74rem; margin-top:16px; text-align:center; }}
 </style>
+<script src="/static/ui/admin_i18n.js" defer></script>
 </head>
 <body>
 <main class="card">
-  <div class="brand"><span class="brand-mark">TB</span><span>Trust Bridge Admin</span></div>
+  <div class="brand"><span class="brand-mark">TB</span><span>Trust Bridge Admin</span><button type="button" class="lang-toggle" data-lang-toggle aria-label="Đổi ngôn ngữ / Toggle language">VI</button></div>
   <h1>Đăng nhập quản trị</h1>
   <p>Dùng tài khoản quản trị đã được cấp. Phiên đăng nhập được giữ bằng cookie an toàn, không dùng hộp thoại Basic Auth.</p>
   {error_html}

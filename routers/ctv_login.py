@@ -17,7 +17,7 @@ _HEADERS = {
     "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 }
 
 
@@ -32,7 +32,10 @@ def _page(content: str, *, error: str = "", status_code: int = 200) -> HTMLRespo
 * {{ box-sizing:border-box; }}
 body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px; background:radial-gradient(circle at top,#172554 0,#090d16 55%); }}
 main {{ width:min(440px,100%); padding:28px; border:1px solid #24324a; border-radius:16px; background:#111a2b; }}
+.brand-row {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
 .brand {{ color:#93c5fd; font-weight:800; }}
+.lang-toggle {{ width:auto; min-height:32px; margin:0; padding:5px 10px; border:1px solid #40516b; border-radius:999px; background:#0a1220; color:#e8eef8; font-size:.78rem; }}
+.lang-toggle:hover {{ background:#1b2842; }}
 h1 {{ font-size:1.5rem; margin:16px 0 8px; }}
 h2 {{ font-size:1rem; margin:0 0 12px; }}
 p {{ color:#a9b8cc; line-height:1.6; }}
@@ -46,8 +49,8 @@ button:hover {{ background:#1d4ed8; }}
 a {{ color:#93c5fd; }}
 .error {{ padding:12px; border:1px solid #dc6666; border-radius:8px; background:#3b1a25; color:#fecaca; }}
 footer {{ border-top:1px solid #24324a; margin-top:24px; padding-top:16px; font-size:.85rem; }}
-</style></head><body><main>
-<div class="brand">Trust Bridge · Cộng tác viên</div>
+</style><script src="/static/ui/admin_i18n.js" defer></script></head><body><main>
+<div class="brand-row"><div class="brand">Trust Bridge · Cộng tác viên</div><button type="button" class="lang-toggle" data-lang-toggle aria-label="Đổi ngôn ngữ / Toggle language">VI</button></div>
 <h1>Đăng nhập CTV</h1>
 {notice}{content}
 <footer><a href="/login">Đăng nhập quản trị</a></footer>

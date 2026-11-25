@@ -233,7 +233,37 @@
     }
   };
   const phraseMap = {
+    // Admin nav & shared
+    'Điều hướng quản trị': 'Admin navigation',
+    'Menu điều hướng quản trị': 'Admin navigation menu',
+    'Chuyển giao diện sáng / tối': 'Toggle light / dark theme',
+    'Chuyển sang giao diện sáng': 'Switch to light theme',
+    'Chuyển sang giao diện tối': 'Switch to dark theme',
+    'Sáng / Tối': 'Light / Dark',
+    'Đổi ngôn ngữ / Toggle language': 'Toggle language',
+    'Làm Mới': 'Refresh',
+    'Xuất CSV': 'Export CSV',
+    'Xuất JSON': 'Export JSON',
+    'Xuất Excel (CSV)': 'Export Excel (CSV)',
+    'Đã sao chép!': 'Copied!',
+    'Xóa': 'Delete',
+    'Lưu': 'Save',
+    'Hủy': 'Cancel',
+    'Bật': 'Enabled',
+    'Đang tải...': 'Loading...',
+    'Lỗi kết nối:': 'Connection error:',
+    'Lỗi kết nối máy chủ!': 'Server connection error!',
+    'Cơ sở dữ liệu chưa sẵn sàng': 'Database is not ready',
+    'Cơ sở dữ liệu chưa sẵn sàng.': 'Database is not ready.',
+    'CHÍNH THỨC': 'PRODUCTION',
+    'BẢN DEV (surveydb_dev)': 'DEV BUILD (surveydb_dev)',
+    'Hệ thống Cơ sở dữ liệu chính thức': 'Production database system',
+    'Môi trường Thử Nghiệm / Staging độc lập': 'Isolated Staging / Dev environment',
+
+    // Admin CTVs (routers/admin_ctvs.py & static/ui/admin_ctvs.js)
     'Quản Lý CTV': 'CTV Management',
+    'Quản Lý CTV - Trust Bridge': 'CTV Management - Trust Bridge',
+    'Tổng quan CTV': 'CTV Overview',
     'Tổng CTV': 'Total CTVs',
     'Đang hoạt động': 'Active',
     'Bài nộp liên kết': 'Linked Submissions',
@@ -267,25 +297,137 @@
     'Thao tác': 'Actions',
     'Thao Tác': 'Actions',
     'Tên hiển thị': 'Display Name',
+    'Tên CTV': 'CTV Name',
     'Số điện thoại': 'Phone Number',
     'Số Điện Thoại': 'Phone Number',
     'Ghi chú': 'Notes',
+    'Ghi chú nội bộ': 'Internal notes',
     'Kích hoạt ngay': 'Activate immediately',
     'Quy ước': 'Conventions',
     'Chưa cấu hình': 'Not configured',
     'Chưa có CTV nào trong danh bạ.': 'No CTVs in directory yet.',
+    'Tìm CTV': 'Search CTV',
+    'Lọc trạng thái': 'Filter by status',
     'Tìm theo mã, tên, số điện thoại hoặc ghi chú...': 'Search by code, name, phone, or notes...',
     'Danh bạ cộng tác viên, liên hệ, Telegram, mục tiêu và số bài nộp. Thêm, sửa, tạm tắt hoặc xóa CTV ngay tại đây.': 'Collaborator directory, contacts, Telegram, goals, and submissions. Add, edit, disable, or delete CTVs here.',
     'Chỉ liệt kê CTV đang hoạt động được xác nhận từ cơ sở dữ liệu và biểu mẫu công khai, còn nhận phản hồi, bật ghi nhận CTV. Tải lại trang để cập nhật danh sách.': 'Only lists active CTVs confirmed from the database and open public forms with CTV tracking enabled. Reload to refresh.',
+    'Mã CTV được chuẩn hóa thành chữ in hoa, không dấu, dùng gạch dưới. Xóa CTV chỉ xóa danh bạ, liên kết form và quota; bài nộp lịch sử vẫn giữ nguyên.': 'CTV codes are normalized to uppercase ASCII with underscores. Deleting a CTV only removes directory, form links, and quotas; historical submissions are preserved.',
+    'Telegram ID chỉ được điền khi CTV liên kết bot, không sửa trực tiếp tại đây.': 'Telegram ID is populated automatically when the CTV links the bot and cannot be edited directly here.',
     'Sửa CTV': 'Edit CTV',
     'Lưu thay đổi': 'Save changes',
     'Xóa CTV': 'Delete CTV',
+    'Đã thêm CTV mới.': 'New CTV added.',
+    'Đã cập nhật CTV.': 'CTV updated.',
+    'Đã xóa CTV khỏi danh bạ. Dữ liệu bài nộp cũ vẫn được giữ.': 'CTV deleted from directory. Historical submissions are preserved.',
+    'Mã CTV đã tồn tại.': 'CTV code already exists.',
+    'Mã CTV không hợp lệ. Dùng chữ, số, dấu gạch ngang hoặc gạch dưới.': 'Invalid CTV code. Use letters, numbers, hyphens, or underscores.',
+    'Không tìm thấy CTV.': 'CTV not found.',
+    'Đang chuẩn bị ảnh QR…': 'Preparing QR image…',
+    'Liên kết và ảnh PNG đã sẵn sàng.': 'Link and PNG image are ready.',
+    'Không tạo được ảnh PNG. Vui lòng thử lại.': 'Could not create PNG image. Please try again.',
+    'Không tạo được mã QR. Vui lòng tải lại trang và thử lại.': 'Could not generate QR code. Please reload and try again.',
+    'Đã hủy chia sẻ; chưa gửi nội dung.': 'Share cancelled; nothing was sent.',
+    'Thao tác không thành công. Bạn có thể chọn liên kết để sao chép thủ công hoặc tải PNG.': 'Action failed. You can copy the link manually or download the PNG.',
+    'Đã sao chép liên kết.': 'Link copied.',
+    'Đã chia sẻ liên kết.': 'Link shared.',
+    'Đã sao chép ảnh QR PNG.': 'QR PNG image copied.',
+    'Đã chia sẻ ảnh QR.': 'QR image shared.',
+    'Đã yêu cầu tải ảnh PNG.': 'PNG download requested.',
+
+    // Trash (routers/admin_forms.py)
+    'Thùng rác': 'Trash',
+    'Dọn ngay': 'Compact now',
+    'Khôi phục': 'Restore',
+    'Khôi phục thất bại': 'Restore failed',
+    'Thực thể': 'Entity',
+    'Loại': 'Type',
+    'Đã xóa': 'Deleted',
+    'Tệp lưu': 'Stored file',
+    'Lần dọn gần nhất': 'Last compaction',
+    'Thời gian lưu giữ': 'Retention',
+    'Thùng rác trống.': 'Trash is empty.',
+    'Chưa chạy dọn lần nào.': 'No compaction run yet.',
+    'Form được khôi phục nguyên vẹn. Submission được đưa về MANUAL_REVIEW; outbox và hiệu ứng Telegram không được phát lại.': 'Forms are restored intact. Submissions return as MANUAL_REVIEW; outbox and Telegram side effects are not replayed.',
+
+    // Modules & Image Objects (routers/admin_modules.py, routers/admin_image_objects.py)
+    'Tạo module': 'Create module',
+    'Lưu định nghĩa': 'Save definition',
+    'Chạy an toàn': 'Safe run',
+    'Tìm module': 'Search modules',
+    'Tên, id hoặc loại': 'Name, id, or kind',
+    'Tên': 'Name',
+    'Phiên bản module': 'Module version',
+    'JSON định nghĩa': 'Definition JSON',
+    'Dữ liệu thử (JSON)': 'Test payload (JSON)',
+    'Chưa có module nào.': 'No modules yet.',
+    'Module check engine. Implementation nằm trong allowlist của mã ứng dụng; tham số và điều kiện là JSON khai báo.': 'Check engine module. Implementation is allowlisted in app code; parameters and conditions are declarative JSON.',
+    'Python không được nạp hoặc thực thi từ registry. Implementation này cố định trong mã ứng dụng.': 'Python is never loaded or executed from the registry. Implementations are fixed in application code.',
+    'Registry lưu trong cơ sở dữ liệu. Object định nghĩa cách trích xuất ảnh. Check engine là module engine trong cùng registry. Logic chỉ chạy implementation đã biên dịch trong ứng dụng; JSON lưu trữ không bao giờ thực thi mã.': 'Database-backed registry. Objects define image extraction. Check engines are engine modules in the same registry. Logic only runs compiled implementations in app code; stored JSON never executes code.',
+    'Object ảnh': 'Image Objects',
+    'Object ảnh | Admin': 'Image Objects | Admin',
+    'Object ảnh & Check Engine': 'Image Objects & Check Engines',
+    'Danh sách engine tích hợp': 'Built-in Check Engines',
+    'Engine Python tích hợp; JSON không thể chứa mã thực thi.': 'Built-in Python engine; JSON cannot contain executable code.',
+    'Engine module trong registry. Sửa định nghĩa tại': 'Engine module in registry. Edit definition at',
+    'Tạo object': 'Create object',
+    'Tạo object mới': 'Create new object',
+    'Lưu object': 'Save object',
+    'Xóa object': 'Delete object',
+    'Không xóa được object': 'Could not delete object',
+    'Chưa có engine nào.': 'No engines yet.',
+    'Chưa có object nào.': 'No objects yet.',
+    'ID (chữ thường, a-z0-9_)': 'ID (lowercase, a-z0-9_)',
+    'Nhãn': 'Label',
+    'Bộ trích xuất': 'Extractor',
+    'Vai trò phân loại': 'Classifier role',
+    'Đối tượng (mỗi dòng một mục)': 'Objects (one per line)',
+    'Trường bắt buộc (JSON)': 'Required fields (JSON)',
+    'Tùy biến (JSON)': 'Customizable (JSON)',
+    'Mô tả': 'Description',
+    'Triển khai': 'Implementation',
+    'Đường dẫn': 'Path',
+    'Tệp': 'File',
+    'Lỗi': 'Error',
+
+    // Admin recovery (routers/admin_recovery.py)
+    'Khôi phục mật khẩu quản trị': 'Admin Password Recovery',
+    'Đổi email khôi phục': 'Change Recovery Email',
+    'Bạn cần truy cập cả email khôi phục hiện tại và email mới.': 'You need access to both your current recovery email and the new email.',
+    'Email mới': 'New email',
+    'Mã gửi đến email cũ': 'Code sent to old email',
+    'Mã gửi đến email mới': 'Code sent to new email',
+    'Mã khôi phục': 'Recovery code',
+    'Mật khẩu mới (12–1024 ký tự ASCII in được)': 'New password (12–1024 printable ASCII chars)',
+    'Tên đăng nhập': 'Username',
+    'Xác nhận': 'Confirm',
+    'Yêu cầu mã': 'Request code',
+
+    // Forms manager (static/ui/forms_manager.html)
+    'Trust Bridge - Quản Lý Biểu Mẫu': 'Trust Bridge - Form Manager',
+    'Quản Lý Biểu Mẫu Khảo Sát': 'Survey Form Manager',
+    'Hệ Thống Trust Bridge SSOT: Cấu hình biểu mẫu, cấp mã QR chia sẻ, và định tuyến đối soát': 'Trust Bridge SSOT: Configure forms, generate shareable QR codes, and manage verification routing',
+    'Tạo Biểu Mẫu Mới': 'Create New Form',
+    'Nhập biểu mẫu': 'Import Forms',
+    'Xuất tất cả': 'Export All',
+    'Đang nhập...': 'Importing...',
+    'Lọc biểu mẫu theo tên hoặc mã form...': 'Filter forms by title or form ID...',
     'Chính thức': 'Production',
     'Thử nghiệm': 'Test Mode',
     'Tất cả trạng thái': 'All statuses',
     'Không gắn CTV': 'No CTV attached',
     'GẮN MÃ CTV (TÙY CHỌN)': 'ATTACH CTV CODE (OPTIONAL)',
     'ĐƯỜNG DẪN BIỂU MẪU CHÍNH THỨC': 'PRODUCTION FORM LINK',
+    'Chia Sẻ Mã QR Biểu Mẫu': 'Share Form QR Code',
+    'Tạo mã QR': 'Generate QR',
+    'Sao Chép Link': 'Copy Link',
+    'Lưu Ảnh QR (.png)': 'Save QR Image (.png)',
+    'Đã sao chép đường dẫn biểu mẫu chính thức!': 'Production form link copied!',
+    'Biểu mẫu này đã tắt link CTV trong phần cài đặt.': 'This form has CTV referral links disabled in settings.',
+    'Chọn CTV rồi bấm Tạo mã QR để gắn ?ref=.': 'Select a CTV and click Generate QR to attach ?ref=.',
+    'Biểu mẫu chưa có danh sách CTV; mã QR sẽ dùng link chuẩn.': 'This form has no CTV list; QR will use the standard link.',
+    'Lưới': 'Grid',
+    'Dòng': 'List',
+    'Số lượng hiển thị:': 'Items per page:',
     'Sắp xếp: Mặc định': 'Sort: Default',
     'Sắp xếp: Mới sửa đổi': 'Sort: Recently modified',
     'Tên (A → Z)': 'Name (A → Z)',
@@ -293,42 +435,113 @@
     'Số câu hỏi (Nhiều nhất)': 'Questions (Most)',
     'Trang trước': 'Previous',
     'Trang sau': 'Next',
-    'Mã Hồ Sơ': 'Submission ID',
-    'Thời Gian Nộp': 'Submitted At',
-    'Tài Xế': 'Driver',
-    'Biển Số Xe': 'License Plate',
-    'Biển Số Phát Hiện': 'Detected Plate',
-    'Nguồn Dữ Liệu': 'Data Source',
-    'Tất cả nguồn lưu': 'All sources',
-    'Tất cả CTV / Giới thiệu': 'All CTVs / Referrals',
+
+    // Submissions viewer (static/ui/submissions_viewer.html)
+    'Trust Bridge - Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn': 'Trust Bridge - Survey Data Center & Query Table',
+    'Trung Tâm Dữ Liệu Khảo Sát & Bảng Truy Vấn': 'Survey Data Center & Query Table',
+    'Tra cứu, lọc câu hỏi, sắp xếp cột & xuất dữ liệu phân tách theo từng biểu mẫu': 'Search, filter questions, sort columns & export data per form',
+    'Truy vấn từ khóa (Mã ID, Tên, SĐT, Biển số, CTV, Câu trả lời...)': 'Search by ID, Name, Phone, Plate, CTV, Answers...',
+    'Tổng Bản Ghi (Bộ Lọc)': 'Total Records (Filtered)',
+    'Đã Duyệt (Approved)': 'Approved',
+    'Chờ Duyệt (Review)': 'Pending Review',
+    'Bị Từ Chối (Rejected)': 'Rejected',
     'Đã Duyệt (APPROVED)': 'Approved (APPROVED)',
     'Chờ Duyệt (MANUAL_REVIEW)': 'Pending Review (MANUAL_REVIEW)',
     'Bị Từ Chối (REJECTED)': 'Rejected (REJECTED)',
     'Khiếu Nại (APPEAL_PENDING)': 'Appeal Pending (APPEAL_PENDING)',
+    'Tất cả nguồn lưu': 'All sources',
+    'Tất cả CTV / Giới thiệu': 'All CTVs / Referrals',
     'PostgreSQL (Chính thức)': 'PostgreSQL (Production)',
     'Thử nghiệm (Dev Test)': 'Test (Dev Test)',
+    'Từ:': 'From:',
+    'Đến:': 'To:',
+    'Hiển thị mỗi trang:': 'Per page:',
+    'Mã Hồ Sơ': 'Submission ID',
+    'Thời Gian Nộp': 'Submitted At',
+    'Tài Xế': 'Driver',
+    'Tài Xế / Tên': 'Driver / Name',
+    'Phương Tiện': 'Vehicle',
+    'Loại Xe': 'Vehicle Type',
+    'Dòng Xe': 'Vehicle Model',
+    'Biển Số Xe': 'License Plate',
+    'Biển Số Phát Hiện': 'Detected Plate',
+    'Hạng Tài Xế': 'Driver Tier',
+    'Cuốc/Ngày': 'Trips/Day',
+    'Tổng Số Chuyến': 'Total Trips',
+    'Ví': 'Wallet',
+    'Nguồn Dữ Liệu': 'Data Source',
+    'Tác Vụ (Checklist)': 'Tasks (Checklist)',
+    'Các Câu Trả Lời': 'Answers',
     'Chi Tiết Hồ Sơ Khảo Sát': 'Submission Details',
     'Câu Trả Lời Biểu Mẫu': 'Form Answers',
     'Hình Ảnh Upload': 'Uploaded Images',
+    'Thư Viện Ảnh Đã Nộp': 'Submitted Image Gallery',
     'Kết Quả Kiểm Toán AI': 'AI Audit Result',
+    'Kết Quả OCR & Chống Gian Lận (Anti-Fraud)': 'OCR & Anti-Fraud Results',
     'Dữ Liệu Gốc (JSON)': 'Raw Data (JSON)',
+    'Dữ Liệu JSON Toàn Bộ Bản Ghi': 'Full Record JSON Data',
+    'Sao chép JSON': 'Copy JSON',
+    'Tiến Độ Tác Vụ (Action Checklist)': 'Action Checklist Progress',
+    'Thông báo Telegram Admin': 'Admin Telegram Notification',
+    'Đồng bộ Google Drive Deliverables': 'Google Drive Deliverables Sync',
+    'Đồng bộ bảng Lark Base': 'Lark Base Table Sync',
+    'Lưu trữ ảnh Cloudflare R2': 'Cloudflare R2 Image Storage',
+    'Sổ cái thù lao đối soát': 'Reconciliation Billing Ledger',
+    'Ảnh R2 Storage': 'R2 Storage Images',
     'Loại Trùng Lặp': 'Duplicate Type',
     'Trùng Lặp (Duplicate)': 'Duplicate',
+    'Không trùng lặp': 'No duplicate',
+    'CÓ PHÁT HIỆN': 'DETECTED',
     'Độ Mờ (Blur Score)': 'Blur Score',
     'Mô Hình Phân Tích': 'Analysis Model',
     'Mã Hash Dữ Liệu': 'Data Hash',
+    'Lý do từ chối:': 'Rejection reason:',
+    'Không có dữ liệu câu trả lời dạng văn bản.': 'No text answers recorded.',
+    'Không có hình ảnh nào được lưu cho phiếu này.': 'No images stored for this submission.',
+    'Đang tải ảnh đã nộp...': 'Loading submitted images...',
     'Không tìm thấy bản ghi nào phù hợp bộ lọc': 'No records match the current filters',
+    'Hãy thử xóa bớt từ khóa tìm kiếm hoặc chọn biểu mẫu khác.': 'Try clearing some search terms or selecting another form.',
+    'Không có dữ liệu phù hợp để xuất file!': 'No matching data to export!',
     '↺ Đặt lại lọc': '↺ Reset filters',
     '↺ Thử lại tác vụ': '↺ Retry job',
     '« Đầu': '« First',
     '‹ Trước': '‹ Prev',
     'Sau ›': 'Next ›',
     'Cuối »': 'Last »',
-    'Xóa': 'Delete',
+
+    // Audit viewer (static/ui/audit_viewer.html)
+    'Trust Bridge - Nhật Ký Kiểm Toán Toàn Hệ Thống': 'Trust Bridge - System-Wide Audit Log',
+    'Nhật Ký Kiểm Toán Toàn Hệ Thống': 'System-Wide Audit Log',
+    'Nhật ký kiểm toán bất biến & chuỗi băm': 'Immutable audit log & hash chain',
+    'Bảo đảm tính toàn vẹn và xác thực mật mã dữ liệu chuỗi chặng.': 'Ensures integrity and cryptographic verification across pipeline stages.',
+    'Mọi hành động đọc, ghi, xử lý ảnh và phê duyệt dữ liệu đều được ghi nhận tự động.': 'All read, write, image processing, and approval actions are logged automatically.',
+    'Tổng Số Sự Kiện Kiểm Toán': 'Total Audit Events',
+    'Tiếp Nhận & Chuẩn Hóa (Hops 1-2)': 'Ingress & Normalization (Hops 1-2)',
+    'AI & Chống Gian Lận (Hops 3-5)': 'AI & Anti-Fraud (Hops 3-5)',
+    'Lưu Trữ & Quản Trị (Hops 6-8)': 'Persistence & Governance (Hops 6-8)',
+    'Tìm theo Mã Hồ Sơ, Entity, Action, Actor, Hash...': 'Search by Submission ID, Entity, Action, Actor, Hash...',
+    'Tất cả thành phần (Components)': 'All components',
+    'Tất cả loại đối tượng (Entities)': 'All entity types',
+    'INGRESS (Nhận Webhook/Form)': 'INGRESS (Webhook/Form)',
+    'NORMALIZER (Xử lý ảnh & EXIF)': 'NORMALIZER (Image & EXIF)',
+    'AI_VISION (Phân loại & OCR)': 'AI_VISION (Classification & OCR)',
+    'ANTI_FRAUD (Chống gian lận)': 'ANTI_FRAUD (Anti-Fraud)',
+    'EVALUATOR (Kiểm tra tuân thủ)': 'EVALUATOR (Compliance)',
+    'PERSISTENCE (Ghi DB & Niêm phong)': 'PERSISTENCE (DB & Seal)',
+    'OUTBOX (Đẩy sự kiện fan-out)': 'OUTBOX (Fan-out Events)',
+    'MODERATION (Xử lý khiếu nại)': 'MODERATION (Moderation & Appeals)',
+    'FORM_ENGINE (Cấu hình biểu mẫu)': 'FORM_ENGINE (Form Schema)',
+    'PRIVACY_ENGINE (Nghị định 13)': 'PRIVACY_ENGINE (Privacy / Decree 13)',
+    'SURVEY (Hồ sơ khảo sát)': 'SURVEY (Submission)',
+    'DRIVER (Tài xế / Định danh)': 'DRIVER (Driver / Identity)',
+    'VEHICLE (Phương tiện)': 'VEHICLE (Vehicle)',
+    'SCHEMA (Cấu hình Form)': 'SCHEMA (Form Schema)',
+    'SYSTEM (Hệ thống)': 'SYSTEM (System)',
     'Thời Gian': 'Time',
     'Thời Gian Ghi Nhận': 'Recorded At',
     'Chặng & Thành Phần': 'Stage & Component',
     'Chặng Kiểm Toán': 'Audit Stage',
+    'Thành Phần Thực Thi': 'Executing Component',
     'Hành Động': 'Action',
     'Đối Tượng': 'Entity',
     'Đối Tượng Ảnh Hưởng': 'Affected Entity',
@@ -337,56 +550,324 @@
     'Địa Chỉ IP': 'IP Address',
     'Chi Tiết': 'Details',
     'Chi Tiết Sự Kiện Kiểm Toán': 'Audit Event Details',
-    'Tất cả thành phần (Components)': 'All components',
-    'Tất cả loại đối tượng (Entities)': 'All entity types',
+    'Chi Tiết Dữ Liệu Hành Động (Factual Payload Trace)': 'Action Payload Details (Factual Payload Trace)',
+    'Mã Sự Kiện ID': 'Event ID',
+    'Chữ Ký SHA-256 (Tamper Seal)': 'SHA-256 Signature (Tamper Seal)',
+    'Chữ Ký Mật Mã Học Hợp Lệ (Tamper-Evident SHA-256)': 'Valid Cryptographic Signature (Tamper-Evident SHA-256)',
+    'Mã Băm Niêm Phong Toàn Vẹn (SHA-256 Tamper Hash)': 'Tamper-Evident Integrity Hash (SHA-256)',
+    'Click để sao chép toàn bộ mã SHA-256': 'Click to copy full SHA-256 hash',
     'Chưa có sự kiện kiểm toán nào phù hợp bộ lọc': 'No audit events match the current filters',
+    'Không có dữ liệu để xuất!': 'No data to export!',
+
+    // Media manager (static/ui/media_manager.html)
+    'Trust Bridge - Quản Lý Media': 'Trust Bridge - Media Manager',
+    'Quản Lý Media': 'Media Manager',
+    'Kho lưu trữ ảnh biểu mẫu & tài sản trực quan': 'Form image repository & visual assets',
+    'Trạng Thái Lưu Trữ': 'Storage Status',
+    'Lưu trữ:': 'Storage:',
+    'Tự động nén WebP và phục vụ tĩnh trực tiếp.': 'Automatically compresses to WebP and serves statically.',
+    'Chuẩn bị sẵn sàng cutover Cloudflare R2 khi mở rộng quy mô.': 'Ready for Cloudflare R2 cutover when scaling.',
+    'Cây Thư Mục': 'Folder Tree',
+    'Tất Cả Tệp': 'All Files',
+    'Thêm': 'Add',
+    'Danh sách': 'List',
     'Thư mục tải:': 'Upload folder:',
+    'Kéo thả tệp vào đây hoặc nhấp để chọn tệp': 'Drag & drop files here or click to browse',
+    'Tìm kiếm tệp theo tên hoặc định dạng...': 'Search files by name or format...',
+    'Không có tệp nào trong thư mục này': 'No files in this folder',
     'Thông Tin Tệp': 'File Info',
     'Tên Tệp (Có Thể Chỉnh Sửa)': 'File Name (Editable)',
     'Đường Dẫn URL Trực Tiếp': 'Direct URL',
     'Cú Pháp Markdown Mô Tả Form': 'Form Description Markdown',
     'Kích Thước & Dung Lượng': 'Dimensions & Size',
     'Thư Mục Lưu Trữ (Dropdown Di Chuyển)': 'Storage Folder (Move)',
-    'Thùng rác': 'Trash',
-    'Dọn ngay': 'Compact now',
-    'Khôi phục': 'Restore',
-    'Thực thể': 'Entity',
-    'Loại': 'Type',
-    'Đã xóa': 'Deleted',
-    'Tệp lưu': 'Stored file',
-    'Tạo module': 'Create module',
-    'Lưu định nghĩa': 'Save definition',
-    'Chạy an toàn': 'Safe run',
-    'Object ảnh': 'Image Objects',
-    'Object ảnh & Check Engine': 'Image Objects & Check Engines',
-    'Danh sách engine tích hợp': 'Built-in Check Engines',
-    'Tạo object': 'Create object',
-    'Tạo object mới': 'Create new object',
-    'Lưu object': 'Save object',
-    'Xóa object': 'Delete object',
-    'Mô tả': 'Description',
-    'Triển khai': 'Implementation',
-    'Đường dẫn': 'Path',
-    'Tệp': 'File',
-    'Lỗi': 'Error',
+    'Lưu Thay Đổi (Đổi Tên / Di Chuyển)': 'Save Changes (Rename / Move)',
+    'Sửa tên / đổi thư mục': 'Rename / move folder',
+    'Sao chép Link URL': 'Copy Link URL',
+    'Sao chép URL': 'Copy URL',
+    'Sao chép Markdown': 'Copy Markdown',
+    'Sao chép:': 'Copy:',
+    'Xóa tệp': 'Delete file',
+    'Đang lưu thay đổi...': 'Saving changes...',
+    'Đã chép Markdown!': 'Markdown copied!',
+    'Đã cập nhật tệp thành công!': 'File updated successfully!',
+    'Tên tệp không được để trống!': 'File name cannot be empty!',
+
+    // Form editor (static/ui/form_editor.html)
+    'Trình Chỉnh Sửa Biểu Mẫu': 'Form Editor',
     '1. Thông tin chung': '1. General Info',
     '2. Tùy chọn & Cài đặt': '2. Options & Settings',
     '3. Danh sách câu hỏi': '3. Questions',
+    'Lưu & Kích Hoạt Biểu Mẫu': 'Save & Activate Form',
+    'Mã định danh (viết liền không dấu) *': 'Form ID (no spaces/accents) *',
+    'Tên biểu mẫu (Tiêu đề) *': 'Form Title *',
+    'Mô tả biểu mẫu': 'Form Description',
+    'Mô tả / Hướng dẫn': 'Description / Instructions',
+    'Hỗ trợ chèn link [Tên link](url) và ảnh ![Mô tả](url)': 'Supports links [Label](url) and images ![Alt](url)',
+    'Chế độ vận hành': 'Operating Mode',
+    'Chính thức (Lưu PostgreSQL SSOT)': 'Production (PostgreSQL SSOT)',
+    'Thử nghiệm (Lưu nháp tạm)': 'Test Mode (Temporary Draft)',
+    'Quyền truy cập': 'Access Control',
+    'Công khai (Bất kỳ ai có link)': 'Public (Anyone with link)',
+    'Nội bộ (Chỉ tài xế được duyệt)': 'Internal (Approved drivers only)',
+    'Giới hạn số lượng phản hồi (0 = Không giới hạn)': 'Response limit (0 = Unlimited)',
+    'Nhãn biểu mẫu (phân tách bằng dấu phẩy)': 'Form tags (comma-separated)',
+    'Dùng cho phạm vi mục tiêu CTV theo nhãn (hạn mức theo nhãn).': 'Used for tag-scoped CTV quota goals.',
+    'Link giới thiệu CTV (?ref=...)': 'CTV Referral Link (?ref=...)',
+    'Bật gắn mã CTV qua ?ref= và màn hình chọn CTV': 'Enable CTV attribution via ?ref= and CTV picker',
+    'Nguồn nhận phản hồi Telegram': 'Telegram Verdict Recipient',
+    'Theo một câu hỏi (SĐT)': 'By phone question',
+    'Dựa trên CTV phụ trách': 'By assigned CTV',
+    'Không gửi phản hồi': 'Do not send verdict',
+    'Câu hỏi chứa SĐT nhận Telegram': 'Phone question for Telegram verdict',
+    'Telegram Chat ID nhận thông báo': 'Notification Telegram Chat ID',
+    'Cấu hình kiểm tra ảnh toàn cục': 'Global Image Verification Settings',
+    'Kiểm tra AI Vision': 'AI Vision Check',
+    'Kiểm tra AI Vision trích xuất hóa đơn': 'AI Vision receipt extraction check',
+    'Kiểm tra chống gian lận & trùng lặp': 'Anti-fraud & duplicate check',
+    'Chống gian lận & trùng lặp': 'Anti-fraud & duplicate',
+    'Kiểm tra chụp màn hình': 'Screenshot check',
+    'Kiểm tra ảnh chụp màn hình': 'Screenshot detection check',
+    'Kiểm tra đối chiếu biển số': 'License plate match check',
+    'Đối chiếu biển số': 'License plate match',
+    'Kiểm tra độ mờ / rung': 'Blur / shake check',
+    'Kiểm tra độ mờ / rung tay': 'Blur / motion shake check',
+    'Kiểm tra ảnh AI': 'AI-generated image check',
+    'Kiểm tra ảnh AI tổng hợp': 'Synthetic AI image check',
+    'Ngưỡng độ mờ riêng (mặc định 40)': 'Custom blur threshold (default 40)',
+    'Ngưỡng độ mờ tùy chỉnh (mặc định 40)': 'Custom blur threshold (default 40)',
+    'Yêu cầu ảnh độc nhất (Chống trùng lặp)': 'Require unique images (Anti-duplicate)',
+    'Ảnh độc nhất': 'Unique image',
+    'Ảnh độc nhất (Unique)': 'Unique image',
     '+ Thêm Câu Hỏi Mới': '+ Add Question',
     '+ Thêm Module': '+ Add Module',
     '+ Thêm Slot Ảnh': '+ Add Image Slot',
+    '+ Thêm câu hỏi phân bố': '+ Add distribution question',
     '+ Thêm lựa chọn': '+ Add Option',
-    '+ Thêm điều kiện (AND)': '+ Add Condition (AND)',
+    '+ Thêm module kiểm tra': '+ Add check module',
     '+ Thêm nhóm (OR)': '+ Add Group (OR)',
-    'Chế độ vận hành': 'Operating Mode',
-    'Câu hỏi': 'Question'
+    '+ Thêm ràng buộc': '+ Add constraint',
+    '+ Thêm điều kiện (AND)': '+ Add Condition (AND)',
+    '+ Thêm đầu vào': '+ Add Input',
+    'Bỏ câu hỏi': 'Remove question',
+    'Bỏ đầu vào': 'Remove input',
+    'Xóa nhóm': 'Remove group',
+    'Di chuyển lên': 'Move up',
+    'Di chuyển xuống': 'Move down',
+    'Câu hỏi': 'Question',
+    'Loại câu hỏi': 'Question type',
+    'Tiêu đề câu hỏi': 'Question title',
+    'Tiêu đề hiển thị': 'Display title',
+    'Mã câu hỏi (Tự động tạo)': 'Question ID (Auto-generated)',
+    'Bắt buộc trả lời (Mandatory Question)': 'Required (Mandatory Question)',
+    'Bắt buộc chụp': 'Required capture',
+    'Cho phép tải ảnh lên': 'Allow image upload',
+    'Cho phép người dùng tải ảnh có sẵn từ bộ sưu tập/file thay vì chỉ chụp camera trực tiếp': 'Allow users to upload existing photos from gallery/files instead of live camera only',
+    'Bàn phím số (numeric keypad, không phải kiểm tra)': 'Numeric keypad (input mode only, not validation)',
+    'Văn bản': 'Text',
+    'Số': 'Number',
+    'Chọn một': 'Single choice',
+    'Chọn nhiều': 'Multiple choice',
+    'Menu thả xuống': 'Dropdown',
+    'Chụp ảnh trực tiếp': 'Live camera capture',
+    'Chữ ký điện tử': 'Electronic signature',
+    'Tùy chọn câu hỏi': 'Question options',
+    'Câu hỏi đồng ý': 'Consent gate question',
+    'Giá trị được xem là đồng ý': 'Values accepted as consent',
+    'Mọi câu hỏi phía sau chỉ hiển thị khi câu này được trả lời hợp lệ. Trả lời không hợp lệ sẽ bị từ chối khi nộp.': 'Subsequent questions only appear when this question is answered validly. Invalid answers are rejected on submit.',
+    'Khi bật: mọi câu sau chỉ hiển thị sau khi tài xế ký.': 'When enabled, subsequent questions only appear after the driver signs.',
+    'Điều kiện hiển thị': 'Display conditions',
+    'Điều kiện': 'Condition',
+    'Điều kiện chữ ký': 'Signature condition',
+    'Câu hỏi phụ thuộc': 'Dependent question',
+    'Toán tử': 'Operator',
+    'Giá trị': 'Value',
+    'Giá trị (JSON hoặc chuỗi)': 'Value (JSON or string)',
+    'Giá trị (nhiều dòng = nhiều giá trị)': 'Values (one per line)',
+    'Giá trị cố định': 'Literal value',
+    'Giá trị được chấp nhận (mỗi dòng một giá trị, có thể để trống)': 'Accepted values (one per line, may be empty)',
+    'Mỗi dòng một giá trị': 'One value per line',
+    'Bằng (==)': 'Equals (==)',
+    'Khác (!=)': 'Not equals (!=)',
+    'Chứa từ khóa': 'Contains',
+    'Nằm trong danh sách': 'In list',
+    'Đang trống (blank)': 'Is blank',
+    'Không trống (not blank)': 'Not blank',
+    'Đã ký (không cần giá trị)': 'Signed (no value needed)',
+    'Toán tử này không cần giá trị.': 'This operator does not require a value.',
+    'HOẶC (OR)': 'OR',
+    'Tất cả điều kiện trong ÍT NHẤT MỘT nhóm phải đúng (HOẶC giữa các nhóm).': 'All conditions in AT LEAST ONE group must match (OR between groups).',
+    'Câu hỏi đầu tiên luôn hiển thị mặc định.': 'The first question is always shown by default.',
+    'Câu hỏi này luôn hiển thị. Bấm "Thêm nhóm (OR)" để chỉ hiển thị khi các câu hỏi trước có giá trị cụ thể.': 'This question is always shown. Click "+ Add Group (OR)" to display it conditionally.',
+    'Loại module': 'Module kind',
+    'Tên module': 'Module name',
+    'Engine kiểm tra': 'Check engine',
+    'Tổng hợp (tất cả)': 'Composite (all)',
+    'Phân bố (thống kê đáp án)': 'Distribution (answer stats)',
+    'Từ chối bài gửi khi module không đạt': 'Reject submission if module fails',
+    'Thông báo từ chối (tùy chọn)': 'Rejection message (optional)',
+    'Đầu vào': 'Inputs',
+    'Nguồn đầu vào': 'Input source',
+    'Đầu ra (tên đầu ra công khai)': 'Output (public output key)',
+    'Module phía trên': 'Previous module',
+    'Output module trước': 'Previous module output',
+    'Toàn bộ module trước': 'All previous modules',
+    'Module + đầu ra': 'Module + output',
+    'Module kiểm tra cho câu này': 'Check modules for this question',
+    'Module kiểm tra cho slot này': 'Check modules for this slot',
+    'Module cấp câu hỏi chạy theo thứ tự module toàn biểu mẫu; lỗi được gắn với câu hỏi này.': 'Question-scoped modules run in form order; failures attach to this question.',
+    'Module cấp slot chạy theo thứ tự module toàn biểu mẫu; lỗi được gắn với slot ảnh này.': 'Slot-scoped modules run in form order; failures attach to this image slot.',
+    'Chưa có module cấp biểu mẫu. Bấm "+ Thêm Module" để bắt đầu.': 'No form-level modules yet. Click "+ Add Module" to begin.',
+    'Chưa có module kiểm tra nào.': 'No check modules yet.',
+    'Chưa có đầu ra.': 'No outputs yet.',
+    'Chưa có lựa chọn nào.': 'No options yet.',
+    'Chưa có ràng buộc nào.': 'No constraints yet.',
+    'Tải thống kê đã lưu': 'Load saved stats',
+    'Đang tải thống kê đã lưu...': 'Loading saved stats...',
+    'Lưu form trước, rồi tải thống kê.': 'Save the form first, then load stats.',
+    'Lưu form, rồi bấm tải thống kê.': 'Save the form, then click load stats.',
+    'Chưa có báo cáo. Lưu form và thử lại.': 'No report yet. Save the form and retry.',
+    'Chưa có câu hỏi nào được chọn hoặc chưa có dữ liệu.': 'No questions selected or no data yet.',
+    'Cấu hình các Slot Ảnh & Loại Đối Tượng': 'Image Slots & Object Type Configuration',
+    'Loại đối tượng ảnh / Prompt tự nhập': 'Image object type / Custom prompt',
+    'Prompt nhận diện tự nhập': 'Custom recognition prompt',
+    'Mô tả nhận diện AI (ẩn khỏi giao diện khảo sát):': 'AI recognition prompt (hidden from respondents):',
+    'Tùy chỉnh kiểm tra ảnh riêng cho câu hỏi này': 'Custom image checks for this question',
+    'Kích hoạt cấu hình kiểm tra riêng (ghi đè toàn cục)': 'Enable custom check overrides (overrides global)',
+    'Cấu hình kiểm tra nâng cao riêng cho slot này': 'Advanced check overrides for this slot',
+    'Kích hoạt cấu hình riêng (ghi đè câu hỏi)': 'Enable custom overrides (overrides question)',
+    'Tooltip giải thích (Hiển thị popup khi rê chuột)': 'Tooltip explanation (shown on hover)',
+    'Tooltip hướng dẫn riêng cho slot': 'Slot-specific tooltip guidance',
+    'Danh sách Lựa chọn & Nhóm đối kháng (Option Groups)': 'Options & Mutually Exclusive Groups',
+    'Tên lựa chọn (Label)': 'Option label',
+    'Nhóm (Group)': 'Group',
+    'Cấu hình nhóm tương thích (Group Compatibility - Advanced)': 'Group Compatibility (Advanced)',
+    'Vùng nguy hiểm': 'Danger Zone',
+    'Xóa vĩnh viễn biểu mẫu': 'Permanently delete form',
+    '🗑️ Xóa biểu mẫu': '🗑️ Delete form',
+    'Đang xóa...': 'Deleting...',
+    'Xóa vĩnh viễn biểu mẫu này. Toàn bộ schema được sao lưu vào cơ sở dữ liệu trước khi xóa.': 'Permanently delete this form. Full schema is backed up to the database first.',
+    '-- Chưa có câu hỏi --': '-- No questions --',
+    '-- Chọn --': '-- Select --',
+    '-- Chọn câu hỏi --': '-- Select question --',
+    '-- Chọn engine kiểm tra --': '-- Select check engine --',
+    '-- Chọn module logic --': '-- Select logic module --',
+    '-- Chọn module phía trên --': '-- Select previous module --',
+    '-- Câu hỏi đã bị xóa (chọn lại) --': '-- Deleted question (reselect) --',
+    '-- Tự nhập prompt --': '-- Custom prompt --',
+    '-- Đầu ra --': '-- Output --',
+
+    // Login, CTV Login, CTV Portal (routers/login.py, routers/ctv_login.py, routers/ctv_portal.py)
+    'Đăng nhập quản trị': 'Admin Login',
+    'Đăng nhập quản trị | Trust Bridge': 'Admin Login | Trust Bridge',
+    'Đăng nhập': 'Sign In',
+    'Mật khẩu': 'Password',
+    'Dùng tài khoản quản trị đã được cấp. Phiên đăng nhập được giữ bằng cookie an toàn, không dùng hộp thoại Basic Auth.': 'Use your assigned admin account. Sessions are kept with a secure cookie instead of Basic Auth prompts.',
+    'Quên mật khẩu? Dùng trang khôi phục hoặc liên hệ quản trị hệ thống.': 'Forgot password? Use the recovery page or contact a system administrator.',
+    'Tên đăng nhập hoặc mật khẩu không đúng.': 'Incorrect username or password.',
+    'Trust Bridge · Cộng tác viên': 'Trust Bridge · Collaborators',
+    'Đăng nhập CTV': 'CTV Login',
+    'Đăng nhập CTV | Trust Bridge': 'CTV Login | Trust Bridge',
+    'Đăng nhập bằng mã CTV': 'Sign in with CTV code',
+    'Chọn mã của bạn': 'Select your code',
+    'Gửi OTP qua Telegram': 'Send OTP via Telegram',
+    'Hoặc dùng số điện thoại': 'Or use phone number',
+    'Số điện thoại CTV': 'CTV phone number',
+    'Chọn mã CTV hoặc nhập số điện thoại đã xác minh với bot. Cả hai cách đều cần OTP gửi đến Telegram đã liên kết.': 'Select your CTV code or enter your bot-verified phone number. Both require an OTP sent to your linked Telegram.',
+    'Chưa liên kết Telegram? Mở liên kết bot do quản trị viên cấp và chia sẻ số liên hệ của chính bạn trước khi đăng nhập.': 'Telegram not linked yet? Open the bot link from your admin and share your own contact before signing in.',
+    'Phiên đăng nhập được giữ trong 30 ngày trên thiết bị này. Hãy đăng xuất nếu dùng thiết bị chung.': 'Your session stays signed in for 30 days on this device. Sign out if using a shared device.',
+    'OTP đã được gửi đến Telegram đã xác minh của bạn. Mã có hiệu lực trong 5 phút và chỉ dùng một lần.': 'An OTP has been sent to your verified Telegram. It expires in 5 minutes and is single-use.',
+    'Mã OTP': 'OTP Code',
+    'Xác minh và đăng nhập': 'Verify & Sign In',
+    'Đổi mã CTV / số điện thoại hoặc gửi lại OTP': 'Change CTV code / phone or resend OTP',
+    'Cổng cộng tác viên': 'Collaborator Portal',
+    'Cổng cộng tác viên | Trust Bridge': 'Collaborator Portal | Trust Bridge',
+    'Đến nội dung chính': 'Skip to main content',
+    'Đăng xuất': 'Sign Out',
+    'Thông tin của bạn': 'Your Information',
+    'Họ và tên': 'Full Name',
+    'Chưa cập nhật': 'Not updated',
+    'Xác minh': 'Verification',
+    'Đã xác minh qua Telegram': 'Verified via Telegram',
+    'Chưa liên kết Telegram': 'Telegram not linked',
+    'Mục tiêu và tiến độ': 'Goals & Progress',
+    'Mục tiêu chỉ để theo dõi tiến độ, không phải giới hạn nộp phiếu. Bạn vẫn có thể làm khảo sát đang mở sau khi đạt mục tiêu.': 'Goals track progress only and are not submission caps. You can keep submitting open surveys after reaching a goal.',
+    'Kỳ cuốn chiếu tính lùi từ thời điểm hiện tại; mỗi phiếu rời kỳ khi đủ số ngày. Toàn thời gian tính tất cả phiếu đã nộp.': 'Rolling periods count backward from now; each submission leaves the window after that many days. All-time counts every submission.',
+    'Bạn chưa được cấu hình mục tiêu.': 'No goals have been configured for you yet.',
+    'Toàn thời gian': 'All time',
+    'Chưa đặt số lượng mục tiêu.': 'No target count set.',
+    'Đã đạt mục tiêu': 'Goal reached',
+    'Đang thực hiện': 'In progress',
+    'Khảo sát đang mở': 'Open Surveys',
+    'Biểu mẫu có theo dõi CTV sẽ gắn mã của bạn. Biểu mẫu không theo dõi CTV được ghi chú riêng.': 'Tracked forms automatically include your CTV code. Non-attributed forms are marked separately.',
+    'Liên kết đã gắn mã CTV của bạn.': 'Link includes your CTV referral code.',
+    'Biểu mẫu không ghi nhận mã CTV; bài nộp không tính vào tiến độ CTV.': 'This form does not track CTV codes; submissions will not count toward your CTV progress.',
+    'Biểu mẫu thử nghiệm': 'Test form',
+    'Mở khảo sát': 'Open survey',
+    'Hiện chưa có khảo sát công khai đang mở.': 'No open public surveys right now.',
+    'Chỉ hiển thị thông tin và tiến độ của tài khoản đang đăng nhập.': 'Only displays information and progress for the signed-in account.',
+    'Tạm thời không thể tải cổng CTV': 'CTV portal temporarily unavailable',
+    'Không thể xác nhận dữ liệu hiện tại. Vui lòng thử lại sau; không có số liệu thay thế được hiển thị.': 'Unable to verify current data. Please try again later; no fallback numbers are shown.',
+    'Thử lại': 'Retry'
   };
+
+  const patternMap = [
+    [/^Module đã đăng ký \((\d+)\)$/, 'Registered Modules ($1)'],
+    [/^Object ảnh \((\d+)\)$/, 'Image Objects ($1)'],
+    [/^Lỗi định nghĩa \((\d+)\)$/, 'Definition Errors ($1)'],
+    [/^Chi Tiết Hồ Sơ #(.+)$/, 'Submission Details #$1'],
+    [/^Hiển thị (\d+) - (\d+) trên tổng (\d+) bản ghi$/, 'Showing $1 - $2 of $3 records'],
+    [/^Trang (\d+) \/ (\d+)$/, 'Page $1 / $2'],
+    [/^(\d+) tệp$/, '$1 files'],
+    [/^Đang tải lên (.+)\.\.\.$/, 'Uploading $1...'],
+    [/^Đã tải lên (.+)!$/, 'Uploaded $1!'],
+    [/^Đã xóa tệp (.+)!$/, 'Deleted file $1!'],
+    [/^Đã xóa phiếu #(.+)\.$/, 'Deleted submission #$1.'],
+    [/^Ảnh (\d+)$/, 'Image $1'],
+    [/^Ảnh (\d+):$/, 'Image $1:'],
+    [/^Slot #(\d+) \(Chỉ mục: (\d+)\)$/, 'Slot #$1 (Index: $2)'],
+    [/^Nhóm (\d+) \(tất cả phải đúng\)$/, 'Group $1 (all must match)'],
+    [/^Câu hỏi số (\d+)$/, 'Question #$1'],
+    [/^Lựa chọn (\d+)$/, 'Option $1'],
+    [/^Chỉnh Sửa: (.+)$/, 'Editing: $1'],
+    [/^(\d+) ngày cuốn chiếu$/, '$1-day rolling window'],
+    [/^Đã nộp: (\d+) \/ Mục tiêu: (\d+) phiếu$/, 'Submitted: $1 / Goal: $2'],
+    [/^Đã nộp: (\d+) phiếu$/, 'Submitted: $1'],
+    [/^Còn để đạt mục tiêu: (\d+) phiếu · Đã đạt mục tiêu$/, 'Remaining to goal: $1 · Goal reached'],
+    [/^Còn để đạt mục tiêu: (\d+) phiếu · Đang thực hiện$/, 'Remaining to goal: $1 · In progress'],
+    [/^Sửa CTV (.+)$/, 'Edit CTV $1'],
+    [/^Lưu CTV (.+)$/, 'Save CTV $1'],
+    [/^Xóa CTV (.+)\? Dữ liệu bài nộp cũ vẫn được giữ\.$/, 'Delete CTV $1? Historical submissions are preserved.'],
+    [/^Xóa CTV (.+)$/, 'Delete CTV $1'],
+    [/^Tên hiển thị CTV (.+)$/, 'Display name for CTV $1'],
+    [/^Số điện thoại CTV (.+)$/, 'Phone number for CTV $1'],
+    [/^Ghi chú CTV (.+)$/, 'Notes for CTV $1'],
+    [/^Mã QR liên kết khảo sát cho CTV (.+)$/, 'Survey referral QR code for CTV $1'],
+    [/^Liên kết và ảnh PNG đã sẵn sàng\. Trình duyệt không hỗ trợ (.+); bạn có thể sao chép liên kết hoặc tải PNG\.$/, 'Link and PNG image ready. Browser does not support $1; you can copy the link or download PNG.']
+  ];
+
   const origText = new WeakMap();
   const origPlaceholder = new WeakMap();
   const origTitle = new WeakMap();
+  const origAria = new WeakMap();
   const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
+  let origDocTitle = null;
   let applying = false;
   let observer = null;
+
+  const translateText = (raw, lang) => {
+    const selected = lang === 'vi' || lang === 'en' ? lang : getLang();
+    if (selected !== 'en' || !raw) return raw;
+    const match = String(raw).match(/^(\s*)([\s\S]*?)(\s*)$/);
+    const core = match[2];
+    if (!core) return raw;
+    if (core in phraseMap) return match[1] + phraseMap[core] + match[3];
+    for (let i = 0; i < patternMap.length; i += 1) {
+      const [re, rep] = patternMap[i];
+      if (re.test(core)) return match[1] + core.replace(re, rep) + match[3];
+    }
+    return raw;
+  };
 
   const setText = (el, next) => {
     if (el.textContent !== next) el.textContent = next;
@@ -394,47 +875,57 @@
 
   const translateDom = (root, lang) => {
     if (!root) return;
+    if (origDocTitle === null && document.title) origDocTitle = document.title;
+    if (origDocTitle) {
+      const nextTitle = lang === 'en' ? translateText(origDocTitle, 'en') : origDocTitle;
+      if (document.title !== nextTitle) document.title = nextTitle;
+    }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
     while ((node = walker.nextNode())) {
       const parent = node.parentElement;
       if (!parent || skipTags.has(parent.tagName)) continue;
-      if (parent.closest('[data-i18n], [data-role-label], [data-account-option], [data-i18n-template], #adminLangCode')) continue;
+      if (parent.closest('[data-i18n], [data-role-label], [data-account-option], [data-i18n-template], #adminLangCode, [data-lang-toggle]')) continue;
       if (!origText.has(node)) {
         const raw = node.nodeValue || '';
-        const trimmed = raw.trim();
-        if (!trimmed || !(trimmed in phraseMap)) continue;
+        const translated = translateText(raw, 'en');
+        if (translated === raw) continue;
         origText.set(node, raw);
       }
       const saved = origText.get(node);
-      const next = lang === 'en'
-        ? (() => {
-            const match = saved.match(/^(\s*)([\s\S]*?)(\s*)$/);
-            const translated = phraseMap[match[2]];
-            return translated ? match[1] + translated + match[3] : saved;
-          })()
-        : saved;
+      const next = lang === 'en' ? translateText(saved, 'en') : saved;
       if (node.nodeValue !== next) node.nodeValue = next;
     }
-    const targets = root.querySelectorAll ? root.querySelectorAll('input[placeholder], textarea[placeholder], [title]') : [];
+    const targets = root.querySelectorAll ? root.querySelectorAll('input[placeholder], textarea[placeholder], [title], [aria-label]') : [];
     targets.forEach((el) => {
-      if (el.hasAttribute('data-i18n-placeholder')) return;
-      if (el.placeholder) {
-        if (!origPlaceholder.has(el) && (el.placeholder.trim() in phraseMap)) origPlaceholder.set(el, el.placeholder);
+      if (!el.hasAttribute('data-i18n-placeholder') && el.placeholder) {
+        if (!origPlaceholder.has(el) && translateText(el.placeholder, 'en') !== el.placeholder) origPlaceholder.set(el, el.placeholder);
         if (origPlaceholder.has(el)) {
           const saved = origPlaceholder.get(el);
-          const next = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          const next = lang === 'en' ? translateText(saved, 'en') : saved;
           if (el.placeholder !== next) el.placeholder = next;
         }
       }
       if (el.title) {
-        if (!origTitle.has(el) && (el.title.trim() in phraseMap)) origTitle.set(el, el.title);
+        if (!origTitle.has(el) && translateText(el.title, 'en') !== el.title) origTitle.set(el, el.title);
         if (origTitle.has(el)) {
           const saved = origTitle.get(el);
-          const next = lang === 'en' ? (phraseMap[saved.trim()] || saved) : saved;
+          const next = lang === 'en' ? translateText(saved, 'en') : saved;
           if (el.title !== next) el.title = next;
         }
       }
+      const aria = el.getAttribute('aria-label');
+      if (aria) {
+        if (!origAria.has(el) && translateText(aria, 'en') !== aria) origAria.set(el, aria);
+        if (origAria.has(el)) {
+          const saved = origAria.get(el);
+          const next = lang === 'en' ? translateText(saved, 'en') : saved;
+          if (aria !== next) el.setAttribute('aria-label', next);
+        }
+      }
+    });
+    document.querySelectorAll('[data-lang-toggle]').forEach((btn) => {
+      setText(btn, lang.toUpperCase());
     });
   };
 
@@ -482,11 +973,14 @@
     document.dispatchEvent(new CustomEvent('admin-language-change', { detail: { lang: getLang() } }));
   }
   window.AdminI18n = {
-    t, apply, getLang, setLang,
+    t, apply, getLang, setLang, translateText,
     toggle: () => setLang(getLang() === 'vi' ? 'en' : 'vi')
   };
   document.addEventListener('DOMContentLoaded', () => {
     document.documentElement.lang = getLang();
+    document.querySelectorAll('[data-lang-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => window.AdminI18n.toggle());
+    });
     apply();
     if (document.body && typeof MutationObserver !== 'undefined') {
       observer = new MutationObserver(() => {
