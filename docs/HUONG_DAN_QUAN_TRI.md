@@ -44,7 +44,7 @@ Menu trên cùng bên trái gồm:
 - **Dữ liệu nộp**: xem, lọc và xuất dữ liệu bài nộp
 - **Audit**: nhật ký kiểm toán
 - **Media**: quản lý ảnh và tệp tĩnh
-- **CTV**: danh bạ cộng tác viên và quota
+- **CTV**: danh bạ cộng tác viên, thêm/sửa/tạm tắt/xóa, bài nộp và quota
 - **Ảnh/Object**: định nghĩa object ảnh và engine đang có
 - **Module**: logic, object và engine module trong cơ sở dữ liệu
 - **Exports**: cấu hình xuất Google Drive
@@ -262,7 +262,7 @@ Quy tắc an toàn:
 - **Dữ liệu nộp**: xem và lọc bài nộp, xuất CSV/JSON. Không chia sẻ ảnh chụp màn hình có số điện thoại hoặc thông tin tài xế.
 - **Audit**: nhật ký kiểm toán, phục vụ truy vết thay đổi.
 - **Media**: quản lý tệp tĩnh và ảnh minh họa.
-- **CTV**: danh bạ cộng tác viên và quota.
+- **CTV**: danh bạ cộng tác viên, thêm/sửa/tạm tắt/xóa, bài nộp và quota.
 - **Thùng rác**: khôi phục biểu mẫu hoặc bài nộp đã xóa. Không xóa vĩnh viễn nếu chưa có phê duyệt.
 
 ## 8. Checklist nhanh sau khi cấu hình
