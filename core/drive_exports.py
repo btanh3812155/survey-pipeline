@@ -123,11 +123,19 @@ def build_export_csv(rows: Iterable[dict[str, Any]], fields: Iterable[str]) -> b
     return out.getvalue().encode("utf-8-sig")
 
 
+def _sheet_value(value: Any) -> Any:
+    text = _csv_value(value)
+    # Google Sheets rejects a single cell above 50,000 characters.
+    if isinstance(text, str) and len(text) > 49000:
+        return text[:48980] + "... [truncated]"
+    return text
+
+
 def export_matrix(rows: Iterable[dict[str, Any]], fields: Iterable[str]) -> list[list[Any]]:
     selected = _selected_fields(fields)
     labels = dict(EXPORT_FIELDS)
     matrix = [[labels[key] for key in selected]]
-    matrix.extend([[_csv_value(row.get(key)) for key in selected] for row in rows])
+    matrix.extend([[_sheet_value(row.get(key)) for key in selected] for row in rows])
     return matrix
 
 
@@ -737,7 +745,7 @@ async def _internal_form_ids(pool, drive: Any, http, token: str, internal_id: st
     for child in await drive.list_children(http, token, internal_id):
         if child.get("mimeType") == "application/vnd.google-apps.folder":
             name = str(child.get("name") or "")
-            if name and name not in {"submissions", "_legacy_unknown"}:
+            if name and name not in {"submissions", "_legacy", "_legacy_unknown"}:
                 forms.add(name)
     return sorted(forms)
 
