@@ -126,7 +126,8 @@ def render_telegram_verdict(
 
 def render_appeal_keyboard(submission_id: str, remaining_appeals: int = 3) -> dict:
     """Returns Telegram inline keyboard allowing rate-limited appeal request."""
-    return {
+    from services.telegram_ui import with_survey_copy
+    return with_survey_copy({
         "inline_keyboard": [
             [
                 {
@@ -135,4 +136,4 @@ def render_appeal_keyboard(submission_id: str, remaining_appeals: int = 3) -> di
                 }
             ]
         ]
-    }
+    }, submission_id)

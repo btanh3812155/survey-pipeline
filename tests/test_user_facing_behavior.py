@@ -1497,3 +1497,62 @@ def test_simulated_user_submission_reaches_provider_dispatch():
         assert kwargs["form_id"] == form_id
     finally:
         FORM_REGISTRY.pop(form_id, None)
+
+
+def test_survey_copy_button_is_added_once_and_preserves_reply_keyboards():
+    from services.telegram_ui import with_survey_copy
+    from services.templates_vn import render_appeal_keyboard
+
+    inline = {"inline_keyboard": [[{"text": "Mở", "callback_data": "admin_review:VN-1"}]]}
+    once = with_survey_copy(inline, "VN-1")
+    twice = with_survey_copy(once, "VN-1")
+    copy_rows = [
+        row for row in twice["inline_keyboard"]
+        if row == [{"text": "📋 Sao chép mã phiếu", "copy_text": {"text": "VN-1"}}]
+    ]
+    assert len(copy_rows) == 1
+
+    reply_keyboard = {"keyboard": [[{"text": "Khảo sát của tôi"}]], "resize_keyboard": True}
+    assert with_survey_copy(reply_keyboard, "VN-1") == reply_keyboard
+    assert render_appeal_keyboard("VN-2")["inline_keyboard"][-1][0]["copy_text"] == {"text": "VN-2"}
+
+
+def test_driver_verdict_messages_include_copy_button():
+    from routers.survey import render_driver_submission_verdict_message
+
+    for status in ("APPROVED", "REJECTED", "MANUAL_REVIEW"):
+        _, markup = render_driver_submission_verdict_message("VN-TEST-COPY", status)
+        buttons = [
+            button
+            for row in (markup or {}).get("inline_keyboard", [])
+            for button in row
+            if isinstance(button, dict) and button.get("copy_text")
+        ]
+        assert buttons and buttons[0]["copy_text"] == {"text": "VN-TEST-COPY"}
+
+
+@pytest.mark.asyncio
+async def test_admin_flagged_survey_payload_has_copy_button(monkeypatch):
+    from services import admin_moderator
+    from config import settings
+
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_GROUP_ID", "-100123")
+
+    class Client:
+        payload = None
+
+        async def post(self, _url, json=None):
+            self.payload = json
+
+    client = Client()
+    await admin_moderator.forward_flagged_survey_to_admin_group(
+        "VN-FLAG-COPY", "0900000000", "Test Driver", "TEST_FLAG", "test reason",
+        http_client=client,
+    )
+    buttons = [
+        button
+        for row in client.payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+    assert any(button.get("copy_text") == {"text": "VN-FLAG-COPY"} for button in buttons)

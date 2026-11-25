@@ -35,6 +35,7 @@ from core.repositories import append_dev_submission
 from services.privacy_crypto import hash_phone
 from services.normalizer import sanitize_and_normalize_image, compute_laplacian_blur_score, detect_image_manipulation
 from services.action_checklist import dispatch_action_checklist
+from services.telegram_ui import with_survey_copy
 from services.dynamic_form_html import render_dynamic_form_html, render_ctv_selector_landing_html
 from services.form_engine import get_effective_image_checks
 
@@ -1138,7 +1139,7 @@ def render_driver_submission_verdict_message(
             f"• <b>Trạng thái:</b> <b>HỢP LỆ ✅</b>\n\n"
             f"Cảm ơn bạn đã tham gia. Tiền thưởng đang được đưa vào hàng đợi chi trả tự động!"
         )
-        return text, None
+        return text, with_survey_copy(None, submission_id)
 
     elif status_str == "REJECTED":
         text = (
@@ -1148,7 +1149,7 @@ def render_driver_submission_verdict_message(
             f"• <b>Lý do:</b> <i>{reason_str or 'Ảnh chụp hoặc số liệu chưa hợp lệ'}</i>\n\n"
             f"👉 <i>Bạn có thể bấm nút bên dưới để gửi lại ảnh chụp rõ nét hơn hoặc gửi yêu cầu phúc khảo:</i>"
         )
-        reply_markup = {
+        reply_markup = with_survey_copy({
             "inline_keyboard": [
                 [
                     {"text": f"📸 Gửi lại ảnh #{submission_id}", "callback_data": f"driver_fix:{submission_id}:slot_photo"},
@@ -1158,7 +1159,7 @@ def render_driver_submission_verdict_message(
                     {"text": "🆘 Yêu Cầu Hỗ Trợ", "callback_data": f"driver_support:{submission_id}"},
                 ]
             ]
-        }
+        }, submission_id)
         return text, reply_markup
 
     else:
@@ -1169,7 +1170,7 @@ def render_driver_submission_verdict_message(
             f"• <b>Ghi chú:</b> <i>{reason_str or 'Hệ thống đang đối soát dữ liệu'}</i>\n\n"
             f"Kết quả cuối cùng sẽ được thông báo trực tiếp tại đây ngay khi hoàn tất."
         )
-        return text, None
+        return text, with_survey_copy(None, submission_id)
 
 
 def _verification_reply_markup() -> dict:

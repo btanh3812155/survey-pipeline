@@ -10,6 +10,7 @@ from uuid import uuid4
 from psycopg.rows import dict_row
 
 from config import settings
+from services.telegram_ui import with_survey_copy
 from core.phone_links import (
     CONFLICTED_PHONE_LINK_SOURCE,
     VERIFIED_PHONE_LINK_SOURCES,
@@ -205,11 +206,12 @@ async def enqueue_submission_work(conn, submission_id, transition="SUBMITTED", *
         ids.append(await enqueue_action(conn, sid, target, transition, {**base, **payload}))
 
     admin_role = "admin" if settings.TELEGRAM_ADMIN_BOT_TOKEN else "primary"
+    default_admin_markup = {"inline_keyboard": [[{"text": "Mở Phiếu Xét Duyệt", "callback_data": f"admin_review:{sid}"}]]}
     if transition != "PARTY_ONLY":
         await add("TELEGRAM_NOTIFY", {"bot_role": admin_role, "chat_id": settings.TELEGRAM_ADMIN_GROUP_ID,
             "message_class": "ADMIN_REVIEW" if transition in {"SUBMITTED", "LEGACY_RECONCILED"} else transition + "_ADMIN",
             "parse_mode": "HTML", "text": context.get("admin_text") or f"Phiếu khảo sát #{safe_sid}: <b>{safe_status}</b>\n{reason}",
-            "reply_markup": context.get("admin_markup") or {"inline_keyboard": [[{"text": "Mở Phiếu Xét Duyệt", "callback_data": f"admin_review:{sid}"}]]}})
+            "reply_markup": with_survey_copy(context.get("admin_markup") or default_admin_markup, sid)})
     recipient, skip = await _recipient(conn, row, policy)
     driver_role = "driver" if settings.TELEGRAM_DRIVER_BOT_TOKEN else "primary"
     party = {"bot_role": driver_role, "chat_id": recipient, "message_class": "PARTY_VERDICT" if transition in {"SUBMITTED", "LEGACY_RECONCILED"} else transition + "_PARTY",

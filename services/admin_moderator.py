@@ -10,6 +10,7 @@ import httpx
 from typing import Optional, List, Dict, Any, Union
 from config import settings
 from services.image_object_projection import project_income_weeks
+from services.telegram_ui import with_survey_copy
 logger = logging.getLogger("admin_moderator")
 
 
@@ -74,6 +75,8 @@ async def forward_flagged_survey_to_admin_group(
             ],
         ]
     }
+
+    inline_keyboard = with_survey_copy(inline_keyboard, submission_id)
 
     client = http_client or httpx.AsyncClient(timeout=10.0)
     try:

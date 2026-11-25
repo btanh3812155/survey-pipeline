@@ -26,6 +26,7 @@ from services.admin_moderator import (
     render_dossier_message,
 )
 from services.normalizer import compute_laplacian_blur_score, normalize_image_to_webp
+from services.telegram_ui import with_survey_copy
 from services.vehicle_tracker import VehiclePersistenceTracker, stored_vehicle_candidate
 
 logger = logging.getLogger("telegram_polling")
@@ -536,6 +537,7 @@ class TelegramPollingRunner:
                 ]
             }
 
+        buttons = with_survey_copy(buttons, clean_sub_id)
         await self.send_dossier_bundle(
             chat_id,
             f"dossier:{chat_id}:{dossier.get('submission_id')}",
@@ -871,7 +873,7 @@ class TelegramPollingRunner:
                 ]
             }
             if msg_id:
-                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=confirm_buttons)
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=with_survey_copy(confirm_buttons, sub_id))
             await self.answer_callback_query(cq_id, "Vui lòng xác nhận để hoàn tất duyệt phiếu.")
 
         elif data.startswith("admin_req_reject:"):
@@ -888,7 +890,7 @@ class TelegramPollingRunner:
                 ]
             }
             if msg_id:
-                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=confirm_buttons)
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=with_survey_copy(confirm_buttons, sub_id))
             await self.answer_callback_query(cq_id, "Vui lòng xác nhận để hoàn tất từ chối phiếu.")
 
         elif data.startswith("admin_cancel_decision:"):
@@ -902,7 +904,7 @@ class TelegramPollingRunner:
                 ]
             }
             if msg_id:
-                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=restore_buttons)
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=with_survey_copy(restore_buttons, sub_id))
             await self.answer_callback_query(cq_id, "Đã hủy thao tác.")
 
         elif data.startswith("admin_approve:"):
@@ -915,9 +917,9 @@ class TelegramPollingRunner:
 
             await self.answer_callback_query(cq_id, f"Đã duyệt #{sub_id}")
             if msg_id:
-                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã DUYỆT (APPROVED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=with_survey_copy({"inline_keyboard": [[{"text": "🔒 Đã DUYỆT (APPROVED) - Hoàn tất", "callback_data": "resolved_notice"}]]}, sub_id))
             if await self._legacy_delivery_allowed(sub_id):
-                await self.send_message(cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}.</b>")
+                await self.send_message(cq_chat_id, f"✅ <b>Quản trị viên đã DUYỆT thủ công phiếu #{sub_id}.</b>", reply_markup=with_survey_copy(None, sub_id))
                 await self._notify_parties_of_decision(sub_id, "APPROVED", reason=reason)
 
         elif data.startswith("admin_reject:"):
@@ -930,9 +932,9 @@ class TelegramPollingRunner:
 
             await self.answer_callback_query(cq_id, f"Đã từ chối #{sub_id}")
             if msg_id:
-                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup={"inline_keyboard": [[{"text": "🔒 Đã TỪ CHỐI (REJECTED) - Hoàn tất", "callback_data": "resolved_notice"}]]})
+                await self.edit_message_reply_markup(cq_chat_id, msg_id, reply_markup=with_survey_copy({"inline_keyboard": [[{"text": "🔒 Đã TỪ CHỐI (REJECTED) - Hoàn tất", "callback_data": "resolved_notice"}]]}, sub_id))
             if await self._legacy_delivery_allowed(sub_id):
-                await self.send_message(cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}.</b>")
+                await self.send_message(cq_chat_id, f"❌ <b>Quản trị viên đã TỪ CHỐI phiếu #{sub_id}.</b>", reply_markup=with_survey_copy(None, sub_id))
                 await self._notify_parties_of_decision(sub_id, "REJECTED", reason=reason)
 
         elif data == "resolved_notice":
@@ -1167,10 +1169,10 @@ class TelegramPollingRunner:
         self.vehicle_confirmations[token] = (now + 600, chat_id, admin_id, candidate)
         await self.answer_callback_query(cq_id, "Vui lòng xác nhận trước khi đổi xe.")
         await self.send_message(chat_id, f"Xác nhận đổi xe theo phiếu #{html.escape(sid)} sang {plate} ({kind})?",
-                                reply_markup={"inline_keyboard": [[
+                                reply_markup=with_survey_copy({"inline_keyboard": [[
                                     {"text": "Xác nhận đổi xe", "callback_data": f"admin_cv:{token}"},
                                     {"text": "Hủy bỏ", "callback_data": f"admin_cv_cancel:{token}"},
-                                ]]})
+                                ]]}, sid))
 
     async def _confirm_vehicle_change(self, cq_id, chat_id, msg_id, admin_id, token, confirmed):
         prompt = self.vehicle_confirmations.get(token)
@@ -1320,9 +1322,9 @@ class TelegramPollingRunner:
         elif status in ("APPROVED", "REJECTED"):
             text = f"⚠️ Phiếu #{sub_id} đã được xử lý ({status})."
             if msg_id:
-                await self.edit_message_reply_markup(chat_id, msg_id, reply_markup={"inline_keyboard": [[
+                await self.edit_message_reply_markup(chat_id, msg_id, reply_markup=with_survey_copy({"inline_keyboard": [[
                     {"text": f"🔒 Đã xử lý ({status})", "callback_data": "resolved_notice"}
-                ]]})
+                ]]}, sub_id))
         else:
             text = f"Chưa thay đổi được trạng thái của phiếu #{sub_id}."
         await self.answer_callback_query(cq_id, text, show_alert=True)
@@ -2127,6 +2129,9 @@ class DriverBotRunner(TelegramPollingRunner):
                 buttons.append([
                     {"text": f"📸 Gửi lại ảnh #{sub_id}", "callback_data": f"driver_fix:{sub_id}:flat_0"},
                 ])
+            buttons.append([
+                {"text": f"📋 Sao chép #{sub_id}", "copy_text": {"text": sub_id}},
+            ])
 
         inline_markup = {"inline_keyboard": buttons} if buttons else None
         await self.send_tracked(f"surveys:{user_id}", chat_id, "\n\n".join(lines), reply_markup=inline_markup)
@@ -2306,7 +2311,7 @@ class DriverBotRunner(TelegramPollingRunner):
                     f"Vui lòng xem xét và bấm nút duyệt hoặc bác bỏ bên dưới:"
                 ),
                 "parse_mode": "HTML",
-                "reply_markup": {
+                "reply_markup": with_survey_copy({
                     "inline_keyboard": [
                         [
                             {"text": f"✅ Duyệt #{sub_id}", "callback_data": f"admin_req_approve:{sub_id}"},
@@ -2316,7 +2321,7 @@ class DriverBotRunner(TelegramPollingRunner):
                             {"text": f"🔍 Xem hồ sơ #{sub_id}", "callback_data": f"admin_query:{sub_id}"},
                         ],
                     ]
-                },
+                }, sub_id),
             }
             try:
                 await client.post(url, json=payload)

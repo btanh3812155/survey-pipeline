@@ -337,8 +337,9 @@ async def test_telegram_polling_audit_command(monkeypatch):
         lookup.assert_not_awaited()
         runner.schedule_submission_review.assert_not_called()
         await runner.handle_command(chat_id=-100123, text="/check VN-AUDIT01", from_user_id=99999)
-        assert [b["callback_data"] for row in bundle.await_args.kwargs["reply_markup"]["inline_keyboard"]
-                for b in row] == ["resolved_notice"]
+        buttons = [b for row in bundle.await_args.kwargs["reply_markup"]["inline_keyboard"] for b in row]
+        assert [b["callback_data"] for b in buttons if b.get("callback_data")] == ["resolved_notice"]
+        assert [b["copy_text"] for b in buttons if b.get("copy_text")] == [{"text": "VN-AUDIT01"}]
         await runner.handle_command(chat_id=-100123, text="/audit VN-AUDIT01", from_user_id=99999)
         assert "VN-AUDIT01" in bundle.await_args.args[3]
         assert any(b["callback_data"].startswith("admin_override:")

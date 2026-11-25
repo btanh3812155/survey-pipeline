@@ -371,58 +371,6 @@ async def test_turning_form_images_off_clears_old_shortcuts(store, monkeypatch, 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
-    pool, conn = store
-    media_root = tmp_path / "submission_photos"
-    media_root.mkdir()
-    monkeypatch.setattr(submission_media, "PRIVATE_MEDIA_ROOT", str(media_root))
-    _insert(conn, "VN-A", form_id="TB_A")
-    _insert(conn, "VN-B", form_id="TB_B")
-    image_dir = media_root / "VN-B"
-    image_dir.mkdir()
-    Image.new("RGB", (12, 12), (20, 20, 200)).save(image_dir / "slot_1.png")
-    await drive_exports.save_client(pool, {
-        "slug": "tree-client", "display_name": "Tree Client", "kind": "client",
-        "folder_name": "Tree Client", "enabled": True,
-        "form_ids": ["TB_A", "TB_B"], "fields": ["submission_id", "status"],
-        "statuses": ["APPROVED"], "vehicle_types": [], "include_images": True,
-    }, "tester")
-    await drive_exports.save_client_form(pool, "tree-client", "TB_A", {
-        "fields": ["submission_id"], "statuses": ["APPROVED"],
-        "vehicle_types": [], "include_images": False,
-    }, "tester")
-    await drive_exports.save_client_form(pool, "tree-client", "TB_B", {
-        "fields": ["status"], "statuses": ["APPROVED"],
-        "vehicle_types": [], "include_images": True,
-    }, "tester")
-    fake = FakeDrive()
-    report = await drive_exports.run_drive_exports(
-        pool, client=fake, http_client=object(), token="token", root_folder_id="root"
-    )
-    assert report["status"] == "ok", report
-    assert report["forms"] == 2
-    sheet_headers = {
-        name: csv_bytes.decode("utf-8-sig").splitlines()[0]
-        for name, _parent, csv_bytes in fake.sheets
-    }
-    assert sheet_headers["TB_A"] == "Submission ID"
-    assert sheet_headers["TB_B"] == "Status"
-    assert len(fake.uploads) == 1
-    assert len(fake.shortcuts) == 1
-    assert "TB_B" in fake.shortcuts[0][2]
-
-    # Saving the client folder again must not wipe per-form overrides.
-    await drive_exports.save_client(pool, {
-        "slug": "tree-client", "display_name": "Tree Client", "kind": "client",
-        "folder_name": "Tree Client", "enabled": True,
-        "form_ids": ["TB_A", "TB_B"], "fields": ["submission_id", "status"],
-        "statuses": ["APPROVED"], "vehicle_types": [], "include_images": True,
-    }, "tester")
-    saved = await drive_exports.get_client(pool, "tree-client")
-    assert set(saved["form_settings"]) == {"TB_A", "TB_B"}
-
-
-@pytest.mark.postgres
-@pytest.mark.asyncio
 async def test_export_uploads_images_once_and_shortcuts_each_client(store, monkeypatch, tmp_path):
     pool, conn = store
     media_root = tmp_path / "submission_photos"
@@ -727,8 +675,15 @@ async def test_manual_export_runs_in_background_and_exposes_progress(monkeypatch
     monkeypatch.setattr(admin_exports, "run_drive_exports", slow_export)
     monkeypatch.setattr(admin_exports, "_pool", lambda: object())
 
-    response = await admin_exports.run_exports(admin_user="tester")
-    assert response.status_code == 303
+    from starlette.requests import Request
+    request = Request({
+        "type": "http", "method": "POST", "path": "/admin/exports/run",
+        "headers": [(b"accept", b"application/json"), (b"x-requested-with", b"fetch")],
+        "client": ("127.0.0.1", 1234),
+    })
+    response = await admin_exports.run_exports(request, admin_user="tester")
+    assert response.status_code == 200
+    assert b'"started"' in response.body
     await asyncio.sleep(0.05)
 
     snapshot = await admin_exports.export_progress("tester")

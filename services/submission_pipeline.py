@@ -46,6 +46,7 @@ from services.image_objects import (
 )
 from core.admin_modules import refresh_image_object_registry
 from services.image_types import parse_date_range_from_text
+from services.telegram_ui import with_survey_copy
 from services.normalizer import compute_laplacian_blur_score, normalize_image_to_webp, sanitize_and_normalize_image
 from services.online_and_ai_detector import compute_dhash_int, hamming_distance
 from services.privacy_crypto import generate_driver_tag, hash_phone, hash_plate
@@ -1770,13 +1771,13 @@ def _legacy_work(
         f"• <b>Doanh thu:</b> <b>{tot_gross_val:,} VNĐ</b>\n"
         f"• <b>Trạng thái:</b> <code>{status_str}</code>"
     )
-    admin_markup = {
+    admin_markup = with_survey_copy({
         "inline_keyboard": [
             [
                 {"text": "📋 Mở Phiếu Xét Duyệt", "callback_data": f"admin_review:{submission_id}"}
             ]
         ]
-    }
+    }, submission_id)
     policy = record["form_data"]["_delivery_policy"]
     notify_source = policy["source"]
     recipient = prepared.answers.get(policy["question_id"]) if notify_source == "question" else input.collaborator_id
