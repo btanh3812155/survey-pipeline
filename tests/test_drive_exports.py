@@ -694,3 +694,18 @@ async def test_manual_export_runs_in_background_and_exposes_progress(monkeypatch
     assert final["status"] == "ok"
     assert final["report"]["images_uploaded"] == 4
     admin_exports._EXPORT_TASK = None
+
+
+def test_export_matrix_leads_with_code_and_phone_and_truncates_cells():
+    from core.drive_exports import export_matrix
+
+    rows = [{
+        "ctv_code": "CTV-A",
+        "driver_phone": "0901",
+        "submission_id": "VN-A",
+        "form_data": {"blob": "x" * 60000},
+    }]
+    matrix = export_matrix(rows, ["submission_id", "ctv_code", "driver_phone", "form_data"])
+    assert matrix[0] == ["CTV code", "Phone", "Submission ID", "Form data (JSON)"]
+    assert matrix[1][:3] == ["CTV-A", "0901", "VN-A"]
+    assert len(matrix[1][3]) < 50000

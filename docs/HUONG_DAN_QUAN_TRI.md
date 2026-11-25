@@ -164,8 +164,8 @@ Mở **Exports**.
 
 Màn hình gốc có hai thư mục:
 
-- **Client Exports**: cấu hình xuất cho khách hàng
-- **Internal Exports**: cấu hình xuất nội bộ
+- **clients**: cấu hình xuất cho khách hàng
+- **internal**: cấu hình xuất nội bộ
 
 Panel bên phải dùng để:
 
@@ -175,7 +175,7 @@ Panel bên phải dùng để:
 
 ### 5.2 Sửa khách hàng
 
-Mở thư mục **Client Exports**.
+Mở thư mục **clients**.
 
 ![Sửa khách hàng](images/admin-tutorial/exports-clients.png)
 

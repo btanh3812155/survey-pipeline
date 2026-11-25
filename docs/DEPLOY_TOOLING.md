@@ -91,18 +91,21 @@ Workers have two execution slots, 60-second token leases renewed every 15 second
 `GET /admin/exports` is the operator UI for Drive export configuration (migration 009 required). Folder layout under `GOOGLE_DRIVE_ROOT_FOLDER_ID`:
 
 ```
-<master folder>/
-  Client Exports/
-    <client folder>/<form>/<form> (Google Sheet)
-    <client folder>/<form>/Images/<submission>/<shortcut>
-  Internal Exports/
-    <category>/<form>/<form> (Google Sheet)
-    <category>/<form>/Images/<submission>/<shortcut>
-  Images Master/
-    <form>/<submission>/<image>
+clients/
+  <client folder>/<form>/<form> (Google Sheet)
+  <client folder>/<form>/Images/<submission>/<shortcut>
+internal/
+  CTV_Info (Google Sheet; CTV code leftmost, phone next, QR image per form, media URL note)
+  Master_Survey_Deliverables (Google Sheet with one tab per form)
+  <form>/<form> (Google Sheet, alongside submissions)
+  <form>/submissions/<status>/<submission>/
+master images/
+  <form>/<submission>/<image>
 ```
 
-Each client or internal configuration selects a date range, forms, fields, statuses, vehicle kinds, and whether images are included. Empty form/vehicle selections mean all forms/kinds present in the filtered rows; empty fields use the safe default. Only real submissions are exported; DEV/TEST-style IDs are excluded. Output sheets are native Google Sheets named after the form and are overwritten on each run. Images are uploaded once to `Images Master`; every client/internal image folder contains Drive shortcuts to the master file, never duplicate uploads. The run acquires a PostgreSQL advisory lock so two admin clicks cannot overlap. The admin UI is a directory tree: `/admin/exports/<client>/` edits which forms that client receives, and `/admin/exports/<client>/<form>/` edits that form's fields, statuses, vehicles, dates, and image flag for that client. Overrides live in `drive_export_clients.form_settings` after migration 010; absent values inherit the client defaults. Saves require confirmation and return a flash result. The run also removes archived-form folders, stale image files/shortcuts inside each submission folder, and client/internal submission folders no longer selected by the configuration. Form and submission deletion hooks remove their Drive folders best-effort. Google Sheets revision history remains provider-managed; the cleanup targets folders and deduplicated image files, not Sheet revisions. The page stores the last run report; no provider call is made unless an operator presses Run. Drive sharing permissions for each client folder remain a separate manual/provider operation; this page controls data selection, not Google ACLs. Shortcuts also require the viewer to have access to the target master file, so grant per-file or approved-group access where clients must open images. Run this only after the target's Drive credentials, root folder, migration 009/010, and client permissions are approved.
+Each client or internal configuration selects a date range, forms, fields, statuses, vehicle kinds, and whether images are included. Empty form/vehicle selections mean all forms/kinds present in the filtered rows; empty fields use the safe default. Only real submissions are exported; DEV/TEST-style IDs are excluded. Output sheets are native Google Sheets named after the form and are overwritten on each run. CTV code and phone are the leading columns, and data tabs use alternating row colors. Images are uploaded once to `master images`; every client/internal image folder contains Drive shortcuts to the master file, never duplicate uploads. The run acquires a PostgreSQL advisory lock so two admin clicks cannot overlap. The admin UI is a directory tree: `/admin/exports/<client>/` edits which forms that client receives, and `/admin/exports/<cl…
+
+Drive output restructure (2026-11-25, build `535ad97c7a95656b186c8e31d1407cedba237652`, staging `release-3J9TApfy`, production `release-jyKlBCBT`): the shared root now contains only `clients`, `internal`, and `master images`; the old `Master Export` wrapper, root form folders, root master CSV, and `Internal` casing were migrated. `internal/Master_Survey_Deliverables` has one tab per form, each internal form directory has its own `<form>` sheet beside `submissions`, and `clients/Test Client` now contains the approved `TB_GSM_2026_Nov_Test` row plus seven image shortcuts. Exports lead with CTV code, then phone; tabs use alternating row colors. `CTV_Info` uses CTV code and phone as the first two columns, embeds QR images with `=IMAGE(...)`, and stores the hosted media URL as a cell note. The legacy `unknown_form` bucket is preserved as `internal/_legacy_unknown`; it contains old submissions that lacked a form id.
 
 ## DB-side deletion trash
 
