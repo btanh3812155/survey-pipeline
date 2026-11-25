@@ -418,6 +418,16 @@ async def sync_internal_ctv_matrix(
     previous_columns = max(int(metadata.get("column_count") or 1), 1)
     previous_rows = max(int(metadata.get("row_count") or 1), 1)
 
+    await drive_client.batch_update_spreadsheet(
+        http_client, token, sheet_id,
+        [{
+            "updateSpreadsheetProperties": {
+                "properties": {"importFunctionsExternalUrlAccessAllowed": True},
+                "fields": "importFunctionsExternalUrlAccessAllowed",
+            }
+        }],
+    )
+
     # Clear and unmerge the previous grid before writing the new (possibly narrower) matrix.
     cleared = await drive_client.clear_sheet_values(
         http_client,
