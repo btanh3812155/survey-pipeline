@@ -188,8 +188,13 @@ class TelegramPollingRunner:
         # Replies to expired prompts (or another operator's prompt) are not support messages.
         return bool((reply.get("from") or {}).get("is_bot") and (reply.get("text") or "").startswith(ARGUMENT_PROMPT)), None
 
-    async def handle_forms(self, chat_id):
-        from core.ctv import build_ctv_form_url
+    async def handle_forms(self, chat_id, user_id=None):
+        from core.ctv import build_ctv_form_url, get_ctv_assigned_form_ids
+        from core.quotas import (
+            count_approved_responses_by_form,
+            form_response_limit_status,
+            resolve_ctv_code_for_telegram,
+        )
 
         refresh_form_registry_from_disk()
 
@@ -199,13 +204,51 @@ class TelegramPollingRunner:
             except OSError:
                 return 0
 
-        open_forms = [form for form in FORM_REGISTRY.values() if form.settings.access_control == "public"
-                      and (not form.settings.response_limit or form.settings.current_responses < form.settings.response_limit)]
+        public_forms = [
+            form for form in FORM_REGISTRY.values()
+            if form.settings.access_control == "public"
+        ]
+        limited_ids = [
+            form.form_id for form in public_forms
+            if form.settings.response_limit and int(form.settings.response_limit) > 0
+        ]
+        approved_counts = (
+            await count_approved_responses_by_form(self.db_pool, limited_ids)
+            if self.db_pool and limited_ids
+            else None
+        )
+        open_forms = [
+            form for form in public_forms
+            if not form_response_limit_status(
+                form,
+                None if approved_counts is None else approved_counts.get(str(form.form_id), 0),
+            )[0]
+        ]
+        ctv_code = ""
+        if self.role != "admin":
+            if self.db_pool and user_id:
+                try:
+                    ctv_code = await resolve_ctv_code_for_telegram(self.db_pool, user_id) or ""
+                    if ctv_code:
+                        assigned_ids = await get_ctv_assigned_form_ids(self.db_pool, ctv_code, strict=True)
+                        open_forms = [form for form in open_forms if form.form_id in assigned_ids]
+                    else:
+                        open_forms = [form for form in open_forms if not getattr(form.settings, "ctv_ref_enabled", True)]
+                except Exception:
+                    logger.exception("Failed to load assigned forms for Telegram user %s", user_id)
+                    await self.send_message(chat_id, "⚠️ Tạm thời không thể tải danh sách khảo sát được phân công. Vui lòng thử lại sau.")
+                    return
+            else:
+                open_forms = [form for form in open_forms if not getattr(form.settings, "ctv_ref_enabled", True)]
         recent = sorted(open_forms, key=lambda form: (recency(form), form.form_id), reverse=True)[:5]
         if not recent:
-            await self.send_message(chat_id, "Chưa có biểu mẫu nào đang mở.")
+            empty_msg = "Bạn chưa được phân công biểu mẫu nào đang mở." if self.role != "admin" else "Chưa có biểu mẫu nào đang mở."
+            await self.send_message(chat_id, empty_msg)
             return
-        links = [f'• <a href="{build_ctv_form_url("", form.form_id)}">{html.escape(form.title[:200])}</a>' for form in recent]
+        links = [
+            f'• <a href="{build_ctv_form_url(ctv_code if getattr(form.settings, "ctv_ref_enabled", True) else "", form.form_id)}">{html.escape(form.title[:200])}</a>'
+            for form in recent
+        ]
         await self.send_message(chat_id, "📋 <b>Biểu mẫu đang mở gần đây:</b>\n" + "\n".join(links))
 
     async def delete_message(self, chat_id: Union[int, str], message_id: int) -> bool:
@@ -710,7 +753,7 @@ class TelegramPollingRunner:
         elif cmd == "/stats":
             await self.send_message(chat_id, await self.get_stats_message())
         elif cmd == "/forms":
-            await self.handle_forms(chat_id)
+            await self.handle_forms(chat_id, from_user_id)
         elif cmd in HISTORY_COMMANDS:
             if argument:
                 await self.handle_admin_surveys_lookup(chat_id, argument)
@@ -1059,7 +1102,7 @@ class TelegramPollingRunner:
         try:
             async with self.db_pool.connection() as conn:
                 cur = await conn.execute(
-                    "SELECT 1 FROM authorized_users WHERE telegram_user_id=%s AND role='ADMIN' AND is_active",
+                    "SELECT 1 FROM authorized_users WHERE telegram_user_id=%s AND 'ADMIN' = ANY(roles) AND is_active",
                     (admin_id,),
                 )
                 return bool(await cur.fetchone())
@@ -2601,7 +2644,7 @@ class DriverBotRunner(TelegramPollingRunner):
             await self.send_message(chat_id, welcome_text, reply_markup=self.get_driver_reply_keyboard())
 
         elif cmd == "/forms":
-            await self.handle_forms(chat_id)
+            await self.handle_forms(chat_id, user_id)
 
         elif cmd in HISTORY_COMMANDS or clean == "📋 Khảo Sát Của Tôi":
             if from_user.get("id") != user_id or type(user_id) is not int or user_id <= 0:

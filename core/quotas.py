@@ -105,6 +105,9 @@ def evaluate_quota(
     used = 0
     oldest: Optional[datetime] = None
     for submission in submissions:
+        sub_status = submission.get("status")
+        if sub_status is not None and str(sub_status).strip().upper() != "APPROVED":
+            continue
         created_at = _as_datetime(submission.get("created_at"))
         if window_start is not None:
             if created_at is None or created_at < window_start:
@@ -238,7 +241,8 @@ async def fetch_ctv_submission_rows(
         return []
     query = (
         "SELECT form_id, created_at FROM survey_submissions "
-        "WHERE (UPPER(ctv_code) = UPPER(%s) OR UPPER(ctv_code) = UPPER(%s))"
+        "WHERE (UPPER(ctv_code) = UPPER(%s) OR UPPER(ctv_code) = UPPER(%s)) "
+        "AND status = 'APPROVED'"
     )
     params: List[Any] = [str(ctv_code).strip(), normalize_ctv_code(ctv_code)]
     if since is not None:
@@ -398,3 +402,125 @@ async def resolve_ctv_code_for_telegram(db_pool, telegram_user_id: int) -> Optio
         except Exception as e:
             logger.debug("CTV telegram resolution failed for %s (%s)", tg_id, type(e).__name__)
     return None
+
+
+def form_response_limit_status(
+    schema: Any,
+    approved_count: Optional[int] = None,
+) -> Tuple[bool, int, Optional[int]]:
+    """Evaluate campaign-wide response_limit against an APPROVED count.
+
+    Convention:
+      - response_limit is None or 0 -> unlimited (False)
+      - response_limit < 0          -> closed (True)
+      - response_limit > 0          -> capped when count >= response_limit
+    """
+    form_settings = getattr(schema, "settings", None) if schema else None
+    raw_limit = getattr(form_settings, "response_limit", None) if form_settings else None
+    if raw_limit is None:
+        return False, 0, None
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return False, 0, None
+    if limit == 0:
+        return False, 0, 0
+    if limit < 0:
+        return True, 0, limit
+    fallback = int(getattr(form_settings, "current_responses", 0) or 0)
+    count = max(int(approved_count), fallback) if approved_count is not None else fallback
+    return count >= limit, count, limit
+
+
+async def count_approved_form_responses(
+    db_pool,
+    form_id: str,
+    *,
+    strict: bool = False,
+) -> Optional[int]:
+    """Return the live APPROVED submission count for one form, or None if unavailable."""
+    if not db_pool:
+        if strict:
+            raise RuntimeError("Submission database unavailable")
+        return None
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT COUNT(*) FROM survey_submissions "
+                    "WHERE form_id = %s AND status = 'APPROVED';",
+                    (str(form_id),),
+                )
+                row = await cur.fetchone()
+    except Exception as e:
+        logger.warning("Approved response count query failed for %s: %s", form_id, e)
+        if strict:
+            raise
+        return None
+    return int(row[0] or 0) if row else 0
+
+
+async def count_approved_responses_by_form(
+    db_pool,
+    form_ids: Iterable[str],
+    *,
+    strict: bool = False,
+) -> Dict[str, int]:
+    """Return {form_id: approved_count} from survey_submissions for the given form_ids."""
+    ids = sorted({str(fid) for fid in form_ids if fid})
+    if not ids:
+        return {}
+    if not db_pool:
+        if strict:
+            raise RuntimeError("Submission database unavailable")
+        return {}
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT form_id, COUNT(*) FROM survey_submissions "
+                    "WHERE form_id = ANY(%s) AND status = 'APPROVED' "
+                    "GROUP BY form_id;",
+                    (ids,),
+                )
+                rows = await cur.fetchall()
+    except Exception as e:
+        logger.warning("Approved response counts query failed: %s", e)
+        if strict:
+            raise
+        return {}
+    return {str(row[0]): int(row[1] or 0) for row in rows}
+
+
+async def is_form_response_limit_reached(
+    db_pool,
+    form_id: str,
+    schema: Any,
+    *,
+    strict: bool = False,
+    approved_counts: Optional[Dict[str, int]] = None,
+) -> Tuple[bool, int, Optional[int]]:
+    """Check whether a form's campaign-wide response_limit is reached/closed."""
+    form_settings = getattr(schema, "settings", None) if schema else None
+    raw_limit = getattr(form_settings, "response_limit", None) if form_settings else None
+    if raw_limit is None:
+        return False, 0, None
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return False, 0, None
+    if limit == 0:
+        return False, 0, 0
+    if limit < 0:
+        return True, 0, limit
+
+    if approved_counts is not None:
+        return form_response_limit_status(schema, approved_counts.get(str(form_id), 0))
+
+    if db_pool is not None:
+        db_count = await count_approved_form_responses(db_pool, form_id, strict=strict)
+        return form_response_limit_status(schema, db_count)
+
+    if strict:
+        raise RuntimeError("Submission database unavailable")
+    return form_response_limit_status(schema, None)

@@ -287,6 +287,8 @@ def _admin_roles_for_path(path: str, method: str) -> set[str]:
         return everyone
     if path.startswith(("/admin/accounts", "/admin/recovery", "/api/v1/admin/recovery")):
         return {"superadmin"}
+    if path == "/admin/payouts" or path.startswith("/admin/payouts/"):
+        return {"superadmin"}
     if path.startswith("/api/v1/dev/submissions"):
         return {"superadmin"}
     if path == "/api/v1/telegram/set-webhooks":
@@ -295,6 +297,8 @@ def _admin_roles_for_path(path: str, method: str) -> set[str]:
         return everyone if method == "GET" else operators
     if path.startswith("/admin/submissions/"):
         return everyone if method == "GET" else operators
+    if path == "/admin/appeals" or path.startswith("/admin/appeals/"):
+        return everyone if method == "GET" else reviewers
     if path == "/api/v1/submissions":
         return everyone if method == "GET" else operators
     if path.startswith("/api/v1/submissions/"):
@@ -374,6 +378,49 @@ async def _verify_admin_account(
     if role not in _admin_roles_for_path(request.url.path, request.method):
         raise HTTPException(status_code=403, detail="Tài khoản không có quyền truy cập mục này.")
     return username, role, password_hash
+
+
+async def verify_staff_request(request: Request) -> Optional[str]:
+    """Return authenticated staff username (any active admin_accounts role) or None.
+
+    Accepts a valid signed admin session cookie or HTTP Basic credentials.
+    Enforces origin checks on unsafe methods to block cross-site writes.
+    """
+    session_admin = await admin_from_session(request)
+    if session_admin:
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            require_admin_same_origin(request)
+        username, role, password_hash = session_admin
+        request.state.admin_auth_method = "session"
+        _apply_admin_state(request, username, role, password_hash)
+        return username
+
+    credentials = await admin_security(request)
+    if credentials is not None:
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            require_admin_basic_origin(request)
+        redis, account_bucket, ip_bucket = await _check_admin_auth_rate_limit(
+            request, credentials.username
+        )
+        account = await _load_admin_account(credentials.username)
+        if (
+            account is None
+            or not account.get("is_active")
+            or account.get("deleted_at") is not None
+            or not _verify_admin_password(
+                credentials.password, str(account.get("password_hash") or "")
+            )
+        ):
+            await _record_admin_auth_failure(redis, account_bucket, ip_bucket)
+            return None
+        username = credentials.username
+        role = str(account.get("role") or "viewer")
+        password_hash = str(account.get("password_hash") or "")
+        request.state.admin_auth_method = "basic"
+        _apply_admin_state(request, username, role, password_hash)
+        return username
+
+    return None
 
 
 async def verify_admin_auth(

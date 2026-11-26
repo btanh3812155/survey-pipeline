@@ -2,10 +2,10 @@
   if (window.AdminI18n) return;
   const messages = {
     vi: {
-      nav_forms: 'Biểu mẫu', nav_submissions: 'Dữ liệu nộp', nav_audit: 'Audit',
+      nav_forms: 'Biểu mẫu', nav_submissions: 'Dữ liệu nộp', nav_appeals: 'Phúc khảo', nav_audit: 'Audit',
       nav_media: 'Media', nav_ctvs: 'CTV', nav_image_objects: 'Ảnh/Object',
       nav_modules: 'Module', nav_exports: 'Exports', nav_account: 'Tài khoản của tôi', nav_logout: 'Đăng xuất',
-      nav_accounts: 'Quản lý tài khoản', nav_trash: 'Thùng rác', nav_recovery_email: 'Email khôi phục',
+      nav_accounts: 'Quản lý tài khoản', nav_payouts: 'Chi trả CTV', nav_trash: 'Thùng rác', nav_recovery_email: 'Email khôi phục',
       accounts_title: 'Quản lý tài khoản quản trị', account_title: 'Tài khoản của tôi',
       logged_in: 'Đang đăng nhập:',
       account_create_heading: 'Tạo tài khoản quản trị',
@@ -117,10 +117,10 @@
       client_meta_all: '{id} · tất cả form'
     },
     en: {
-      nav_forms: 'Forms', nav_submissions: 'Submissions', nav_audit: 'Audit',
+      nav_forms: 'Forms', nav_submissions: 'Submissions', nav_appeals: 'Appeals', nav_audit: 'Audit',
       nav_media: 'Media', nav_ctvs: 'CTVs', nav_image_objects: 'Images/Objects',
       nav_modules: 'Modules', nav_exports: 'Exports', nav_account: 'My account', nav_logout: 'Sign out',
-      nav_accounts: 'Manage accounts', nav_trash: 'Trash', nav_recovery_email: 'Recovery email',
+      nav_accounts: 'Manage accounts', nav_payouts: 'CTV Payouts', nav_trash: 'Trash', nav_recovery_email: 'Recovery email',
       accounts_title: 'Admin account management', account_title: 'My account',
       logged_in: 'Signed in as:',
       account_create_heading: 'Create admin account',
@@ -861,7 +861,61 @@
     'Chỉ hiển thị thông tin và tiến độ của tài khoản đang đăng nhập.': 'Only displays information and progress for the signed-in account.',
     'Tạm thời không thể tải cổng CTV': 'CTV portal temporarily unavailable',
     'Không thể xác nhận dữ liệu hiện tại. Vui lòng thử lại sau; không có số liệu thay thế được hiển thị.': 'Unable to verify current data. Please try again later; no fallback numbers are shown.',
-    'Thử lại': 'Retry'
+    'Thử lại': 'Retry',
+
+    // Form options & Admin Appeals
+    'Đối soát thủ công sau khi đạt kiểm tra tự động': 'Manual review after automated checks pass',
+    'Yêu cầu Ban Quản Trị duyệt thủ công (tắt để tự động duyệt khi đạt kiểm tra)': 'Require admin manual review (turn off to auto-approve when checks pass)',
+    'Xét Duyệt Phúc Khảo': 'Appeals Review',
+    'Xét Duyệt Phúc Khảo - Trust Bridge': 'Appeals Review - Trust Bridge',
+    'Danh sách phiếu đang chờ phúc khảo (APPEAL_PENDING). Duyệt hoặc từ chối kèm ghi chú đối soát.': 'Submissions pending appeal review (APPEAL_PENDING). Approve or reject with moderation notes.',
+    'Dữ liệu nộp': 'Submissions',
+    'Tổng quan phúc khảo': 'Appeals overview',
+    'Đang chờ phúc khảo': 'Pending appeals',
+    'Tìm theo mã phiếu, form, CTV, SĐT, tên tài xế hoặc lý do...': 'Search by submission ID, form, CTV, phone, driver name, or reason...',
+    'Tìm kiếm': 'Search',
+    'Mã phiếu': 'Submission ID',
+    'Biểu mẫu': 'Form',
+    'Tài xế': 'Driver',
+    'Lý do phúc khảo': 'Appeal Reason',
+    'Thời gian': 'Timestamps',
+    'Xem hồ sơ': 'View submission',
+    'Danh sách ảnh': 'Photo list',
+    'Ghi chú xét duyệt (tùy chọn)...': 'Moderation notes (optional)...',
+    'Duyệt phúc khảo': 'Approve appeal',
+    'Từ chối phúc khảo': 'Reject appeal',
+    'Chỉ xem': 'View only',
+    'Nộp:': 'Submitted:',
+    'Phúc khảo:': 'Appealed:',
+    'Hiện không có yêu cầu phúc khảo nào đang chờ xử lý.': 'No pending appeals right now.',
+    'Đã duyệt phúc khảo và cập nhật trạng thái phiếu.': 'Appeal approved and submission status updated.',
+    'Đã từ chối phúc khảo và cập nhật trạng thái phiếu.': 'Appeal rejected and submission status updated.',
+    'Không tìm thấy phiếu khảo sát.': 'Submission not found.',
+    'Phiếu này không còn ở trạng thái chờ phúc khảo.': 'This submission is no longer pending appeal.',
+    'Không thể xử lý phúc khảo lúc này. Vui lòng thử lại.': 'Unable to process this appeal right now. Please try again.',
+    'Mã phiếu không hợp lệ.': 'Invalid submission ID.',
+
+    // Admin Payouts (routers/admin_payouts.py)
+    'Quản Lý Chi Trả CTV': 'CTV Payouts Management',
+    'Quản Lý Chi Trả CTV - Trust Bridge': 'CTV Payouts Management - Trust Bridge',
+    'Đối soát sổ cái thù lao CTV, cập nhật trạng thái chi trả và thu hồi phiếu đã duyệt hoặc đã thanh toán.': 'Reconcile the collaborator billing ledger, update payout statuses, and revoke approved or paid submissions.',
+    'Tổng quan chi trả': 'Payouts overview',
+    'Tổng bản ghi': 'Total records',
+    'Tìm theo mã giao dịch, mã phiếu, form, mã CTV hoặc Telegram ID...': 'Search by transaction ID, submission ID, form, CTV code, or Telegram ID...',
+    'Tất cả trạng thái chi trả': 'All payout statuses',
+    'Lọc trạng thái chi trả': 'Filter by payout status',
+    'Số tiền': 'Amount',
+    'Phiếu:': 'Submission:',
+    'Cập nhật trạng thái': 'Update status',
+    'Ghi chú quyết toán (tùy chọn)...': 'Settlement notes (optional)...',
+    'Lý do thu hồi...': 'Revocation reason...',
+    'Thu hồi phiếu & hủy chi trả': 'Revoke submission & cancel payout',
+    'Chưa có bản ghi chi trả nào trong sổ cái.': 'No payout records in the billing ledger yet.',
+    'Đã cập nhật trạng thái chi trả CTV.': 'CTV payout status updated.',
+    'Đã thu hồi phiếu khảo sát và hủy chi trả thành công.': 'Submission revoked and payout cancelled.',
+    'Không tìm thấy bản ghi chi trả hoặc phiếu khảo sát.': 'Payout ledger entry or submission not found.',
+    'Trạng thái chi trả không hợp lệ.': 'Invalid payout status.',
+    'Không thể xử lý yêu cầu lúc này. Vui lòng thử lại.': 'Unable to process this request right now. Please try again.'
   };
 
   const patternMap = [
@@ -903,6 +957,10 @@
     [/^Trường dữ liệu · ([^·]+) · bắt buộc$/, 'Field · $1 · required'],
     [/^(.+) · ([^·]+) · bắt buộc$/, '$1 · $2 · required'],
     [/^#(\d+) (\S+) lúc (.+) \(giữ (\d+), xóa (\d+), bảo vệ (\d+)\)$/, '#$1 $2 at $3 (kept $4, removed $5, protected $6)'],
+    [/^Ghi chú xét duyệt cho phiếu (.+)$/, 'Moderation notes for submission $1'],
+    [/^Trạng thái chi trả cho phiếu (.+)$/, 'Payout status for submission $1'],
+    [/^Ghi chú quyết toán cho phiếu (.+)$/, 'Settlement notes for submission $1'],
+    [/^Lý do thu hồi cho phiếu (.+)$/, 'Revocation reason for submission $1'],
     [/^Liên kết và ảnh PNG đã sẵn sàng\. Trình duyệt không hỗ trợ (.+); bạn có thể sao chép liên kết hoặc tải PNG\.$/, 'Link and PNG image ready. Browser does not support $1; you can copy the link or download PNG.']
   ];
 

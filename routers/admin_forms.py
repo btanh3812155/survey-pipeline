@@ -131,6 +131,12 @@ async def _persist_form_schema(
     if not (target_path == base_path or target_path.startswith(base_path + os.sep)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mã biểu mẫu không hợp lệ")
 
+    is_brand_new_form = (
+        not previous_form_id
+        and schema.form_id not in FORM_REGISTRY
+        and not os.path.exists(schema_path)
+    )
+
     FORM_REGISTRY[schema.form_id] = schema
     try:
         # Atomic replace so sibling workers never read a half-written JSON on refresh.
@@ -167,6 +173,13 @@ async def _persist_form_schema(
                 await conn.commit()
         except Exception as e:
             logger.warning(f"Failed to persist form tags for {schema.form_id}: {e}")
+
+    if db_pool and is_brand_new_form:
+        try:
+            from core.ctv import assign_default_ctvs_for_new_form
+            await assign_default_ctvs_for_new_form(db_pool, schema.form_id, assigned_by="default_new_form")
+        except Exception as e:
+            logger.warning(f"Failed to assign default CTVs for new form {schema.form_id}: {e}")
 
     if db_pool:
         from services.audit_and_privacy import record_audit_event

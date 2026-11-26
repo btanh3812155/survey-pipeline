@@ -7,6 +7,8 @@ from .system import router as system_router
 from .login import router as login_router
 from .admin_forms import router as admin_forms_router
 from .admin_data import router as admin_data_router
+from .admin_appeals import router as admin_appeals_router
+from .admin_payouts import router as admin_payouts_router
 from .admin_audit import router as admin_audit_router
 from .admin_media import router as admin_media_router
 from .admin_ctvs import router as admin_ctvs_router
@@ -24,6 +26,8 @@ __all__ = [
     "login_router",
     "admin_forms_router",
     "admin_data_router",
+    "admin_appeals_router",
+    "admin_payouts_router",
     "admin_audit_router",
     "admin_media_router",
     "admin_ctvs_router",

@@ -13,10 +13,11 @@ from core.quotas import get_ctv_quota_evaluations
 
 
 class Pool:
-    def __init__(self, *, quotas=(), submissions=(), tags=(), fail_on=None):
+    def __init__(self, *, quotas=(), submissions=(), tags=(), assignments=(), fail_on=None):
         self.quotas = list(quotas)
         self.submissions = list(submissions)
         self.tags = list(tags)
+        self.assignments = list(assignments)
         self.fail_on = fail_on
         self.rows = []
         self.queries = []
@@ -40,15 +41,44 @@ class Pool:
         if "FROM ctv_quotas" in sql:
             self.rows = [row for row in self.quotas if row[1].upper() in {str(p).upper() for p in params} and row[6]]
         elif "FROM survey_submissions" in sql:
-            self.rows = [
-                (form_id, created_at) for code, form_id, created_at in self.submissions
-                if code.upper() in {str(p).upper() for p in params[:2]}
-                and (len(params) < 3 or created_at >= params[2])
+            approved_only = "status = 'APPROVED'" in sql
+            normalized = [
+                (row[0], row[1], row[2], row[3] if len(row) > 3 else "APPROVED")
+                for row in self.submissions
             ]
+            if "GROUP BY form_id" in sql:
+                form_ids = set(params[0]) if params else set()
+                counts = {}
+                for _code, form_id, _created_at, status in normalized:
+                    if form_id in form_ids and (not approved_only or status.upper() == "APPROVED"):
+                        counts[form_id] = counts.get(form_id, 0) + 1
+                self.rows = list(counts.items())
+            elif "COUNT(*)" in sql:
+                form_id = str(params[0])
+                cnt = sum(
+                    1 for _code, fid, _created_at, status in normalized
+                    if fid == form_id and (not approved_only or status.upper() == "APPROVED")
+                )
+                self.rows = [(cnt,)]
+            else:
+                self.rows = [
+                    (form_id, created_at) for code, form_id, created_at, status in normalized
+                    if code.upper() in {str(p).upper() for p in params[:2]}
+                    and (not approved_only or status.upper() == "APPROVED")
+                    and (len(params) < 3 or created_at >= params[2])
+                ]
         elif "FROM form_tags" in sql:
             self.rows = [row for row in self.tags if not params or row[0] in params[0]]
+        elif "FROM ctv_form_assignments" in sql:
+            self.rows = [
+                (form_id,) for code, form_id in self.assignments
+                if code.upper() == str(params[0]).upper()
+            ]
         else:
             raise AssertionError(f"Unexpected query: {sql}")
+
+    async def fetchone(self):
+        return self.rows[0] if self.rows else None
 
     async def fetchall(self):
         return self.rows
@@ -138,6 +168,7 @@ def test_reached_goals_do_not_close_forms_and_usage_is_personal(portal):
         (3, "OWN", "tag", "team", 4, 7, True),
     ]
     portal.pool.tags = [("open", "team")]
+    portal.pool.assignments = [("OWN", "open")]
     portal.pool.submissions = [("OWN", "open", now)] * 2 + [("OTHER", "open", now)] * 5
     portal.module.FORM_REGISTRY["open"] = form("Vẫn mở")
     response = portal.client.get("/ctv")
@@ -170,11 +201,11 @@ def test_empty_goals_are_not_an_outage(portal):
     response = portal.client.get("/ctv")
     assert response.status_code == 200
     assert "Bạn chưa được cấu hình mục tiêu." in response.text
-    assert "Hiện chưa có khảo sát công khai đang mở." in response.text
+    assert "Hiện bạn chưa được phân công khảo sát nào đang mở." in response.text
     assert_private(response)
 
 
-@pytest.mark.parametrize("table", ["ctv_quotas", "survey_submissions", "form_tags"])
+@pytest.mark.parametrize("table", ["ctv_quotas", "survey_submissions", "form_tags", "ctv_form_assignments"])
 def test_quota_query_failures_never_look_like_empty_or_zero(portal, table):
     portal.pool.quotas = [(1, "OWN", "tag", "team", 10, 7, True)]
     portal.pool.fail_on = table
@@ -218,6 +249,14 @@ def test_catalog_refresh_eligibility_test_labels_and_encoded_local_links(portal)
             "unlimited": form("Sans plafond", limit=0, count=999),
         })
 
+    portal.pool.assignments = [
+        (portal.profile["code"], 'open /?"&'),
+        (portal.profile["code"], "private"),
+        (portal.profile["code"], "closed"),
+        (portal.profile["code"], "full"),
+        (portal.profile["code"], "over"),
+        (portal.profile["code"], "unlimited"),
+    ]
     portal.monkeypatch.setattr(portal.module, "refresh_form_registry_from_disk", refresh)
     response = portal.client.get("/ctv", headers={"host": "dev.test"})
     assert response.status_code == 200
@@ -247,8 +286,36 @@ def test_referral_disabled_forms_are_available_without_false_attribution(portal)
     portal.module.FORM_REGISTRY.update({
         "tracked": form("Có ghi nhận CTV"),
         "untracked": form("Không ghi nhận CTV", tracking=False),
+        "unassigned": form("Chưa phân công"),
     })
+    portal.pool.assignments = [("OWN", "tracked"), ("OWN", "untracked"), ("OTHER", "unassigned")]
     response = portal.client.get("/ctv")
     assert response.status_code == 200
     assert Links(response.text).urls == ["/forms/tracked?ref=OWN", "/forms/untracked"]
+    assert "Chưa phân công" not in response.text
     assert "Biểu mẫu không ghi nhận mã CTV; bài nộp không tính vào tiến độ CTV." in response.text
+
+
+def test_quotas_and_response_limit_count_only_approved_submissions(portal):
+    now = datetime.now(timezone.utc)
+    portal.pool.quotas = [(1, "OWN", "form", "capped", 2, 7, True)]
+    portal.pool.assignments = [("OWN", "capped")]
+    portal.pool.submissions = [
+        ("OWN", "capped", now, "APPROVED"),
+        ("OWN", "capped", now, "REJECTED"),
+        ("OWN", "capped", now, "MANUAL_REVIEW"),
+        ("OWN", "capped", now, "APPEAL_PENDING"),
+    ]
+    portal.module.FORM_REGISTRY["capped"] = form("Khảo sát giới hạn", limit=2, count=0)
+
+    first = portal.client.get("/ctv")
+    assert first.status_code == 200
+    assert "Đã nộp: 1 / Mục tiêu: 2" in first.text
+    assert Links(first.text).urls == ["/forms/capped?ref=OWN"]
+
+    portal.pool.submissions.append(("OTHER", "capped", now, "APPROVED"))
+    second = portal.client.get("/ctv")
+    assert second.status_code == 200
+    assert "Đã nộp: 1 / Mục tiêu: 2" in second.text
+    assert Links(second.text).urls == []
+    assert "Khảo sát giới hạn" not in second.text

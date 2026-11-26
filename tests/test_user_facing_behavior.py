@@ -454,6 +454,8 @@ async def test_telegram_admin_notification_license_plate_stripped(monkeypatch):
                 "gsm_incentive_policy": "Có áp dụng chỉ tiêu",
                 "is_test_mode": "false",
                 "bypass_img_check": "false",
+                "gps_latitude": "10.7769",
+                "gps_longitude": "106.7009",
             },
             files={
                 f"survey_photo_{i}": (f"slot_{i}.jpg", real_photos[i][1], "image/jpeg")
@@ -910,6 +912,7 @@ def _register_persist_probe_form(form_id: str):
         title="Persistence Probe",
         settings=FormSettings(
             decree13_required=False,
+            ctv_ref_enabled=False,
             is_test_mode=False,
             image_checks=ImageCheckConfig(enable_blur_check=False, enable_ai_vision=True),
         ),
@@ -924,6 +927,7 @@ def _register_persist_probe_form(form_id: str):
     )
     data = {"form_id": form_id, "is_test_mode": "false", "bypass_img_check": "false",
             "driver_phone": "0988111222", "driver_name": "Nguyen Van A",
+            "gps_latitude": "10.7769", "gps_longitude": "106.7009",
             "q_cam_0": "uploaded_0", "q_cam_1": "uploaded_1"}
     files = [
         ("survey_photo_0", ("profile.jpg", io.BytesIO(jpeg_bytes((20, 60, 200))), "image/jpeg")),

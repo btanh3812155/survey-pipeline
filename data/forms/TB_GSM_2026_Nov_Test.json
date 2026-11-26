@@ -12,6 +12,7 @@
     "notify_email": null,
     "decree13_required": true,
     "ctv_ref_enabled": true,
+    "require_manual_review": true,
     "tags": [],
     "tg_response_source": "question",
     "tg_response_question_id": "cau_20",

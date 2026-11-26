@@ -8,8 +8,14 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from core.ctv import get_ctv_assigned_form_ids
 from core.ctv_auth import ctv_from_session
-from core.quotas import SCOPE_LABELS, get_ctv_quota_evaluations
+from core.quotas import (
+    SCOPE_LABELS,
+    count_approved_responses_by_form,
+    form_response_limit_status,
+    get_ctv_quota_evaluations,
+)
 from core.state import FORM_REGISTRY, get_db_pool, refresh_form_registry_from_disk
 
 router = APIRouter(tags=["CTV Portal"])
@@ -67,15 +73,23 @@ def _goal_card(goal: dict, index: int) -> str:
     )
 
 
-def _form_cards(code: str) -> str:
+def _form_cards(
+    code: str,
+    assigned_form_ids: set[str],
+    approved_counts: dict[str, int] | None = None,
+) -> str:
     cards = []
     for form_id, schema in sorted(FORM_REGISTRY.items(), key=lambda item: item[0]):
+        if form_id not in assigned_form_ids:
+            continue
         settings = schema.settings
         # Archived forms are removed from the refreshed registry. Private forms
         # and response-limit closure follow the existing survey/bot convention.
         if settings.access_control != "public":
             continue
-        if settings.response_limit and settings.current_responses >= settings.response_limit:
+        approved = None if approved_counts is None else approved_counts.get(str(form_id), 0)
+        limit_reached, _, _ = form_response_limit_status(schema, approved)
+        if limit_reached:
             continue
         url = f"/forms/{quote(str(form_id), safe='')}"
         if settings.ctv_ref_enabled:
@@ -89,7 +103,7 @@ def _form_cards(code: str) -> str:
             f'<a class="action" href="{_escape(url)}">Mở khảo sát'
             f'<span class="note"> · {_escape(schema.title)}</span></a></li>'
         )
-    return '<ul class="grid">' + "".join(cards) + "</ul>" if cards else '<p class="card">Hiện chưa có khảo sát công khai đang mở.</p>'
+    return '<ul class="grid">' + "".join(cards) + "</ul>" if cards else '<p class="card">Hiện bạn chưa được phân công khảo sát nào đang mở.</p>'
 
 
 def _unavailable() -> HTMLResponse:
@@ -113,9 +127,20 @@ async def ctv_dashboard(request: Request):
     if not profile or not profile.get("is_active"):
         return RedirectResponse("/ctv/login", status_code=303, headers=_HEADERS)
     try:
-        goals = await get_ctv_quota_evaluations(get_db_pool(), profile["code"], strict=True)
+        db_pool = get_db_pool()
+        goals = await get_ctv_quota_evaluations(db_pool, profile["code"], strict=True)
+        assigned_forms = await get_ctv_assigned_form_ids(db_pool, profile["code"], strict=True)
         refresh_form_registry_from_disk()
-        forms = _form_cards(str(profile["code"]))
+        limited_ids = [
+            form_id
+            for form_id, schema in FORM_REGISTRY.items()
+            if form_id in assigned_forms
+            and schema.settings.access_control == "public"
+            and schema.settings.response_limit
+            and int(schema.settings.response_limit) > 0
+        ]
+        approved_counts = await count_approved_responses_by_form(db_pool, limited_ids, strict=True)
+        forms = _form_cards(str(profile["code"]), assigned_forms, approved_counts=approved_counts)
     except Exception:
         logger.exception("CTV dashboard data unavailable")
         return _unavailable()

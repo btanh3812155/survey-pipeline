@@ -7,6 +7,7 @@ and driver appeal workflows.
 """
 
 import os
+import math
 import httpx
 import html
 import re
@@ -16,15 +17,24 @@ import logging
 import asyncio
 from typing import Optional, Dict, Any, Union, List, Tuple
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, BackgroundTasks, Depends, File, UploadFile, Form, HTTPException, status
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from config import settings
-from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk, verify_admin_auth
+from core.state import get_db_pool, get_redis_client, get_http_client, FORM_REGISTRY, DEV_STORAGE_FILE, vision_client, refresh_form_registry_from_disk, verify_admin_auth, verify_staff_request
 from core.cache import BoundedTTLCache
-from core.ctv import resolve_ctv_identifier, extract_ctv_short_code, get_ctv_options_for_form, resolve_ctv_from_slug
+from core.quotas import is_form_response_limit_reached
+from core.ctv import (
+    resolve_ctv_identifier,
+    extract_ctv_short_code,
+    get_ctv_options_for_form,
+    get_assigned_ctvs_for_form,
+    is_ctv_assigned_to_form,
+    resolve_ctv_from_slug,
+)
 from core.phone_links import (
     get_notification_telegram_target,
     normalize_vn_phone,
@@ -63,6 +73,58 @@ PRE_CHECK_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 ACTIVE_APPEALS_RATE_LIMITER = BoundedTTLCache(max_size=1024, ttl_seconds=7200.0)
 STATUS_RATE_LIMITER = BoundedTTLCache(max_size=2048, ttl_seconds=60.0)
 
+def _is_private_form(schema: Any) -> bool:
+    return bool(
+        schema
+        and getattr(schema, "settings", None)
+        and getattr(schema.settings, "access_control", "public") != "public"
+    )
+
+
+def _private_form_forbidden_html(request: Request) -> HTMLResponse:
+    next_url = request.url.path + (("?" + request.url.query) if request.url.query else "")
+    login_href = "/login?next=" + quote(next_url, safe="")
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang='vi'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Biểu mẫu riêng tư</title>"
+            "<body style='font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px;line-height:1.6'>"
+            "<h1>Biểu mẫu riêng tư</h1>"
+            "<p>Khảo sát này chỉ dành cho quản trị viên/nhân sự nội bộ. Vui lòng đăng nhập tài khoản quản trị để truy cập.</p>"
+            f"<p><a href='{html.escape(login_href, quote=True)}'>Đăng nhập quản trị</a></p>"
+            "</body></html>"
+        ),
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _response_limit_reached_html(schema: Any, approved_count: int, response_limit: Optional[int]) -> HTMLResponse:
+    title_text = html.escape(getattr(schema, "title", None) or "Khảo sát")
+    if response_limit and response_limit > 0:
+        detail = (
+            f"Khảo sát đã đạt giới hạn {response_limit} phản hồi được duyệt "
+            f"({approved_count}/{response_limit}) và tạm dừng tiếp nhận thêm phiếu."
+        )
+    else:
+        detail = "Khảo sát hiện đã đóng (đạt giới hạn) và ngừng tiếp nhận phản hồi mới."
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang='vi'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{title_text}</title>"
+            "<body style='font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px;line-height:1.6'>"
+            "<h1>Khảo sát đã đủ số lượng phản hồi</h1>"
+            f"<p><strong>{title_text}</strong></p>"
+            f"<p>{detail}</p>"
+            "</body></html>"
+        ),
+        status_code=200,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/camera-form", response_class=HTMLResponse)
 @router.get("/forms/{form_id}", response_class=HTMLResponse)
 async def get_dynamic_form(request: Request, form_id: str = "default"):
@@ -99,6 +161,29 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
     effective_form_id = form_id if form_id in FORM_REGISTRY else "income_survey"
     schema = FORM_REGISTRY.get(effective_form_id) or next(iter(FORM_REGISTRY.values()))
 
+    # 3a. Private forms require authenticated staff/admin access.
+    if _is_private_form(schema):
+        if not await verify_staff_request(request):
+            return _private_form_forbidden_html(request)
+
+    # 3b. Campaign-wide response limit (counts APPROVED submissions only).
+    db_pool = get_db_pool()
+    try:
+        limit_reached, approved_count, response_limit = await is_form_response_limit_reached(
+            db_pool,
+            effective_form_id,
+            schema,
+            strict=(db_pool is not None or settings.ENVIRONMENT == "production"),
+        )
+    except Exception:
+        logger.exception("Response limit check failed for form %s", effective_form_id)
+        return HTMLResponse(
+            content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Tạm thời không thể kiểm tra trạng thái khảo sát</h1><p>Vui lòng thử lại sau.</p></body></html>",
+            status_code=503,
+        )
+    if limit_reached:
+        return _response_limit_reached_html(schema, approved_count, response_limit)
+
     # Per-form switch: when disabled, ignore ?ref= and skip the CTV selector
     ctv_ref_enabled = bool(getattr(schema.settings, "ctv_ref_enabled", True))
     if not ctv_ref_enabled:
@@ -112,18 +197,54 @@ async def get_dynamic_form(request: Request, form_id: str = "default"):
     # approval verdicts have nowhere to go.
     has_ctv_tracking = ctv_ref_enabled
 
-    # 4. If accessed WITHOUT ?ref= on a CTV-tracked form, show CTV selection dropdown!
-    if not matched_ctv and has_ctv_tracking:
-        ctv_options = get_ctv_options_for_form(schema)
-        return HTMLResponse(
-            content=render_ctv_selector_landing_html(
-                schema=schema,
-                ctv_options=ctv_options,
-                form_id=effective_form_id,
-                query_params=dict(request.query_params),
-            ),
-            status_code=200,
-        )
+    # 4. Enforce per-CTV survey assignments when CTV tracking is enabled.
+    if has_ctv_tracking:
+        if matched_ctv:
+            if db_pool is not None:
+                try:
+                    assigned = await is_ctv_assigned_to_form(db_pool, matched_ctv, effective_form_id)
+                except Exception:
+                    logger.exception("CTV assignment check failed for form %s", effective_form_id)
+                    return HTMLResponse(
+                        content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Tạm thời không thể xác nhận phân công khảo sát</h1><p>Vui lòng thử lại sau.</p></body></html>",
+                        status_code=503,
+                    )
+                if not assigned:
+                    return HTMLResponse(
+                        content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Không có quyền truy cập khảo sát</h1><p>Mã CTV này chưa được phân công khảo sát hoặc quyền truy cập đã bị thu hồi.</p></body></html>",
+                        status_code=403,
+                    )
+            elif settings.ENVIRONMENT == "production":
+                return HTMLResponse(
+                    content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Tạm thời không thể xác nhận phân công khảo sát</h1><p>Vui lòng thử lại sau.</p></body></html>",
+                    status_code=503,
+                )
+        else:
+            if db_pool is not None:
+                try:
+                    ctv_options = await get_assigned_ctvs_for_form(db_pool, effective_form_id)
+                except Exception:
+                    logger.exception("Assigned CTV lookup failed for form %s", effective_form_id)
+                    return HTMLResponse(
+                        content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Tạm thời không thể tải danh sách CTV</h1><p>Vui lòng thử lại sau.</p></body></html>",
+                        status_code=503,
+                    )
+            elif settings.ENVIRONMENT == "production":
+                return HTMLResponse(
+                    content="<!doctype html><html lang='vi'><meta charset='utf-8'><body><h1>Tạm thời không thể tải danh sách CTV</h1><p>Vui lòng thử lại sau.</p></body></html>",
+                    status_code=503,
+                )
+            else:
+                ctv_options = get_ctv_options_for_form(schema)
+            return HTMLResponse(
+                content=render_ctv_selector_landing_html(
+                    schema=schema,
+                    ctv_options=ctv_options,
+                    form_id=effective_form_id,
+                    query_params=dict(request.query_params),
+                ),
+                status_code=200,
+            )
     # 5. Render individual form with locked CTV code
     return HTMLResponse(
         content=render_dynamic_form_html(schema, ctv_code=matched_ctv, ctv_slug=active_slug, ref_code=active_ref),
@@ -148,12 +269,18 @@ async def list_public_forms_api():
 
 
 @router.get("/api/v1/forms/{form_id}")
-async def get_form_schema_api(form_id: str):
-    """Public schema endpoint for dynamic form rendering."""
+async def get_form_schema_api(request: Request, form_id: str):
+    """Public schema endpoint for dynamic form rendering (staff-only for private forms)."""
     refresh_form_registry_from_disk()
     schema = FORM_REGISTRY.get(form_id)
     if not schema:
         raise HTTPException(status_code=404, detail="Biểu mẫu không tồn tại")
+    if _is_private_form(schema):
+        if not await verify_staff_request(request):
+            raise HTTPException(
+                status_code=403,
+                detail="Biểu mẫu riêng tư yêu cầu đăng nhập quản trị viên.",
+            )
     return schema.model_dump()
 @router.get("/api/v1/surveys/history")
 async def get_survey_history(
@@ -537,6 +664,28 @@ def _group_uploaded_files(form_data: Any, schema: Any, explicit_question_id: Opt
     return ordered
 
 
+def _has_valid_gps(lat_raw: Any, lon_raw: Any) -> bool:
+    """Validates finite, in-range, non-(0,0) GPS coordinates."""
+    if lat_raw is None or lon_raw is None:
+        return False
+    lat_s = str(lat_raw).strip()
+    lon_s = str(lon_raw).strip()
+    if not lat_s or not lon_s:
+        return False
+    try:
+        lat = float(lat_s)
+        lon = float(lon_s)
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    if lat == 0.0 and lon == 0.0:
+        return False
+    return True
+
+
 def _authorize_test_flags(schema: Any, is_test_mode: bool, bypass_img_check: bool) -> None:
     """Server-side authority for client test/bypass flags.
 
@@ -613,10 +762,37 @@ async def submit_webrtc_survey(
     requested_form = (form_id or "").strip()
     active_form = requested_form or "income_survey"
     schema = FORM_REGISTRY.get(requested_form) if requested_form else None
+    effective_schema = schema or FORM_REGISTRY.get(active_form)
+    if _is_private_form(effective_schema):
+        if not await verify_staff_request(request):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Biểu mẫu riêng tư yêu cầu đăng nhập nhân sự quản trị."},
+            )
     _authorize_test_flags(schema, bool(is_test_mode), bool(bypass_img_check))
     received_at = datetime.now(timezone.utc)
     if requested_form and schema is None:
         logger.warning("[SUBMIT] form_id '%s' is not registered; schema validation skipped.", requested_form)
+    db_pool = get_db_pool()
+    if effective_schema is not None:
+        try:
+            limit_reached, _, _ = await is_form_response_limit_reached(
+                db_pool,
+                active_form,
+                effective_schema,
+                strict=(db_pool is not None or settings.ENVIRONMENT == "production"),
+            )
+        except Exception:
+            logger.exception("Response limit check failed on submit for form %s", active_form)
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Tạm thời không thể kiểm tra giới hạn số lượng phiếu của khảo sát."},
+            )
+        if limit_reached:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Khảo sát đã đạt giới hạn số lượng phiếu được duyệt."},
+            )
     form = await request.form()
     ctv_ref = (
         collaborator_id
@@ -627,6 +803,28 @@ async def submit_webrtc_survey(
         or request.query_params.get("collaborator_id")
         or request.query_params.get("ctv")
     )
+    # Enforce live CTV assignment at submission time (revoking an assignment blocks immediately).
+    ctv_ref_enabled = bool(getattr(schema.settings, "ctv_ref_enabled", True)) if schema else False
+    if ctv_ref_enabled and (db_pool is not None or settings.ENVIRONMENT == "production"):
+        if db_pool is None:
+            return JSONResponse(status_code=503, content={"detail": "Cơ sở dữ liệu chưa sẵn sàng để xác nhận phân công CTV."})
+        resolved_ctv = resolve_ctv_identifier(str(ctv_ref).strip()) if ctv_ref and str(ctv_ref).strip() else None
+        try:
+            assigned = bool(resolved_ctv) and await is_ctv_assigned_to_form(db_pool, resolved_ctv, active_form)
+        except Exception:
+            logger.exception("CTV assignment verification failed on submit for form %s", active_form)
+            return JSONResponse(status_code=503, content={"detail": "Tạm thời không thể xác nhận phân công khảo sát."})
+        if not assigned:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CTV chưa được phân công khảo sát này hoặc quyền truy cập đã bị thu hồi."},
+            )
+    if not bool(is_test_mode):
+        if not _has_valid_gps(form.get("gps_latitude"), form.get("gps_longitude")):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Bắt buộc bật định vị GPS để gửi khảo sát."},
+            )
     explicit_question = (question_id or "").strip() or None
     uploads = []
     upload_error = None
@@ -1027,7 +1225,8 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT telegram_user_id FROM authorized_users "
-                        "WHERE is_active = TRUE AND (LOWER(username) = ANY(%s) OR LOWER(driver_phone) = ANY(%s)) "
+                        "WHERE is_active = TRUE AND 'COLLABORATOR' = ANY(roles) "
+                        "AND (LOWER(username) = ANY(%s) OR LOWER(driver_phone) = ANY(%s)) "
                         "LIMIT 1;",
                         (list(candidates), list(candidates)),
                     )
@@ -1045,7 +1244,7 @@ async def lookup_telegram_user_for_collaborator(collab_id: Union[str, int]) -> O
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT telegram_user_id FROM authorized_users "
-                        "WHERE telegram_user_id = %s AND is_active = TRUE LIMIT 1;",
+                        "WHERE telegram_user_id = %s AND is_active = TRUE AND 'COLLABORATOR' = ANY(roles) LIMIT 1;",
                         (int(collab_str),),
                     )
                     row = await cur.fetchone()

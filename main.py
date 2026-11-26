@@ -50,6 +50,8 @@ from routers import (
     login_router,
     admin_forms_router,
     admin_data_router,
+    admin_appeals_router,
+    admin_payouts_router,
     admin_audit_router,
     admin_media_router,
     admin_ctvs_router,
@@ -346,6 +348,8 @@ app.include_router(ctv_login_router)
 app.include_router(ctv_portal_router)
 app.include_router(admin_forms_router)
 app.include_router(admin_data_router)
+app.include_router(admin_appeals_router)
+app.include_router(admin_payouts_router)
 app.include_router(admin_audit_router)
 app.include_router(admin_media_router)
 app.include_router(admin_ctvs_router)

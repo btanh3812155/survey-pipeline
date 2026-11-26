@@ -37,6 +37,8 @@ SHA_011="$(sha256sum "$ROOT/scripts/migrations/011_engine_modules.sql" | cut -d 
 SHA_012="$(sha256sum "$ROOT/scripts/migrations/012_db_trash.sql" | cut -d ' ' -f 1)"
 SHA_013="$(sha256sum "$ROOT/scripts/migrations/013_trash_retention_policy.sql" | cut -d ' ' -f 1)"
 SHA_014="$(sha256sum "$ROOT/scripts/migrations/014_trash_compaction_runs.sql" | cut -d ' ' -f 1)"
+SHA_015="$(sha256sum "$ROOT/scripts/migrations/015_ctv_auth_revision.sql" | cut -d ' ' -f 1)"
+SHA_016="$(sha256sum "$ROOT/scripts/migrations/016_authorized_users_multi_roles.sql" | cut -d ' ' -f 1)"
 if [ -n "${UPGRADE_TEST_POSTGRES_CONTAINER:-}" ]; then
   CONTAINER="$UPGRADE_TEST_POSTGRES_CONTAINER"
   ENDPOINT="${UPGRADE_TEST_DOCKER_ENDPOINT:?UPGRADE_TEST_DOCKER_ENDPOINT is required with the container runner}"
@@ -82,7 +84,7 @@ case "$(printf '%s' "$ACTUAL_DB" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 if [ -n "${UPGRADE_TEST_POSTGRES_CONTAINER:-}" ]; then
-  "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" -v migration_003_sha256="$SHA_003" -v migration_004_sha256="$SHA_004" -v migration_005_sha256="$SHA_005" -v migration_006_sha256="$SHA_006" -v migration_007_sha256="$SHA_007" -v migration_008_sha256="$SHA_008" -v migration_009_sha256="$SHA_009" -v migration_010_sha256="$SHA_010" -v migration_011_sha256="$SHA_011" -v migration_012_sha256="$SHA_012" -v migration_013_sha256="$SHA_013" -v migration_014_sha256="$SHA_014" < "$FILE"
+  "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" -v migration_003_sha256="$SHA_003" -v migration_004_sha256="$SHA_004" -v migration_005_sha256="$SHA_005" -v migration_006_sha256="$SHA_006" -v migration_007_sha256="$SHA_007" -v migration_008_sha256="$SHA_008" -v migration_009_sha256="$SHA_009" -v migration_010_sha256="$SHA_010" -v migration_011_sha256="$SHA_011" -v migration_012_sha256="$SHA_012" -v migration_013_sha256="$SHA_013" -v migration_014_sha256="$SHA_014" -v migration_015_sha256="$SHA_015" -v migration_016_sha256="$SHA_016" < "$FILE"
 else
-  PGOPTIONS="$PGOPTIONS" "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" -v migration_003_sha256="$SHA_003" -v migration_004_sha256="$SHA_004" -v migration_005_sha256="$SHA_005" -v migration_006_sha256="$SHA_006" -v migration_007_sha256="$SHA_007" -v migration_008_sha256="$SHA_008" -v migration_009_sha256="$SHA_009" -v migration_010_sha256="$SHA_010" -v migration_011_sha256="$SHA_011" -v migration_012_sha256="$SHA_012" -v migration_013_sha256="$SHA_013" -v migration_014_sha256="$SHA_014" < "$FILE"
+  PGOPTIONS="$PGOPTIONS" "${PSQL[@]}" -X -v ON_ERROR_STOP=1 -v migration_sha256="$SHA" -v migration_001_sha256="$SHA_001" -v migration_002_sha256="$SHA_002" -v migration_003_sha256="$SHA_003" -v migration_004_sha256="$SHA_004" -v migration_005_sha256="$SHA_005" -v migration_006_sha256="$SHA_006" -v migration_007_sha256="$SHA_007" -v migration_008_sha256="$SHA_008" -v migration_009_sha256="$SHA_009" -v migration_010_sha256="$SHA_010" -v migration_011_sha256="$SHA_011" -v migration_012_sha256="$SHA_012" -v migration_013_sha256="$SHA_013" -v migration_014_sha256="$SHA_014" -v migration_015_sha256="$SHA_015" -v migration_016_sha256="$SHA_016" < "$FILE"
 fi

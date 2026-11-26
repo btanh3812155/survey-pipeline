@@ -21,8 +21,10 @@ from core.ctv import (
     CTV_CODES,
     create_ctv_directory_entry,
     delete_ctv_directory_entry,
+    get_all_ctv_assignments,
     get_ctv_directory,
     normalize_ctv_code,
+    set_ctv_form_assignments,
     update_ctv_directory_entry,
 )
 from core.quotas import get_ctv_quota_evaluations
@@ -140,6 +142,24 @@ def _icon(name: str) -> str:
     return f'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">{paths[name]}</svg>'
 
 
+def _assignment_editor(code_path: str, assigned_ids: set[str], forms: List[tuple[str, str]]) -> str:
+    if not forms:
+        return '<span class="muted">Chưa có khảo sát</span>'
+    boxes = "".join(
+        f'<label style="display:block;margin:4px 0;"><input type="checkbox" name="form_ids" '
+        f'value="{html.escape(str(fid), quote=True)}" {"checked" if fid in assigned_ids else ""}> '
+        f'{html.escape(str(title))}</label>'
+        for fid, title in forms
+    )
+    count = len(assigned_ids & {fid for fid, _ in forms})
+    return (
+        f'<details><summary>Phân công ({count}/{len(forms)})</summary>'
+        f'<form method="post" action="/admin/ctvs/{code_path}/assignments" style="margin-top:6px;">'
+        f'{boxes}<button type="submit" class="secondary" style="margin-top:6px;">Lưu phân công</button>'
+        f'</form></details>'
+    )
+
+
 def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "", forms=None) -> str:
     active_rows = [row for row in rows if row.get("is_active", True)]
     total_submissions = sum(int(row.get("submission_count") or 0) for row in rows)
@@ -166,6 +186,7 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
         last_seen = row.get("last_submission_at")
         last_seen_text = last_seen.strftime("%d/%m/%Y %H:%M") if hasattr(last_seen, "strftime") else "—"
         quota_html = row.get("quota_summary") or ""
+        assign_html = _assignment_editor(code_path, set(row.get("assigned_forms") or ()), forms or [])
         search = html.escape(f"{code_raw} {name_raw} {phone_raw} {notes_raw}".lower(), quote=True)
         phone_val = html.escape(phone_raw, quote=True)
         name_val = html.escape(name_raw, quote=True)
@@ -189,6 +210,7 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
                       <dt>Trạng thái</dt><dd><span class="ctv-view">{_status_badge(active)}</span><label class="ctv-edit inline-active"><input form="{form_id}" type="checkbox" name="is_active" value="1" {active_checked} disabled> Hoạt động</label></dd>
                       <dt>Bài nộp</dt><dd>{count} · {last_seen_text}</dd>
                       <dt>Mục tiêu</dt><dd>{quota_html}</dd>
+                      <dt>Khảo sát</dt><dd>{assign_html}</dd>
                     </dl>
                     <div class="row-actions">
                       <button type="button" class="secondary icon-button" data-edit-ctv="mobile" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
@@ -212,7 +234,7 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
                 <label class="ctv-edit inline-active"><input form="{form_id}" type="checkbox" name="is_active" value="1" {active_checked} disabled> Hoạt động</label>
               </td>
               <td class="ctv-desktop"><strong>{count}</strong><div class="muted">{last_seen_text}</div></td>
-              <td class="ctv-desktop ctv-quota">{quota_html}</td>
+              <td class="ctv-desktop ctv-quota">{quota_html}<div style="margin-top:6px;">{assign_html}</div></td>
               <td class="ctv-desktop">
                 <div class="row-actions">
                   <button type="button" class="secondary icon-button" data-edit-ctv="desktop" aria-label="Sửa CTV {code}" title="Sửa CTV">{_icon('edit')}</button>
@@ -381,7 +403,9 @@ async def admin_ctv_directory(
     """CTV directory with create/edit/toggle/delete actions."""
     db_pool = get_db_pool()
     rows = await _load_directory_rows(db_pool)
+    assignments_by_ctv = await get_all_ctv_assignments(db_pool)
     for row in rows:
+        row["assigned_forms"] = assignments_by_ctv.get(str(row.get("code") or ""), set())
         try:
             row["quota_summary"] = _quota_summary(
                 await get_ctv_quota_evaluations(db_pool, row["code"])
@@ -394,7 +418,6 @@ async def admin_ctv_directory(
         (form_id, schema.title)
         for form_id, schema in sorted(FORM_REGISTRY.items())
         if schema.settings.access_control == "public"
-        and schema.settings.ctv_ref_enabled
         and not (schema.settings.response_limit and schema.settings.current_responses >= schema.settings.response_limit)
     ]
     return HTMLResponse(content=_render_page(rows, message=msg, error=err, forms=forms), status_code=200)
@@ -485,6 +508,24 @@ async def toggle_admin_ctv(
         notes=notes if notes is not None else current.get("notes"),
         is_active=not bool(current.get("is_active", True)),
     )
+    return RedirectResponse(url="/admin/ctvs?msg=updated", status_code=303)
+
+
+@router.post("/admin/ctvs/{code}/assignments")
+async def update_admin_ctv_assignments(
+    code: str,
+    form_ids: List[str] = Form(default=[]),
+    admin_user: str = Depends(verify_admin_auth),
+):
+    """Replaces the assigned surveys for a single CTV."""
+    db_pool = get_db_pool()
+    if not db_pool:
+        return RedirectResponse(url="/admin/ctvs?msg=database", status_code=303)
+    updated = await set_ctv_form_assignments(db_pool, code, form_ids, assigned_by=admin_user)
+    if updated is None:
+        return RedirectResponse(url="/admin/ctvs?msg=missing", status_code=303)
+    from services.audit_and_privacy import record_audit_event
+    await record_audit_event(db_pool, "ADMIN_CTV", "CTV_ASSIGNMENTS_UPDATED", "SYSTEM", code, "ADMIN", admin_user, {"form_ids": updated})
     return RedirectResponse(url="/admin/ctvs?msg=updated", status_code=303)
 
 

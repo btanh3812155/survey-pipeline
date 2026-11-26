@@ -398,7 +398,8 @@ async def test_replacement_preserves_unrelated_telegram_administrator_privileges
     )
     admin = conn.execute("SELECT * FROM authorized_users WHERE telegram_user_id=%s", (admin_user,)).fetchone()
     assert await onboarding.complete_ctv_onboarding(pool, OTHER_USER, PHONE, "Replacement") == CODE
-    assert conn.execute("SELECT * FROM authorized_users WHERE telegram_user_id=%s", (admin_user,)).fetchone() == admin
+    expected = {**admin, "roles": ["ADMIN", "COLLABORATOR"]} if admin_user == OTHER_USER else admin
+    assert conn.execute("SELECT * FROM authorized_users WHERE telegram_user_id=%s", (admin_user,)).fetchone() == expected
     assert await quotas.resolve_ctv_code_for_telegram(pool, USER) is None
 
 
@@ -548,4 +549,96 @@ async def test_replacement_never_reactivates_an_administratively_disabled_incomi
     with pytest.raises(ValueError, match="inactive"):
         await onboarding.complete_ctv_onboarding(pool, OTHER_USER, PHONE, "Replacement")
     assert _identity_state(conn) == before
+
+
+async def test_numeric_ctv_code_resolves_via_directory_not_telegram_id(store):
+    pool, conn = store
+    numeric_code = "1001"
+    conn.execute(
+        "INSERT INTO authorized_users(telegram_user_id,full_name,role,is_active) VALUES (%s,'Other TG','COLLABORATOR',TRUE)",
+        (int(numeric_code),),
+    )
+    conn.execute(
+        "INSERT INTO authorized_users(telegram_user_id,full_name,role,is_active) VALUES (%s,'Actual CTV','COLLABORATOR',TRUE)",
+        (OTHER_USER,),
+    )
+    assert await ctv.create_ctv_directory_entry(pool, numeric_code, "Numeric CTV", OTHER_PHONE, OTHER_USER)
+    async with pool.connection() as connection:
+        assert await durable_work._recipient(
+            connection, {"ctv_code": numeric_code, "collaborator_id": USER}, {"source": "ctv"},
+        ) == (OTHER_USER, None)
+        assert await durable_work._recipient(
+            connection, {"ctv_code": None, "collaborator_id": int(numeric_code)}, {"source": "ctv"},
+        ) == (int(numeric_code), None)
+    assert await ctv.update_ctv_directory_entry(pool, numeric_code, "Numeric CTV", OTHER_PHONE, is_active=False)
+    async with pool.connection() as connection:
+        assert await durable_work._recipient(
+            connection, {"ctv_code": numeric_code, "collaborator_id": int(numeric_code)}, {"source": "ctv"},
+        ) == (None, "UNLINKED_RECIPIENT")
+
+
+async def test_multi_role_admin_and_driver_ctv_rebind_and_billing(billing_store, database):
+    pool, conn = billing_store
+    admin_user = OTHER_USER
+    driver_user = OTHER_USER + 1
+    conn.execute(
+        "INSERT INTO authorized_users(telegram_user_id,username,full_name,role,is_active) "
+        "VALUES (%s,'ops_admin','Ops Admin','ADMIN',TRUE),(%s,'drv_one','Driver One','DRIVER',TRUE)",
+        (admin_user, driver_user),
+    )
+    # Rebinding onto an active ADMIN grants COLLABORATOR while keeping ADMIN and billing eligibility.
+    assert await onboarding.complete_ctv_onboarding(pool, admin_user, PHONE, "CTV Name") == CODE
+    admin_row = conn.execute("SELECT username,full_name,role,roles,is_active FROM authorized_users WHERE telegram_user_id=%s", (admin_user,)).fetchone()
+    assert admin_row == {
+        "username": "ops_admin", "full_name": "Ops Admin", "role": "ADMIN",
+        "roles": ["ADMIN", "COLLABORATOR"], "is_active": True,
+    }
+    # Outstanding submission from old CTV account remains billable through the admin+CTV owner.
+    result = await outbox_delivery._billing(database, _billing_event(conn))
+    assert result.outcome == "SUCCEEDED"
+    # New submission under the dual-role admin+CTV is directly billable while active.
+    conn.execute(
+        "INSERT INTO survey_submissions(submission_id,ctv_code,collaborator_id,status,work_owner) "
+        "VALUES ('REBIND-ADMIN-DIRECT',%s,%s,'APPROVED','outbox_v2'),('REBIND-ADMIN-NEW',%s,%s,'APPROVED','outbox_v2')",
+        (CODE, admin_user, CODE, admin_user),
+    )
+    direct_event = _billing_event(conn, "REBIND-ADMIN-DIRECT")
+    direct_event["payload"]["collaborator_id"] = admin_user
+    assert (await outbox_delivery._billing(database, direct_event)).outcome == "SUCCEEDED"
+    admin_event = _billing_event(conn, "REBIND-ADMIN-NEW")
+    admin_event["payload"]["collaborator_id"] = admin_user
+    # Rebinding away from the admin onto a DRIVER preserves ADMIN on admin_user and grants COLLABORATOR+DRIVER on driver_user.
+    assert await onboarding.complete_ctv_onboarding(pool, driver_user, PHONE, "Driver CTV") == CODE
+    assert conn.execute("SELECT role,roles,is_active FROM authorized_users WHERE telegram_user_id=%s", (admin_user,)).fetchone() == {
+        "role": "ADMIN", "roles": ["ADMIN"], "is_active": True,
+    }
+    assert conn.execute("SELECT role,roles,is_active FROM authorized_users WHERE telegram_user_id=%s", (driver_user,)).fetchone() == {
+        "role": "COLLABORATOR", "roles": ["COLLABORATOR", "DRIVER"], "is_active": True,
+    }
+    # Outstanding submission made while admin held the CTV still bills through the verified rebind chain.
+    assert (await outbox_delivery._billing(database, admin_event)).outcome == "SUCCEEDED"
+    # Emptying roles via UPDATE must fail closed instead of silently restoring the revoked role.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("UPDATE authorized_users SET roles = '{}'::text[] WHERE telegram_user_id=%s", (admin_user,))
+    # Rebinding away from DRIVER+COLLABORATOR clears the CTV code username on the retained DRIVER row.
+    third_user = OTHER_USER + 2
+    assert await onboarding.complete_ctv_onboarding(pool, third_user, PHONE, "Third CTV") == CODE
+    assert conn.execute("SELECT username,role,roles,is_active FROM authorized_users WHERE telegram_user_id=%s", (driver_user,)).fetchone() == {
+        "username": None, "role": "DRIVER", "roles": ["DRIVER"], "is_active": True,
+    }
+
+
+async def test_inactive_admin_account_cannot_bind_as_ctv(store):
+    pool, conn = store
+    await _enroll(pool)
+    conn.execute(
+        "INSERT INTO authorized_users(telegram_user_id,full_name,role,is_active) VALUES (%s,'Disabled Admin','ADMIN',FALSE)",
+        (OTHER_USER,),
+    )
+    before = _identity_state(conn)
+    with pytest.raises(ValueError, match="inactive"):
+        await onboarding.complete_ctv_onboarding(pool, OTHER_USER, PHONE, "Replacement")
+    assert _identity_state(conn) == before
+
+
 

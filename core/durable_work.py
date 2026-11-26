@@ -102,19 +102,27 @@ async def _recipient(conn, row, policy):
             (phone, CONFLICTED_PHONE_LINK_SOURCE, row["created_at"]),
         )
     else:
-        ref = row.get("ctv_code") or row.get("collaborator_id")
-        if not ref:
-            return None, "UNLINKED_RECIPIENT"
-        if str(ref).isdigit():
-            cur = await conn.execute("SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id=%s AND is_active", (int(ref),))
-        else:
+        ctv_code = str(row.get("ctv_code") or "").strip()
+        if ctv_code:
             exists = await conn.execute("SELECT to_regclass('ctv_directory')")
             found = await exists.fetchone()
             if not (found[0] if not isinstance(found, dict) else next(iter(found.values()))):
                 return None, "UNLINKED_RECIPIENT"
             from core.ctv import extract_ctv_short_code, normalize_ctv_code
-            candidates = [str(ref), normalize_ctv_code(str(ref)), extract_ctv_short_code(str(ref))]
+            candidates = [ctv_code, normalize_ctv_code(ctv_code), extract_ctv_short_code(ctv_code)]
             cur = await conn.execute("SELECT telegram_user_id FROM ctv_directory WHERE UPPER(code)=ANY(%s) AND is_active", ([value.upper() for value in candidates if value],))
+        else:
+            collaborator_id = row.get("collaborator_id")
+            raw_id = str(collaborator_id).strip() if collaborator_id is not None else ""
+            if not raw_id or not (raw_id.isascii() and raw_id.isdigit()):
+                return None, "UNLINKED_RECIPIENT"
+            tg_id = int(raw_id)
+            if tg_id <= 0 or tg_id > (1 << 63) - 1:
+                return None, "UNLINKED_RECIPIENT"
+            cur = await conn.execute(
+                "SELECT telegram_user_id FROM authorized_users WHERE telegram_user_id=%s AND is_active AND 'COLLABORATOR' = ANY(roles)",
+                (tg_id,),
+            )
     value = await cur.fetchone()
     if value:
         if isinstance(value, dict):

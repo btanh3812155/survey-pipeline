@@ -240,6 +240,7 @@ class FormSettings(BaseModel):
     notify_email: Optional[str] = None
     decree13_required: bool = True
     ctv_ref_enabled: bool = True # allow ?ref=<ctv> attribution links for this form
+    require_manual_review: bool = True # require manual admin review after automated checks pass
     # Free-form labels used by CTV quota tag scopes (normalized to lowercase slugs).
     tags: List[str] = Field(default_factory=list)
     # Who receives the Telegram verdict for a submission:

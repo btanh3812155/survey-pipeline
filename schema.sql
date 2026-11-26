@@ -12,10 +12,38 @@ CREATE TABLE IF NOT EXISTS authorized_users (
     username TEXT,
     full_name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('COLLABORATOR', 'DRIVER', 'ADMIN')),
+    roles TEXT[] NOT NULL CHECK (cardinality(roles) >= 1 AND roles <@ ARRAY['COLLABORATOR', 'DRIVER', 'ADMIN']::text[]),
     driver_phone VARCHAR(20),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE OR REPLACE FUNCTION sync_authorized_user_roles() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE normalized TEXT[];
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.role IS DISTINCT FROM OLD.role AND NEW.roles IS NOT DISTINCT FROM OLD.roles THEN
+        NEW.roles := ARRAY[NEW.role]::text[];
+    ELSIF TG_OP = 'INSERT' AND NEW.roles IS NULL THEN
+        NEW.roles := ARRAY[NEW.role]::text[];
+    ELSE
+        SELECT COALESCE(
+            array_agg(r ORDER BY array_position(ARRAY['ADMIN', 'COLLABORATOR', 'DRIVER'], r), r),
+            '{}'::text[]
+        ) INTO normalized
+        FROM (SELECT DISTINCT unnest(NEW.roles) AS r) s;
+        NEW.roles := normalized;
+        IF cardinality(NEW.roles) >= 1 AND NEW.roles[1] = ANY(ARRAY['ADMIN', 'COLLABORATOR', 'DRIVER']) THEN
+            NEW.role := NEW.roles[1];
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER authorized_users_sync_roles
+BEFORE INSERT OR UPDATE ON authorized_users
+FOR EACH ROW EXECUTE FUNCTION sync_authorized_user_roles();
 
 -- 1b. Pseudonymized Driver Identity Vault (Decree 13 / GDPR PII Isolation)
 CREATE TABLE IF NOT EXISTS driver_identity_vault (

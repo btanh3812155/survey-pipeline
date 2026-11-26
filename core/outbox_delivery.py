@@ -357,7 +357,7 @@ async def _binding_valid(conn_str, event):
             else:
                 cur = await conn.execute(
                     "SELECT 1 FROM authorized_users WHERE telegram_user_id = %s "
-                    "AND telegram_user_id = %s AND is_active AND role = 'COLLABORATOR'",
+                    "AND telegram_user_id = %s AND is_active AND 'COLLABORATOR' = ANY(roles)",
                     (submission["collaborator_id"], event["payload"].get("chat_id")),
                 )
             return bool(await cur.fetchone())

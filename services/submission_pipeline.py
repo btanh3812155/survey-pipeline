@@ -1333,7 +1333,25 @@ async def _evaluate(
             status_str = "REJECTED"
             reason_str = failure["message"]
             ai_res["module_failure"] = failure
-    if is_approved and not is_bypassed and prepared.answers.get("consent_choice") != "Tôi không đồng ý" and not input.is_test_mode:
+    is_dissent = str(prepared.answers.get("consent_choice") or "").strip() == "Tôi không đồng ý"
+    if schema:
+        is_dissent = is_dissent or any(
+            not _is_blank(prepared.answers.get(gate.id))
+            and not gate_satisfied(gate, prepared.answers[gate.id])
+            for gate in effective_gates(schema)
+        )
+    if is_dissent:
+        is_approved = False
+        status_str = "REJECTED"
+        reason_str = "Tài xế không đồng ý xử lý dữ liệu theo Nghị định 13."
+    require_manual_review = bool(getattr(getattr(schema, "settings", None), "require_manual_review", True))
+    if (
+        require_manual_review
+        and is_approved
+        and not is_bypassed
+        and not is_dissent
+        and not input.is_test_mode
+    ):
         status_str = "MANUAL_REVIEW"
         reason_str = "Phiếu khảo sát của bạn đã được ghi nhận. Ban Quản Trị đang tiến hành đối soát thủ công. Vui lòng mở Telegram @TrustBridgeVN_bot để nhận kết quả!"
     return SubmissionEvaluation(
@@ -1407,7 +1425,7 @@ def _record(
             totals[key] += count
     for key, total_key in (("gross", "total_gross_revenue"), ("net", "total_net_income"), ("trips", "total_trips")):
         totals[key] = _to_int(eval.income_totals.get(total_key) or totals[key])
-    dissent = answers.get("consent_choice") == "Tôi không đồng ý"
+    dissent = str(answers.get("consent_choice") or "").strip() == "Tôi không đồng ý"
     daily_trips = fields.get("daily_trips")
     incentives = fields.get("gsm_incentive_policy") or ""
     record = {
@@ -1417,8 +1435,12 @@ def _record(
         "driver_phone": None if dissent else prepared.phone,
         "driver_name": None if dissent else (input.driver_name or "Tài xế"),
         "receipt_serial_no": f"SN-{input.license_plate or 'AUTO'}",
-        "status": eval.status,
-        "rejection_reason": eval.reason if not eval.is_approved else None,
+        "status": "REJECTED" if dissent else eval.status,
+        "rejection_reason": (
+            eval.reason
+            if (dissent or not eval.is_approved)
+            else None
+        ),
         "form_data": {**prepared.form_data, "_delivery_policy": delivery_policy_snapshot(
             input.delivery_schema or input.schema, dissent=dissent)},
         "raw_extracted_facts": ai,

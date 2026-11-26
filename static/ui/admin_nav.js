@@ -17,6 +17,7 @@
   const links = [
     ...(operator ? [['/admin/forms', 'nav_forms']] : []),
     ['/admin/submissions', 'nav_submissions'],
+    ['/admin/appeals', 'nav_appeals'],
     ...(operator ? [
       ['/admin/audit', 'nav_audit'],
       ['/admin/media', 'nav_media'],
@@ -28,6 +29,7 @@
     ['/admin/account', 'nav_account'],
     ['/logout', 'nav_logout'],
     ...(superadmin ? [
+      ['/admin/payouts', 'nav_payouts'],
       ['/admin/accounts', 'nav_accounts'],
       ['/admin/trash', 'nav_trash'],
       ['/admin/recovery/email', 'nav_recovery_email'],

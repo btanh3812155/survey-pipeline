@@ -27,6 +27,8 @@ MIGRATIONS = (
     "013_trash_retention_policy.sql",
     "014_trash_compaction_runs.sql",
     "015_ctv_auth_revision.sql",
+    "016_authorized_users_multi_roles.sql",
+    "017_ctv_form_assignments.sql",
 )
 TARGET = ("--target", "production", "--schema", "002")
 RUNTIME = (

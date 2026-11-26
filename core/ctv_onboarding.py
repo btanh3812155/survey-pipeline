@@ -11,6 +11,60 @@ from core.phone_links import (
 )
 
 CTV_ONBOARDING_STATEMENTS = (
+    """
+    DO $$
+    BEGIN
+        IF to_regclass(format('%I.authorized_users', current_schema())) IS NOT NULL THEN
+            ALTER TABLE authorized_users ADD COLUMN IF NOT EXISTS roles TEXT[];
+            UPDATE authorized_users SET roles = ARRAY[role]::text[] WHERE roles IS NULL OR cardinality(roles) = 0;
+            ALTER TABLE authorized_users ALTER COLUMN roles SET NOT NULL;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'authorized_users_roles_check'
+                  AND conrelid = format('%I.authorized_users', current_schema())::regclass
+            ) THEN
+                ALTER TABLE authorized_users ADD CONSTRAINT authorized_users_roles_check
+                CHECK (cardinality(roles) >= 1 AND roles <@ ARRAY['COLLABORATOR', 'DRIVER', 'ADMIN']::text[]);
+            END IF;
+        END IF;
+    END
+    $$;
+    """,
+    """
+    CREATE OR REPLACE FUNCTION sync_authorized_user_roles() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    DECLARE normalized TEXT[];
+    BEGIN
+        IF TG_OP = 'UPDATE' AND NEW.role IS DISTINCT FROM OLD.role AND NEW.roles IS NOT DISTINCT FROM OLD.roles THEN
+            NEW.roles := ARRAY[NEW.role]::text[];
+        ELSIF TG_OP = 'INSERT' AND NEW.roles IS NULL THEN
+            NEW.roles := ARRAY[NEW.role]::text[];
+        ELSE
+            SELECT COALESCE(
+                array_agg(r ORDER BY array_position(ARRAY['ADMIN', 'COLLABORATOR', 'DRIVER'], r), r),
+                '{}'::text[]
+            ) INTO normalized
+            FROM (SELECT DISTINCT unnest(NEW.roles) AS r) s;
+            NEW.roles := normalized;
+            IF cardinality(NEW.roles) >= 1 AND NEW.roles[1] = ANY(ARRAY['ADMIN', 'COLLABORATOR', 'DRIVER']) THEN
+                NEW.role := NEW.roles[1];
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF to_regclass(format('%I.authorized_users', current_schema())) IS NOT NULL THEN
+            CREATE OR REPLACE TRIGGER authorized_users_sync_roles
+            BEFORE INSERT OR UPDATE ON authorized_users
+            FOR EACH ROW EXECUTE FUNCTION sync_authorized_user_roles();
+        END IF;
+    END
+    $$;
+    """,
     "ALTER TABLE ctv_directory ADD COLUMN IF NOT EXISTS bot_invite_token TEXT;",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_ctv_bot_invite_token ON ctv_directory (bot_invite_token);",
     """
@@ -144,11 +198,11 @@ async def complete_ctv_onboarding(db_pool, telegram_user_id: int, phone: str, fu
             if replacing and not registered_phone:
                 raise ValueError("CTV account replacement requires a registered phone")
             await cur.execute(
-                "SELECT role, is_active FROM authorized_users WHERE telegram_user_id = %s FOR UPDATE",
+                "SELECT roles, is_active FROM authorized_users WHERE telegram_user_id = %s FOR UPDATE",
                 (telegram_user_id,),
             )
             incoming_user = await cur.fetchone()
-            if incoming_user and incoming_user[0] != 'ADMIN' and not incoming_user[1]:
+            if incoming_user and not incoming_user[1]:
                 raise ValueError("Telegram account is administratively inactive")
             await cur.execute(
                 "SELECT telegram_user_id, source FROM phone_telegram_links WHERE phone_normalized = %s FOR UPDATE",
@@ -170,18 +224,28 @@ async def complete_ctv_onboarding(db_pool, telegram_user_id: int, phone: str, fu
             elif not await store_phone_telegram_link(cur, normalized, telegram_user_id, "verified_contact"):
                 raise ValueError("verified phone ownership conflict")
             await cur.execute(
-                "INSERT INTO authorized_users (telegram_user_id, username, full_name, role, is_active) "
-                "VALUES (%s, %s, %s, 'COLLABORATOR', TRUE) "
+                "INSERT INTO authorized_users (telegram_user_id, username, full_name, role, roles, is_active) "
+                "VALUES (%s, %s, %s, 'COLLABORATOR', ARRAY['COLLABORATOR']::text[], TRUE) "
                 "ON CONFLICT (telegram_user_id) DO UPDATE SET "
-                "username = EXCLUDED.username, full_name = EXCLUDED.full_name, role = 'COLLABORATOR' "
-                "WHERE authorized_users.role <> 'ADMIN' AND authorized_users.is_active",
+                "username = CASE WHEN 'ADMIN' = ANY(authorized_users.roles) THEN authorized_users.username ELSE EXCLUDED.username END, "
+                "full_name = CASE WHEN 'ADMIN' = ANY(authorized_users.roles) THEN authorized_users.full_name ELSE EXCLUDED.full_name END, "
+                "roles = CASE "
+                "WHEN 'COLLABORATOR' = ANY(authorized_users.roles) THEN authorized_users.roles "
+                "ELSE array_append(authorized_users.roles, 'COLLABORATOR') END "
+                "WHERE authorized_users.is_active RETURNING 1",
                 (telegram_user_id, code, full_name),
             )
+            if await cur.fetchone() is None:
+                raise ValueError("Telegram account is administratively inactive")
             if replacing:
                 await cur.execute(
-                    "UPDATE authorized_users SET is_active = FALSE "
-                    "WHERE telegram_user_id = %s AND role = 'COLLABORATOR'",
-                    (old_user_id,),
+                    "UPDATE authorized_users "
+                    "SET is_active = CASE WHEN array_remove(roles, 'COLLABORATOR') = '{}'::text[] THEN FALSE ELSE is_active END, "
+                    "roles = CASE WHEN array_remove(roles, 'COLLABORATOR') = '{}'::text[] THEN roles ELSE array_remove(roles, 'COLLABORATOR') END, "
+                    "username = CASE WHEN array_remove(roles, 'COLLABORATOR') <> '{}'::text[] "
+                    "AND UPPER(TRIM(COALESCE(username, ''))) = UPPER(%s) THEN NULL ELSE username END "
+                    "WHERE telegram_user_id = %s AND 'COLLABORATOR' = ANY(roles)",
+                    (code, old_user_id),
                 )
             await cur.execute(
                 "UPDATE ctv_directory SET telegram_user_id = %s, phone = COALESCE(NULLIF(phone, ''), %s), "
@@ -241,15 +305,18 @@ async def billing_collaborator_is_eligible(conn, telegram_user_id: int, *, ctv_c
             WHERE NOT r.cycle AND e.event_timestamp >= r.event_timestamp
         )
         SELECT 1 FROM authorized_users u
-        WHERE u.telegram_user_id = %s AND u.role = 'COLLABORATOR'
-            AND (u.is_active OR (NOT EXISTS (SELECT 1 FROM replacements WHERE cycle) AND EXISTS (
-                SELECT 1 FROM replacements r JOIN ctv_directory d
-                    ON d.code = r.entity_id AND d.auth_revision::text = r.new_revision
-                    AND d.telegram_user_id::text = r.new_id
-                JOIN authorized_users current_owner ON current_owner.telegram_user_id = d.telegram_user_id
-                    AND current_owner.is_active AND current_owner.role = 'COLLABORATOR'
-                WHERE d.is_active = TRUE AND d.created_at <= %s::timestamptz
-            )))""",
+        WHERE u.telegram_user_id = %s
+            AND (
+                (u.is_active AND 'COLLABORATOR' = ANY(u.roles))
+                OR (NOT EXISTS (SELECT 1 FROM replacements WHERE cycle) AND EXISTS (
+                    SELECT 1 FROM replacements r JOIN ctv_directory d
+                        ON d.code = r.entity_id AND d.auth_revision::text = r.new_revision
+                        AND d.telegram_user_id::text = r.new_id
+                    JOIN authorized_users current_owner ON current_owner.telegram_user_id = d.telegram_user_id
+                        AND current_owner.is_active AND 'COLLABORATOR' = ANY(current_owner.roles)
+                    WHERE d.is_active = TRUE AND d.created_at <= %s::timestamptz
+                ))
+            )""",
         (str(telegram_user_id), ctv_code, submitted_at, telegram_user_id, submitted_at),
     )
     return bool(await cur.fetchone())

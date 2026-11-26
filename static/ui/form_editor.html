@@ -340,6 +340,15 @@
                     </div>
 
                     <div class="field-group" style="margin-top: 10px;">
+                        <label>Đối soát thủ công sau khi đạt kiểm tra tự động</label>
+                        <label class="toggle-switch" style="margin-top:6px;">
+                            <input type="checkbox" id="globalRequireManualReview" checked>
+                            <span class="toggle-slider"></span>
+                            <span style="color:#38bdf8; font-size:0.8rem;">Yêu cầu Ban Quản Trị duyệt thủ công (tắt để tự động duyệt khi đạt kiểm tra)</span>
+                        </label>
+                    </div>
+
+                    <div class="field-group" style="margin-top: 10px;">
                         <label for="formTags">Nhãn biểu mẫu (phân tách bằng dấu phẩy)</label>
                         <input type="text" id="formTags" value="" placeholder="Ví dụ: income, gsm, hcm">
                         <span style="display:block; color:#94a3b8; font-size:0.75rem; margin-top:4px;">Dùng cho phạm vi mục tiêu CTV theo nhãn (hạn mức theo nhãn).</span>
@@ -2542,6 +2551,7 @@
                     tg_response_source: (document.getElementById('tgResponseSource') || {}).value || 'ctv',
                     tg_response_question_id: (document.getElementById('tgResponseQuestion') || {}).value || null,
                     ctv_ref_enabled: document.getElementById('globalEnableCtvRef') ? document.getElementById('globalEnableCtvRef').checked : true,
+                    require_manual_review: document.getElementById('globalRequireManualReview') ? document.getElementById('globalRequireManualReview').checked : true,
                     tags: (document.getElementById('formTags') ? document.getElementById('formTags').value : '')
                         .split(',')
                         .map(t => t.trim().toLowerCase())
@@ -2667,6 +2677,8 @@
             document.getElementById('accessControl').value = st.access_control || 'public';
             document.getElementById('isTestMode').value = st.is_test_mode ? 'true' : 'false';
             document.getElementById('globalEnableCtvRef').checked = st.ctv_ref_enabled !== false;
+            const manualReviewEl = document.getElementById('globalRequireManualReview');
+            if (manualReviewEl) manualReviewEl.checked = st.require_manual_review !== false;
             const tagsEl = document.getElementById('formTags');
             if (tagsEl) tagsEl.value = Array.isArray(st.tags) ? st.tags.join(', ') : '';
             const tgSrcEl = document.getElementById('tgResponseSource');

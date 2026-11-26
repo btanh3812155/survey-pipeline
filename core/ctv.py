@@ -111,6 +111,16 @@ CTV_TABLE_STATEMENTS: Tuple[str, ...] = (
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS ctv_form_assignments (
+        ctv_code TEXT NOT NULL REFERENCES ctv_directory(code) ON DELETE CASCADE,
+        form_id TEXT NOT NULL,
+        assigned_by TEXT,
+        assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (ctv_code, form_id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ctv_form_assignments_form ON ctv_form_assignments (form_id);",
+    """
     CREATE TABLE IF NOT EXISTS ctv_quotas (
         id SERIAL PRIMARY KEY,
         ctv_code TEXT NOT NULL,
@@ -422,20 +432,20 @@ async def seed_ctv_directory(cur) -> Dict[str, Any]:
         "UPDATE authorized_users SET username = NULL "
         "WHERE username IS NOT NULL "
         "AND UPPER(TRIM(username)) = ANY(%s) "
-        "AND UPPER(COALESCE(role, '')) <> 'COLLABORATOR';",
+        "AND NOT ('COLLABORATOR' = ANY(roles));",
         (list(CTV_CODES),),
     )
 
     # Only explicit CTV bindings may populate the directory. A driver phone is
     # never a CTV target: question-source verdicts resolve the phone directly.
     await cur.execute(
-        "SELECT telegram_user_id, username, full_name, driver_phone, role "
+        "SELECT telegram_user_id, username, full_name, driver_phone, roles "
         "FROM authorized_users;"
     )
     rows = await cur.fetchall()
-    for tg_id, username, full_name, phone, role in rows:
+    for tg_id, username, full_name, phone, roles in rows:
         raw_ref = str(username or "").strip()
-        if not raw_ref or str(role or "").upper() != "COLLABORATOR":
+        if not raw_ref or "COLLABORATOR" not in (roles or ()):
             continue
         code = normalize_ctv_code(raw_ref)
         if code not in CTV_CODE_MAP:
@@ -534,6 +544,94 @@ async def update_ctv_directory_entry(
     return updated
 
 
+def is_test_ctv(code: Optional[str], display_name: Optional[str] = None) -> bool:
+    """Returns True when either code or display_name marks this CTV as a test account."""
+    return "TEST" in str(code or "").upper() or "TEST" in str(display_name or "").upper()
+
+
+def _is_open_public_form(schema: Any) -> bool:
+    """True when a registered form is public and not closed by response_limit."""
+    form_settings = getattr(schema, "settings", None)
+    if form_settings is None:
+        return True
+    if getattr(form_settings, "access_control", "public") != "public":
+        return False
+    limit = getattr(form_settings, "response_limit", None)
+    if limit is not None:
+        if limit < 0:
+            return False
+        if limit > 0 and int(getattr(form_settings, "current_responses", 0) or 0) >= limit:
+            return False
+    return True
+
+
+async def assign_default_forms_for_new_ctv(
+    db_pool,
+    ctv_code: str,
+    *,
+    display_name: Optional[str] = None,
+    is_active: bool = True,
+    assigned_by: str = "default_new_ctv",
+) -> List[str]:
+    """Auto-assigns a brand-new active non-test CTV to all currently open public forms."""
+    normalized = normalize_ctv_code(ctv_code)
+    if not db_pool or not normalized or not is_active or is_test_ctv(normalized, display_name):
+        return []
+    open_form_ids = sorted(
+        fid for fid, schema in FORM_REGISTRY.items() if _is_open_public_form(schema)
+    )
+    if not open_form_ids:
+        return []
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                for fid in open_form_ids:
+                    await cur.execute(
+                        "INSERT INTO ctv_form_assignments (ctv_code, form_id, assigned_by) "
+                        "VALUES (%s, %s, %s) ON CONFLICT (ctv_code, form_id) DO NOTHING;",
+                        (normalized, fid, assigned_by),
+                    )
+            await conn.commit()
+    except Exception as e:
+        logger.warning(f"Default form assignment failed for new CTV {normalized}: {e}")
+        return []
+    return open_form_ids
+
+
+async def assign_default_ctvs_for_new_form(
+    db_pool,
+    form_id: str,
+    *,
+    assigned_by: str = "default_new_form",
+) -> List[str]:
+    """Auto-assigns all active non-test CTVs to a brand-new form."""
+    fid = str(form_id or "").strip()
+    if not db_pool or not fid:
+        return []
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO ctv_form_assignments (ctv_code, form_id, assigned_by)
+                    SELECT code, %s, %s
+                    FROM ctv_directory
+                    WHERE is_active = TRUE
+                      AND UPPER(code) NOT LIKE '%%TEST%%'
+                      AND UPPER(COALESCE(display_name, '')) NOT LIKE '%%TEST%%'
+                    ON CONFLICT (ctv_code, form_id) DO NOTHING
+                    RETURNING ctv_code;
+                    """,
+                    (fid, assigned_by),
+                )
+                rows = await cur.fetchall()
+            await conn.commit()
+        return [str(row[0]) for row in rows if row and row[0]]
+    except Exception as e:
+        logger.warning(f"Default CTV assignment failed for new form {fid}: {e}")
+        return []
+
+
 async def create_ctv_directory_entry(
     db_pool,
     code: str,
@@ -547,6 +645,7 @@ async def create_ctv_directory_entry(
     normalized = normalize_ctv_code(code)
     if not db_pool or not normalized:
         return False
+    cleaned_display_name = str(display_name).strip() or None if display_name is not None else None
     try:
         async with db_pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -560,7 +659,7 @@ async def create_ctv_directory_entry(
                     """,
                     (
                         normalized,
-                        str(display_name).strip() or None if display_name is not None else None,
+                        cleaned_display_name,
                         _clean_phone(phone) if phone else None,
                         int(telegram_user_id) if telegram_user_id not in (None, "") else None,
                         bool(is_active),
@@ -573,6 +672,14 @@ async def create_ctv_directory_entry(
         logger.warning(f"CTV directory create failed for {code}: {e}")
         return False
     if created:
+        if bool(is_active) and not is_test_ctv(normalized, cleaned_display_name):
+            await assign_default_forms_for_new_ctv(
+                db_pool,
+                normalized,
+                display_name=cleaned_display_name,
+                is_active=True,
+                assigned_by="default_new_ctv",
+            )
         await refresh_ctv_directory_cache(db_pool)
     return created
 
@@ -589,6 +696,7 @@ async def delete_ctv_directory_entry(db_pool, code: str) -> bool:
             async with conn.cursor() as cur:
                 await cur.execute("DELETE FROM ctv_quotas WHERE ctv_code = %s", (stored_code,))
                 await cur.execute("DELETE FROM ctv_form_links WHERE ctv_code = %s", (stored_code,))
+                await cur.execute("DELETE FROM ctv_form_assignments WHERE ctv_code = %s", (stored_code,))
                 await cur.execute("DELETE FROM ctv_directory WHERE code = %s RETURNING code", (stored_code,))
                 deleted = await cur.fetchone() is not None
             await conn.commit()
@@ -598,6 +706,117 @@ async def delete_ctv_directory_entry(db_pool, code: str) -> bool:
     if deleted:
         await refresh_ctv_directory_cache(db_pool)
     return deleted
+
+
+async def get_ctv_assigned_form_ids(db_pool, ctv_code: str, *, strict: bool = False) -> set[str]:
+    """Returns form_ids explicitly assigned to an active CTV."""
+    raw = str(ctv_code or "").strip()
+    if not raw:
+        return set()
+    if not db_pool:
+        if strict:
+            raise RuntimeError("CTV assignment database unavailable")
+        return set()
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT form_id FROM ctv_form_assignments WHERE UPPER(ctv_code) = UPPER(%s)",
+                    (raw,),
+                )
+                return {str(row[0]) for row in await cur.fetchall() if row and row[0]}
+    except Exception:
+        if strict:
+            raise
+        logger.warning("CTV assignment lookup failed for %s", raw)
+        return set()
+
+
+async def get_all_ctv_assignments(db_pool) -> Dict[str, set[str]]:
+    """Returns {ctv_code: {form_id, ...}} for admin directory display."""
+    if not db_pool:
+        return {}
+    try:
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT ctv_code, form_id FROM ctv_form_assignments ORDER BY ctv_code, form_id"
+                )
+                result: Dict[str, set[str]] = {}
+                for ctv_code, form_id in await cur.fetchall():
+                    if ctv_code and form_id:
+                        result.setdefault(str(ctv_code), set()).add(str(form_id))
+                return result
+    except Exception as e:
+        logger.warning("Failed to load all CTV assignments: %s", e)
+        return {}
+
+
+async def get_assigned_ctvs_for_form(db_pool, form_id: str) -> List[str]:
+    """Returns active CTV codes assigned to a specific survey form."""
+    fid = str(form_id or "").strip()
+    if not db_pool or not fid:
+        return []
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT a.ctv_code FROM ctv_form_assignments a "
+                "JOIN ctv_directory d ON UPPER(d.code) = UPPER(a.ctv_code) "
+                "WHERE a.form_id = %s AND d.is_active = TRUE ORDER BY a.ctv_code",
+                (fid,),
+            )
+            return [str(row[0]) for row in await cur.fetchall() if row and row[0]]
+
+
+async def is_ctv_assigned_to_form(db_pool, ctv_code: str, form_id: str) -> bool:
+    """Live PostgreSQL authorization check: CTV must be active and assigned to form_id."""
+    raw = str(ctv_code or "").strip()
+    fid = str(form_id or "").strip()
+    if not raw or not fid:
+        return False
+    if not db_pool:
+        raise RuntimeError("CTV assignment database unavailable")
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM ctv_form_assignments a "
+                "JOIN ctv_directory d ON UPPER(d.code) = UPPER(a.ctv_code) "
+                "WHERE UPPER(a.ctv_code) = UPPER(%s) AND a.form_id = %s AND d.is_active = TRUE LIMIT 1",
+                (raw, fid),
+            )
+            return await cur.fetchone() is not None
+
+
+async def set_ctv_form_assignments(
+    db_pool,
+    ctv_code: str,
+    form_ids: Iterable[str],
+    assigned_by: Optional[str] = None,
+) -> Optional[List[str]]:
+    """Transactionally replaces the assigned survey set for a CTV."""
+    raw = str(ctv_code or "").strip()
+    if not db_pool or not raw:
+        return None
+    cleaned = sorted({str(fid).strip() for fid in form_ids if str(fid or "").strip()})
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT code FROM ctv_directory WHERE UPPER(code) = UPPER(%s) FOR UPDATE",
+                (raw,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            stored_code = str(row[0])
+            await cur.execute("DELETE FROM ctv_form_assignments WHERE ctv_code = %s", (stored_code,))
+            for fid in cleaned:
+                await cur.execute(
+                    "INSERT INTO ctv_form_assignments (ctv_code, form_id, assigned_by) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (ctv_code, form_id) DO NOTHING",
+                    (stored_code, fid, assigned_by),
+                )
+        await conn.commit()
+    return cleaned
 
 
 async def ensure_ctv_platform_schema(db_pool=None) -> bool:

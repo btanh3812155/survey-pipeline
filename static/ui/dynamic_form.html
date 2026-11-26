@@ -1204,6 +1204,7 @@
                 gps_acquired: "Đã xác nhận vị trí",
                 gps_denied: "Quyền vị trí bị từ chối. Vui lòng cho phép trong cài đặt.",
                 gps_err: "Chưa thể lấy vị trí. Vui lòng thử lại.",
+                gps_required_submit: "Bắt buộc bật định vị GPS để gửi khảo sát. Vui lòng bật vị trí và thử lại.",
                 mode_label: "Chế độ biểu mẫu:",
                 mode_prod: "Chính thức",
                 mode_test: "Thử nghiệm (Không lưu hệ thống)",
@@ -1273,6 +1274,7 @@
                 gps_acquired: "Location acquired",
                 gps_denied: "Location permission denied. Please allow in settings.",
                 gps_err: "Cannot obtain location. Please try again.",
+                gps_required_submit: "GPS location is required to submit this survey. Please enable location and try again.",
                 mode_label: "Form Mode:",
                 mode_prod: "Production",
                 mode_test: "Test Mode (Dev Storage)",
@@ -3554,6 +3556,25 @@
                     alert(t.missing_required + `'${q.title}'`);
                     return;
                 }
+            }
+
+            const gpsLat = gpsCoordinates ? Number(gpsCoordinates.latitude) : NaN;
+            const gpsLon = gpsCoordinates ? Number(gpsCoordinates.longitude) : NaN;
+            const hasValidGps = (
+                Number.isFinite(gpsLat)
+                && Number.isFinite(gpsLon)
+                && gpsLat >= -90 && gpsLat <= 90
+                && gpsLon >= -180 && gpsLon <= 180
+                && !(gpsLat === 0 && gpsLon === 0)
+            );
+            if (!isTestMode && !hasValidGps) {
+                showInitialGpsPrompt();
+                alert(t.gps_required_submit);
+                const gpsBanner = document.getElementById('gpsBanner');
+                if (gpsBanner && gpsBanner.scrollIntoView) {
+                    gpsBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
             }
 
             const btn = document.getElementById('btnSubmitForm');
