@@ -29,12 +29,14 @@ Bấm **Đăng xuất** trên thanh điều hướng để kết thúc phiên.
 
 | Vai trò | Quyền chính |
 |---|---|
-| `superadmin` (**Quản trị**) | Toàn bộ quản trị, gồm quản lý tài khoản, phân quyền, thùng rác, email khôi phục |
-| `manager` | Biểu mẫu, dữ liệu nộp, audit, media, CTV, ảnh/object, module, exports |
-| `reviewer` | Dữ liệu nộp và các màn hình được phép xem |
-| `viewer` | Chỉ xem các màn hình được phép |
+| `superadmin` (**Quản trị**) | Toàn bộ quản trị, gồm quản lý tài khoản, phân quyền, thùng rác, email khôi phục, **chi trả & thu hồi phiếu (`/admin/payouts`)**, và nhật ký kiểm toán (`/admin/audit`) |
+| `manager` | Vận hành hằng ngày: biểu mẫu, dữ liệu nộp, **phúc khảo (`/admin/appeals`)**, **audit (`/admin/audit`)**, media, CTV & phân công khảo sát, ảnh/object, module, exports |
+| `reviewer` | Xem dữ liệu nộp/ảnh và **duyệt hoặc từ chối phúc khảo trên `/admin/appeals`** (không sửa biểu mẫu, CTV, module hay exports) |
+| `viewer` | Chỉ xem dữ liệu nộp, ảnh, danh sách phúc khảo và xem trước biểu mẫu riêng tư (mọi thao tác sửa bị chặn `403`) |
 
-Thanh điều hướng có nút `VI/EN` để đổi ngôn ngữ giao diện. Ngôn ngữ mặc định là tiếng Việt và được ghi nhớ trên trình duyệt.
+> **Phân chia Web vs Telegram**: Xử lý **phúc khảo (`APPEAL_PENDING`)** trên web (`/admin/appeals`) và trên bot Telegram là **tương đương nhau** (đều cập nhật trạng thái, kích hoạt billing/thông báo và ghi audit). Duyệt phiếu chờ kiểm tra thủ công thông thường (`MANUAL_REVIEW`) và **chat hỗ trợ CTV 1-1** hiện thực hiện qua **Telegram**.
+
+Thanh điều hướng có nút `VI/EN` để đổi ngôn ngữ giao diện và nút chuyển chế độ sáng/tối (mặc định giao diện tối). Ngôn ngữ mặc định là tiếng Việt và được ghi nhớ trên trình duyệt.
 
 ## 2. Tổng quan menu
 
@@ -42,16 +44,18 @@ Menu trên cùng bên trái gồm:
 
 - **Biểu mẫu**: danh sách và trình chỉnh sửa biểu mẫu
 - **Dữ liệu nộp**: xem, lọc và xuất dữ liệu bài nộp
-- **Audit**: nhật ký kiểm toán
+- **Phúc khảo (`/admin/appeals`)**: hàng đợi xử lý phiếu `APPEAL_PENDING` (`reviewer`, `manager`, `superadmin` duyệt/từ chối; `viewer` chỉ xem)
+- **Audit**: nhật ký kiểm toán (`superadmin` và `manager`)
 - **Media**: quản lý ảnh và tệp tĩnh
-- **CTV**: danh bạ cộng tác viên, thêm/sửa/xóa, bài nộp, mục tiêu và tạo liên kết/QR theo biểu mẫu.
+- **CTV**: danh bạ cộng tác viên, thêm/sửa/xóa, **phân công khảo sát**, bài nộp, mục tiêu và tạo liên kết/QR theo biểu mẫu
 - **Ảnh/Object**: định nghĩa object ảnh và engine đang có
 - **Module**: logic, object và engine module trong cơ sở dữ liệu
 - **Exports**: cấu hình xuất Google Drive
-- **Tài khoản của tôi**: xem vai trò, trạng thái, email khôi phục (superadmin) và đổi mật khẩu
-- **Quản lý tài khoản**: chỉ superadmin
-- **Thùng rác**: khôi phục biểu mẫu và bài nộp đã xóa
-- **Email khôi phục**: chỉ superadmin
+- **Chi trả CTV (`/admin/payouts`)**: chỉ `superadmin` — cập nhật trạng thái quyết toán ngoại tuyến và thu hồi phiếu `APPROVED`/`PAID` (có audit)
+- **Tài khoản của tôi**: xem vai trò, trạng thái, email khôi phục (`superadmin`) và đổi mật khẩu
+- **Quản lý tài khoản**: chỉ `superadmin`
+- **Thùng rác**: khôi phục biểu mẫu và bài nộp đã xóa (chỉ `superadmin`)
+- **Email khôi phục**: chỉ `superadmin`
 
 ## 3. Quản lý biểu mẫu
 
@@ -82,11 +86,19 @@ Mở biểu mẫu cần sửa bằng nút bút chì.
 
 Trình chỉnh sửa có ba tab:
 
-1. **Thông tin chung**: mã form, tiêu đề, mô tả, giới hạn phản hồi, chế độ test, CTV, thông báo Telegram.
+1. **Thông tin chung**: mã form, tiêu đề, mô tả, **quyền truy cập (`public`/`private`)**, **giới hạn phản hồi (`response_limit`)**, **bắt buộc duyệt thủ công (`require_manual_review`)**, chế độ test, theo dõi CTV (`ctv_ref_enabled`), thông báo Telegram.
 2. **Tùy chọn & Cài đặt**: kiểm tra ảnh toàn form và danh sách module.
 3. **Danh sách câu hỏi**: thêm, sửa, sắp xếp câu hỏi, điều kiện hiển thị, chữ ký, consent gate và slot ảnh.
 
-Bấm **Lưu & Kích hoạt biểu mẫu** sau khi sửa. Nếu form đã tồn tại, thao tác lưu sẽ cập nhật file cấu hình và registry.
+Bấm **Lưu & Kích hoạt biểu mẫu** sau khi sửa. Nếu form đã tồn tại, thao tác lưu sẽ cập nhật file cấu hình và registry mà **không ghi đè** danh sách phân công CTV hiện có. Khi tạo **biểu mẫu hoàn toàn mới**, hệ thống tự động phân công toàn bộ CTV đang hoạt động (không phải tài khoản `*TEST*`).
+
+Quy tắc truy cập và đếm số lượng trên biểu mẫu:
+
+- **`access_control = private`**: Chặn toàn bộ người dùng chưa đăng nhập nhân sự (`403`) ở cả trang mở form, API lấy schema và API nộp bài; nhân sự đã đăng nhập web vẫn mở xem trước/thử nghiệm được.
+- **`response_limit`**: Chỉ đếm các bài nộp ở trạng thái **`APPROVED`** (không đếm `REJECTED`, `MANUAL_REVIEW`, `APPEAL_PENDING`). Khi đủ giới hạn, trang biểu mẫu hiển thị thông báo đã đủ số lượng phản hồi thay vì hiển thị form và API nộp bài từ chối với mã `409`.
+- **`require_manual_review`**: Mặc định bật (`true` — bài vượt qua kiểm tra tự động chuyển sang `MANUAL_REVIEW` chờ duyệt qua Telegram). Khi tắt (`false`), bài đạt mọi kiểm tra tự động sẽ được ghi nhận `APPROVED` ngay.
+- **GPS bắt buộc**: Mọi bài nộp thật (không phải test mode) bắt buộc có tọa độ GPS hợp lệ; thiếu GPS sẽ bị chặn ngay (`400`).
+- **Từ chối Nghị định 13 (`Tôi không đồng ý`)**: Hệ thống luôn từ chối (`REJECTED`), xóa sạch số điện thoại/tên tài xế, không gửi thông báo và không tính vào `APPROVED`, mục tiêu hay chi trả.
 
 ### 3.3 Module kiểm tra của biểu mẫu
 
@@ -240,19 +252,38 @@ Sau khi đổi thành công, tài khoản cũ mất quyền CTV; phiên trình d
 1. Mở miền khảo sát, ví dụ `https://survey.trustbridgevn.com`. Khi chưa đăng nhập, hệ thống mở trang đăng nhập CTV.
 2. Chọn mã CTV trong danh sách hoặc nhập số điện thoại đã xác minh. **Cả hai cách đều cần OTP**, không thể đăng nhập chỉ bằng mã CTV công khai.
 3. Bot Telegram dành cho CTV gửi mã gồm 6 chữ số vào tài khoản đã liên kết. Nhập mã trên chính trình duyệt đã yêu cầu; mã hết hạn sau 5 phút, dùng một lần và có tối đa 5 lần thử. Nếu chưa nhận được mã, kiểm tra đã hoàn tất bước xác minh danh bạ ở mục 5.6 và chưa chặn bot.
-4. Sau khi đăng nhập, CTV xem thông tin cá nhân, mục tiêu/quota cùng tiến độ và các khảo sát công khai đang mở. Bấm **Mở khảo sát** để mở liên kết trên cùng miền. Biểu mẫu bật theo dõi CTV có sẵn mã CTV; biểu mẫu tắt theo dõi được ghi chú rõ và không tính vào tiến độ CTV.
+4. Sau khi đăng nhập, CTV xem thông tin cá nhân, mục tiêu/quota (chỉ tính phiếu **`APPROVED`**) và **chỉ các khảo sát công khai đang mở được phân công cho mình**. Bấm **Mở khảo sát** để mở liên kết trên cùng miền. Biểu mẫu bật theo dõi CTV có sẵn mã CTV; biểu mẫu tắt theo dõi được ghi chú rõ và không tính vào tiến độ CTV.
 
-Mục tiêu là chỉ tiêu theo dõi, không chặn nộp phiếu khi đã đạt. Mục tiêu cuốn chiếu và toàn thời gian được hiển thị riêng. Khảo sát riêng tư, lưu trữ hoặc đã đủ giới hạn phản hồi không xuất hiện trong danh sách.
+Mục tiêu là chỉ tiêu theo dõi, chỉ tính phiếu `APPROVED` và không chặn nộp phiếu khi đã đạt. Mục tiêu cuốn chiếu và toàn thời gian được hiển thị riêng. Khảo sát riêng tư, chưa được phân công, lưu trữ hoặc đã đủ giới hạn `APPROVED` không xuất hiện trong danh sách và bị chặn nếu mở link trực tiếp hoặc gửi bài.
 
 Phiên CTV được giữ trong 30 ngày trên thiết bị này. Bấm **Đăng xuất** để kết thúc; thao tác này không đăng xuất tài khoản quản trị riêng. Tắt/xóa CTV hoặc thay đổi mã/số điện thoại/Telegram làm phiên và OTP cũ không còn hợp lệ, kể cả khi bật lại hoặc khôi phục thông tin cũ. Sửa tên hoặc ghi chú không làm mất phiên. Số chưa xác minh, số bị tranh chấp hoặc số không thuộc CTV không được đăng nhập. Lỗi cơ sở dữ liệu, Redis hay Telegram không được thay thế bằng số liệu giả hoặc bỏ qua OTP.
 
-### 5.8 Quản lý CTV và tạo liên kết/QR
+**Đa vai trò Telegram (`authorized_users.roles`)**: Một tài khoản Telegram có thể giữ đồng thời nhiều vai trò (ví dụ `ADMIN` + `COLLABORATOR`, hoặc `DRIVER` + `COLLABORATOR`). Khi một quản trị viên liên kết mã CTV bằng tài khoản Telegram của mình, quyền `ADMIN` được giữ nguyên đồng thời vẫn đủ điều kiện thanh toán CTV. Nếu sau đó mã CTV chuyển sang tài khoản Telegram khác, tài khoản quản trị cũ chỉ bị gỡ vai trò `COLLABORATOR` và vẫn giữ quyền `ADMIN`.
+
+### 5.8 Quản lý CTV, phân công khảo sát và tạo liên kết/QR
 
 - Trên máy tính, nút sửa (biểu tượng bút) và xóa (biểu tượng thùng rác) nằm ngang. Không còn nút tắt nhanh hay cột **Thông tin** riêng; tên và ghi chú vẫn có trong phần chi tiết/chỉnh sửa.
-- Trên điện thoại, mỗi dòng chỉ hiện mã CTV và tam giác xổ xuống. Chạm mã để mở toàn bộ thông tin, số điện thoại, Telegram, trạng thái, bài nộp, mục tiêu và các nút thao tác.
+- Trên điện thoại, mỗi dòng chỉ hiện mã CTV và tam giác xổ xuống. Chạm mã để mở toàn bộ thông tin, số điện thoại, Telegram, trạng thái, bài nộp, mục tiêu, **phân công khảo sát** và các nút thao tác.
+- **Phân công khảo sát (`Phân công`)**: Mở mục **Phân công** trên từng dòng CTV để tick/bỏ tick các biểu mẫu được phép chạy và bấm **Lưu phân công** (ghi audit `CTV_ASSIGNMENTS_UPDATED`).
+  - Mặc định khi thêm CTV mới đang hoạt động (không chứa `TEST` trong mã/tên), hệ thống tự phân công toàn bộ khảo sát công khai đang mở.
+  - Thu hồi phân công có hiệu lực **ngay lập tức** ở cả cổng `/ctv`, lệnh `/forms` trên bot, liên kết trực tiếp `/forms/{id}?ref=...` và thời điểm bấm gửi bài (`403`), kể cả khi tài xế đang làm dở giữa chừng.
 - Trong phần tạo liên kết/QR, chọn CTV và biểu mẫu rồi bấm **Tạo**. Chỉ CTV đang hoạt động và biểu mẫu công khai, đang mở, có theo dõi CTV được dùng để tạo liên kết có ghi nhận mã.
 - Liên kết có nút **Sao chép** và **Chia sẻ**. QR có **Sao chép ảnh**, **Chia sẻ ảnh** và **Tải PNG**. QR và liên kết cùng trỏ đến biểu mẫu/mã CTV đã chọn trên chính miền hiện tại. Đổi lựa chọn sẽ xóa kết quả cũ để tránh chia sẻ nhầm.
 - Sao chép ảnh và chia sẻ tùy khả năng/quyền của trình duyệt, thường cần HTTPS. Nếu không được hỗ trợ, dùng tải PNG hoặc sao chép liên kết; thông báo lỗi không có nghĩa là đã sao chép/chia sẻ thành công.
+
+### 5.9 Xử lý phúc khảo trên Web (`/admin/appeals`)
+
+- Hiển thị tất cả phiếu đang ở trạng thái **`APPEAL_PENDING`** (gửi từ nút phúc khảo trên web hoặc từ Telegram) với bộ tìm kiếm, phân trang và liên kết xem chi tiết/ảnh bài nộp.
+- `reviewer`, `manager`, `superadmin` có thể nhập ghi chú và bấm **Duyệt phúc khảo** (`APPEAL_APPROVED`) hoặc **Từ chối phúc khảo** (`APPEAL_REJECTED`).
+- Hệ thống chuyển trạng thái đồng bộ qua luồng outbox (tạo bản ghi billing khi duyệt và gửi kết quả về Telegram) và ghi đầy đủ vào **Audit**.
+- `viewer` chỉ xem được danh sách, không thể thao tác duyệt/từ chối (`403`).
+
+### 5.10 Quyết toán & thu hồi chi trả CTV (`/admin/payouts` — chỉ `superadmin`)
+
+- Việc chi trả thực tế cho CTV hiện thực hiện **ngoại tuyến (offline)** dựa trên số liệu phiếu đã duyệt (`collaborator_billing_ledger`).
+- Trang `/admin/payouts` chỉ dành cho **`superadmin`** (`manager`/`reviewer`/`viewer` bị chặn `403`):
+  - **Cập nhật trạng thái quyết toán**: Chuyển `payout_status` giữa `UNPAID`, `PENDING_PAYOUT`, `PAID`, `CANCELLED` kèm ghi chú (ghi audit `PAYOUT_STATUS_CHANGED`).
+  - **Thu hồi phiếu `APPROVED` / `PAID`**: Chuyển trạng thái phiếu về `REJECTED` và đánh dấu bản ghi thanh toán thành `CANCELLED` (áp dụng được cả với bản ghi đã `PAID`) kèm lý do bắt buộc/mặc định (ghi audit `PAYOUT_REVOKED`).
 
 
 ## 6. Tài khoản và phân quyền

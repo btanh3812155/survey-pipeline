@@ -113,6 +113,11 @@ Google Drive integrations remain in `services/google_drive_delivery.py`; durable
 
 ## Current documentation
 
+- **[Documentation Hub & LLM Guide Index](docs/README.md)**: Start here — maps every user manual, campaign playbook, and technical reference for both humans and LLM assistants.
+- **[CTV User Manual (`HUONG_DAN_CTV.md`)](docs/HUONG_DAN_CTV.md)**: End-to-end CTV guide (Telegram binding & same-number rebind, `/ctv` OTP login, assigned surveys, GPS/camera capture, web/Telegram appeals, retry links, support chats).
+- **[Staff & Admin Operations Manual (`HUONG_DAN_QUAN_TRI.md`)](docs/HUONG_DAN_QUAN_TRI.md)**: Complete admin guide across all 4 roles (`superadmin`, `manager`, `reviewer`, `viewer`), form editor, CTV assignments, `/admin/appeals`, `/admin/payouts`, Drive exports, audit, accounts & trash.
+- **[Campaign Playbook Template (`MAU_HUONG_DAN_CHIEN_DICH.md`)](docs/MAU_HUONG_DAN_CHIEN_DICH.md)**: Reusable per-campaign operational template.
+- **[Technical Architecture & LLM Reference (`TECHNICAL_ARCHITECTURE.md`)](docs/TECHNICAL_ARCHITECTURE.md)**: Authoritative current technical spec (package layout, PostgreSQL schema & migrations `001`–`017`, RBAC/multi-role rules, HTTP/Telegram catalogs, Mermaid state machines, error-code troubleshooting table).
 - [Module designer handoff](docs/MODULE_DESIGNER_HANDOFF.md): current architecture review, active bugs, and acceptance criteria.
 - [Wave 3 idempotency/media boundary](docs/WAVE3_IDEMPOTENCY_MEDIA_BOUNDARY.md): local implementation, migration activation and observed evidence.
 - [Bug and safeguards archive](docs/BUGS_AND_SAFEGUARDS_ARCHIVE.md): active-review summary and historical safeguards.
