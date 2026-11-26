@@ -299,7 +299,10 @@
       + '<button type="button" data-pg="next">Sau ›</button>'
       + '<button type="button" data-pg="last">Cuối »</button>'
       + '</div>';
-    container.insertAdjacentElement('afterend', bar);
+    const anchor = container.tagName === 'TBODY'
+      ? (container.closest('.table-card, .table-wrap') || container.closest('table') || container)
+      : container;
+    anchor.insertAdjacentElement('afterend', bar);
     const sizeSel = bar.querySelector('.tb-page-size');
     sizeSel.value = String(pageSize);
     const summaryEl = bar.querySelector('.tb-page-summary');
