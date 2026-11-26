@@ -198,6 +198,7 @@ flowchart TD
 | `POST /admin/payouts/{submission_id}/revoke` | `superadmin` only | `PAYOUT_REVOKED` (transitions submission to `REJECTED` and ledger row to `CANCELLED`, even if previously `PAID`) |
 | `GET /admin/audit` | `superadmin`, `manager` | Read-only audit viewer |
 | `GET/POST /admin/exports*` | `superadmin`, `manager` | `DRIVE_EXPORT_*` |
+| `GET /api/v1/image-objects`, `POST /admin/image-objects/{object_id}`, `POST /admin/modules` | `superadmin`, `manager` | `ADMIN_MODULE_SAVED` — see [IMAGE_OBJECT_AI_AUTHORING_GUIDE.md](IMAGE_OBJECT_AI_AUTHORING_GUIDE.md) for strict `ImageObjectDefinition` schema & AI authoring workflow |
 | `GET/POST /admin/accounts*`, `/admin/recovery*`, `/admin/trash*` | `superadmin` only | `ADMIN_ACCOUNT_*`, `TRASH_*` |
 
 ### 5.3 Telegram Bot Commands

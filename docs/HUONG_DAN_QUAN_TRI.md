@@ -165,6 +165,7 @@ Lưu ý phân biệt:
 - **Engine** là logic kiểm tra dùng chung.
 - Object chỉ **tham chiếu** engine bằng ID; định nghĩa engine nằm trong trang **Module**.
 - Danh sách engine trong trang Ảnh/Object là danh mục chỉ đọc để biết object có thể gắn engine nào. Muốn sửa engine, vào **Module**.
+- **Tạo Object ảnh nhanh từ ảnh mẫu bằng AI**: Khách hàng hoặc quản trị viên có thể đưa một ảnh mẫu kèm tài liệu [IMAGE_OBJECT_AI_AUTHORING_GUIDE.md](IMAGE_OBJECT_AI_AUTHORING_GUIDE.md) cho AI agent (ChatGPT, Claude, Gemini...) để AI tự tạo object qua API (`POST /admin/image-objects/<id>`) hoặc xuất sẵn JSON/từng trường để dán vào `/admin/modules` hoặc `/admin/image-objects` và hướng dẫn gắn vào slot ảnh của biểu mẫu.
 
 ## 5. Xuất Google Drive
 

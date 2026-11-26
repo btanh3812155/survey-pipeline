@@ -9,6 +9,7 @@
 | CTV onboarding, Telegram verification, changing Telegram accounts, `/ctv` OTP login, guiding drivers, GPS/camera capture, handling rejections, web/Telegram appeals, retry links, support chats | [HUONG_DAN_CTV.md](HUONG_DAN_CTV.md) | CTVs & LLM support assistants |
 | Daily admin & superadmin operations: forms, modules, CTV directory & survey assignments, `/admin/appeals`, `/admin/payouts`, `/admin/exports` (Google Drive), `/admin/audit`, accounts, trash, Telegram moderation | [HUONG_DAN_QUAN_TRI.md](HUONG_DAN_QUAN_TRI.md) | Staff (`superadmin`, `manager`, `reviewer`, `viewer`) |
 | Launching a new survey campaign (photo requirements, quotas, limits, assignments, escalation) | [MAU_HUONG_DAN_CHIEN_DICH.md](MAU_HUONG_DAN_CHIEN_DICH.md) | Campaign managers & CTV onboarding |
+| Creating a new **Image Object** from a sample image using an AI agent (schema, extractors, 23 built-in engines, direct API calls & copy-paste UI guide) | [IMAGE_OBJECT_AI_AUTHORING_GUIDE.md](IMAGE_OBJECT_AI_AUTHORING_GUIDE.md) | Customers, Admins & AI Agents |
 | System architecture, database schema & migrations (`001`-`017`), RBAC & multi-role rules, HTTP/API routes, Telegram commands, state machines, error-code troubleshooting, security boundaries | [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md) | Engineers, technical reviewers & LLM coding/support assistants |
 | Guarded deployment, migrations, rollback & smoke testing | [DEPLOY_TOOLING.md](DEPLOY_TOOLING.md) | Release operators (`superadmin` / DevOps) |
 
