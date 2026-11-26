@@ -168,6 +168,12 @@ async def _persist_form_schema(
         except Exception as e:
             logger.warning(f"Failed to persist form tags for {schema.form_id}: {e}")
 
+    if db_pool:
+        from services.audit_and_privacy import record_audit_event
+        await record_audit_event(
+            db_pool, "FORM_ENGINE", "FORM_SAVED", "SCHEMA", schema.form_id,
+            "ADMIN", admin_user, {"previous_form_id": previous_form_id or None, "title": schema.title},
+        )
     return {
         "status": "success",
         "form_id": schema.form_id,
@@ -427,17 +433,28 @@ async def admin_trash_page(admin_user: str = Depends(verify_admin_auth)):
         "weekly": "mỗi tuần", "monthly": "mỗi tháng", "semiannual": "mỗi 6 tháng",
     }
     rows = []
+    entity_types = sorted({str(item.get("entity_type") or "") for item in items if item.get("entity_type")})
     for item in items:
         meta = item.get("metadata") or {}
         media = meta.get("media_trash_path") or ""
+        etype = str(item.get("entity_type") or "")
+        tier = str(item.get("retention_tier") or "")
+        search_val = html.escape(f"{item['id']} {etype} {item['entity_id']} {item.get('label') or ''} {tier}".lower(), quote=True)
         rows.append(
-            f"<tr><td><code>{html.escape(str(item['id']))}</code></td>"
-            f"<td>{html.escape(str(item['entity_type']))}</td>"
+            f'<tr data-trash-row data-search="{search_val}" data-entity-type="{html.escape(etype, quote=True)}" data-tier="{html.escape(tier, quote=True)}">'
+            f"<td><code>{html.escape(str(item['id']))}</code></td>"
+            f"<td>{html.escape(etype)}</td>"
             f"<td><code>{html.escape(str(item['entity_id']))}</code><br><span class=muted>{html.escape(str(item['label'] or ''))}</span></td>"
-            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(tier_labels.get(str(item['retention_tier']), str(item['retention_tier'])))}</span></td>"
+            f"<td>{html.escape(str(item['deleted_at']))}<br><span class=muted>{html.escape(tier_labels.get(tier, tier))}</span></td>"
             f"<td>{'media nội bộ' if media else 'không có media'}<br><span class=muted>{int(meta.get('drive_ledger_items') or 0)} liên kết Drive</span></td>"
-            f"<td><button onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Khôi phục</button></td></tr>"
+            f"<td><button type=\"button\" onclick=\"restoreTrash('{html.escape(str(item['id']))}')\">Khôi phục</button></td></tr>"
         )
+    type_options = "".join(
+        f'<option value="{html.escape(t, quote=True)}">{html.escape(t)}</option>' for t in entity_types
+    )
+    tier_options = "".join(
+        f'<option value="{html.escape(k, quote=True)}">{html.escape(v)}</option>' for k, v in tier_labels.items()
+    )
     policy = "".join(
         f"<li><b>{html.escape(tier_labels.get(k, k))}</b>: {html.escape(v)}</li>"
         for k, v in RETENTION_FREQUENCIES.items()
@@ -458,11 +475,29 @@ table{{width:100%;border-collapse:collapse;background:var(--panel);border:1px so
 th{{color:var(--accent)}}.muted{{color:var(--muted);font-size:.78rem}}code{{color:#67e8f9}}button{{background:#0369a1;color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}}
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}}
 </style></head><body><main><h1>Thùng rác</h1><p class=muted>Form được khôi phục nguyên vẹn. Submission được đưa về MANUAL_REVIEW; outbox và hiệu ứng Telegram không được phát lại.</p>
-<div class=card><b>Thời gian lưu giữ</b><ul>{policy}</ul></div>
+<details class=card><summary><b>Thời gian lưu giữ</b></summary><ul style="margin:10px 0 0;padding-left:18px;">{policy}</ul></details>
 <div class=card><b>Lần dọn gần nhất</b><div id=lastCompaction>{last_html}</div>
-<button onclick="runCompaction()" style="margin-top:8px;">Dọn ngay</button></div>
-<table><thead><tr><th>ID</th><th>Loại</th><th>Thực thể</th><th>Đã xóa</th><th>Tệp lưu</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan=6 class=muted>Thùng rác trống.</td></tr>'}</tbody></table>
+<button type="button" onclick="runCompaction()" style="margin-top:8px;">Dọn ngay</button></div>
+<div class="admin-toolbar">
+  <label class="search" aria-label="Tìm trong thùng rác"><input type="search" id="trashSearch" placeholder="Tìm theo ID, thực thể, nhãn..." oninput="filterTrashRows()"></label>
+  <select id="trashTypeFilter" class="select-filter" data-searchable-select onchange="filterTrashRows()"><option value="all">Tất cả loại đối tượng</option>{type_options}</select>
+  <select id="trashTierFilter" class="select-filter" data-searchable-select onchange="filterTrashRows()"><option value="all">Tất cả chu kỳ lưu giữ</option>{tier_options}</select>
+</div>
+<div class="table-card"><table><thead><tr><th>ID</th><th>Loại</th><th>Thực thể</th><th>Đã xóa</th><th>Tệp lưu</th><th>Thao tác</th></tr></thead><tbody id="trashBody" data-tb-paginate="tr[data-trash-row]" data-page-size="20">{''.join(rows) or '<tr><td colspan=6 class=muted>Thùng rác trống.</td></tr>'}</tbody></table></div>
 <script>
+function filterTrashRows() {{
+  const q = (document.getElementById('trashSearch').value || '').trim().toLowerCase();
+  const etype = document.getElementById('trashTypeFilter').value || 'all';
+  const tier = document.getElementById('trashTierFilter').value || 'all';
+  const body = document.getElementById('trashBody');
+  body.querySelectorAll('tr[data-trash-row]').forEach((row) => {{
+    const ok = (!q || (row.dataset.search || '').includes(q))
+      && (etype === 'all' || row.dataset.entityType === etype)
+      && (tier === 'all' || row.dataset.tier === tier);
+    row.dataset.filterHidden = ok ? '0' : '1';
+  }});
+  if (body._tbPaginateRender) body._tbPaginateRender();
+}}
 async function runCompaction() {{
   if (!confirm('Dọn thùng rác ngay?')) return;
   const resp = await fetch('/api/v1/admin/trash/compact', {{method:'POST', credentials:'include'}});

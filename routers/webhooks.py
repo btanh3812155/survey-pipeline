@@ -342,6 +342,40 @@ async def lark_webhook_ingress(
     }, webp_bytes, "webp", export=True)
 
 
+async def _audit_telegram_update(bot_role: str, body: dict) -> None:
+    from core.state import get_db_pool
+    from services.audit_and_privacy import record_audit_event
+    msg = body.get("message") or body.get("edited_message") or {}
+    cb = body.get("callback_query") or {}
+    if cb:
+        chat = (cb.get("message") or {}).get("chat") or {}
+        sender = cb.get("from") or {}
+        data = str(cb.get("data") or "")
+        action = "TELEGRAM_ADMIN_CALLBACK" if bot_role == "admin" else "TELEGRAM_DRIVER_CALLBACK"
+        if any(k in data for k in ("approve", "reject", "verdict")):
+            action = "TELEGRAM_ADMIN_VERDICT"
+        elif any(k in data for k in ("appeal", "support", "fix")):
+            action = "TELEGRAM_SUPPORT_APPEAL"
+        details = {"bot": bot_role, "chat_id": chat.get("id"), "chat_type": chat.get("type"), "callback_prefix": data[:64]}
+        entity_id = str(body.get("update_id") or chat.get("id") or "")
+        actor_id = str(sender.get("id") or "telegram")
+    elif msg:
+        chat = msg.get("chat") or {}
+        sender = msg.get("from") or {}
+        chat_type = str(chat.get("type") or "")
+        action = "TELEGRAM_ADMIN_GROUP_MESSAGE" if (bot_role == "admin" and chat_type in ("group", "supergroup")) else f"TELEGRAM_{bot_role.upper()}_MESSAGE"
+        text = str(msg.get("text") or msg.get("caption") or "")
+        details = {"bot": bot_role, "chat_id": chat.get("id"), "chat_type": chat_type, "has_contact": bool(msg.get("contact")), "text_preview": text[:120]}
+        entity_id = str(body.get("update_id") or chat.get("id") or "")
+        actor_id = str(sender.get("id") or "telegram")
+    else:
+        return
+    await record_audit_event(
+        get_db_pool(), "MODERATION", action, "SYSTEM", entity_id,
+        "ADMIN" if bot_role == "admin" else "DRIVER", actor_id, details,
+    )
+
+
 @router.post("/webhook/telegram")
 @router.post("/webhook/telegram/admin")
 async def telegram_admin_webhook_ingress(
@@ -350,6 +384,7 @@ async def telegram_admin_webhook_ingress(
 ):
     verify_telegram_webhook_secret(x_telegram_bot_api_secret_token)
     body = await request.json()
+    await _audit_telegram_update("admin", body)
     runner = get_admin_bot_runner()
     if runner:
         await runner.handle_update(body)
@@ -363,6 +398,7 @@ async def telegram_driver_webhook_ingress(
 ):
     verify_telegram_webhook_secret(x_telegram_bot_api_secret_token)
     body = await request.json()
+    await _audit_telegram_update("driver", body)
     runner = get_driver_bot_runner()
     if runner:
         await runner.handle_update(body)

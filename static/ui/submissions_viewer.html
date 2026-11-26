@@ -982,21 +982,12 @@
                 { key: 'submission_id', label: 'Mã Hồ Sơ' },
                 { key: 'created_at', label: 'Thời Gian Nộp' },
                 { key: 'status', label: 'Trạng Thái' },
-                { key: 'driver_name', label: 'Tài Xế / Tên' },
                 { key: 'driver_phone', label: 'Số Điện Thoại' },
                 { key: 'ctv_code', label: 'Mã CTV' },
             ];
 
-            if (currentFormId === 'income_survey' || currentFormId === 'income_survey_test') {
-                baseCols.push(
-                    { key: 'vehicle_type', label: 'Loại Xe' },
-                    { key: 'car_model', label: 'Dòng Xe' },
-                    { key: 'daily_trips', label: 'Cuốc/Ngày' },
-                    { key: 'total_trips', label: 'Tổng Số Chuyến' },
-                    { key: 'membership_type', label: 'Hạng Tài Xế' }
-                );
-            } else if (currentFormId !== 'all' && FORMS_REGISTRY[currentFormId]) {
-                // Extract question columns from custom schema
+            if (currentFormId !== 'all' && FORMS_REGISTRY[currentFormId]) {
+                // Extract question columns from selected form schema
                 const formDef = FORMS_REGISTRY[currentFormId];
                 if (formDef.questions) {
                     formDef.questions.slice(0, 5).forEach(q => {
@@ -1005,11 +996,6 @@
                         }
                     });
                 }
-            } else {
-                baseCols.push(
-                    { key: 'vehicle_type', label: 'Phương Tiện' },
-                    { key: 'total_gross_revenue', label: 'Doanh Thu' }
-                );
             }
 
             baseCols.push({ key: 'action_status', label: 'Tác Vụ (Checklist)' });
@@ -1093,14 +1079,15 @@
                             defs.forEach(d => {
                                 const st = (acts[d.id] && acts[d.id].status) || 'PENDING';
                                 let cls = 'badge-pill';
-                                let icon = '⏳';
-                                if (st === 'COMPLETED') { cls = 'badge-approved'; icon = '✓'; }
-                                else if (st === 'FAILED') { cls = 'badge-rejected'; icon = '✕'; }
-                                else if (st === 'RUNNING') { cls = 'badge-review'; icon = '⚡'; }
+                                let icon = 'PENDING';
+                                if (st === 'COMPLETED') { cls = 'badge-approved'; icon = 'OK'; }
+                                else if (st === 'FAILED') { cls = 'badge-rejected'; icon = 'ERR'; }
+                                else if (st === 'RUNNING') { cls = 'badge-review'; icon = 'RUN'; }
                                 else if (st === 'SKIPPED') { cls = 'badge-pill'; icon = '-'; }
                                 chips += `<span class="badge ${cls}" style="padding:1px 5px; font-size:0.68rem; margin-right:3px;" title="${d.label}: ${st}">${d.label} ${icon}</span>`;
                             });
                             rowHtml += `<td>${chips}</td>`;
+                        } else if (k === '_actions') {
                             rowHtml += `<td style="text-align:right; white-space:nowrap;">
                                 <button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem;" onclick="openInspectorModal('${r.submission_id}')">Xem</button>
                                 ${r.mode === 'TEST_DEV_MODE' ? '' : `<button type="button" class="btn-toolbar" style="padding:4px 8px; font-size:0.72rem; color:#f87171; border-color:#7f1d1d;" onclick="deleteSubmission('${r.submission_id}')">Xóa</button>`}

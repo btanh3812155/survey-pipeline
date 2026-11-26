@@ -105,6 +105,8 @@ Local verification for these corrections: **193 focused pytest checks passed**, 
 
 ## Operational notes
 
+**UI convention (for all contributors and agents):** Do not use emojis or dingbat characters (such as `🗑️`, `✓`, `⏳`, `📍`, `⚡`) anywhere in the web UI (`routers/`, `static/ui/`). Use clean text labels or inline SVG icons instead.
+
 Do not run production data synchronization from a local workstation. Verify the target deployment, credentials, and worker supervision before triggering a production sync.
 
 Google Drive integrations remain in `services/google_drive_delivery.py`; durable manual/periodic sync requests use independent `drive_sync` jobs and the existing advisory exclusion. The FastAPI lifespan does not start workers. Compatible workers require structured receipts or explicit skips; ambiguous non-idempotent effects are quarantined instead of blindly resent. Legacy compatibility remains fenced away from durable-owned records while untransferred cohorts/rollback still exist.

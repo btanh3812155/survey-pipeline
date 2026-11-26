@@ -340,12 +340,13 @@ def test_accounts_page_has_role_section_and_manage_panel():
     owner = {"username": "owner", "role": "superadmin", "is_active": True, "created_at": None}
     member = {"username": "member", "role": "viewer", "is_active": False, "created_at": None}
     page = routes._render_accounts("owner", [owner, member], [], "", "")
-    assert "Phân quyền tài khoản" in page
-    assert f'action="{ACCOUNTS}/role"' in page
+    assert "Phân quyền tài khoản" not in page
+    assert f'action="{ACCOUNTS}/member/role"' in page
     assert 'name="username"' in page
-    assert "<summary data-i18n=\"manage\">Quản lý</summary>" in page
-    assert 'data-i18n="role_section_heading"' in page
+    assert 'data-manage-account-toggle=' in page
     assert 'data-i18n="manage"' in page
+    assert 'data-role-add-toggle=' in page
+    assert 'data-i18n="role_section_heading"' not in page
     assert 'data-role-label="superadmin"' in page
     assert "Quản trị" in page
     assert "Quản trị tối cao" not in page

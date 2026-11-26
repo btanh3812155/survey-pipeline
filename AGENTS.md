@@ -14,6 +14,10 @@ When adding or changing UI text:
 6. Update affected screenshots in `docs/images/` from the Vietnamese default UI; screenshots must not show a stale mixed-language page.
 7. When a surface is intentionally still Vietnamese-only, state that explicitly in the handoff instead of claiming full localization.
 
+## UI icons and emojis
+
+Do not use emojis or dingbat characters (such as `🗑️`, `✓`, `⏳`, `📍`, `⚡`) anywhere in the web UI (`routers/`, `static/ui/`). Use plain localized text or inline SVG icons instead.
+
 ## Auth surfaces
 
 Admin browser pages use the `/login` signed-cookie session. API clients may still use HTTP Basic Authentication. Do not document browser pages as Basic Auth. Cookie-session writes require exact same-origin Origin/Referer. Basic API writes allow headerless CLI clients but reject browser cross-site `Sec-Fetch-Site` and any present mismatched Origin/Referer. `/logout` is POST-only and same-origin protected.

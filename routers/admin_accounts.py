@@ -210,7 +210,7 @@ def _date(value) -> str:
 
 def _password_form(action: str) -> str:
     return f"""
-    <form method="post" action="{action}">
+    <form method="post" action="{action}" class="inline-form">
       <label><span data-i18n="current_password">Mật khẩu hiện tại</span><input type="password" name="current_password" required autocomplete="current-password"></label>
       <label><span data-i18n="new_password_hint">Mật khẩu mới (12–1024 ký tự ASCII in được)</span><input type="password" name="new_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
       <label><span data-i18n="confirm_new_password">Nhập lại mật khẩu mới</span><input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
@@ -218,42 +218,60 @@ def _password_form(action: str) -> str:
     </form>"""
 
 
-def _manage_panel(username: str, admin_user: str, role: str, active: bool) -> str:
-    if username == admin_user:
-        body = _password_form(ACCOUNT_PASSWORD_PATH)
-        body += f'<p><a href="{ACCOUNT_PATH}" data-i18n="open_my_account">Mở trang tài khoản của tôi</a></p>'
+_CROSS_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+_PLUS_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
+
+
+def _manage_row_content(username: str, admin_user: str, role: str, active: bool, idx: int) -> str:
+    user_esc = html.escape(username, quote=True)
+    picker_id = f"role-picker-{idx}"
+    parts = []
+    if username != admin_user:
+        remove_action = f"{ACCOUNTS_PATH}/{user_esc}/role" if role != "viewer" else f"{ACCOUNTS_PATH}/{user_esc}/deactivate"
+        remove_hidden = '<input type="hidden" name="role" value="viewer">' if role != "viewer" else ""
+        remove_title = "Hạ về Chỉ xem" if role != "viewer" else "Tắt tài khoản"
+        role_row = f"""
+        <div class="actions" style="margin-bottom:12px;">
+          <span class="muted" data-i18n="role">Vai trò</span>
+          <span class="badge on" style="display:inline-flex;align-items:center;gap:6px;">
+            <span data-role-label="{html.escape(role)}">{html.escape(_role_label(role))}</span>
+            <form method="post" action="{remove_action}" style="display:inline;margin:0;">{remove_hidden}<button type="submit" class="icon-button" style="min-width:22px;min-height:22px;padding:2px;" aria-label="{remove_title}" title="{remove_title}">{_CROSS_SVG}</button></form>
+          </span>
+          <button type="button" class="secondary icon-button" data-role-add-toggle="{picker_id}" aria-label="Đổi hoặc thêm vai trò" title="Đổi vai trò">{_PLUS_SVG}</button>
+          <form id="{picker_id}" method="post" action="{ACCOUNTS_PATH}/{user_esc}/role" class="actions" hidden style="margin:0;">
+            <select name="role" style="width:auto;min-width:140px;margin:0;">{_role_options(role)}</select>
+            <button type="submit" data-i18n="update_role_short">Cập nhật vai trò</button>
+          </form>
+        </div>"""
+        account_actions = (
+            '<div class="actions">'
+            + (_action_form(username, "deactivate", "Tắt tài khoản", danger=True, label_key="deactivate_account") if active
+               else _action_form(username, "activate", "Bật tài khoản", label_key="activate_account"))
+            + _action_form(username, "delete", "Xóa tài khoản", danger=True, label_key="delete_account")
+            + "</div>"
+        )
+        parts.append(role_row)
+        parts.append(account_actions)
     else:
-        body = _action_form(
-            username, "role", "Cập nhật vai trò", label_key="update_role_short",
-            fields=f'<label><span data-i18n="new_role">Vai trò mới</span><select name="role">{_role_options(role)}</select></label>',
-        )
-        body += (
-            _action_form(username, "deactivate", "Tắt tài khoản", danger=True, label_key="deactivate_account") if active
-            else _action_form(username, "activate", "Bật tài khoản", label_key="activate_account")
-        )
-        body += _action_form(username, "delete", "Xóa tài khoản", danger=True, label_key="delete_account")
-    return f'<details class="manage"><summary data-i18n="manage">Quản lý</summary><div class="manage-body">{body}</div></details>'
+        parts.append(_password_form(ACCOUNT_PASSWORD_PATH))
+        parts.append(f'<p style="margin:10px 0 0;"><a href="{ACCOUNT_PATH}" data-i18n="open_my_account">Mở trang tài khoản của tôi</a></p>')
+    return "".join(parts)
 
 
 def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> str:
-    role_accounts = "".join(
-        f'<option value="{html.escape(str(account["username"]))}" '
-        f'data-account-option data-account-username="{html.escape(str(account["username"]))}" '
-        f'data-account-role="{html.escape(str(account["role"]))}">'
-        f'{html.escape(str(account["username"]))} ({html.escape(_role_label(str(account["role"])))})</option>'
-        for account in accounts
-    )
     rows = []
-    for account in accounts:
+    for idx, account in enumerate(accounts):
         username = account["username"]
-        role = account["role"]
-        active = account["is_active"]
-        actions = _manage_panel(username, admin_user, role, active)
+        role = str(account["role"])
+        active = bool(account["is_active"])
+        row_id = f"account-manage-{idx}"
         rows.append(
             f'<tr><td><code>{html.escape(username)}</code></td>'
-            f'<td><span data-role-label="{html.escape(str(role))}">{html.escape(_role_label(str(role)))}</span></td>'
+            f'<td><span data-role-label="{html.escape(role)}">{html.escape(_role_label(role))}</span></td>'
             f'<td><span class="badge {"on" if active else "off"}" data-i18n="{"status_on" if active else "status_off"}">{"Hoạt động" if active else "Đã tắt"}</span></td>'
-            f'<td>{_date(account["created_at"])}</td><td><div class="actions">{actions}</div></td></tr>'
+            f'<td>{_date(account["created_at"])}</td>'
+            f'<td><button type="button" class="secondary" data-manage-account-toggle="{row_id}" aria-expanded="false" data-i18n="manage">Quản lý</button></td></tr>'
+            f'<tr id="{row_id}" class="account-manage-row" hidden><td colspan="5" style="padding:14px 18px;">{_manage_row_content(username, admin_user, role, active, idx)}</td></tr>'
         )
     bin_rows = []
     for account in deleted:
@@ -266,36 +284,27 @@ def _render_accounts(admin_user: str, accounts, deleted, msg: str, err: str) -> 
         )
     empty_row = '<tr><td colspan="5" class="muted" data-i18n="empty_accounts">Không có tài khoản.</td></tr>'
     content = f"""
-<section class="card">
-  <h2 data-i18n="account_create_heading">Tạo tài khoản quản trị</h2>
-  <form method="post" action="{ACCOUNTS_PATH}">
+<details class="card" style="margin-bottom:16px;">
+  <summary><strong data-i18n="account_create_heading">Tạo tài khoản quản trị</strong></summary>
+  <form method="post" action="{ACCOUNTS_PATH}" class="inline-form" style="margin-top:12px;">
     <label><span data-i18n="username">Tên đăng nhập</span><input type="text" name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\\-]+" required autocomplete="off"></label>
     <label><span data-i18n="role">Vai trò</span><select name="role" required><option value="" disabled selected data-i18n="choose_role">Chọn vai trò</option>{_role_options()}</select></label>
     <label><span data-i18n="password_hint">Mật khẩu (12–1024 ký tự ASCII in được)</span><input type="password" name="password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
     <label><span data-i18n="confirm_password">Nhập lại mật khẩu</span><input type="password" name="confirm_password" minlength="{MIN_PASSWORD}" maxlength="{MAX_PASSWORD}" required autocomplete="new-password"></label>
     <button type="submit" data-i18n="create_account">Tạo tài khoản</button>
   </form>
-</section>
-<section class="card">
-  <h2 data-i18n="role_section_heading">Phân quyền tài khoản</h2>
-  <p class="muted" data-i18n="role_section_hint">Chọn tài khoản và vai trò mới. Không thể tự hạ vai trò hoặc xóa quản trị cuối cùng.</p>
-  <form method="post" action="{ACCOUNTS_PATH}/role" class="inline-form">
-    <label><span data-i18n="account">Tài khoản</span><select name="username" required>{role_accounts}</select></label>
-    <label><span data-i18n="new_role">Vai trò mới</span><select name="role" required><option value="" disabled selected data-i18n="choose_role">Chọn vai trò</option>{_role_options()}</select></label>
-    <button type="submit" data-i18n="update_role">Cập nhật vai trò</button>
-  </form>
-</section>
+</details>
 <h2 data-i18n="accounts_table_heading">Tài khoản quản trị</h2>
-<table>
+<div class="table-card"><table>
   <thead><tr><th data-i18n="th_username">Tên đăng nhập</th><th data-i18n="th_role">Vai trò</th><th data-i18n="th_status">Trạng thái</th><th data-i18n="th_created">Tạo lúc</th><th></th></tr></thead>
   <tbody>{''.join(rows) or empty_row}</tbody>
-</table>
-<h2 data-i18n="trash_heading">Thùng rác</h2>
+</table></div>
+<h2 data-i18n="trash_heading" style="margin-top:24px;">Thùng rác</h2>
 <p class="sub" data-i18n="trash_hint">Có thể khôi phục tài khoản trong vòng 30 ngày sau khi xóa.</p>
-<table>
+<div class="table-card"><table>
   <thead><tr><th data-i18n="th_username">Tên đăng nhập</th><th data-i18n="th_role">Vai trò</th><th data-i18n="th_deleted_at">Xóa lúc</th><th data-i18n="th_deleted_by">Người xóa</th><th></th></tr></thead>
   <tbody>{''.join(bin_rows) or empty_row}</tbody>
-</table>"""
+</table></div>"""
     return _render("Quản lý tài khoản quản trị", admin_user, content, msg, err, title_key="accounts_title")
 
 
@@ -352,6 +361,15 @@ def _render_own_account(admin_user: str, account, msg: str = "", err: str = "") 
 <section class="card">
   <h2 data-i18n="change_password_heading">Đổi mật khẩu</h2>
   {_password_form(ACCOUNT_PASSWORD_PATH)}
+</section>
+<section class="card" style="margin-top:16px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0 0 4px;" data-i18n="nav_logout">Đăng xuất</h2>
+      <p class="muted" style="margin:0;">Kết thúc phiên đăng nhập quản trị trên trình duyệt này.</p>
+    </div>
+    <button type="button" class="danger" data-confirm-logout data-i18n="nav_logout">Đăng xuất</button>
+  </div>
 </section>"""
     return _render("Tài khoản của tôi", admin_user, content, msg, err, title_key="account_title")
 

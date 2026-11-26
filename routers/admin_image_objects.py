@@ -55,8 +55,8 @@ def _object_form(obj: Any) -> str:
     raw = obj.model_dump(mode="json") if obj is not None else {}
     object_id = _esc(raw.get("id", ""))
     return f"""
-    <details class="card" {'open' if obj is not None else ''}>
-      <summary><span class="mono">{object_id or '＋ Tạo object mới'}</span> <span class="muted">{_esc(raw.get('label', ''))}</span></summary>
+    <details class="card">
+      <summary><span class="mono">{object_id or 'Tạo object mới'}</span> <span class="muted">{_esc(raw.get('label', ''))}</span></summary>
       <div class="src">Định nghĩa trong registry module: {object_id or '&lt;id&gt;'} (cơ sở dữ liệu là nguồn chuẩn khi migration 008 đang bật)</div>
       <form method="post" action="/admin/image-objects/{object_id}">
         <div class="grid">
@@ -162,33 +162,39 @@ def render_image_objects_html(message: str = "", error: str = "", selected: Opti
 <main>
   {banner}
   {errors_html}
-  <section class="panel">
-    <h2>Tạo object mới</h2>
-    <div class="src">Object: {_esc(paths['objects'])} · Engine: {_esc(paths['engines'])}</div>
+  <details class="panel">
+    <summary><strong>Danh sách engine tích hợp</strong></summary>
+    <div class="table-wrap" style="margin-top:10px;">
+      <table><thead><tr><th>Triển khai</th><th>Mô tả</th></tr></thead><tbody>
+        {''.join(f"<tr><td class='mono'>{_esc(name)}</td><td>Engine Python tích hợp; JSON không thể chứa mã thực thi.</td></tr>" for name in sorted(ENGINE_IMPLEMENTATIONS))}
+      </tbody></table>
+    </div>
+  </details>
+  <details class="panel">
+    <summary><strong>Tạo object mới</strong></summary>
+    <div class="src" style="margin-top:10px;">Object: {_esc(paths['objects'])} · Engine: {_esc(paths['engines'])}</div>
     <form method="post" action="/admin/image-objects/new_object">
       <div class="grid">
         <label>ID (chữ thường, a-z0-9_)<input name="id" required pattern="[a-z0-9_]+"></label>
         <label>Nhãn<input name="label" required></label>
-        <label>Bộ trích xuất<select name="extractor">{''.join(f'<option value="{_esc(v)}">{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
+        <label>Bộ trích xuất<select name="extractor" data-searchable-select>{''.join(f'<option value="{_esc(v)}">{_esc(v)}</option>' for v in _EXTRACTORS)}</select></label>
         <label>Vai trò phân loại<input name="classify_role" placeholder="app_income"></label>
       </div>
       <div class="actions"><button type="submit">Tạo object</button></div>
     </form>
-  </section>
+  </details>
   <section class="panel">
     <h2>Object ảnh ({len(objects)})</h2>
-    {object_cards or '<div class="muted">Chưa có object nào.</div>'}
+    <div data-tb-paginate="details.card" data-page-size="10">
+      {object_cards or '<div class="muted">Chưa có object nào.</div>'}
+    </div>
   </section>
-  <section class="panel">
-    <h2>Check engine ({len(engines)})</h2>
-    {engine_cards or '<div class="muted">Chưa có engine nào.</div>'}
-  </section>
-  <section class="panel">
-    <h2>Danh sách engine tích hợp</h2>
-    <table><thead><tr><th>Triển khai</th><th>Mô tả</th></tr></thead><tbody>
-      {''.join(f"<tr><td class='mono'>{_esc(name)}</td><td>Engine Python tích hợp; JSON không thể chứa mã thực thi.</td></tr>" for name in sorted(ENGINE_IMPLEMENTATIONS))}
-    </tbody></table>
-  </section>
+  <details class="panel">
+    <summary><strong>Check engine ({len(engines)})</strong></summary>
+    <div style="margin-top:10px;" data-tb-paginate="details.card" data-page-size="10">
+      {engine_cards or '<div class="muted">Chưa có engine nào.</div>'}
+    </div>
+  </details>
 </main>
 <script>
 async function deleteObject(objectId) {{

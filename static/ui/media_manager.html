@@ -1203,7 +1203,7 @@
             const currentPrefix = (currentFolder !== 'all' && currentFolder) ? currentFolder + "/" : "";
             const name = prompt(`Nhập tên thư mục mới (ví dụ: ${currentPrefix}subfolder):`, currentPrefix);
             if (name && name.trim()) {
-                const clean = name.trim().toLowerCase().replace(/[^a-z0-9_/\-]/g, "").replace(/^\/+|\/+$/g, "");
+                const clean = name.trim().replace(/[đĐ]/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9_/\-]/g, "").replace(/^\/+|\/+$/g, "");
                 if (clean && !ALL_FOLDERS.includes(clean)) {
                     ALL_FOLDERS.push(clean);
                     selectFolder(clean);

@@ -277,12 +277,12 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
     </div>
   </section>
 
-  <div class="admin-layout">
+  <div class="admin-stack">
     <section class="card ctv-generator" aria-labelledby="ctv-link-title">
       <h2 id="ctv-link-title">Tạo liên kết và mã QR CTV</h2>
       <form id="ctv-link-form">
-        <label>CTV đang hoạt động<select id="ctv-link-code" required><option value="">Chọn CTV</option>{ctv_options}</select></label>
-        <label>Biểu mẫu công khai đang mở<select id="ctv-link-form-id" required><option value="">Chọn biểu mẫu</option>{form_options}</select></label>
+        <label>CTV đang hoạt động<select id="ctv-link-code" data-searchable-select required><option value="">Chọn CTV</option>{ctv_options}</select></label>
+        <label>Biểu mẫu công khai đang mở<select id="ctv-link-form-id" data-searchable-select required><option value="">Chọn biểu mẫu</option>{form_options}</select></label>
         <button type="submit">Tạo liên kết / QR</button>
       </form>
       <p class="muted">Chỉ liệt kê CTV đang hoạt động được xác nhận từ cơ sở dữ liệu và biểu mẫu công khai, còn nhận phản hồi, bật ghi nhận CTV. Tải lại trang để cập nhật danh sách.</p>
@@ -294,6 +294,26 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
       </div>
       <p id="ctv-link-status" role="status" aria-live="polite"></p>
     </section>
+
+    <details class="card" id="new-ctv">
+      <summary><strong>Thêm CTV</strong> <span class="muted">Tạo danh bạ mới</span></summary>
+      <div style="margin-top:14px;">
+        <form method="post" action="/admin/ctvs" class="inline-form">
+          <label>Mã CTV<input name="code" required maxlength="64" placeholder="VD: TUAN_LM_HCM_001" autocomplete="off"></label>
+          <label>Tên hiển thị<input name="display_name" maxlength="120" placeholder="Tên CTV"></label>
+          <label>Số điện thoại<input name="phone" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx"></label>
+          <label>Ghi chú<input name="notes" maxlength="500" placeholder="Ghi chú nội bộ"></label>
+          <label><span><input type="checkbox" name="is_active" value="1" checked> Kích hoạt ngay</span></label>
+          <div class="actions"><button type="submit">Thêm CTV</button></div>
+        </form>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+          <div class="panel-title"><h2>Quy ước</h2></div>
+          <p class="muted">Mã CTV được chuẩn hóa thành chữ in hoa, không dấu, dùng gạch dưới. Xóa CTV chỉ xóa danh bạ, liên kết form và quota; bài nộp lịch sử vẫn giữ nguyên.</p>
+          <p class="muted">Telegram ID chỉ được điền khi CTV liên kết bot, không sửa trực tiếp tại đây.</p>
+        </div>
+      </div>
+    </details>
+
     <div class="admin-stack">
       <form class="admin-toolbar" method="get" action="/admin/ctvs" onsubmit="return false;">
         <label class="search" aria-label="Tìm CTV">
@@ -318,48 +338,29 @@ def _render_page(rows: List[Dict[str, Any]], message: str = "", error: str = "",
               <th>Thao tác</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="ctvTableBody" data-tb-paginate="tr[data-ctv-row]" data-page-size="15">
             {''.join(body_rows) or '<tr><td colspan="6" class="empty">Chưa có CTV nào trong danh bạ.</td></tr>'}
           </tbody>
         </table>
       </section>
     </div>
-
-    <aside class="admin-stack">
-      <section class="card" id="new-ctv">
-        <div class="panel-title">
-          <h2>Thêm CTV</h2>
-          <span class="muted">Tạo danh bạ mới</span>
-        </div>
-        <form method="post" action="/admin/ctvs">
-          <label>Mã CTV<input name="code" required maxlength="64" placeholder="VD: TUAN_LM_HCM_001" autocomplete="off"></label>
-          <label>Tên hiển thị<input name="display_name" maxlength="120" placeholder="Tên CTV"></label>
-          <label>Số điện thoại<input name="phone" maxlength="32" inputmode="tel" placeholder="09xx xxx xxx"></label>
-          <label>Ghi chú<input name="notes" maxlength="500" placeholder="Ghi chú nội bộ"></label>
-          <label><span><input type="checkbox" name="is_active" value="1" checked> Kích hoạt ngay</span></label>
-          <div class="actions"><button type="submit">Thêm CTV</button></div>
-        </form>
-      </section>
-
-      <section class="card">
-        <div class="panel-title"><h2>Quy ước</h2></div>
-        <p class="muted">Mã CTV được chuẩn hóa thành chữ in hoa, không dấu, dùng gạch dưới. Xóa CTV chỉ xóa danh bạ, liên kết form và quota; bài nộp lịch sử vẫn giữ nguyên.</p>
-        <p class="muted">Telegram ID chỉ được điền khi CTV liên kết bot, không sửa trực tiếp tại đây.</p>
-      </section>
-    </aside>
   </div>
 </main>
 <script>
 function filterCtvRows() {{
   const q = (document.getElementById('ctvSearch').value || '').trim().toLowerCase();
   const status = document.querySelector('[data-status-filter].active')?.dataset.statusFilter || 'all';
+  const body = document.getElementById('ctvTableBody');
   document.querySelectorAll('[data-ctv-row]').forEach((row) => {{
     const matchesText = !q || (row.dataset.search || '').includes(q);
     const matchesStatus = status === 'all'
       || (status === 'active' && row.dataset.active === '1')
       || (status === 'inactive' && row.dataset.active === '0');
-    row.hidden = !(matchesText && matchesStatus);
+    const ok = matchesText && matchesStatus;
+    row.dataset.filterHidden = ok ? '0' : '1';
+    if (!body?._tbPaginateRender) row.hidden = !ok;
   }});
+  if (body?._tbPaginateRender) body._tbPaginateRender();
 }}
 function setCtvStatus(button) {{
   document.querySelectorAll('[data-status-filter]').forEach((item) => item.classList.remove('active'));
@@ -423,6 +424,9 @@ async def create_admin_ctv(
         notes=notes.strip() or None,
         is_active=is_active is not None,
     )
+    if created:
+        from services.audit_and_privacy import record_audit_event
+        await record_audit_event(db_pool, "ADMIN_CTV", "CTV_CREATED", "SYSTEM", normalized, "ADMIN", admin_user, {"is_active": is_active is not None})
     return RedirectResponse(
         url=f"/admin/ctvs?msg={'created' if created else 'duplicate'}",
         status_code=303,
@@ -452,6 +456,8 @@ async def update_admin_ctv(
     )
     if not updated:
         return RedirectResponse(url="/admin/ctvs?msg=missing", status_code=303)
+    from services.audit_and_privacy import record_audit_event
+    await record_audit_event(db_pool, "ADMIN_CTV", "CTV_UPDATED", "SYSTEM", code, "ADMIN", admin_user, {"is_active": is_active is not None})
     return RedirectResponse(url="/admin/ctvs?msg=updated", status_code=303)
 
 
@@ -492,6 +498,9 @@ async def delete_admin_ctv(
     if not db_pool:
         return RedirectResponse(url="/admin/ctvs?msg=database", status_code=303)
     deleted = await delete_ctv_directory_entry(db_pool, code)
+    if deleted:
+        from services.audit_and_privacy import record_audit_event
+        await record_audit_event(db_pool, "ADMIN_CTV", "CTV_DELETED", "SYSTEM", code, "ADMIN", admin_user, {})
     return RedirectResponse(
         url=f"/admin/ctvs?msg={'deleted' if deleted else 'missing'}",
         status_code=303,

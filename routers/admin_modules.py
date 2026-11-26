@@ -81,14 +81,23 @@ label {{ display:block; margin:10px 0; color:var(--muted); font-size:.85rem }} i
 textarea {{ resize:vertical }} button {{ border:0; border-radius:6px; background:#0369a1; color:white; padding:8px 12px; cursor:pointer }} button.danger {{ background:#991b1b }} pre {{ overflow:auto; background:#09111e; padding:10px }} .actions {{ justify-content:flex-start; margin:10px 0 }} .actions form {{ display:inline }}
 </style></head><body><main><h1>Module Logic, Object &amp; Engine</h1><p class="muted">Registry lưu trong cơ sở dữ liệu. Object định nghĩa cách trích xuất ảnh. Check engine là module engine trong cùng registry. Logic chỉ chạy implementation đã biên dịch trong ứng dụng; JSON lưu trữ không bao giờ thực thi mã.</p>
 {f'<div class="flash">{_esc(message or error)}</div>' if message or error else ''}
-<div class="grid"><label>Tìm module<input id="search" type="search" placeholder="Tên, id hoặc loại" oninput="filterModules()"></label></div>
-<section><h2>Module đã đăng ký ({len(modules)})</h2>{''.join(cards) or '<p class="muted">Chưa có module nào.</p>'}</section>
-<section class="module"><h2>Tạo module</h2><form method="post" action="/admin/modules">
-<div class="grid"><label>ID module<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Loại<select name="module_type" id="moduleType" onchange="setModuleTemplate(this.value)"><option value="object">Object ảnh</option><option value="logic">Logic</option><option value="engine">Check engine</option></select></label><label>Tên<input name="display_name" maxlength="100" required></label><label>Phiên bản module<input name="module_version" maxlength="32" value="1" required></label></div>
+<details class="module"><summary><strong>Tạo module</strong></summary><form method="post" action="/admin/modules" style="margin-top:12px;">
+<div class="grid"><label>ID module<input name="module_id" pattern="[A-Za-z0-9_-]{1,64}" required></label><label>Loại<select name="module_type" id="moduleType" data-searchable-select onchange="setModuleTemplate(this.value)"><option value="object">Object ảnh</option><option value="logic">Logic</option><option value="engine">Check engine</option></select></label><label>Tên<input name="display_name" maxlength="100" required></label><label>Phiên bản module<input name="module_version" maxlength="32" value="1" required></label></div>
 <label>JSON định nghĩa<textarea id="moduleDefinition" name="definition" rows="10" required>{{"version":1,"label":"Object ảnh mới","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}}</textarea></label>
-<p class="hint">Định nghĩa logic phải tham chiếu implementation trong allowlist, ví dụ <code>get_percentage</code>; định nghĩa engine phải tham chiếu implementation như <code>required_fields</code>. Muốn thêm Python tùy ý phải thay đổi mã ứng dụng và được review.</p><button type="submit">Tạo module</button></form></section>
+<p class="hint">Định nghĩa logic phải tham chiếu implementation trong allowlist, ví dụ <code>get_percentage</code>; định nghĩa engine phải tham chiếu implementation như <code>required_fields</code>. Muốn thêm Python tùy ý phải thay đổi mã ứng dụng và được review.</p><button type="submit">Tạo module</button></form></details>
+<div class="grid"><label>Tìm module<input id="search" type="search" placeholder="Tên, id hoặc loại" oninput="filterModules()"></label></div>
+<section><h2>Module đã đăng ký ({len(modules)})</h2><div id="modulesList" data-tb-paginate="details.module[data-search]" data-page-size="10">{''.join(cards) or '<p class="muted">Chưa có module nào.</p>'}</div></section>
 </main><script>
-function filterModules() {{ const query = document.getElementById('search').value.trim().toLowerCase(); for (const item of document.querySelectorAll('.module[data-search]')) item.hidden = !item.dataset.search.toLowerCase().includes(query); }}
+function filterModules() {{
+  const query = document.getElementById('search').value.trim().toLowerCase();
+  const list = document.getElementById('modulesList');
+  for (const item of document.querySelectorAll('.module[data-search]')) {{
+    const ok = item.dataset.search.toLowerCase().includes(query);
+    item.dataset.filterHidden = ok ? '0' : '1';
+    if (!list?._tbPaginateRender) item.hidden = !ok;
+  }}
+  if (list?._tbPaginateRender) list._tbPaginateRender();
+}}
 const MODULE_TEMPLATES = {{
   object: {{"version":1,"label":"Object ảnh mới","prompt":"Inspect {{{{objects}}}}. Expected fields: {{{{fields}}}}. Configuration: {{{{config}}}}.","objects":[],"expected_fields":[],"customizable":[],"engines":[],"extractor":"generic","json_output_instruction":false}},
   logic: {{"id":"new-logic","name":"new-logic","version":"1","description":"","implementation":"get_percentage","inputs":[{{"name":"target","type":"integer","required":true}},{{"name":"total","type":"integer","required":true}}]}},

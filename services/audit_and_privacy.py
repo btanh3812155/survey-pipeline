@@ -77,6 +77,37 @@ async def record_hop_audit(
             await conn.commit()
     return audit_hash
 
+
+async def record_audit_event(
+    db_pool,
+    component_name: str,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    actor_type: str,
+    actor_id: str,
+    details: Optional[Dict[str, Any]] = None,
+    hop_number: int = 8,
+    hop_name: str = "GOVERNANCE",
+) -> Optional[str]:
+    """Best-effort tamper-evident audit entry into system_audit_log."""
+    try:
+        return await record_hop_audit(
+            db_pool,
+            hop_number=hop_number,
+            hop_name=hop_name,
+            component_name=component_name,
+            action=action,
+            entity_type=entity_type,
+            entity_id=str(entity_id or ""),
+            actor_type=actor_type,
+            actor_id=str(actor_id or "system"),
+            details=dict(details or {}),
+        )
+    except Exception as exc:
+        logger.debug("Best-effort audit event %s failed: %s", action, exc)
+        return None
+
 async def tokenize_or_get_driver_id(db_pool, driver_phone: str, driver_name: Optional[str] = None) -> str:
     """
     Tokenizes raw phone number into an opaque driver_id (e.g. DRV-8A2F9)

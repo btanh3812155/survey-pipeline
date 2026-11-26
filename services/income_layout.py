@@ -79,7 +79,8 @@ class IncomeLayoutResult:
 
 
 def _normalize(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", value or "")
+    raw = (value or "").replace("đ", "d").replace("Đ", "D")
+    decomposed = unicodedata.normalize("NFKD", raw)
     stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]", "", stripped.lower())
 

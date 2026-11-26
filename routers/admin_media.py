@@ -149,6 +149,9 @@ async def upload_media_api(
         "url": rel_url,
         "modified_at": datetime.now(timezone.utc).isoformat(),
     }
+    from core.state import get_db_pool
+    from services.audit_and_privacy import record_audit_event
+    await record_audit_event(get_db_pool(), "ADMIN_MEDIA", "MEDIA_UPLOADED", "SYSTEM", item["id"], "ADMIN", admin_user, {"folder": clean_folder, "size_kb": size_kb})
     return {"status": "success", "item": item}
 
 
@@ -167,6 +170,9 @@ async def delete_media_api(
     if os.path.exists(full_path) and os.path.isfile(full_path):
         try:
             os.remove(full_path)
+            from core.state import get_db_pool
+            from services.audit_and_privacy import record_audit_event
+            await record_audit_event(get_db_pool(), "ADMIN_MEDIA", "MEDIA_DELETED", "SYSTEM", id, "ADMIN", admin_user, {})
             return {"status": "success", "deleted": id}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

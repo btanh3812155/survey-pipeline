@@ -239,7 +239,8 @@ def validate_extracted_weekly_period(
 # ==============================================================================
 
 def _alias_key(value: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
+    raw = str(value or "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFKD", raw)
     ascii_text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]+", "_", ascii_text.lower()).strip("_")
 

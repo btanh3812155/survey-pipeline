@@ -147,7 +147,7 @@
                 <svg viewBox="0 0 24 24" style="width:16px; height:16px; fill:#38bdf8; flex-shrink:0;"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5 2.5-2.5 2.5z"/></svg>
                 <div>
                     <div id="gpsStatusPill" style="display:inline-flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#94a3b8; background:rgba(30,41,59,0.6); padding:4px 10px; border-radius:6px; border:1px solid #334155;">
-                        <span id="txtCtvGps">📍 Vui lòng bấm 'Bật vị trí' để xác thực đối soát</span>
+                        <span id="txtCtvGps">Vui lòng bấm 'Bật vị trí' để xác thực đối soát</span>
                     </div>
                 </div>
             </div>
@@ -185,8 +185,8 @@
                 pill.style.background = isSuccess ? "rgba(16, 185, 129, 0.15)" : "rgba(56, 189, 248, 0.15)";
                 pill.style.borderColor = isSuccess ? "rgba(16, 185, 129, 0.35)" : "rgba(56, 189, 248, 0.35)";
                 pill.innerHTML = isSuccess
-                    ? `✓ Đã xác thực GPS (${earlyGps.lat.toFixed(4)}, ${earlyGps.lon.toFixed(4)})`
-                    : `📍 Đã dùng vị trí mạng (IP dự phòng)`;
+                    ? `Đã xác thực GPS (${earlyGps.lat.toFixed(4)}, ${earlyGps.lon.toFixed(4)})`
+                    : `Đã dùng vị trí mạng (IP dự phòng)`;
             }
             if (btn && isSuccess) btn.style.display = "none";
             updateCtvButtonState();
@@ -196,7 +196,7 @@
             const btn = document.getElementById("btnRequestGps");
             const pill = document.getElementById("gpsStatusPill");
             if (btn) { btn.disabled = true; btn.textContent = "..."; }
-            if (pill) pill.innerHTML = "<span>📍 Đang xác thực vị trí vệ tinh...</span>";
+            if (pill) pill.innerHTML = "<span>Đang xác thực vị trí vệ tinh...</span>";
 
             let resolved = false;
 
@@ -285,7 +285,7 @@
                 btn.style.background = "linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)";
                 btn.style.boxShadow = "0 4px 14px rgba(2, 132, 199, 0.35)";
                 if (helper) {
-                    helper.textContent = `✓ Sẵn sàng mở khảo sát với mã ${ctv}`;
+                    helper.textContent = `Sẵn sàng mở khảo sát với mã ${ctv}`;
                     helper.style.color = "#10b981";
                 }
             }

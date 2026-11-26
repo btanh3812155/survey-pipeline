@@ -585,6 +585,9 @@ def _evaluate_constraint(constraint: Dict[str, Any], facts: Dict[str, Any]) -> T
 
     if passed:
         return True, ""
+    custom_msg = str(constraint.get("reject_message") or "").strip()
+    if custom_msg:
+        return False, custom_msg
     return False, f"Ràng buộc không đạt: {label} (giá trị thực: {actual!r})."
 
 

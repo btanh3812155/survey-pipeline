@@ -428,7 +428,7 @@
                             Xóa vĩnh viễn biểu mẫu này. Toàn bộ schema được sao lưu vào cơ sở dữ liệu trước khi xóa.
                         </p>
                         <button type="button" id="btnDeleteForm" onclick="deleteFormWithConfirmation()" style="display:none; align-items:center; gap:8px; padding:10px 16px; border-radius:10px; background:#dc2626; color:#fff; border:none; font-weight:700; font-size:0.88rem; cursor:pointer;">
-                            🗑️ Xóa biểu mẫu
+                            Xóa biểu mẫu
                         </button>
                     </div>
 
@@ -489,6 +489,7 @@
 
         function slugifyText(str) {
             return (str || '')
+                .replace(/[đĐ]/g, 'd')
                 .toLowerCase()
                 .normalize('NFD')
                 .replace(/[\u0300-\u036f]/g, '')
@@ -1283,9 +1284,13 @@
         function renderSlotObjectConstraintRow(qidx, sidx, key, ridx, row, fields) {
             const op = row && Object.prototype.hasOwnProperty.call(row, 'op') ? row.op : '';
             const controls = fields.map(fieldDef => renderSlotObjectConstraintField(qidx, sidx, key, ridx, row, fieldDef, op)).join('');
-            return `<div class="constraint-row">
+            const keyArg = escapeHtml(JSON.stringify(key));
+            const rejectMsg = row && row.reject_message != null ? String(row.reject_message) : '';
+            const boxStyle = 'width:100%; padding:6px; font-size:0.8rem; background:#020617; border:1px solid #334155; color:#fff; border-radius:4px;';
+            return `<div class="constraint-row" style="flex-wrap:wrap;">
                 ${controls}
-                <button type="button" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171; padding:6px 10px; border-radius:6px; font-size:0.72rem; cursor:pointer;" onclick="removeSlotObjectConstraint(${qidx}, ${sidx}, ${escapeHtml(JSON.stringify(key))}, ${ridx})">Xóa</button>
+                <div style="flex:1 1 180px;"><label style="font-size:0.7rem; color:#94a3b8; display:block; margin-bottom:3px;">Thông báo từ chối (tùy chọn)</label><input type="text" style="${boxStyle}" value="${escapeHtml(rejectMsg)}" placeholder="Thông báo khi không đạt..." oninput="setSlotObjectConstraintValue(${qidx}, ${sidx}, ${keyArg}, ${ridx}, 'reject_message', this.value, 'text')"></div>
+                <button type="button" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171; padding:6px 10px; border-radius:6px; font-size:0.72rem; cursor:pointer; align-self:flex-end;" onclick="removeSlotObjectConstraint(${qidx}, ${sidx}, ${keyArg}, ${ridx})">Xóa</button>
             </div>`;
         }
         function renderSlotObjectConstraints(qidx, sidx, key, item, value) {
@@ -1889,9 +1894,16 @@
                 <button type="button" class="btn-add-q" style="padding:7px 12px; width:auto; align-self:flex-start; font-size:0.78rem;" onclick="loadDistributionPreview(${midx})">Tải thống kê đã lưu</button>
                 <pre id="distributionPreview_${midx}" style="white-space:pre-wrap; margin:0; color:#cbd5e1; font-size:0.75rem;">Lưu form, rồi bấm tải thống kê.</pre>
             </div>` : '';
-            return `<div class="question-item" style="gap:12px; ${isAll ? 'border-color:#7c3aed;' : ''}${isDistribution ? 'border-color:#0ea5e9;' : ''}">
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            const summaryTitle = escapeHtml(module.name || module.module_id || ('Module #' + (midx + 1)));
+            return `<details class="question-item form-module-details" style="gap:12px; ${isAll ? 'border-color:#7c3aed;' : ''}${isDistribution ? 'border-color:#0ea5e9;' : ''}">
+                <summary style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; width:100%;">
                     <span style="font-weight:800; color:#60a5fa; font-size:0.82rem; min-width:26px;">#${midx + 1}</span>
+                    <strong style="flex:1; min-width:120px; font-size:0.88rem;">${summaryTitle}</strong>
+                    <span style="font-size:0.74rem; color:var(--muted);">${escapeHtml(module.kind || 'engine')}</span>
+                    <span style="font-size:0.74rem; color:${module.enabled ? 'var(--success)' : 'var(--danger)'};">${module.enabled ? 'Đang bật' : 'Đã tắt'}</span>
+                </summary>
+                <div style="display:flex; flex-direction:column; gap:12px; margin-top:12px;">
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <input type="text" value="${escapeHtml(module.name)}" placeholder="Tên module" oninput="setModuleName(${midx}, this.value)" style="flex:1; min-width:150px; background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
                     <label class="toggle-switch" style="white-space:nowrap;">
                         <input type="checkbox" ${module.enabled ? 'checked' : ''} onchange="setModuleEnabled(${midx}, this.checked)">
@@ -1934,7 +1946,8 @@
                     </label>
                     <input type="text" value="${escapeHtml(module.reject_message || '')}" placeholder="Thông báo từ chối (tùy chọn)" oninput="setModuleRejectMessage(${midx}, this.value)" style="background:#020617; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.82rem;">
                 </div>`}
-            </div>`;
+                </div>
+            </details>`;
         }
         function renderFormModules() {
             const list = document.getElementById('formModulesList');
@@ -2475,7 +2488,7 @@
             } catch (e) {
                 alert('Lỗi kết nối: ' + e.message);
             } finally {
-                if (btn) { btn.disabled = false; btn.textContent = '🗑️ Xóa biểu mẫu'; }
+                if (btn) { btn.disabled = false; btn.textContent = 'Xóa biểu mẫu'; }
             }
         }
 

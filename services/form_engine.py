@@ -265,7 +265,8 @@ class FormSettings(BaseModel):
             raise ValueError("tags phải là danh sách hoặc chuỗi phân tách bằng dấu phẩy")
         tags: List[str] = []
         for item in value:
-            tag = unicodedata.normalize("NFKD", str(item or ""))
+            raw_tag = str(item or "").replace("đ", "d").replace("Đ", "D")
+            tag = unicodedata.normalize("NFKD", raw_tag)
             tag = "".join(ch for ch in tag if not unicodedata.combining(ch))
             tag = re.sub(r"[^a-z0-9_-]+", "_", tag.lower()).strip("_")
             if not tag:
